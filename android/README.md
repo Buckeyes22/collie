@@ -38,14 +38,15 @@ dependency tree.
 From this directory:
 
 ```bash
-npm ci
+npm ci --no-audit --no-fund
 npx --no-install bubblewrap --version
 ```
 
 The second command must report `1.25.0`. On first use, Bubblewrap asks for a JDK and Android SDK;
 select the existing local installations. It stores those workstation-specific paths outside Git.
 Never commit `local.properties` or a Bubblewrap configuration containing absolute workstation
-paths.
+paths. The install command deliberately avoids making reproducibility depend on npm's advisory and
+funding endpoints; run dependency auditing as a separate review step.
 
 `twa-manifest.json` is the reviewed generator input. Bubblewrap's `update` command overwrites
 generated source. After any regeneration, inspect the complete diff and preserve the intentional

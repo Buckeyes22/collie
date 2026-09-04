@@ -28,6 +28,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 ### Added
 
 - A pinned Android TWA project, unsigned CI build and identity checks package the live PWA without a WebView.
+- Android CI installs its pinned tooling without depending on npm's advisory or funding endpoints.
 
 ## [1.5.0] - 2026-09-04
 
