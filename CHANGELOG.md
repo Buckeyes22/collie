@@ -25,6 +25,10 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 
 ## [Unreleased]
 
+### Added
+
+- A pinned Android TWA project, unsigned CI build and identity checks package the live PWA without a WebView.
+
 ## [1.5.0] - 2026-09-04
 
 ### Added

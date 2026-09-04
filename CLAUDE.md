@@ -148,6 +148,9 @@ kind must come from the install kind (`cli/install-kind.ts`), never assume one.
 - **Frontend changes** (`web/`): rebuild with `bun run build` (root) or `cd web && bun run build`.
   The bridge serves `web/dist` **from disk at request time**, so on the deployment host
   a rebuild is **immediately live — no restart**.
+- **Android packaging is a TWA over Collie's existing HTTPS PWA** — never add a WebView, Capacitor
+  shell, native JavaScript bridge, second push stack, or Android-only CORS exception
+  ([ADR 0035](./.adr/0035-the-android-app-is-a-twa-not-a-webview.md)).
 - **Backend changes** (`bridge/*.ts`): Bun does **not** hot-reload the service — you must
   `systemctl --user restart collie`. Forgetting this is the #1 "my change didn't take" trap.
 - `bun run build` (root) is now **one definition**: it runs `collie build`, which gates on
