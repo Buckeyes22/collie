@@ -28,8 +28,13 @@ are command shapes; paths and identifiers marked as inputs must be resolved befo
   lifecycle on an API 36 emulator. This is compile/lifecycle evidence, not release acceptance.
 - P5–P8 remain deliberately incomplete: no release key exists, the live Digital Asset Links URL
   still returns 404, and no release-signed APK has been produced.
-- P9 remains incomplete because the Samsung S25 Ultra is not attached to `adb`; pairing,
-  fullscreen trust, offline behavior, notification attribution, and deep links require that device.
+- The Samsung S25 Ultra is now attached through wireless `adb`. The debug APK installs and launches,
+  the tailnet-only origin loads, the browser profile is paired as `S25-Ultra`, and background Web
+  Push delivery plus notification-click navigation pass under the expected unverified fallback.
+- P9 release acceptance remains incomplete: the debug signer correctly produces a Custom Tab,
+  Chrome-attributed notifications, and unverified app-link state. Release-signed installation,
+  chrome-free fullscreen trust, Collie-attributed notification delegation, offline-shell behavior,
+  off-origin handling, and update continuity wait for P5–P8.
 - The provisional package ID `com.lateapex.collie` is present in source but MUST be confirmed before
   key generation, Digital Asset Links publication, or installation as the durable private release.
 
