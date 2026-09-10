@@ -23,4 +23,7 @@
     <item name="composer_settings_button" type="id" />
     <item name="composer_dock_title" type="id" />
     <item name="composer_dock_close" type="id" />
+    <item name="pane_rename_input" type="id" />
+    <item name="pane_action_close_button" type="id" />
+    <item name="pane_close_again" type="id" />
 </resources>

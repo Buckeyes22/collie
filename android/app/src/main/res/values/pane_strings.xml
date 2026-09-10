@@ -31,9 +31,7 @@
     <string name="pane_rename_hint">Pane label</string>
     <string name="pane_rename_save">Save</string>
     <string name="pane_action_cancel">Cancel</string>
-    <string name="pane_close_title">Close this pane?</string>
-    <string name="pane_close_message">This ends the terminal and anything running in it. This cannot be undone.</string>
-    <string name="pane_close_confirm">Close pane</string>
+    <string name="pane_close_title">Close pane</string>
     <string name="pane_close_again">Tap again to close</string>
     <string name="pane_focus_done">Pane focused in the terminal.</string>
     <string name="pane_rename_done">Pane label updated.</string>
@@ -236,4 +234,10 @@
         <item quantity="one">%d tab</item>
         <item quantity="other">%d tabs</item>
     </plurals>
+    <string name="pane_status_shell">Shell</string>
+    <string name="pane_status_working">Working</string>
+    <string name="pane_status_needs_input">Needs input</string>
+    <string name="pane_status_ready">Ready</string>
+    <string name="pane_status_idle">Idle</string>
+    <string name="pane_close_confirm_message">This closes the pane for everyone on this Herdr.</string>
 </resources>

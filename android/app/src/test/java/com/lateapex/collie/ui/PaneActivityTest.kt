@@ -26,7 +26,9 @@ import com.lateapex.collie.network.PaneSummary
 import com.lateapex.collie.network.TabSummary
 import com.lateapex.collie.network.TranscriptEntry
 import com.lateapex.collie.network.TranscriptPart
+import androidx.core.content.ContextCompat
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertFalse
@@ -94,7 +96,7 @@ class PaneActivityTest {
     }
 
     @Test
-    fun currentPaneRenameStaysInTheSameSheetAndCloseArmsInPlace() {
+    fun currentPaneRenameAndCloseOpenTheirOwnSheets() {
         val activity = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("current:pane")).create().get()
         render(
             activity,
@@ -112,24 +114,34 @@ class PaneActivityTest {
 
         sheetButton(dialog, activity.getString(R.string.pane_action_rename)).performClick()
 
-        assertSame(dialog, ShadowDialog.getLatestDialog())
-        assertTrue(dialog.isShowing)
+        val rename = ShadowDialog.getLatestDialog() as CollieBottomSheetDialog
+        assertFalse(dialog == rename)
+        assertTrue(rename.isShowing)
+        assertEquals(
+            activity.getString(R.string.pane_rename_title),
+            rename.findViewById<TextView>(R.id.collie_sheet_title)!!.text.toString(),
+        )
         assertEquals(
             "Current label",
-            descendants(requireNotNull(dialog.findViewById<View>(R.id.collie_sheet_content)))
+            descendants(requireNotNull(rename.findViewById<View>(R.id.collie_sheet_content)))
                 .filterIsInstance<EditText>()
                 .single()
                 .text
                 .toString(),
         )
 
-        sheetButton(dialog, activity.getString(R.string.pane_action_cancel)).performClick()
-        val close = sheetButton(dialog, activity.getString(R.string.pane_action_close))
-        close.performClick()
+        rename.findViewById<View>(R.id.collie_sheet_close)!!.performClick()
+        assertFalse(activity.isFinishing)
 
-        assertSame(dialog, ShadowDialog.getLatestDialog())
-        assertTrue(dialog.isShowing)
-        assertEquals(activity.getString(R.string.pane_close_again), close.text.toString())
+        val actions = openActionsSheet(activity)
+        sheetButton(actions, activity.getString(R.string.pane_action_close)).performClick()
+        val confirm = ShadowDialog.getLatestDialog() as CollieBottomSheetDialog
+        assertFalse(actions == confirm)
+        assertTrue(confirm.isShowing)
+        assertEquals(
+            activity.getString(R.string.pane_close_title),
+            confirm.findViewById<TextView>(R.id.collie_sheet_title)!!.text.toString(),
+        )
         assertFalse(activity.isFinishing)
     }
 
@@ -1211,6 +1223,50 @@ class PaneActivityTest {
         activity.findViewById<View>(R.id.keys_mode_button).performClick()
         val scroller = activity.findViewById<View>(R.id.pane_key_queue_scroll) as HorizontalScrollView
         assertTrue(scroller.isHorizontalFadingEdgeEnabled)
+    }
+
+    @Test
+    fun renameSheetIsTitledAndPrefilled() {
+        val activity = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("rename:pane")).create().start().resume().get()
+        render(
+            activity,
+            PaneUiState(
+                loading = false,
+                canWrite = true,
+                panes = listOf(paneSummary("rename:pane").copy(paneLabel = null, sessionName = "Codex session log 01a0")),
+            ),
+        )
+        activity.showRenameForTest()
+        val sheet = ShadowDialog.getLatestDialog() as CollieBottomSheetDialog
+        assertEquals("Rename pane", sheet.findViewById<TextView>(R.id.collie_sheet_title)!!.text.toString())
+        assertEquals("Codex session log 01a0", sheet.findViewById<EditText>(R.id.pane_rename_input)!!.text.toString())
+    }
+
+    @Test
+    fun statusLabelUsesOneVocabulary() {
+        val activity = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("status:v", agent = "claude")).create().start().resume().get()
+        render(
+            activity,
+            PaneUiState(
+                loading = false,
+                panes = listOf(paneSummary("status:v").copy(status = AgentStatus.BLOCKED)),
+            ),
+        )
+        assertEquals("Needs input", activity.findViewById<TextView>(R.id.pane_status).text.toString())
+    }
+
+    @Test
+    fun closeConfirmIsItsOwnSheetWithOneRedButton() {
+        val activity = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("close:pane")).create().start().resume().get()
+        render(activity, PaneUiState(loading = false, canWrite = true, panes = listOf(paneSummary("close:pane"))))
+        val sheet = openActionsSheet(activity)
+        sheet.findViewById<View>(R.id.pane_action_close_button)!!.performClick()
+        val confirm = ShadowDialog.getLatestDialog() as CollieBottomSheetDialog
+        assertNotSame(sheet, confirm)
+        assertEquals("Close pane", confirm.findViewById<TextView>(R.id.collie_sheet_title)!!.text.toString())
+        val again = confirm.findViewById<MaterialButton>(R.id.pane_close_again)!!
+        assertEquals(activity.getString(R.string.pane_action_close), again.text.toString())
+        assertEquals(ContextCompat.getColor(activity, R.color.collie_destructive), again.backgroundTintList!!.defaultColor)
     }
 
     @Test

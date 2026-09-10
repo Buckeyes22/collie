@@ -424,14 +424,10 @@ class PaneActivity : AppCompatActivity() {
         binding.paneTitle.text = title
         binding.paneCwd.text = DisplayText.abbreviateHome(cwd)
         binding.tabStrip.contentDescription = getString(R.string.pane_tab_strip_description, tabLabel, status)
-        binding.paneStatus.text = if (agentName.equals("shell", ignoreCase = true)) {
-            getString(R.string.status_shell).uppercase(Locale.getDefault())
-        } else {
-            status.uppercase(Locale.ROOT)
-        }
-        binding.paneStatus.setTextColor(statusColour(status))
+        binding.paneStatus.text = PaneStatusVocabulary.label(resources, agentName, status)
+        binding.paneStatus.setTextColor(PaneStatusVocabulary.colour(this, status))
         binding.paneStatusDot.isVisible = !agentName.equals("shell", ignoreCase = true)
-        binding.paneStatusDot.backgroundTintList = ColorStateList.valueOf(statusColour(status))
+        binding.paneStatusDot.backgroundTintList = ColorStateList.valueOf(PaneStatusVocabulary.colour(this, status))
     }
 
     /** Find is a full header-row takeover on the web route, not an extra row above the mirror. */
@@ -459,13 +455,9 @@ class PaneActivity : AppCompatActivity() {
         binding.paneCwd.text = presentation.cwd.orEmpty()
         binding.paneCwd.isVisible = presentation.cwd != null
         binding.paneStatusDot.isVisible = !presentation.shell
-        binding.paneStatusDot.backgroundTintList = ColorStateList.valueOf(statusColour(presentation.status))
-        binding.paneStatus.text = if (presentation.shell) {
-            getString(R.string.status_shell).uppercase(Locale.getDefault())
-        } else {
-            presentation.status.uppercase(Locale.ROOT)
-        }
-        binding.paneStatus.setTextColor(statusColour(presentation.status))
+        binding.paneStatusDot.backgroundTintList = ColorStateList.valueOf(PaneStatusVocabulary.colour(this, presentation.status))
+        binding.paneStatus.text = PaneStatusVocabulary.label(resources, agentName, presentation.status)
+        binding.paneStatus.setTextColor(PaneStatusVocabulary.colour(this, presentation.status))
         binding.tabStrip.contentDescription = getString(
             R.string.pane_tab_strip_description,
             pane.tabLabel.orEmpty(),
@@ -3177,12 +3169,13 @@ class PaneActivity : AppCompatActivity() {
                 }
                 if (close.visible) {
                     content.addView(
-                        armedCloseButton(
-                            dialog = dialog,
-                            label = getString(R.string.pane_action_close),
-                            warning = getString(R.string.pane_close_again),
-                            onConfirmed = ::closeCurrentPane,
-                        ).apply { isEnabled = close.enabled },
+                        sheetActionButton(getString(R.string.pane_action_close)) {
+                            dialog.dismiss()
+                            showCloseConfirmSheet()
+                        }.apply {
+                            id = R.id.pane_action_close_button
+                            isEnabled = close.enabled
+                        },
                     )
                 }
                 listOfNotNull(focus.refusal, rename.refusal, close.refusal).firstOrNull()?.let { refusal ->
@@ -3540,16 +3533,25 @@ class PaneActivity : AppCompatActivity() {
         }
     }
 
+    /** B.3: rename is its own titled sheet, prefilled with the name the pane already shows. */
     private fun showRenameCurrentPane(
         dialog: CollieBottomSheetDialog,
         onBack: () -> Unit,
     ) {
         if (!canMutatePane("renamePane")) return
+        val pane = currentPaneSummary()
+        val shownName = pane?.let {
+            it.paneLabel?.takeIf(String::isNotBlank)
+                ?: PaneHeaderPresenter.present(it, 1).name
+        }.orEmpty()
+        dialog.dismiss()
+        val sheet = CollieBottomSheetDialog(this, getString(R.string.pane_rename_title))
         val field = EditText(this).apply {
+            id = R.id.pane_rename_input
             hint = getString(R.string.pane_rename_hint)
             isSingleLine = true
             filters = arrayOf(InputFilter.LengthFilter(MAX_PANE_LABEL_CHARS))
-            setText(currentPaneSummary()?.paneLabel.orEmpty())
+            setText(shownName)
             setSelection(text.length)
         }
         val content = LinearLayout(this).apply {
@@ -3557,7 +3559,6 @@ class PaneActivity : AppCompatActivity() {
             addView(field)
             addView(sheetActionButton(getString(R.string.pane_rename_save)) {
                 val label = field.text?.toString()?.trim().orEmpty()
-                val pane = currentPaneSummary()
                 val clearedTitle = if (pane == null) {
                     address.paneId
                 } else {
@@ -3566,7 +3567,7 @@ class PaneActivity : AppCompatActivity() {
                         ?: pane.workspaceLabel.takeIf(String::isNotBlank)
                         ?: address.paneId
                 }
-                dialog.dismiss()
+                sheet.dismiss()
                 mutatePane(
                     "renamePane",
                     getString(R.string.pane_action_rename),
@@ -3580,18 +3581,53 @@ class PaneActivity : AppCompatActivity() {
                 }
             })
             addView(sheetActionButton(getString(R.string.pane_action_cancel)) {
-                returnToSheetActions(dialog, field, onBack)
+                field.clearFocus()
+                (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
+                    .hideSoftInputFromWindow(field.windowToken, 0)
+                sheet.dismiss()
+                onBack()
             })
         }
-        dialog.setSheetContent(content)
+        sheet.setSheetContent(content)
+        sheet.setOnDismissListener { restorePaneFocus() }
+        sheet.show()
         field.post { field.requestFocus() }
     }
+
+    @VisibleForTesting
+    internal fun showRenameForTest() = showRenameCurrentPane(
+        CollieBottomSheetDialog(this, getString(R.string.pane_actions)),
+        {},
+    )
 
     private fun closeCurrentPane() = mutatePane(
         "closePane",
         getString(R.string.pane_action_close),
         { repository.closePane(address) },
     ) { finish() }
+
+    /** B.3: the destructive confirm is its own sheet — one message, one red button. */
+    private fun showCloseConfirmSheet() {
+        val sheet = CollieBottomSheetDialog(this, getString(R.string.pane_close_title))
+        val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        content.addView(TextView(this).apply {
+            text = getString(R.string.pane_close_confirm_message)
+            textSize = 13f
+            setTextColor(getColor(R.color.collie_foreground))
+            setPadding(dp(12), dp(8), dp(12), dp(8))
+        })
+        content.addView(sheetActionButton(getString(R.string.pane_action_close)) {
+            sheet.dismiss()
+            closeCurrentPane()
+        }.apply {
+            id = R.id.pane_close_again
+            backgroundTintList = ColorStateList.valueOf(getColor(R.color.collie_destructive))
+            setTextColor(getColor(R.color.collie_on_destructive))
+        })
+        sheet.setSheetContent(content)
+        sheet.setOnDismissListener { restorePaneFocus() }
+        sheet.show()
+    }
 
     private fun currentPaneSummary(): PaneSummary? = currentState.panes.firstOrNull {
         it.paneId == address.paneId && it.host == address.scope.host && it.session == address.scope.session
@@ -3791,15 +3827,7 @@ class PaneActivity : AppCompatActivity() {
         override fun afterTextChanged(value: android.text.Editable?) = Unit
     }
 
-    private fun statusColour(status: String): Int = getColor(
-        when (status) {
-            "blocked" -> R.color.collie_blocked
-            "working" -> R.color.collie_working
-            "done" -> R.color.collie_done
-            "idle" -> R.color.collie_idle
-            else -> R.color.collie_unknown
-        },
-    )
+    private fun statusColour(status: String): Int = PaneStatusVocabulary.colour(this, status)
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
