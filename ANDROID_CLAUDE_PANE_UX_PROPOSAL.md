@@ -252,3 +252,84 @@ but nothing says why in one line; the reason is three red rows above it.
 5. A.8 and A.9: pairing card first when unpaired, drop the empty notifications card, Zen row
    unconditional, disconnect as a button.
 6. A.5 and A.11: fold Display into the actions sheet, unify sheets and drawers.
+
+## Appendix B — second pass, every capture
+
+Appendix A was written from a handful of captures and memory of the rest; that was not a review.
+This pass opened all 176 captures from the day (about 70 distinct screen states) and records what
+A missed. Cited captures are saved under `android/acceptance/`.
+
+### B.1 Space (`2026-09-10-space-strip-missing-current.png`)
+
+- **The spaces strip does not contain the current space.** Viewing `collie-ui-test`, the strip
+  reads "← Back · StormLens · flock · pitwall · pen …" and the current space is off-screen to the
+  right, unselected. A strip that exists to show where you are does not show where you are.
+- The current space's chips carry status dots and agent icons on the Space screen but the strip
+  chips carry only a dot, so the two rows encode the same panes two ways.
+
+### B.2 Pane chrome (captures 29, 51, 55, 121, 207, 46)
+
+- **The collapsed tab strip is a centred plain title.** After "Hide tabs", the strip becomes the
+  pane name centred in the same weight as a heading, with no chevron or affordance; nothing says
+  it re-expands on tap.
+- **Confirmation notices are floating cards.** "Reply sent.", "ctrl+c sent." and "Typed into
+  terminal." appear as a white elevated card with a drop shadow over the first rows of the mirror,
+  overlapping the prompt they confirm. They read as a system dialog left behind.
+- **Type mode says the same thing twice and hides its stop.** The field hint becomes "Typing
+  directly into terminal…" and a second label "Direct terminal typing armed" appears under it,
+  while the Send button, now a stop control, keeps the paper-plane icon.
+- **An attached image is a file path in the draft** (`2026-09-10-upload-path-in-draft.png`): after
+  the picker, the composer holds `/home/chris/.local/state/collie/uploads/wM_p1-….png` across three
+  lines with "Image added — path in message." beneath. That is the bridge's storage location shown
+  to the operator; an attachment should be a chip or thumbnail the send expands.
+- **Staged key chips overflow with no cue.** Four chips fill the row and the fourth is clipped at
+  the edge; the row scrolls, but nothing indicates it.
+- **Presets expanded leaves zero terminal rows** (`2026-09-10-keys-presets-no-terminal.png`). The
+  drawer, the mode row and the composer take the whole screen; the terminal the keys act on is not
+  visible at all, so the effect of Ctrl R or Ctrl U cannot be seen without closing the drawer.
+- **Tree connectors render with the wrong glyph.** Claude's "⎿" child marker draws as a hooked
+  "⌊" with a gap in the system mono face, which lacks the box-drawing coverage. This is the one
+  place a bundled mono face is warranted, not as a picker but as the mirror's face.
+
+### B.3 Sheets (captures 63, 87, 117, 118, 106)
+
+- **The Rename sheet is titled "Pane actions"**, not "Rename pane", and its field is empty rather
+  than prefilled with the current name, so a one-word edit means retyping the name.
+- **The Close confirm keeps the "Pane actions" title** while its last row turns solid red "Tap
+  again to close"; the other three rows stay live during the confirm.
+- **Worktree creation is three sheets for one input.** Repository choice (one option, `collie-app`),
+  then a sheet whose only content is "Create new branch", then the branch field. The final sheet
+  says nothing about where the worktree will be made or from which base.
+- **Disconnect is a black button with red text** (`2026-09-10-disconnect-sheet.png`) under a body
+  of grey prose. A destructive confirm needs a red fill or a red outline, not red on black.
+
+### B.4 Settings and pairing (captures 107, 110, 115, 216, 217)
+
+- **Two input styles for the same task.** The setup screen uses outlined boxes with floating
+  labels; the Settings pairing form uses bare underlined fields. Same code, same label, two
+  designs.
+- **"Revoke" on this phone's own row** where the description says "Unpair this phone". The
+  destructive verb should match the row.
+- **Updates: "Remind me next digest" is plain text** beneath the disabled button, not visibly a
+  control; "Details · 3 red ^" is a centred text toggle; and the three "Fix:" lines are server-side
+  instructions (`git stash`, set an environment variable) shown on a phone that cannot act on them.
+
+### B.5 Dashboard (captures 200, 219, 99)
+
+- **The collapse icon rotates to the wrong direction.** Recent expanded shows "↑", collapsed shows
+  "←"; a disclosure should be a chevron that turns, not an arrow that points left.
+- **Landscape** centres a phone-width column with empty margins either side, which is acceptable,
+  but the pane in landscape keeps the tab strip and full composer and leaves five terminal rows.
+
+### B.6 Corrections to Appendix A
+
+- A.3 claimed three status vocabularies; the captures show the header dot, the label above the
+  mode row, the dashboard ring, and the Space chip dot: four.
+- A.5 called Quick "fine on a shell"; capture 54 shows the drawer opening at two thirds of screen
+  height for two buttons.
+
+### B.7 Additions to the order of work
+
+Insert after step 2 of A.12: the Space strip must include and select the current space; notices
+move into the composer band; the attachment becomes a chip; Rename prefills and is titled; the
+mirror gets a bundled mono face with box-drawing coverage. Steps 3 to 6 stand.
