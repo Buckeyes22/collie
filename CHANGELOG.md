@@ -30,6 +30,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - Android: the Claude chrome filter reflows the transcript body and leaves status rows and tables untouched.
 - Android: the rows under Claude's input box render as one pinned status row instead of raw mono lines.
 - Android: the mirror and key caps use a bundled JetBrains Mono so tree markers and box drawing render correctly.
+- Android: the history turn renderer is a reusable class so the pane body can share it.
 - A native Kotlin Android client mirrors Collie's existing HTTP API without a WebView or browser shell.
 - Android CI builds and validates the native app with pinned Gradle tooling independent of npm's advisory and funding endpoints.
 - The web and native Android interfaces are English-only; language selectors, alternate catalogs,
