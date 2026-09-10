@@ -108,6 +108,9 @@ internal class SettingsServerControls(
     private val mutationGate = SettingsMutationControlGate()
     private var pairCodeDraft = initialPairCode.orEmpty()
     private var pairLabelDraft = ""
+    // The devices card is rebuilt on every refresh, and the form with it; a refused code's message
+    // has to outlive that rebuild or the operator never sees it.
+    private var pairOutcome: Pair<String, Boolean>? = null
     private var devicesRevealPending = focusDevices || initialPairCode != null
     private var pairNameFocusPending = initialPairCode != null
     private var refreshing = false
@@ -417,22 +420,39 @@ internal class SettingsServerControls(
             setText(pairLabelDraft)
             doAfterTextChanged { pairLabelDraft = it?.toString().orEmpty() }
         }
+        // The outcome is reported under the form itself. The shared status line sits at the end
+        // of the server controls, below the connection card, where a refused code went unseen.
+        val outcome = TextView(activity).apply {
+            id = R.id.settings_pair_status
+            textSize = 12f
+            setPadding(dp(4), dp(8), dp(4), 0)
+            isVisible = false
+            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+            pairOutcome?.let { (message, error) -> showStatus(message, error, target = this) }
+        }
+        fun report(message: String?, error: Boolean = false) {
+            pairOutcome = message?.let { it to error }
+            showStatus(message, error, target = outcome)
+        }
         val submit = actionButton(R.id.settings_pair_button, text(R.string.pair_and_connect)) {
             val origin = repository.connection.value?.origin
             if (origin == null || code.text.isNullOrBlank() || label.text.isNullOrBlank()) {
-                showStatus(text(R.string.settings_pair_fields_required), error = true)
+                report(text(R.string.settings_pair_fields_required), error = true)
                 return@actionButton
             }
             mutate(
                 progress = text(R.string.settings_pairing_phone),
+                target = outcome,
+                onFailure = { report(it, error = true) },
                 onSuccess = { result ->
                     when (result) {
                         is PairResult.Paired -> {
                             pairCodeDraft = ""
                             pairLabelDraft = ""
+                            pairOutcome = null
                             refresh()
                         }
-                        is PairResult.Refused -> showStatus(text(R.string.pairing_refused, result.reason), error = true)
+                        is PairResult.Refused -> report(text(R.string.pairing_refused, result.reason), error = true)
                     }
                 },
             ) { repository.pair(origin.value, label.text.toString(), code.text.toString()) }
@@ -440,6 +460,7 @@ internal class SettingsServerControls(
         form.addView(code)
         form.addView(label)
         form.addView(submit)
+        form.addView(outcome)
         return PairFormView(form, label)
     }
 
@@ -595,12 +616,14 @@ internal class SettingsServerControls(
 
     private fun <T> mutate(
         progress: String,
+        target: TextView = status,
+        onFailure: ((String) -> Unit)? = null,
         onSuccess: suspend (T) -> Unit = { refresh() },
         action: suspend () -> ApiResult<T>,
     ) {
         if (mutationGate.busy) return
         mutationGate.setBusy(true)
-        showStatus(progress)
+        showStatus(progress, target = target)
         activity.lifecycleScope.launch {
             val result = try {
                 action()
@@ -609,7 +632,10 @@ internal class SettingsServerControls(
             }
             when (result) {
                 is ApiResult.Success -> onSuccess(result.value)
-                is ApiResult.Failure -> showStatus(errorText(text(R.string.settings_change), result.error), error = true)
+                is ApiResult.Failure -> {
+                    val message = errorText(text(R.string.settings_change), result.error)
+                    if (onFailure != null) onFailure(message) else showStatus(message, error = true, target = target)
+                }
                 is ApiResult.NotModified -> refresh()
             }
         }
@@ -693,10 +719,10 @@ internal class SettingsServerControls(
         layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(1))
     }
 
-    private fun showStatus(message: String?, error: Boolean = false) {
-        status.text = message.orEmpty()
-        status.isVisible = message != null
-        status.setTextColor(color(if (error) R.color.collie_error else R.color.collie_muted))
+    private fun showStatus(message: String?, error: Boolean = false, target: TextView = status) {
+        target.text = message.orEmpty()
+        target.isVisible = message != null
+        target.setTextColor(color(if (error) R.color.collie_error else R.color.collie_muted))
     }
 
     private fun errorText(subject: String, failure: ApiFailure) = activity.getString(

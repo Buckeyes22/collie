@@ -47,6 +47,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - Android Updates draws a refused "Update to x.y.z" button as disabled instead of solid black.
 - The Android pane's back arrow is described as "Back", since it returns to wherever the pane was opened from.
 - The Android dashboard and Space screens show nothing about server updates any more, neither the top ribbon nor the footer notice; Settings → Updates is the only update surface on the phone.
+- The Android pairing form reports a refused or failed code right under its button instead of on a status line at the far end of Settings.
 
 ## [1.5.1] - 2026-09-04
 
