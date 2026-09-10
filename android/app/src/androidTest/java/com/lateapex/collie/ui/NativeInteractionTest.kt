@@ -115,12 +115,11 @@ class NativeInteractionTest {
         }
     }
 
-    @Test fun displayControlsOpenAndCloseThroughTouch() {
+    @Test fun paneActionsOpenAndCloseThroughTouch() {
         launchPane().use {
-            onView(withId(R.id.composer_settings_button)).perform(click())
-            onView(withId(R.id.display_prefs_container)).check(matches(isDisplayed()))
-            onView(withId(R.id.composer_settings_button)).perform(click())
-            onView(withId(R.id.composer_dock)).check(matches(withEffectiveVisibility(Visibility.GONE)))
+            onView(withId(R.id.refresh_button)).perform(click())
+            onView(withId(R.id.pane_action_wrap)).check(matches(isDisplayed()))
+            onView(withContentDescription(R.string.pane_dock_close)).perform(click())
         }
     }
 
@@ -724,8 +723,9 @@ class NativeInteractionTest {
             onView(withId(R.id.keys_mode_button)).perform(click())
             val keys = listOf(R.id.escape_button to "Escape", R.id.tab_button to "Tab",
                 R.id.up_button to "Up", R.id.down_button to "Down", R.id.left_button to "Left",
-                R.id.right_button to "Right", R.id.enter_button to "Enter", R.id.ctrl_c_button to "ctrl+c")
+                R.id.right_button to "Right", R.id.enter_button to "Enter")
             keys.forEach { (id, _) -> onView(withId(id)).perform(click()) }
+            onView(withText(R.string.pane_keys_more)).perform(click())
             onView(withText(R.string.pane_key_space)).perform(click())
             assertEquals(keys.map { it.second } + "Space", api.keys.flatten())
         }
@@ -737,11 +737,11 @@ class NativeInteractionTest {
             onView(withId(R.id.pane_keys_segment_digits)).perform(click())
             (1..9).forEach { onView(withText(it.toString())).perform(click()) }
             onView(withId(R.id.pane_keys_segment_keys)).perform(click())
-            onView(withId(R.id.pane_keys_functions_toggle)).perform(scrollTo(), click())
-            (1..12).forEach { onView(withText("F$it")).perform(scrollTo(), click()) }
+            onView(withText(R.string.pane_keys_more)).perform(click())
+            (1..12).forEach { onView(withText("F$it")).perform(click()) }
             var expandedHeight = 0
             scenario.onActivity { expandedHeight = it.findViewById<View>(R.id.key_row).height }
-            onView(withId(R.id.pane_keys_functions_toggle)).perform(scrollTo(), click())
+            onView(withContentDescription(R.string.pane_dock_close)).perform(click())
             onView(withId(R.id.pane_keys_segment_digits)).perform(scrollTo(), click())
             scenario.onActivity { assertTrue("Collapsed pad retained empty expanded height", it.findViewById<View>(R.id.key_row).height < expandedHeight) }
             assertEquals((1..9).map(Int::toString) + (1..12).map { "F$it" }, api.keys.flatten())

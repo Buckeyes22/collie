@@ -36,6 +36,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - Android: an agent pane with a journal shows its transcript as the body and drops to the mirror only for a dialog, Raw, or no journal.
 - Android: pane confirmations render in the composer band, the collapsed tab strip shows a tab count, and user turns read as cards.
 - Android: direct typing shows one label and a stop icon, an attached image is a chip, and the staged-key row fades to show it scrolls.
+- Android: the Keys drawer is one compact row plus a More sheet, and Wrap/Raw live in the pane actions sheet; the Display drawer is gone.
 - A native Kotlin Android client mirrors Collie's existing HTTP API without a WebView or browser shell.
 - Android CI builds and validates the native app with pinned Gradle tooling independent of npm's advisory and funding endpoints.
 - The web and native Android interfaces are English-only; language selectors, alternate catalogs,

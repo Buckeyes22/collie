@@ -16,4 +16,11 @@
     <item name="pane_keys_functions" type="id" />
     <item name="transcript_load_older" type="id" />
     <item name="pane_key_queue_scroll" type="id" />
+    <item name="pane_keys_more" type="id" />
+    <item name="pane_action_wrap" type="id" />
+    <item name="pane_action_raw" type="id" />
+    <item name="display_prefs_container" type="id" />
+    <item name="composer_settings_button" type="id" />
+    <item name="composer_dock_title" type="id" />
+    <item name="composer_dock_close" type="id" />
 </resources>

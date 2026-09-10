@@ -92,10 +92,6 @@
     <string name="pane_key_space">Space</string>
     <string name="pane_keys_segment_keys">Keys</string>
     <string name="pane_keys_segment_digits" translatable="false">123</string>
-    <string name="pane_keys_presets">Presets</string>
-    <string name="pane_keys_function_keys">Function keys</string>
-    <string name="pane_keys_expand_section">Expand %1$s</string>
-    <string name="pane_keys_collapse_section">Collapse %1$s</string>
     <string name="pane_key_digit" translatable="false">%1$d</string>
     <string name="pane_key_function" translatable="false">F%1$d</string>
     <string name="pane_key_shift">⇧ Shift</string>
@@ -190,12 +186,6 @@
     <string name="pane_fold_open_symbol" translatable="false">⌄</string>
     <string name="pane_fold_closed_symbol" translatable="false">›</string>
     <string name="pane_dock_close">Close composer controls</string>
-    <string name="pane_display_wrap">Wrap lines</string>
-    <string name="pane_display_tap_to_type">Tap terminal to type</string>
-    <string name="pane_display_raw">Raw terminal</string>
-    <string name="pane_display_text_size">Text size</string>
-    <string name="pane_display_smaller">Decrease terminal text size</string>
-    <string name="pane_display_larger">Increase terminal text size</string>
     <string name="pane_direct_hint">Typing directly into terminal…</string>
     <string name="pane_direct_wait">Wait for the current terminal input to finish before arming Type again.</string>
     <string name="pane_direct_draft_refusal">Send or clear the reply draft before using Type.</string>
@@ -207,7 +197,6 @@
     <string name="pane_agent_icon_description">%1$s icon</string>
     <string name="pane_agent_confirm">Tap again to run %1$s</string>
     <string name="pane_destructive_confirm">Destructive: %1$s — tap Send again to confirm</string>
-    <string name="pane_display_size_value">%1$d sp</string>
     <string name="pane_error_no_composer">A recognized free-text composer is not visible. Use only the named keys on this screen.</string>
     <string name="pane_reply_sent">Reply sent.</string>
     <string name="pane_error_text_delivered">Text was already typed, but submit did not complete. Check the pane; do not resend it blindly.</string>
@@ -239,6 +228,10 @@
     <string name="pane_body_showing_mirror_no_journal">Terminal</string>
     <string name="pane_body_switch_to_mirror">Show terminal</string>
     <string name="pane_body_switch_to_transcript">Show transcript</string>
+    <string name="pane_keys_more">More</string>
+    <string name="pane_keys_more_title">Presets and function keys</string>
+    <string name="pane_action_wrap">Wrap lines</string>
+    <string name="pane_action_raw">Raw terminal</string>
     <plurals name="pane_tabs_collapsed_count">
         <item quantity="one">%d tab</item>
         <item quantity="other">%d tabs</item>

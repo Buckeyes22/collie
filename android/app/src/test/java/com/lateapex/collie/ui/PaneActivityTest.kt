@@ -27,6 +27,7 @@ import com.lateapex.collie.network.TabSummary
 import com.lateapex.collie.network.TranscriptEntry
 import com.lateapex.collie.network.TranscriptPart
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
@@ -243,13 +244,11 @@ class PaneActivityTest {
         val keys = activity.findViewById<View>(R.id.keys_mode_button)
         val quick = activity.findViewById<View>(R.id.quick_mode_button)
         val agent = activity.findViewById<View>(R.id.agent_mode_button)
-        val display = activity.findViewById<View>(R.id.composer_settings_button)
         val dock = activity.findViewById<View>(R.id.composer_dock)
 
         assertTrue(keys.hasOnClickListeners())
         assertTrue(quick.hasOnClickListeners())
         assertTrue(agent.hasOnClickListeners())
-        assertTrue(display.hasOnClickListeners())
         assertEquals(View.GONE, dock.visibility)
 
         quick.performClick()
@@ -258,11 +257,7 @@ class PaneActivityTest {
         assertEquals(View.VISIBLE, quickActions.visibility)
         assertTrue(quickActions.childCount > 0)
 
-        display.performClick()
-        assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.display_prefs_container).visibility)
-        assertEquals(View.GONE, activity.findViewById<View>(R.id.quick_actions_container).visibility)
-
-        display.performClick()
+        quick.performClick()
         assertEquals(View.GONE, dock.visibility)
     }
 
@@ -324,22 +319,19 @@ class PaneActivityTest {
     }
 
     @Test
-    fun presetsAndFunctionKeysStayInlineAndCollapsedUntilRequested() {
+    fun presetsAndFunctionKeysLiveInTheMoreSheet() {
         val activity = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("keys-sections:pane")).create().get()
         activity.findViewById<View>(R.id.keys_mode_button).performClick()
-        val presets = activity.findViewById<GridLayout>(R.id.pane_keys_presets)
-        val functions = activity.findViewById<GridLayout>(R.id.pane_keys_functions)
+        assertNull(activity.findViewById<View?>(R.id.pane_keys_presets_toggle))
 
-        assertEquals(View.GONE, presets.visibility)
-        assertEquals(View.GONE, functions.visibility)
-        assertEquals(12, functions.childCount)
-
-        activity.findViewById<View>(R.id.pane_keys_presets_toggle).performClick()
-        activity.findViewById<View>(R.id.pane_keys_functions_toggle).performClick()
+        activity.showMoreKeysSheetForTest()
+        val sheet = ShadowDialog.getLatestDialog() as CollieBottomSheetDialog
+        val presets = sheet.findViewById<GridLayout>(R.id.pane_keys_presets)!!
+        val functions = sheet.findViewById<GridLayout>(R.id.pane_keys_functions)!!
 
         assertEquals(View.VISIBLE, presets.visibility)
         assertEquals(View.VISIBLE, functions.visibility)
-        assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.composer_dock).visibility)
+        assertEquals(12, functions.childCount)
     }
 
     @Test
@@ -697,7 +689,7 @@ class PaneActivityTest {
         val activity = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("wrap:pane")).create().get()
         val horizontal = activity.findViewById<HorizontalScrollView>(R.id.terminal_horizontal_scroll)
         val output = activity.findViewById<TextView>(R.id.terminal_text)
-        val wrap = activity.findViewById<android.widget.CompoundButton>(R.id.wrap_lines_switch)
+        val wrap = openActionsSheet(activity).findViewById<android.widget.CompoundButton>(R.id.pane_action_wrap)!!
 
         wrap.isChecked = false
         assertFalse(horizontal.isFillViewport)
@@ -724,9 +716,14 @@ class PaneActivityTest {
         assertEquals(3, blocks.childCount)
         assertTrue(blocks.getChildAt(1) is HorizontalScrollView)
 
-        activity.findViewById<android.widget.CompoundButton>(R.id.wrap_lines_switch).isChecked = false
+        openActionsSheet(activity).findViewById<android.widget.CompoundButton>(R.id.pane_action_wrap)!!.isChecked = false
         assertEquals(View.VISIBLE, flat.visibility)
         assertEquals(View.GONE, blocks.visibility)
+    }
+
+    private fun openActionsSheet(activity: PaneActivity): CollieBottomSheetDialog {
+        activity.showPaneActionsForTest()
+        return ShadowDialog.getLatestDialog() as CollieBottomSheetDialog
     }
 
     @Test
@@ -890,10 +887,10 @@ class PaneActivityTest {
         }
         val panel = activity.findViewById<View>(R.id.semantic_panel)
         val terminal = activity.findViewById<TextView>(R.id.terminal_text)
-        val rawSwitch = activity.findViewById<android.widget.CompoundButton>(R.id.raw_terminal_switch)
 
         assertEquals(View.VISIBLE, panel.visibility)
         assertFalse(terminal.text.toString().contains("Which color?"))
+        val rawSwitch = openActionsSheet(activity).findViewById<android.widget.CompoundButton>(R.id.pane_action_raw)!!
         rawSwitch.isChecked = true
         assertEquals(View.GONE, panel.visibility)
         assertTrue(terminal.text.toString().contains("Which color?"))
@@ -1214,6 +1211,31 @@ class PaneActivityTest {
         activity.findViewById<View>(R.id.keys_mode_button).performClick()
         val scroller = activity.findViewById<View>(R.id.pane_key_queue_scroll) as HorizontalScrollView
         assertTrue(scroller.isHorizontalFadingEdgeEnabled)
+    }
+
+    @Test
+    fun keysDrawerHasOneCompactRowAndAMoreButton() {
+        val activity = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("keys:pane")).create().start().resume().get()
+        activity.findViewById<View>(R.id.keys_mode_button).performClick()
+        assertNull(activity.findViewById<View?>(R.id.pane_keys_presets_toggle))
+        assertNull(activity.findViewById<View?>(R.id.pane_keys_functions_toggle))
+        assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.pane_keys_more).visibility)
+        val primary = activity.findViewById<ViewGroup>(R.id.pane_keys_primary)
+        assertEquals(
+            listOf("Esc", "Tab", "↑", "↓", "←", "→", "Enter"),
+            (0 until primary.childCount).map { (primary.getChildAt(it) as TextView).text.toString() },
+        )
+    }
+
+    @Test
+    fun displayDrawerIsGoneAndActionsSheetHoldsWrapAndRaw() {
+        val activity = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("display:pane")).create().start().resume().get()
+        assertNull(activity.findViewById<View?>(R.id.display_prefs_container))
+        assertNull(activity.findViewById<View?>(R.id.composer_settings_button))
+        activity.showPaneActionsForTest()
+        val sheet = ShadowDialog.getLatestDialog() as CollieBottomSheetDialog
+        assertNotNull(sheet.findViewById<View>(R.id.pane_action_wrap))
+        assertNotNull(sheet.findViewById<View>(R.id.pane_action_raw))
     }
 
     @Test

@@ -26,7 +26,6 @@
     <string name="pane_mode_type">Type</string>
     <string name="pane_mode_quick">Quick</string>
     <string name="pane_mode_agent">Agent</string>
-    <string name="pane_mode_settings">Display settings</string>
     <string name="navigate_back">Back</string>
     <string name="space_empty">No tabs in this space.</string>
     <string name="space_tabs_title">TABS</string>

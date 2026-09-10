@@ -652,35 +652,6 @@
             android:orientation="vertical"
             android:visibility="gone">
 
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="44dp"
-                android:gravity="center_vertical"
-                android:orientation="horizontal"
-                android:paddingStart="12dp">
-
-                <TextView
-                    android:id="@+id/composer_dock_title"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:fontFamily="@font/collie_ui"
-                    android:textColor="@color/collie_foreground"
-                    android:textSize="13sp" />
-
-                <androidx.appcompat.widget.AppCompatButton
-                    android:id="@+id/composer_dock_close"
-                    style="@style/Widget.AppCompat.Button.Borderless"
-                    android:layout_width="44dp"
-                    android:layout_height="44dp"
-                    android:contentDescription="@string/pane_dock_close"
-                    android:minWidth="44dp"
-                    android:text="@string/pane_close_symbol"
-                    android:textAllCaps="false"
-                    android:textColor="@color/collie_muted"
-                    android:textSize="22sp" />
-            </LinearLayout>
-
             <ScrollView
                 android:id="@+id/key_row"
                 android:layout_width="match_parent"
@@ -717,73 +688,6 @@
                 android:paddingHorizontal="12dp"
                 android:paddingBottom="10dp"
                 android:visibility="gone" />
-
-            <LinearLayout
-                android:id="@+id/display_prefs_container"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:paddingHorizontal="12dp"
-                android:paddingBottom="10dp"
-                android:visibility="gone">
-
-                <com.google.android.material.materialswitch.MaterialSwitch
-                    android:id="@+id/wrap_lines_switch"
-                    android:layout_width="match_parent"
-                    android:layout_height="44dp"
-                    android:text="@string/pane_display_wrap" />
-
-                <com.google.android.material.materialswitch.MaterialSwitch
-                    android:id="@+id/tap_to_type_switch"
-                    android:layout_width="match_parent"
-                    android:layout_height="44dp"
-                    android:text="@string/pane_display_tap_to_type" />
-
-                <com.google.android.material.materialswitch.MaterialSwitch
-                    android:id="@+id/raw_terminal_switch"
-                    android:layout_width="match_parent"
-                    android:layout_height="44dp"
-                    android:text="@string/pane_display_raw" />
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="44dp"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal">
-
-                    <TextView
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="@string/pane_display_text_size"
-                        android:textColor="@color/collie_foreground"
-                        android:textSize="13sp" />
-
-                    <androidx.appcompat.widget.AppCompatButton
-                        android:id="@+id/font_smaller_button"
-                        style="@style/Widget.AppCompat.Button.Borderless"
-                        android:layout_width="44dp"
-                        android:layout_height="44dp"
-                        android:contentDescription="@string/pane_display_smaller"
-                        android:text="−" />
-
-                    <TextView
-                        android:id="@+id/font_size_value"
-                        android:layout_width="40dp"
-                        android:layout_height="wrap_content"
-                        android:gravity="center"
-                        android:textColor="@color/collie_foreground"
-                        android:textSize="13sp" />
-
-                    <androidx.appcompat.widget.AppCompatButton
-                        android:id="@+id/font_larger_button"
-                        style="@style/Widget.AppCompat.Button.Borderless"
-                        android:layout_width="44dp"
-                        android:layout_height="44dp"
-                        android:contentDescription="@string/pane_display_larger"
-                        android:text="+" />
-                </LinearLayout>
-            </LinearLayout>
         </LinearLayout>
 
         <LinearLayout
@@ -827,14 +731,6 @@
                 android:contentDescription="@string/pane_mode_agent"
                 android:drawableTop="@drawable/ic_composer_agent"
                 android:text="@string/pane_mode_agent" />
-
-            <androidx.appcompat.widget.AppCompatButton
-                android:id="@+id/composer_settings_button"
-                style="@style/Widget.Collie.PaneMode"
-                android:layout_width="44dp"
-                android:contentDescription="@string/pane_mode_settings"
-                android:drawableTop="@drawable/ic_composer_settings"
-                android:text="" />
         </LinearLayout>
 
         <LinearLayout

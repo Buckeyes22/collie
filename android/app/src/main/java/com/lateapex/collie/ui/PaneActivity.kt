@@ -505,7 +505,6 @@ class PaneActivity : AppCompatActivity() {
         speechButton.setOnClickListener { toggleSpeechRecording() }
         keysModeButton.setOnClickListener { toggleDrawer(ComposerDrawer.KEYS) }
         quickModeButton.setOnClickListener { toggleDrawer(ComposerDrawer.QUICK) }
-        composerSettingsButton.setOnClickListener { toggleDrawer(ComposerDrawer.DISPLAY) }
         agentModeButton.setOnClickListener { showAgentPalette() }
         typeModeButton.setOnClickListener {
             if (directTyping) {
@@ -517,7 +516,6 @@ class PaneActivity : AppCompatActivity() {
                 setDirectTyping(true)
             }
         }
-        composerDockClose.setOnClickListener { showDrawer(ComposerDrawer.NONE) }
         switcherHandle.setOnClickListener { showPaneSwitcher() }
         bindSwitcherPull()
         bindTerminalTap(terminalText)
@@ -528,7 +526,6 @@ class PaneActivity : AppCompatActivity() {
             downButton to "Down",
             leftButton to "Left",
             rightButton to "Right",
-            ctrlCButton to "ctrl+c",
             enterButton to "Enter",
         ).forEach { (button, key) ->
             keyButtons[button] = listOf(key)
@@ -709,31 +706,14 @@ class PaneActivity : AppCompatActivity() {
         composerMediaStatus.isVisible = !mediaStatus.isNullOrBlank()
     }
 
-    private fun bindDisplayPreferences() = with(binding) {
-        wrapLinesSwitch.isChecked = displayPreferences.getBoolean(PREF_WRAP, true)
-        tapToTypeSwitch.isChecked = displayPreferences.getBoolean(PREF_TAP_TO_TYPE, true)
-        rawTerminalSwitch.isChecked = displayPreferences.getBoolean(PREF_RAW, false)
+    private fun bindDisplayPreferences() {
         applyTerminalPreferences()
-        wrapLinesSwitch.setOnCheckedChangeListener { _, checked ->
-            displayPreferences.edit().putBoolean(PREF_WRAP, checked).apply()
-            applyTerminalPreferences()
-        }
-        tapToTypeSwitch.setOnCheckedChangeListener { _, checked ->
-            displayPreferences.edit().putBoolean(PREF_TAP_TO_TYPE, checked).apply()
-        }
-        rawTerminalSwitch.setOnCheckedChangeListener { _, checked ->
-            displayPreferences.edit().putBoolean(PREF_RAW, checked).apply()
-            renderSemanticSurface(semanticSurface, currentState)
-            renderTerminal(lastRawText.ifEmpty { latestRawText })
-        }
-        fontSmallerButton.setOnClickListener { stepFontSize(-1) }
-        fontLargerButton.setOnClickListener { stepFontSize(1) }
     }
 
     private fun bindExpandedKeys(presets: List<ComposerKeyPreset>) {
         val container = binding.keyPadContainer
         val primaryButtons = with(binding) {
-            listOf(escapeButton, ctrlCButton, upButton, enterButton, tabButton, leftButton, downButton, rightButton)
+            listOf(escapeButton, tabButton, upButton, downButton, leftButton, rightButton, enterButton)
         }
         keyButtons.keys.filterNot { it in primaryButtons }.forEach(keyButtons::remove)
         keyModifierButtons.clear()
@@ -860,25 +840,22 @@ class PaneActivity : AppCompatActivity() {
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
         )
 
+        // A.4/B.2: the Keys drawer is one compact row plus a modifiers row and a More sheet,
+        // so with the drawer open at most three rows sit above the composer.
         val keysContent = LinearLayout(this).apply {
             id = R.id.pane_keys_primary
-            orientation = LinearLayout.VERTICAL
-        }
-        val primaryGrid = GridLayout(this).apply {
-            columnCount = 4
-            rowCount = 2
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
         }
         primaryButtons.forEachIndexed { index, button ->
             (button.parent as? ViewGroup)?.removeView(button)
             button.minWidth = 0
-            primaryGrid.addView(button, gridParams(button, index / 4, index % 4))
+            keysContent.addView(button, rowParams(button))
         }
-        keysContent.addView(primaryGrid, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(96)))
-
-        val space = keyButton(getString(R.string.pane_key_space), listOf("Space"))
-        keysContent.addView(space, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)).apply {
-            setMargins(dp(2), 0, dp(2), dp(2))
-        })
+        container.addView(
+            keysContent,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)),
+        )
 
         val modifiers = LinearLayout(this).apply {
             id = R.id.pane_keys_modifiers
@@ -888,6 +865,9 @@ class PaneActivity : AppCompatActivity() {
             val label = getString(modifier.labelRes)
             val button = outlinedButton(label).apply {
                 minWidth = 0
+                isCheckable = true
+                strokeWidth = dp(2)
+                strokeColor = ColorStateList.valueOf(getColor(R.color.collie_accent))
                 contentDescription = getString(R.string.pane_key_modifier_description, label)
                 tag = modifier
                 setOnClickListener {
@@ -900,78 +880,18 @@ class PaneActivity : AppCompatActivity() {
             keyModifierButtons[modifier] = button
             modifiers.addView(button, rowParams(button))
         }
-        keysContent.addView(modifiers, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)))
-
-        fun sectionToggle(label: String, id: Int, section: View): MaterialButton =
-            outlinedButton(label).apply {
-                this.id = id
-                text = "$label  ⌄"
-                isAllCaps = false
-                minHeight = dp(44)
-                gravity = Gravity.START or Gravity.CENTER_VERTICAL
-                strokeWidth = 0
-                backgroundTintList = ColorStateList.valueOf(Color.TRANSPARENT)
-                contentDescription = getString(R.string.pane_keys_expand_section, label)
-                setOnClickListener {
-                    val expanded = !section.isVisible
-                    section.isVisible = expanded
-                    text = "$label  ${if (expanded) "⌃" else "⌄"}"
-                    contentDescription = getString(
-                        if (expanded) R.string.pane_keys_collapse_section else R.string.pane_keys_expand_section,
-                        label,
-                    )
-                }
+        val moreButton = outlinedButton(getString(R.string.pane_keys_more)).apply {
+            id = R.id.pane_keys_more
+            minWidth = 0
+            setOnClickListener {
+                resetKeyQueueDiscardConfirm()
+                showMoreKeysSheet()
             }
-
-        val presetGrid = GridLayout(this).apply {
-            id = R.id.pane_keys_presets
-            columnCount = 3
-            rowCount = (presets.size + 2) / 3
-            isVisible = false
         }
-        presets.forEachIndexed { index, preset ->
-            val button = keyButton(preset.label, preset.keys).apply {
-                contentDescription = getString(R.string.pane_key_preset_description, preset.label)
-                setOnClickListener { pressPreset(this, preset) }
-            }
-            presetGrid.addView(button, gridParams(button, index / 3, index % 3))
-        }
-        keyPresetSection = presetGrid
-        keyPresetToggle = sectionToggle(
-            getString(R.string.pane_keys_presets),
-            R.id.pane_keys_presets_toggle,
-            presetGrid,
-        )
-        keysContent.addView(keyPresetToggle)
-        keysContent.addView(
-            presetGrid,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48) * presetGrid.rowCount),
-        )
-
-        val functionGrid = GridLayout(this).apply {
-            id = R.id.pane_keys_functions
-            columnCount = 4
-            rowCount = 3
-            isVisible = false
-        }
-        (1..12).forEach { number ->
-            val button = keyButton(getString(R.string.pane_key_function, number), listOf("F$number"))
-            functionGrid.addView(button, gridParams(button, (number - 1) / 4, (number - 1) % 4))
-        }
-        keyFunctionSection = functionGrid
-        keyFunctionToggle = sectionToggle(
-            getString(R.string.pane_keys_function_keys),
-            R.id.pane_keys_functions_toggle,
-            functionGrid,
-        )
-        keysContent.addView(keyFunctionToggle)
-        keysContent.addView(
-            functionGrid,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48) * functionGrid.rowCount),
-        )
+        modifiers.addView(moreButton, rowParams(moreButton))
         container.addView(
-            keysContent,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
+            modifiers,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)),
         )
 
         val digits = GridLayout(this).apply {
@@ -989,6 +909,92 @@ class PaneActivity : AppCompatActivity() {
         renderKeysSegment()
         renderKeyQueue()
     }
+
+    /** A.5: presets and function keys live in one sheet so they leave zero drawer rows. */
+    private fun showMoreKeysSheet() {
+        val presets = renderedKeyPresets ?: emptyList()
+        val dialog = CollieBottomSheetDialog(this, getString(R.string.pane_keys_more_title))
+        val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val presetGrid = GridLayout(this).apply {
+            id = R.id.pane_keys_presets
+            columnCount = 3
+            rowCount = (presets.size + 2) / 3
+        }
+        presets.forEachIndexed { index, preset ->
+            val button = outlinedButton(preset.label).apply {
+                minWidth = 0
+                keyButtons[this] = preset.keys
+                contentDescription = getString(R.string.pane_key_preset_description, preset.label)
+                setOnClickListener { pressPreset(this, preset) }
+            }
+            presetGrid.addView(
+                button,
+                GridLayout.LayoutParams(GridLayout.spec(index / 3), GridLayout.spec(index % 3, 1f)).apply {
+                    width = 0
+                    height = dp(44)
+                    setMargins(dp(2), dp(2), dp(2), dp(2))
+                },
+            )
+        }
+        keyPresetSection = presetGrid
+        content.addView(
+            presetGrid,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
+        )
+        val spaceRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        listOf(
+            getString(R.string.pane_key_space) to listOf("Space"),
+            getString(R.string.pane_key_interrupt) to listOf("ctrl+c"),
+        ).forEach { (label, keys) ->
+            val button = outlinedButton(label).apply {
+                minWidth = 0
+                keyButtons[this] = keys
+                contentDescription = label
+                setOnClickListener { pressPaneKeys(keys, this) }
+            }
+            spaceRow.addView(button, LinearLayout.LayoutParams(0, dp(44), 1f).apply {
+                marginStart = dp(2); marginEnd = dp(2)
+            })
+        }
+        content.addView(
+            spaceRow,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)),
+        )
+        val functionGrid = GridLayout(this).apply {
+            id = R.id.pane_keys_functions
+            columnCount = 4
+            rowCount = 3
+        }
+        (1..12).forEach { number ->
+            val button = outlinedButton(getString(R.string.pane_key_function, number)).apply {
+                minWidth = 0
+                keyButtons[this] = listOf("F$number")
+                setOnClickListener { pressPaneKeys(listOf("F$number"), this) }
+            }
+            functionGrid.addView(
+                button,
+                GridLayout.LayoutParams(GridLayout.spec((number - 1) / 4), GridLayout.spec((number - 1) % 4, 1f)).apply {
+                    width = 0
+                    height = dp(44)
+                    setMargins(dp(2), dp(2), dp(2), dp(2))
+                },
+            )
+        }
+        keyFunctionSection = functionGrid
+        content.addView(
+            functionGrid,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
+        )
+        dialog.setSheetContent(content)
+        dialog.setOnDismissListener { restorePaneFocus() }
+        dialog.show()
+    }
+
+    @VisibleForTesting
+    internal fun showMoreKeysSheetForTest() = showMoreKeysSheet()
+
+    @VisibleForTesting
+    internal fun showPaneActionsForTest() = showPaneActions(binding.keysModeButton)
 
     private fun constrainKeysViewport(): Boolean {
         if (drawer != ComposerDrawer.KEYS) return false
@@ -1029,19 +1035,6 @@ class PaneActivity : AppCompatActivity() {
 
     private fun resetKeysTrayPresentation() {
         keysSegment = PaneKeysSegment.KEYS
-        keyPresetSection?.isVisible = false
-        keyFunctionSection?.isVisible = false
-        keyPresetToggle?.apply {
-            text = "${getString(R.string.pane_keys_presets)}  ⌄"
-            contentDescription = getString(R.string.pane_keys_expand_section, getString(R.string.pane_keys_presets))
-        }
-        keyFunctionToggle?.apply {
-            text = "${getString(R.string.pane_keys_function_keys)}  ⌄"
-            contentDescription = getString(
-                R.string.pane_keys_expand_section,
-                getString(R.string.pane_keys_function_keys),
-            )
-        }
         renderKeysSegment()
     }
 
@@ -1403,7 +1396,6 @@ class PaneActivity : AppCompatActivity() {
         quickModeButton.isEnabled = terminalWritable && !state.sending && hasPane && !ordinaryInputBlocked
         agentModeButton.isVisible = state.commands.isNotEmpty()
         agentModeButton.isEnabled = terminalWritable && !state.sending && hasPane && !ordinaryInputBlocked
-        composerSettingsButton.isEnabled = true
         renderComposerMediaControls()
         renderComposerNotices(state)
         renderPaneNavigation(state)
@@ -2147,6 +2139,8 @@ class PaneActivity : AppCompatActivity() {
         showDrawer(if (drawer == target) ComposerDrawer.NONE else target)
     }
 
+    private var drawerHeaderHost: View? = null
+
     private fun showDrawer(target: ComposerDrawer): Boolean {
         if (drawer == ComposerDrawer.KEYS && target != ComposerDrawer.KEYS && paneKeyQueue.staged.isNotEmpty()) {
             if (!keyQueueDiscardConfirmation.confirm(KEY_QUEUE_DISCARD_CONFIRMATION)) {
@@ -2168,20 +2162,49 @@ class PaneActivity : AppCompatActivity() {
             composerDock.isVisible = target != ComposerDrawer.NONE
             keyRow.isVisible = target == ComposerDrawer.KEYS
             quickActionsContainer.isVisible = target == ComposerDrawer.QUICK
-            displayPrefsContainer.isVisible = target == ComposerDrawer.DISPLAY
-            composerDockTitle.text = when (target) {
-                ComposerDrawer.KEYS -> getString(R.string.pane_mode_keys)
-                ComposerDrawer.QUICK -> getString(R.string.pane_mode_quick)
-                ComposerDrawer.DISPLAY -> getString(R.string.pane_mode_settings)
-                ComposerDrawer.NONE -> ""
+            composerDock.removeView(drawerHeaderHost)
+            if (target == ComposerDrawer.KEYS || target == ComposerDrawer.QUICK) {
+                drawerHeaderHost = drawerHeader(
+                    getString(if (target == ComposerDrawer.KEYS) R.string.pane_mode_keys else R.string.pane_mode_quick),
+                ) { showDrawer(ComposerDrawer.NONE) }
+                composerDock.addView(drawerHeaderHost, 0)
+            } else {
+                drawerHeaderHost = null
             }
             setControlState(keysModeButton, target == ComposerDrawer.KEYS)
             setControlState(quickModeButton, target == ComposerDrawer.QUICK)
-            setControlState(composerSettingsButton, target == ComposerDrawer.DISPLAY)
             if (target == ComposerDrawer.QUICK) populateQuickActions(currentState.quickReplies)
         }
         return true
     }
+
+    /** A.11: drawers and sheets share one header vocabulary — a title and a × close. */
+    private fun drawerHeader(title: String, onClose: () -> Unit): View =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            minimumHeight = dp(44)
+            setPadding(dp(12), 0, 0, 0)
+            addView(TextView(this@PaneActivity).apply {
+                id = R.id.composer_dock_title
+                text = title
+                textSize = 13f
+                typeface = androidx.core.content.res.ResourcesCompat.getFont(this@PaneActivity, R.font.collie_ui)
+                setTextColor(getColor(R.color.collie_foreground))
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+            addView(androidx.appcompat.widget.AppCompatButton(this@PaneActivity).apply {
+                id = R.id.composer_dock_close
+                background = null
+                contentDescription = getString(R.string.pane_dock_close)
+                minWidth = dp(44)
+                minimumHeight = dp(44)
+                text = getString(R.string.pane_close_symbol)
+                setTextColor(getColor(R.color.collie_muted))
+                textSize = 22f
+                isAllCaps = false
+                setOnClickListener { onClose() }
+            }, LinearLayout.LayoutParams(dp(44), dp(44)))
+        }
 
     private fun resetKeyQueueDiscardConfirm(render: Boolean = true) {
         confirmHandler.removeCallbacks(clearKeyQueueDiscardConfirm)
@@ -3092,11 +3115,41 @@ class PaneActivity : AppCompatActivity() {
                 }.apply { isEnabled = enabled })
             }
 
+            fun switchRow(label: String, id: Int, checked: Boolean, onToggle: (Boolean) -> Unit) {
+                content.addView(
+                    com.google.android.material.materialswitch.MaterialSwitch(this).apply {
+                        this.id = id
+                        text = label
+                        isChecked = checked
+                        minHeight = dp(44)
+                        setPadding(dp(12), 0, dp(12), 0)
+                        setOnCheckedChangeListener { _, value -> onToggle(value) }
+                    },
+                )
+            }
+
+            switchRow(
+                getString(R.string.pane_action_wrap),
+                R.id.pane_action_wrap,
+                displayPreferences.getBoolean(PREF_WRAP, true),
+            ) { checked ->
+                displayPreferences.edit().putBoolean(PREF_WRAP, checked).apply()
+                applyTerminalPreferences()
+            }
+            switchRow(
+                getString(R.string.pane_action_raw),
+                R.id.pane_action_raw,
+                displayPreferences.getBoolean(PREF_RAW, false),
+            ) { checked ->
+                displayPreferences.edit().putBoolean(PREF_RAW, checked).apply()
+                renderSemanticSurface(semanticSurface, currentState)
+                renderTerminal(lastRawText.ifEmpty { latestRawText })
+            }
             closingRow(getString(R.string.pane_action_find), action = ::openFind)
             if (historyAvailable) {
                 closingRow(getString(R.string.pane_action_history), action = ::openHistory)
             }
-            if (nativePreferences.zenAvailable) {
+            run {
                 val zenLabel = if (zenMode) {
                     "✓ ${getString(R.string.pane_action_zen)}"
                 } else {
@@ -3413,7 +3466,7 @@ class PaneActivity : AppCompatActivity() {
                 terminalTapBlocked = false
                 return@setOnClickListener
             }
-            if (displayPreferences.getBoolean(PREF_TAP_TO_TYPE, true) && terminalWriteBlock() == null &&
+            if (terminalWriteBlock() == null &&
                 semanticSurface?.ownsKeyboard != true && noEchoPrompt == null) {
                 binding.replyInput.requestFocus()
                 WindowCompat.getInsetsController(window, binding.replyInput)
@@ -3621,9 +3674,6 @@ class PaneActivity : AppCompatActivity() {
         binding.terminalStatusline.typeface = mono
         binding.terminalText.textSize = size.toFloat()
         binding.replyInput.textSize = nativePreferences.draftFontSize.toFloat()
-        binding.fontSizeValue.text = getString(R.string.pane_display_size_value, size)
-        binding.fontSmallerButton.isEnabled = size > MIN_FONT_SIZE
-        binding.fontLargerButton.isEnabled = size < MAX_FONT_SIZE
         // The rendered text was precomputed for the previous size and typeface; setting it again
         // throws (PrecomputedText parameters must match the view), which crashed the pane on the
         // Display drawer's +/- (S25 Ultra, 2026-09-10). Lay it out afresh from the raw text.
@@ -3632,12 +3682,6 @@ class PaneActivity : AppCompatActivity() {
 
     private fun isLightTheme(): Boolean =
         resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK != Configuration.UI_MODE_NIGHT_YES
-
-    private fun stepFontSize(delta: Int) {
-        val value = (nativePreferences.terminalFontSize + delta).coerceIn(MIN_FONT_SIZE, MAX_FONT_SIZE)
-        nativePreferences.terminalFontSize = value
-        applyTerminalPreferences()
-    }
 
     private fun showTransientMessage(message: String) {
         binding.errorText.text = message
@@ -3761,7 +3805,7 @@ class PaneActivity : AppCompatActivity() {
 
     private fun Intent.nonBlankExtra(name: String): String? = getStringExtra(name)?.trim()?.takeIf(String::isNotEmpty)
 
-    private enum class ComposerDrawer { NONE, KEYS, QUICK, DISPLAY }
+    private enum class ComposerDrawer { NONE, KEYS, QUICK }
 
     private data class PendingDestructiveSend(val draft: String, val reason: String)
     private data class PendingReplyAttempt(val text: String, val revision: Long?, val paneText: String?)
@@ -3786,12 +3830,9 @@ class PaneActivity : AppCompatActivity() {
         private const val STATUS_UNKNOWN = "unknown"
         private const val DISPLAY_PREFERENCES = "collie_pane_display"
         private const val PREF_WRAP = "wrap_lines"
-        private const val PREF_TAP_TO_TYPE = "tap_to_type"
         private const val PREF_RAW = "raw_terminal"
         private const val PREF_FONT_SIZE = "terminal_font_size"
         private const val PREF_FONT_MIGRATED = "terminal_font_migrated_to_native"
-        private const val MIN_FONT_SIZE = 9
-        private const val MAX_FONT_SIZE = 16
         private const val DEFAULT_FONT_SIZE = 10
         private const val MAX_PANE_LABEL_CHARS = 120
         private const val SWITCHER_PEEK_DP = 120

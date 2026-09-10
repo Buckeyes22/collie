@@ -28,17 +28,11 @@ class PaneComposerDeviceTest {
                     R.id.type_mode_button,
                     R.id.quick_mode_button,
                     R.id.agent_mode_button,
-                    R.id.composer_settings_button,
                     R.id.switcher_handle,
                 ).forEach { id -> assertTrue(activity.findViewById<View>(id).hasOnClickListeners()) }
 
-                val display = activity.findViewById<View>(R.id.composer_settings_button)
                 val dock = activity.findViewById<View>(R.id.composer_dock)
-                val prefs = activity.findViewById<View>(R.id.display_prefs_container)
                 assertEquals(View.GONE, dock.visibility)
-                display.performClick()
-                assertEquals(View.VISIBLE, dock.visibility)
-                assertEquals(View.VISIBLE, prefs.visibility)
             }
         }
     }

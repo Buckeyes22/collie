@@ -65,10 +65,8 @@ class PaneLayoutTest {
     fun localDisplayControlsRemainPresentBesideTheWriteControls() {
         assertTrue(binding.quickModeButton.isEnabled)
         assertTrue(binding.agentModeButton.isEnabled)
-        assertTrue(binding.composerSettingsButton.isEnabled)
         assertSame(binding.composerDock, binding.keyRow.parent)
         assertSame(binding.composerDock, binding.quickActionsContainer.parent)
-        assertSame(binding.composerDock, binding.displayPrefsContainer.parent)
     }
 
     @Test
