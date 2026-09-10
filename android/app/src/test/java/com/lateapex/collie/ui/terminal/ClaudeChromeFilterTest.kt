@@ -49,6 +49,23 @@ class ClaudeChromeFilterTest {
     }
 
     @Test
+    fun collapsesTheBlankPaddingClaudePinsAboveItsBox() {
+        val parsed = parser.parse(
+            (listOf("❯ Reply with PONG", "", "● PONG", "", "✻ Cooked for 2s") +
+                List(46) { "" } +
+                listOf("66083 tokens", rule, "❯\u00a0", rule, "chris@ed8:/home/chris/git/collie", "bypass permissions on")
+            ).joinToString("\n"),
+        )
+
+        val result = filter.filter(parsed).toString()
+
+        assertEquals(
+            "❯ Reply with PONG\n\n● PONG\n\n✻ Cooked for 2s\n\n\n66083 tokens\nchris@ed8:/home/chris/git/collie\nbypass permissions on",
+            result,
+        )
+    }
+
+    @Test
     fun stripsWrappedDraftOnlyWhenTheFullBoxShapeIsPresent() {
         val parsed = parser.parse(
             listOf(

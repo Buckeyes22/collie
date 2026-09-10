@@ -51,6 +51,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - The Android pairing form keeps its fields across Settings refreshes, so the code field no longer loses focus and its keyboard every couple of seconds while you type.
 - The Android pane no longer crashes when the Display drawer's text size +/- is tapped; the mirror is laid out afresh for the new size.
 - The Android device list keeps a row's Cancel/Revoke confirm across Settings refreshes instead of snapping back to "Revoke" a second after the tap.
+- The Android mirror collapses the blank rows Claude pads between its transcript and its input box, so a short conversation no longer reads as an empty screen with a footer.
 
 ## [1.5.1] - 2026-09-04
 

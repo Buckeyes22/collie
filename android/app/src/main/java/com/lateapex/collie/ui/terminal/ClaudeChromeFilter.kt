@@ -21,12 +21,34 @@ class ClaudeChromeFilter {
         while (bodyEnd > 0 && lines[bodyEnd - 1].text.isBlank()) bodyEnd--
 
         val kept = buildList {
-            addAll(lines.subList(0, bodyEnd))
+            addAll(collapsePadding(lines.subList(0, bodyEnd)))
             for (index in box.bottomBorder + 1 until box.statusEnd) {
                 if (lines[index].text.isNotBlank()) add(lines[index])
             }
         }
         return joinLines(input, kept)
+    }
+
+    /**
+     * Claude pins its input box to the bottom of the terminal and pads the rows between the last
+     * transcript line and the box with blanks: a short conversation on a 67-row terminal carries
+     * 40-odd empty rows, and the token-count row directly above the box stops the blank trim from
+     * reaching them. On the phone that read as an empty mirror with a footer (S25 Ultra,
+     * 2026-09-10). A run longer than [MAX_BLANK_RUN] collapses to that many rows; no content moves.
+     */
+    private fun collapsePadding(body: List<Line>): List<Line> {
+        val out = ArrayList<Line>(body.size)
+        var blanks = 0
+        for (line in body) {
+            if (line.text.isBlank()) {
+                blanks++
+                if (blanks > MAX_BLANK_RUN) continue
+            } else {
+                blanks = 0
+            }
+            out.add(line)
+        }
+        return out
     }
 
     private fun locateInputBox(lines: List<Line>, end: Int): InputBox? {
@@ -143,6 +165,7 @@ class ClaudeChromeFilter {
         private const val PROMPT_MARKER = "❯"
         private const val MIN_BORDER_LENGTH = 8
         private const val MAX_STATUS_LINES = 8
+        private const val MAX_BLANK_RUN = 2
         private const val MAX_FOOTER_LINES = 8
         private const val MAX_DRAFT_LINES = 100
         private val LABELLED_BORDER = Regex("^─{2,}\\s+(.+)\\s+─{2,}$")
