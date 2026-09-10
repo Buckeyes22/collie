@@ -8,7 +8,6 @@ import androidx.test.core.app.ApplicationProvider
 import com.lateapex.collie.R
 import com.lateapex.collie.network.MuxConfigResponse
 import com.lateapex.collie.network.TabSummary
-import com.lateapex.collie.network.UpdateInfo
 import com.lateapex.collie.network.WorkspaceSummary
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -22,33 +21,12 @@ import org.robolectric.Shadows.shadowOf
 @RunWith(RobolectricTestRunner::class)
 class SpaceActivityTest {
     @Test
-    fun spaceFooterUsesWebPrecedenceAndAlwaysNamesTheNativeBuild() {
+    fun spaceFooterNamesTheNativeBuild() {
         val context = ApplicationProvider.getApplicationContext<Context>()
-        val parent = FrameLayout(context)
-        var opened = false
-        val adapter = SpaceFooterAdapter { opened = true }
-        val holder = adapter.onCreateViewHolder(parent, 0)
-        adapter.submit(
-            UpdateInfo(
-                current = "1.5.0",
-                latest = "1.5.1",
-                latestUrl = null,
-                releaseAvailable = true,
-                majorAvailable = null,
-                majorUrl = null,
-                bridgeStale = true,
-                checkedAt = null,
-            ),
-        )
-        adapter.onBindViewHolder(holder, 0)
+        val holder = SpaceFooterAdapter().onCreateViewHolder(FrameLayout(context), 0)
 
-        val notice = holder.itemView.findViewById<TextView>(R.id.space_update_notice)
         val stamp = holder.itemView.findViewById<TextView>(R.id.space_build_stamp)
-        assertEquals(context.getString(R.string.settings_update_restart_needed), notice.text.toString())
-        assertEquals(View.VISIBLE, notice.visibility)
         assertTrue(stamp.text.toString().startsWith("Android app build "))
-        notice.performClick()
-        assertTrue(opened)
     }
 
     @Test

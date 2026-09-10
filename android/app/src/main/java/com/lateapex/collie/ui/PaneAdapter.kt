@@ -115,7 +115,6 @@ internal sealed interface DashboardItem {
     data class Footer(
         val build: String,
         val pack: PackFooterSummary? = null,
-        val update: FooterUpdateNotice? = null,
     ) : DashboardItem
 }
 
@@ -203,7 +202,6 @@ internal object DashboardModel {
                 DashboardItem.Footer(
                     build = build,
                     pack = packFooterSummary(snapshot.servers),
-                    update = FooterUpdateNoticeModel.from(snapshot.update),
                 ),
             )
         }
@@ -378,7 +376,6 @@ internal class DashboardAdapter(
     private val onLauncher: (Launcher) -> Unit = {},
     private val onLaunchOpen: (Boolean) -> Unit = {},
     private val onPack: () -> Unit = {},
-    private val onUpdates: () -> Unit = {},
 ) : ListAdapter<DashboardItem, RecyclerView.ViewHolder>(Diff) {
     override fun getItemViewType(position: Int): Int = when (getItem(position)) {
         DashboardItem.AllClear -> TYPE_ALL_CLEAR
@@ -717,15 +714,6 @@ internal class DashboardAdapter(
             }.orEmpty()
             binding.dashboardPackLink.setOnClickListener(
                 if (item.pack != null) View.OnClickListener { onPack() } else null,
-            )
-            val updateText = item.update?.text(binding.root.context).orEmpty()
-            binding.dashboardFooterUpdateNotice.text = updateText
-            binding.dashboardFooterUpdateNotice.contentDescription = updateText
-                .takeIf(String::isNotEmpty)
-                ?.let { binding.root.resources.getString(R.string.footer_update_open, it) }
-            binding.dashboardFooterUpdateNotice.isVisible = updateText.isNotEmpty()
-            binding.dashboardFooterUpdateNotice.setOnClickListener(
-                if (updateText.isNotEmpty()) View.OnClickListener { onUpdates() } else null,
             )
             binding.buildText.text = item.build
         }

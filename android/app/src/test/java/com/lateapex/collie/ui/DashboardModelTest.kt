@@ -593,7 +593,7 @@ class DashboardModelTest {
     }
 
     @Test
-    fun footerProjectsPackCountsAndTheSharedUpdateNoticeFromSnapshotOnly() {
+    fun footerProjectsPackCountsFromSnapshotOnly() {
         val footer = DashboardModel.items(
             snapshot(
                 servers = listOf(
@@ -608,48 +608,25 @@ class DashboardModelTest {
         ).filterIsInstance<DashboardItem.Footer>().single()
 
         assertEquals(PackFooterSummary(machines = 3, reachable = 2), footer.pack)
-        assertEquals(FooterUpdateNotice(FooterUpdateNoticeKind.RESTART), footer.update)
         assertEquals("native build", footer.build)
         assertNull(packFooterSummary(listOf(server("solo", reachable = true))))
     }
 
     @Test
-    fun footerUpdateNoticeUsesSpacePrecedenceAndRequiresAVersionForRelease() {
-        assertEquals(
-            FooterUpdateNotice(FooterUpdateNoticeKind.RESTART),
-            FooterUpdateNoticeModel.from(update(bridgeStale = true, releaseAvailable = true)),
-        )
-        assertEquals(
-            FooterUpdateNotice(FooterUpdateNoticeKind.RELEASE, "1.6.0"),
-            FooterUpdateNoticeModel.from(update(releaseAvailable = true)),
-        )
-        assertEquals(
-            FooterUpdateNotice(FooterUpdateNoticeKind.MAJOR, "2.0.0"),
-            FooterUpdateNoticeModel.from(
-                update(releaseAvailable = false, latest = null, majorAvailable = "2.0.0"),
-            ),
-        )
-        assertNull(FooterUpdateNoticeModel.from(update(releaseAvailable = true, latest = null)))
-    }
-
-    @Test
-    fun footerRendersPackThenUpdateThenBuildAndRoutesBothLinks() {
+    fun footerRendersPackThenBuildAndRoutesThePackLink() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val parent = FrameLayout(ContextThemeWrapper(context, R.style.Theme_Collie))
         var packOpened = false
-        var updatesOpened = false
         val adapter = DashboardAdapter(
             onPane = {},
             onSpace = {},
             onPack = { packOpened = true },
-            onUpdates = { updatesOpened = true },
         )
         adapter.submitList(
             listOf(
                 DashboardItem.Footer(
                     build = "Android app build test",
                     pack = PackFooterSummary(3, 2),
-                    update = FooterUpdateNotice(FooterUpdateNoticeKind.RELEASE, "1.6.0"),
                 ),
             ),
         )
@@ -659,17 +636,12 @@ class DashboardModelTest {
         adapter.onBindViewHolder(holder, 0)
         val root = holder.itemView as LinearLayout
         val pack = root.findViewById<View>(R.id.dashboard_pack_link)
-        val notice = root.findViewById<TextView>(R.id.dashboard_footer_update_notice)
         val build = root.findViewById<TextView>(R.id.build_text)
 
         assertEquals("Pack · 3 machines · 2 reachable", root.findViewById<TextView>(R.id.dashboard_pack_text).text)
-        assertEquals(context.getString(R.string.settings_update_available_short, "1.6.0"), notice.text)
-        assertTrue(root.indexOfChild(pack) < root.indexOfChild(notice))
-        assertTrue(root.indexOfChild(notice) < root.indexOfChild(build))
+        assertTrue(root.indexOfChild(pack) < root.indexOfChild(build))
         pack.performClick()
-        notice.performClick()
         assertTrue(packOpened)
-        assertTrue(updatesOpened)
     }
 
     private fun snapshot(

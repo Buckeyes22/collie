@@ -71,9 +71,7 @@ class SpaceActivity : AppCompatActivity() {
     private lateinit var scope: Scope
     private lateinit var workspaceId: String
     private val adapter = SpaceAdapter(::openPane)
-    private val footerAdapter = SpaceFooterAdapter {
-        startActivity(Intent(this, UpdatesActivity::class.java))
-    }
+    private val footerAdapter = SpaceFooterAdapter()
     private var selectedTabId: String? = null
     private var creatingTab = false
     private var creatingSpace = false
@@ -170,7 +168,6 @@ class SpaceActivity : AppCompatActivity() {
             renderTabStrip(content, state)
         }
         adapter.submitList(SpacePresentationModel.rows(content, selectedTabId))
-        footerAdapter.submit(content?.update)
     }
 
     private fun renderSpaceStrip(content: SpaceContent, state: SpaceUiState) = with(binding.spaceChips) {

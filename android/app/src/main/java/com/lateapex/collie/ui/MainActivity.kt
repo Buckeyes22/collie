@@ -94,7 +94,6 @@ class MainActivity : AppCompatActivity() {
             render(viewModel.state.value)
         },
         onPack = { startActivity(Intent(this, PackActivity::class.java)) },
-        onUpdates = { startActivity(Intent(this, UpdatesActivity::class.java)) },
     )
 
     override fun onCreate(savedInstanceState: Bundle?) {

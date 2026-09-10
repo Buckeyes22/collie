@@ -42,21 +42,6 @@
     </LinearLayout>
 
     <TextView
-        android:id="@+id/dashboard_footer_update_notice"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:background="@drawable/bg_dashboard_shell_working"
-        android:clickable="true"
-        android:focusable="true"
-        android:gravity="center"
-        android:minHeight="44dp"
-        android:paddingHorizontal="10dp"
-        android:paddingVertical="6dp"
-        android:textColor="@color/collie_working"
-        android:textSize="11sp"
-        android:visibility="gone" />
-
-    <TextView
         android:id="@+id/build_text"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"

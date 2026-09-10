@@ -41,7 +41,6 @@
     <string name="build_stamp">Android app build %1$s</string>
     <string name="pack_footer_label">Pack · %1$s · %2$d reachable</string>
     <string name="pack_footer_accessibility">Open the pack overview</string>
-    <string name="footer_update_open">%1$s. Open Updates.</string>
     <plurals name="pack_machine_count">
         <item quantity="one">%1$d machine</item>
         <item quantity="other">%1$d machines</item>
