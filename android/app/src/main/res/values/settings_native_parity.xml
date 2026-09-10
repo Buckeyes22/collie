@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <item name="settings_parity_terminal_font_card" type="id" /><item name="settings_parity_hands_free_card" type="id" />
+    <item name="settings_parity_pairing_card" type="id" />
     <item name="settings_parity_zen_card" type="id" /><item name="settings_parity_push_card" type="id" />
     <item name="settings_parity_notify_card" type="id" /><item name="settings_parity_snooze_card" type="id" />
     <item name="settings_parity_updates_card" type="id" /><item name="settings_parity_devices_card" type="id" />

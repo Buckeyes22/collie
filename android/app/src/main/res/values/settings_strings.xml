@@ -68,8 +68,6 @@
     <string name="updates_starting">Starting server update…</string>
     <string name="settings_hands_free_title">Hands-free voice</string>
     <string name="settings_hands_free_description">Send the transcript immediately instead of putting it in the message box. Off by default — you normally read what was heard before it reaches the terminal.</string>
-    <string name="settings_zen_title">Zen mode</string>
-    <string name="settings_zen_description">Adds a row to the pane menu that hides everything but the terminal.</string>
     <string name="settings_terminal_font_title">Text size</string>
     <string name="settings_terminal_font_description">The terminal mirror and the draft field, on this device.</string>
     <string name="settings_terminal_size">Mirror text</string>
@@ -103,9 +101,6 @@
     <string name="settings_gate_not_enforced">not enforced</string>
     <string name="settings_gate_authorized">authorized</string>
     <string name="settings_gate_read_only">read-only</string>
-    <string name="settings_background_notifications">Background notifications</string>
-    <string name="settings_background_description">Native delivery is not configured on this build.</string>
-    <string name="settings_background_unavailable">Unavailable · foreground live updates remain active</string>
     <string name="settings_notify_needs_input">Needs input</string>
     <string name="settings_notify_finished">Finished</string>
     <string name="settings_notify_updates">Server updates</string>

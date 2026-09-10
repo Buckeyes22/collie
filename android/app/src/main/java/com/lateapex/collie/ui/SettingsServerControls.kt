@@ -99,6 +99,7 @@ internal class SettingsServerControls(
     private lateinit var parent: LinearLayout
     private lateinit var devicesCard: LinearLayout
     private lateinit var devicesDescription: TextView
+    private var pairingCard: LinearLayout? = null
     private lateinit var notifyCard: LinearLayout
     private lateinit var snoozeCard: LinearLayout
     private lateinit var updateSummary: TextView
@@ -126,7 +127,26 @@ internal class SettingsServerControls(
     fun bind(parent: LinearLayout) {
         this.parent = parent
         parent.removeAllViews()
-        parent.addView(pushCard().apply { id = R.id.settings_parity_push_card })
+        var pairFormForEntry: PairFormView? = null
+        if (unpaired()) {
+            val form = pairForm().also { pairFormView = it; pairFormForEntry = it }
+            pairingCard = card().also {
+                it.id = R.id.settings_parity_pairing_card
+                it.addView(header(
+                    text(R.string.settings_pair_phone),
+                    text(R.string.settings_phone_not_paired),
+                    R.drawable.ic_history_user,
+                ))
+                it.addView(divider())
+                it.addView(form.root)
+            }
+            parent.addView(pairingCard)
+            if (devicesRevealPending) {
+                onRevealDevices(pairingCard!!, if (pairNameFocusPending) form.label else pairingCard!!)
+                devicesRevealPending = false
+                pairNameFocusPending = false
+            }
+        }
         notifyCard = card().also {
             it.id = R.id.settings_parity_notify_card
             it.addView(header(
@@ -170,10 +190,12 @@ internal class SettingsServerControls(
             parent.addView(it)
         }
         if (devicesRevealPending) {
-            // A QR arrival scrolls now but waits to focus until the pair form exists. An ordinary
-            // read-only-banner arrival focuses the card itself, matching the web fragment route.
-            onRevealDevices(devicesCard, if (pairNameFocusPending) null else devicesCard)
+            // A QR arrival scrolls now but the pair form's name field only exists when the phone is
+            // unpaired; a read-only-banner arrival focuses the devices card itself, matching the web
+            // fragment route.
+            onRevealDevices(devicesCard, if (pairNameFocusPending) pairFormForEntry?.label else devicesCard)
             devicesRevealPending = false
+            pairNameFocusPending = false
         }
         packCard = navigationCard(
             title = text(R.string.settings_pack_title),
@@ -270,21 +292,7 @@ internal class SettingsServerControls(
         }
     }
 
-    private fun pushCard() = card().apply {
-        addView(header(
-            text(R.string.settings_background_notifications),
-            text(R.string.settings_background_description),
-            R.drawable.ic_dashboard_connected,
-        ))
-        addView(divider())
-        addView(TextView(activity).apply {
-            id = R.id.settings_push_state
-            setText(R.string.settings_background_unavailable)
-            textSize = 12f
-            setTextColor(color(R.color.collie_muted))
-            setPadding(dp(16), dp(10), dp(16), dp(10))
-        })
-    }
+    private fun unpaired(): Boolean = repository.connection.value?.isPaired == false
 
     private fun addNotifyRows(card: LinearLayout, prefs: NotifyPreferences?) {
         while (card.childCount > 1) card.removeViewAt(card.childCount - 1)
@@ -356,11 +364,7 @@ internal class SettingsServerControls(
     }
 
     internal fun renderDevices(result: ApiResult<DevicesResponse>, writesAllowed: Boolean) {
-        // Detaching a focused field drops its focus, so the field that had it is re-focused once the
-        // card is rebuilt; the form instance itself is kept (below), so it is the same view.
-        val focusedField = pairFormView?.let { form ->
-            activity.currentFocus?.takeIf { it === form.code || it === form.label }
-        }
+        pairingCard?.isVisible = unpaired()
         while (devicesCard.childCount > 1) devicesCard.removeViewAt(devicesCard.childCount - 1)
         devicesCard.addView(divider())
         val list = LinearLayout(activity).apply {
@@ -386,21 +390,6 @@ internal class SettingsServerControls(
             list.addView(divider())
         }
         devicesCard.addView(list)
-        if (data.enforced && data.current == null) {
-            // One form instance for as long as the phone stays unpaired: rebuilding it on every
-            // refresh recreated the code field under the operator's finger, dropping focus and the
-            // keyboard every couple of seconds (S25 Ultra, 2026-09-10).
-            val form = pairFormView ?: pairForm().also { pairFormView = it }
-            (form.root.parent as? ViewGroup)?.removeView(form.root)
-            devicesCard.addView(form.root)
-            focusedField?.requestFocus()
-            if (pairNameFocusPending) {
-                onRevealDevices(devicesCard, form.label)
-                pairNameFocusPending = false
-            }
-        } else {
-            pairFormView = null
-        }
     }
 
     private data class PairFormView(val root: View, val code: EditText, val label: EditText)
@@ -410,11 +399,6 @@ internal class SettingsServerControls(
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(10), dp(16), dp(14))
         }
-        form.addView(TextView(activity).apply {
-            setText(R.string.settings_pair_phone)
-            textSize = 14f
-            setTextColor(color(R.color.collie_foreground))
-        })
         val code = EditText(activity).apply {
             id = R.id.settings_pair_code
             setHint(R.string.settings_pair_code_hint)

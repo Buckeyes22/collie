@@ -16,10 +16,14 @@ import com.lateapex.collie.BuildConfig
 import com.lateapex.collie.CollieApplication
 import com.lateapex.collie.R
 import com.lateapex.collie.data.EncryptedConnectionStore
+import com.lateapex.collie.domain.CollieOrigin
+import com.lateapex.collie.domain.Connection
+import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -100,7 +104,6 @@ class SettingsActivityTest {
         shadowOf(activity.mainLooper).idle()
 
         assertNotNull(activity.findViewById<android.view.View>(R.id.settings_hands_free_switch))
-        assertNotNull(activity.findViewById<android.view.View>(R.id.settings_zen_switch))
         assertNotNull(activity.findViewById<android.view.View>(R.id.settings_notify_blocked_switch))
         assertNotNull(activity.findViewById<android.view.View>(R.id.settings_snooze_30))
         assertNotNull(activity.findViewById<android.view.View>(R.id.settings_devices_list))
@@ -131,7 +134,7 @@ class SettingsActivityTest {
             (0 until local.childCount).map { local.getChildAt(it).id },
         )
         val behavior = activity.findViewById<LinearLayout>(R.id.settings_behavior_preferences)
-        assertEquals(listOf(R.id.settings_parity_hands_free_card, R.id.settings_parity_zen_card), (0 until behavior.childCount).map { behavior.getChildAt(it).id })
+        assertEquals(listOf(R.id.settings_parity_hands_free_card), (0 until behavior.childCount).map { behavior.getChildAt(it).id })
         assertEquals(View.GONE, activity.findViewById<View>(R.id.settings_parity_hands_free_card).visibility)
         assertEquals(View.GONE, activity.findViewById<View>(R.id.settings_parity_pack_card).visibility)
         assertEquals(null, activity.findViewById<View>(R.id.settings_server_diagnostics))
@@ -154,8 +157,6 @@ class SettingsActivityTest {
             R.id.settings_parity_terminal_font_card,
             R.id.settings_haptics_card,
             R.id.settings_parity_hands_free_card,
-            R.id.settings_parity_zen_card,
-            R.id.settings_parity_push_card,
             R.id.settings_parity_notify_card,
             R.id.settings_parity_snooze_card,
             R.id.settings_parity_updates_card,
@@ -184,7 +185,6 @@ class SettingsActivityTest {
             R.id.theme_dark_button,
             R.id.haptics_switch,
             R.id.settings_hands_free_switch,
-            R.id.settings_zen_switch,
         ).forEach { viewId ->
             val view = activity.findViewById<View>(viewId)
             assertTrue("view $viewId should retain a 44dp height", view.layoutParams.height >= floor)
@@ -241,6 +241,39 @@ class SettingsActivityTest {
         assertEquals(SettingsActivity::class.java.name, settings.component?.className)
         assertEquals("AB12-CD34", settings.getStringExtra(SettingsActivity.EXTRA_PAIR_CODE))
         assertTrue(settings.getBooleanExtra(SettingsActivity.EXTRA_FOCUS_DEVICES, false))
+    }
+
+    @Test
+    fun unpairedSettingsLeadsWithThePairingCard() {
+        val activity = launchSettings(paired = false)
+        val controls = activity.findViewById<LinearLayout>(R.id.settings_server_controls)
+        assertEquals(R.id.settings_parity_pairing_card, controls.getChildAt(0).id)
+        assertNull(activity.findViewById<View?>(R.id.settings_parity_push_card))
+    }
+
+    @Test
+    fun pairedSettingsHasNoPairingCardAndNoZenCard() {
+        val activity = launchSettings(paired = true)
+        assertNull(activity.findViewById<View?>(R.id.settings_parity_pairing_card))
+        assertNull(activity.findViewById<View?>(R.id.settings_parity_zen_card))
+    }
+
+    private fun launchSettings(paired: Boolean): SettingsActivity {
+        seedConnection(paired)
+        return Robolectric.buildActivity(SettingsActivity::class.java).create().get()
+    }
+
+    private fun seedConnection(paired: Boolean) {
+        val store = (context.applicationContext as CollieApplication).container.connectionStore
+        @Suppress("UNCHECKED_CAST")
+        val flow = EncryptedConnectionStore::class.java.getDeclaredField("mutableConnection")
+            .apply { isAccessible = true }
+            .get(store) as MutableStateFlow<Connection?>
+        flow.value = Connection(
+            CollieOrigin(BuildConfig.DEFAULT_ORIGIN),
+            "S25U-native",
+            token = if (paired) "pairing-token" else null,
+        )
     }
 
     private fun firstImage(view: View): ImageView? {

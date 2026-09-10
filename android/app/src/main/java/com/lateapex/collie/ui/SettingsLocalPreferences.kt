@@ -40,13 +40,6 @@ internal class SettingsLocalPreferences(
             visibility = View.GONE
         }
         handsFreeCard?.let(parent::addView)
-        parent.addView(switchCard(
-            title = text(R.string.settings_zen_title),
-            description = text(R.string.settings_zen_description),
-            id = R.id.settings_zen_switch,
-            checked = preferences.zenAvailable,
-            iconRes = R.drawable.ic_collie_layers,
-        ) { preferences.zenAvailable = it }.apply { id = R.id.settings_parity_zen_card })
     }
 
     fun setHandsFreeCapability(available: Boolean) {
