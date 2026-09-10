@@ -791,6 +791,9 @@ describe("real corpus — pinned so any change to the walk shows up as a diff", 
     { fixture: "select-preview-note-attached", statusRows: 0, draft: null, stripped: 0 },
     { fixture: "select-preview-note-input", statusRows: 0, draft: null, stripped: 0 },
     { fixture: "send-inflight", statusRows: 2, draft: "/rename", stripped: 5 },
+    // The soft-wrap reflow capture (a real 101-column pane read): an idle box under soft-wrapped
+    // prose, empty prompt, ordinary 2-row statusline. Its reflow behaviour is pinned in reflow.test.ts.
+    { fixture: "soft-wrapped-paragraph", statusRows: 2, draft: null, stripped: 5 },
     { fixture: "trust-prompt", statusRows: 0, draft: null, stripped: 0 },
     { fixture: "wizard-multiselect-checked", statusRows: 0, draft: null, stripped: 0 },
     { fixture: "wizard-multiselect-final", statusRows: 0, draft: null, stripped: 0 },
