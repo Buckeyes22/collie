@@ -52,6 +52,8 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - The Android pane no longer crashes when the Display drawer's text size +/- is tapped; the mirror is laid out afresh for the new size.
 - The Android device list keeps a row's Cancel/Revoke confirm across Settings refreshes instead of snapping back to "Revoke" a second after the tap.
 - The Android mirror collapses the blank rows Claude pads between its transcript and its input box, so a short conversation no longer reads as an empty screen with a footer.
+- Android and web recognise an AskUserQuestion whose prompt is not phrased as a question ("Pick a colour:"), so its options render as buttons.
+- Android re-analyses a pane's dialog whenever its text changes, not only on Herdr's always-zero revision, so an answered dialog's buttons leave the screen without reopening the pane.
 
 ## [1.5.1] - 2026-09-04
 

@@ -19,6 +19,7 @@ class AgentSemanticParserTest {
             "agy--plan-approval.txt" to SemanticKind.PROMPT_SELECT,
             "agy--select-menu.txt" to SemanticKind.PROMPT_SELECT,
             "agy--trust-prompt.txt" to SemanticKind.PROMPT_SELECT,
+            "claude--select-ask-no-question-mark.txt" to SemanticKind.PROMPT_SELECT,
             "claude--autocomplete-slash-long.txt" to SemanticKind.AUTOCOMPLETE,
             "claude--autocomplete-slash-short.txt" to SemanticKind.AUTOCOMPLETE,
             "claude--menu-model-picker-dismissed.txt" to null,

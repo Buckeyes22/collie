@@ -16,7 +16,12 @@ class ClaudeChromeFilter {
         while (end > 0 && lines[end - 1].text.isBlank()) end--
         if (end == 0) return input
 
-        val box = locateInputBox(lines, end) ?: return input
+        // No box at the tail (a dialog is up, or the buffer is torn): still collapse the padding
+        // Claude leaves under the dialog, otherwise the mirror above the native panel reads blank.
+        val box = locateInputBox(lines, end) ?: run {
+            val collapsed = collapsePadding(lines)
+            return if (collapsed.size == lines.size) input else joinLines(input, collapsed)
+        }
         var bodyEnd = box.top
         while (bodyEnd > 0 && lines[bodyEnd - 1].text.isBlank()) bodyEnd--
 

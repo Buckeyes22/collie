@@ -773,6 +773,21 @@ class PaneActivityTest {
     }
 
     @Test
+    fun anAnsweredDialogClearsItsPanelEvenWhenHerdrRepeatsRevisionZero() {
+        val activity = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("dialog:pane")).create().start().resume().get()
+        PaneActivity::class.java.getDeclaredField("agentName").apply { isAccessible = true; set(activity, "claude") }
+        val render = PaneActivity::class.java.getDeclaredMethod("render", PaneUiState::class.java).apply { isAccessible = true }
+        val panel = activity.findViewById<View>(R.id.semantic_panel)
+        val dialog = "Which colour?\n❯ 1. Red\n  2. Green\nEnter to select · ↑/↓ to navigate · Esc to cancel"
+
+        render.invoke(activity, PaneUiState(pane = PaneReadResponse("dialog:pane", dialog, false, 0), loading = false, canWrite = true))
+        assertEquals(View.VISIBLE, panel.visibility)
+
+        render.invoke(activity, PaneUiState(pane = PaneReadResponse("dialog:pane", "● Green\n❯ ", false, 0), loading = false, canWrite = true))
+        assertEquals(View.GONE, panel.visibility)
+    }
+
+    @Test
     fun mirrorFollowsChangedTextWhenHerdrRepeatsRevisionZero() {
         // Herdr 0.7.x stubs `revision` to 0 on every read (HERDR_API.md); only the text can key change.
         val activity = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("rev0:pane")).create().get()

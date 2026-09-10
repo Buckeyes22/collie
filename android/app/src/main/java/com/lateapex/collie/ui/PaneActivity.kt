@@ -96,6 +96,7 @@ class PaneActivity : AppCompatActivity() {
     private var semanticSurface: SemanticSurface? = null
     private var noEchoPrompt: String? = null
     private var analyzedPaneRevision: Long? = null
+    private var analyzedPaneText: String? = null
     private var analyzedSemanticSurface: SemanticSurface? = null
     private var analyzedNoEchoPrompt: String? = null
     private var analyzedTerminalDraft: TerminalDraft? = null
@@ -1309,11 +1310,16 @@ class PaneActivity : AppCompatActivity() {
         val analysisPane = state.pane
         if (analysisPane == null) {
             analyzedPaneRevision = null
+            analyzedPaneText = null
             analyzedSemanticSurface = null
             analyzedNoEchoPrompt = null
             analyzedTerminalDraft = null
-        } else if (analysisPane.revision != analyzedPaneRevision) {
+        } else if (analysisPane.revision != analyzedPaneRevision || analysisPane.text != analyzedPaneText) {
+            // Herdr 0.7.x reports revision 0 on every read (HERDR_API.md), so the revision alone
+            // analysed a pane once and never again: a dialog that had been answered stayed on
+            // screen with its buttons until the pane was reopened (S25 Ultra, 2026-09-10).
             analyzedPaneRevision = analysisPane.revision
+            analyzedPaneText = analysisPane.text
             analyzedSemanticSurface = AgentSemanticParser.detect(agentName, analysisPane.text, analysisPane.revision)
             analyzedNoEchoPrompt = TerminalComposerSemantics.noEchoPrompt(analysisPane.text)
             analyzedTerminalDraft = if (analyzedSemanticSurface?.ownsKeyboard != true && analyzedNoEchoPrompt == null) {

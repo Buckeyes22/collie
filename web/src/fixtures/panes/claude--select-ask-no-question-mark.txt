@@ -1,0 +1,67 @@
+
+[0m[38;2;215;119;87m ▐[0m[38;2;215;119;87m[48;2;0;0;0m▛███▛█   [0m[1mClaude Code [0m[38;2;153;153;153mv2.1.267[0m
+[0m[38;2;215;119;87m▝▜[0m[38;2;215;119;87m[48;2;0;0;0m█████[0m[38;2;215;119;87m█▀  [0m[38;2;153;153;153mSonnet 5 with xhigh effort · Claude Max[0m
+[0m[38;2;215;119;87m  ▝▝ ▝▝    [0m[38;2;153;153;153m~/git/collie[0m
+
+[0m[38;2;255;193;7m⚠ 7 MCP servers need authentication[0m[38;2;153;153;153m · run /mcp[0m
+
+[0m[38;2;80;80;80m[48;2;55;55;55m❯[0m[48;2;55;55;55m [0m[38;2;255;255;255m[48;2;55;55;55m/model[0m[48;2;55;55;55m                                                                                             [0m
+[0m[38;2;153;153;153m  ⎿  [0mSet model to [0m[38;2;177;185;249mSonnet 5 [0mand saved as your default for new sessions
+
+[0m[38;2;80;80;80m[48;2;55;55;55m❯ [0m[38;2;255;255;255m[48;2;55;55;55mReply with exactly the word PONG and nothing else.[0m[48;2;55;55;55m                                                 [0m
+
+[0m[38;2;255;255;255m● [0mPONG
+
+[0m[38;2;153;153;153m✻ Cooked for 2s · done 3:48 PM[0m
+
+[0m[38;2;153;153;153m※ [0m[1m[38;2;153;153;153mrecap: [0m[3m[38;2;153;153;153mNo task is in progress this session — the last thing recorded was setting the model to [0m
+  [0m[3m[38;2;153;153;153mSonnet 5. Let me know what you'd like to work on next in the collie repo. (disable recaps in [0m
+  [0m[3m[38;2;153;153;153m/config)[0m
+
+[0m[38;2;80;80;80m[48;2;55;55;55m❯ [0m[38;2;255;255;255m[48;2;55;55;55mUse the AskUserQuestion tool to ask me to pick one colour from exactly these three options: Red, [0m[48;2;55;55;55m  [0m
+[0m[48;2;55;55;55m  [0m[38;2;255;255;255m[48;2;55;55;55mGreen, Blue. After I answer, reply with only the colour I chose.[0m[48;2;55;55;55m                                   [0m
+[0m[38;2;153;153;153m─────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+[0m[38;2;0;0;0m[48;2;177;185;249m ☐ Colour [0m
+
+[0m[1m[38;2;255;255;255mPick a colour:[0m
+
+[0m[38;2;177;185;249m❯ [0m[38;2;153;153;153m1. [0m[38;2;177;185;249mRed[0m
+     [0m[38;2;153;153;153mRed[0m
+  [0m[38;2;153;153;153m2. [0mGreen
+     [0m[38;2;153;153;153mGreen[0m
+  [0m[38;2;153;153;153m3. [0mBlue
+     [0m[38;2;153;153;153mBlue[0m
+  [0m[38;2;153;153;153m4. Type something.[0m
+[0m[38;2;153;153;153m─────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+  5. Chat about this
+
+[0m[38;2;153;153;153mEnter to select · ↑/↓ to navigate · Esc to cancel[0m
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+     
+   
+
+                                                                                       
+
+
+
+
+  

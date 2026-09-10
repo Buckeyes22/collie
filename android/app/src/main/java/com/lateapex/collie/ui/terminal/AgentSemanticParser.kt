@@ -585,10 +585,19 @@ object AgentSemanticParser {
         }
 
     private fun findQuestion(lines: List<String>, firstOption: Int): Int? {
-        for (i in firstOption - 1 downTo maxOf(0, firstOption - 12)) {
+        val floor = maxOf(0, firstOption - 12)
+        for (i in firstOption - 1 downTo floor) {
             val trimmed = lines[i].trim()
             if (trimmed.contains('?') || trimmed.startsWith("Do you", true) ||
                 trimmed.startsWith("Question ", true) || trimmed.startsWith("Requesting permission", true)) return i
+        }
+        // An AskUserQuestion need not be phrased as a question ("Pick a colour:"). Claude prints
+        // its "☐ Header" tab above the text either way, so the first non-blank line under that
+        // header is the question (S25 Ultra, 2026-09-10; the web grammar accepts the same shape).
+        for (i in firstOption - 1 downTo floor) {
+            if (Regex("^\\s*☐\\s+\\S").containsMatchIn(lines[i])) {
+                return (i + 1 until firstOption).firstOrNull { lines[it].isNotBlank() }
+            }
         }
         return null
     }

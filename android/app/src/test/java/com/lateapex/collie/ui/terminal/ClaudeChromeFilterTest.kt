@@ -66,6 +66,19 @@ class ClaudeChromeFilterTest {
     }
 
     @Test
+    fun collapsesPaddingUnderADialogWhenNoBoxIsAtTheTail() {
+        val parsed = parser.parse(
+            (listOf("❯ 1. Red", "  2. Green", "Enter to select · ↑/↓ to navigate · Esc to cancel") + List(30) { "" })
+                .joinToString("\n"),
+        )
+
+        assertEquals(
+            "❯ 1. Red\n  2. Green\nEnter to select · ↑/↓ to navigate · Esc to cancel\n\n",
+            filter.filter(parsed).toString(),
+        )
+    }
+
+    @Test
     fun stripsWrappedDraftOnlyWhenTheFullBoxShapeIsPresent() {
         val parsed = parser.parse(
             listOf(
