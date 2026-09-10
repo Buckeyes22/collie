@@ -17,6 +17,7 @@ import com.lateapex.collie.network.PaneSummary
 import com.lateapex.collie.network.MuxConfigResponse
 import com.lateapex.collie.network.ServerSummary
 import com.lateapex.collie.network.TabSummary
+import com.lateapex.collie.network.TranscriptEntry
 import com.lateapex.collie.ui.terminal.PromptBinding
 import com.lateapex.collie.ui.terminal.SemanticAction
 import com.lateapex.collie.ui.terminal.SemanticActionGuard
@@ -65,6 +66,10 @@ data class PaneUiState(
     val requestedLines: Int = PaneScrollbackWindow.INITIAL_LINES,
     val loadedLines: Int = 0,
     val loadingOlder: Boolean = false,
+    val transcript: List<TranscriptEntry> = emptyList(),
+    val transcriptAvailable: Boolean? = null,
+    val transcriptReason: String? = null,
+    val transcriptHasMore: Boolean = false,
 )
 
 class PaneViewModel(
@@ -614,16 +619,19 @@ class PaneViewModel(
             do {
                 val lines = paneRequestedLines
                 when (val result = repository.readPane(address, lines, markSeen = true)) {
-                    is ApiResult.Success -> mutableState.value = mutableState.value.copy(
-                        pane = result.value.pane,
-                        loading = false,
-                        error = null,
-                        composerReady = PromptBinding.composerRegion(agent, result.value.pane.text) != null,
-                        lastSuccessAt = System.currentTimeMillis(),
-                        requestedLines = paneRequestedLines,
-                        loadedLines = lines,
-                        loadingOlder = lines < paneRequestedLines,
-                    )
+                    is ApiResult.Success -> {
+                        mutableState.value = mutableState.value.copy(
+                            pane = result.value.pane,
+                            loading = false,
+                            error = null,
+                            composerReady = PromptBinding.composerRegion(agent, result.value.pane.text) != null,
+                            lastSuccessAt = System.currentTimeMillis(),
+                            requestedLines = paneRequestedLines,
+                            loadedLines = lines,
+                            loadingOlder = lines < paneRequestedLines,
+                        )
+                        loadTranscript()
+                    }
                     is ApiResult.Failure -> {
                         // Keep the last successful window actionable so a failed grow can be retried.
                         if (mutableState.value.loadingOlder && mutableState.value.loadedLines > 0) {
@@ -645,6 +653,47 @@ class PaneViewModel(
             } while (mutableState.value.loadedLines < paneRequestedLines)
         } finally {
             readInFlight.set(false)
+        }
+    }
+
+    /** One "no journal" answer is enough: the mirror shows and history polling stops for the pane. */
+    private var transcriptKnownUnavailable = false
+
+    private suspend fun loadTranscript() {
+        if (transcriptKnownUnavailable) return
+        when (val result = repository.history(address, limit = TRANSCRIPT_PAGE)) {
+            is ApiResult.Success -> {
+                val page = result.value
+                if (!page.available) {
+                    transcriptKnownUnavailable = true
+                    mutableState.value = mutableState.value.copy(
+                        transcriptAvailable = false,
+                        transcriptReason = page.reason,
+                        transcript = emptyList(),
+                    )
+                    return
+                }
+                mutableState.value = mutableState.value.copy(
+                    transcript = HistoryPresentation.mergeNewer(mutableState.value.transcript, page.entries),
+                    transcriptAvailable = true,
+                    transcriptReason = null,
+                    transcriptHasMore = page.hasMore,
+                )
+            }
+            is ApiResult.Failure, is ApiResult.NotModified -> Unit
+        }
+    }
+
+    fun loadOlderTranscript() {
+        val oldest = mutableState.value.transcript.firstOrNull()?.uuid ?: return
+        viewModelScope.launch {
+            val result = repository.history(address, limit = TRANSCRIPT_PAGE, before = oldest)
+            if (result is ApiResult.Success && result.value.available) {
+                mutableState.value = mutableState.value.copy(
+                    transcript = HistoryPresentation.mergeOlder(mutableState.value.transcript, result.value.entries),
+                    transcriptHasMore = result.value.hasMore,
+                )
+            }
         }
     }
 
@@ -890,6 +939,7 @@ class PaneViewModel(
 
     companion object {
         const val STATUS_NOTICE_MS = 4_000L
+        const val TRANSCRIPT_PAGE = 60
         const val MAX_DIRECT_KEY_BATCH = 64
         const val MAX_DIRECT_KEYS_PENDING = 8_192
         const val MAX_REVIEWED_KEY_BATCH = 128

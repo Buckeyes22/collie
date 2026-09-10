@@ -94,6 +94,12 @@ internal object HistoryPresentation {
         return (older + current).filter { seen.add(it.uuid) }
     }
 
+    /** The history route pages newest-anchored; merging keeps the older entries the client holds. */
+    fun mergeNewer(current: List<TranscriptEntry>, newer: List<TranscriptEntry>): List<TranscriptEntry> {
+        val seen = HashSet<String>(current.size + newer.size)
+        return (current + newer).filter { seen.add(it.uuid) }
+    }
+
     fun stepUserTurn(entries: List<TranscriptEntry>, focusedUuid: String?, delta: Int): String? {
         val stops = entries.indices.filter { entries[it].role == "user" }
         if (stops.isEmpty()) return null

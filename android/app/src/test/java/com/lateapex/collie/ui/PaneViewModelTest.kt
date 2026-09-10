@@ -20,10 +20,13 @@ import com.lateapex.collie.network.HealthResponse
 import com.lateapex.collie.network.MuxConfigResponse
 import com.lateapex.collie.network.OriginValidator
 import com.lateapex.collie.network.PairResult
+import com.lateapex.collie.network.PaneHistoryResponse
 import com.lateapex.collie.network.PaneReadResponse
 import com.lateapex.collie.network.PaneSummary
 import com.lateapex.collie.network.ServerSummary
 import com.lateapex.collie.network.SnapshotResponse
+import com.lateapex.collie.network.TranscriptEntry
+import com.lateapex.collie.network.TranscriptPart
 import com.lateapex.collie.ui.terminal.AgentSemanticParser
 import com.lateapex.collie.ui.terminal.TerminalDraft
 import kotlinx.coroutines.Dispatchers
@@ -462,6 +465,33 @@ class PaneViewModelTest {
         assertTrue(fixture.viewModel.state.value.mutationError?.contains("changed") == true)
     }
 
+    @Test
+    fun pollMergesTranscriptEntriesByUuid() = runTest(dispatcher) {
+        val model = fixture(ApiResult.Success(ActionResponse(ok = true), 200)).let { f ->
+            f.api.historyPages += PaneHistoryResponse("w1:p1", available = true, entries = listOf(entry("a"), entry("b")))
+            f.api.historyPages += PaneHistoryResponse("w1:p1", available = true, entries = listOf(entry("b"), entry("c")))
+            f.viewModel
+        }
+        model.refresh(); advanceUntilIdle()
+        model.refresh(); advanceUntilIdle()
+        assertEquals(listOf("a", "b", "c"), model.state.value.transcript.map { it.uuid })
+        assertEquals(true, model.state.value.transcriptAvailable)
+    }
+
+    @Test
+    fun unavailableHistoryIsRecordedOnceAndNotPolledAgain() = runTest(dispatcher) {
+        val f = fixture(ApiResult.Success(ActionResponse(ok = true), 200))
+        f.api.historyPages += PaneHistoryResponse("w1:p1", available = false, reason = "no-session")
+        f.viewModel.refresh(); advanceUntilIdle()
+        f.viewModel.refresh(); advanceUntilIdle()
+        assertEquals(false, f.viewModel.state.value.transcriptAvailable)
+        assertEquals("no-session", f.viewModel.state.value.transcriptReason)
+        assertEquals(1, f.api.historyCalls)
+    }
+
+    private fun entry(uuid: String) =
+        TranscriptEntry(uuid, "2026-09-10T00:00:00Z", "assistant", listOf(TranscriptPart("text", text = uuid)))
+
     private fun fixture(
         reply: ApiResult<ActionResponse>,
         keyResults: List<ApiResult<ActionResponse>> = emptyList(),
@@ -521,6 +551,19 @@ class PaneViewModelTest {
             truncated = false,
             revision = 7,
         )
+        val historyPages = ArrayDeque<PaneHistoryResponse>()
+        var historyCalls = 0
+
+        override suspend fun history(
+            connection: Connection,
+            address: PaneAddress,
+            limit: Int,
+            before: String?,
+        ): ApiResult<PaneHistoryResponse> {
+            historyCalls++
+            val page = historyPages.removeFirstOrNull() ?: PaneHistoryResponse(address.paneId, available = true)
+            return ApiResult.Success(page, 200)
+        }
 
         override suspend fun pane(
             connection: Connection,
