@@ -2338,12 +2338,8 @@ class PaneActivity : AppCompatActivity() {
         val hasStrips = model.tabs.isNotEmpty() || model.panes.size > 1
         tabStrip.isVisible = !zenMode && model.visible
         showTabsButton.isVisible = !zenMode && hasStrips && !model.visible
-        currentPaneSummary()?.let { pane ->
-            showTabsButton.text = listOfNotNull(
-                pane.workspaceLabel,
-                pane.tabLabel?.takeIf(String::isNotBlank),
-            ).joinToString(" › ")
-        }
+        showTabsButton.text = resources.getQuantityString(R.plurals.pane_tabs_collapsed_count, model.tabs.size, model.tabs.size)
+        showTabsButton.setCompoundDrawablesRelativeWithIntrinsicBounds(0, 0, R.drawable.ic_history_chevron_down, 0)
         newTabButton.isVisible = model.canCreateTab
         newTabButton.isEnabled = model.canCreateTab && !tabCreateInFlight
         tabItems.removeAllViews()

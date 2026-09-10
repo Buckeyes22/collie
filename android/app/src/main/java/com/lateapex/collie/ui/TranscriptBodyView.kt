@@ -3,10 +3,12 @@ package com.lateapex.collie.ui
 import android.content.Context
 import android.util.AttributeSet
 import android.view.View
+import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import androidx.annotation.VisibleForTesting
+import androidx.core.content.ContextCompat
 import androidx.core.view.isVisible
 import com.google.android.material.button.MaterialButton
 import com.lateapex.collie.R
@@ -63,12 +65,21 @@ class TranscriptBodyView @JvmOverloads constructor(
             if (turns[entry.uuid] != null) return@forEach
             val turn = HistoryPresentation.turn(entry, agent, resources)
             val view = renderer!!.turnView(turn, showHeader = true)
+            styleUserTurn(view, entry)
             turns[entry.uuid] = view
             turnsContainer.addView(view)
         }
         if (atBottom) post {
             scroll.scrollTo(0, (turnsContainer.height - scroll.height).coerceAtLeast(0))
         }
+    }
+
+    /** B.2: the operator's own message reads as a card in the pane body. */
+    private fun styleUserTurn(view: View, entry: TranscriptEntry) {
+        if (entry.role != "user") return
+        val content = (view as? ViewGroup)?.getChildAt(0) as? ViewGroup ?: return
+        content.background = ContextCompat.getDrawable(context, R.drawable.bg_pane_user_turn)
+        content.setPadding(dp(12), dp(8), dp(12), dp(8))
     }
 
     private fun toggleTool(uuid: String, partIndex: Int) {

@@ -380,22 +380,6 @@
             android:textSize="11sp"
             android:visibility="gone" />
 
-        <TextView
-            android:id="@+id/error_text"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_gravity="top"
-            android:layout_margin="12dp"
-            android:accessibilityLiveRegion="polite"
-            android:background="@drawable/bg_pane_notice"
-            android:elevation="6dp"
-            android:maxLines="4"
-            android:paddingHorizontal="10dp"
-            android:paddingVertical="8dp"
-            android:textColor="@color/collie_error"
-            android:textSize="12sp"
-            android:visibility="gone" />
-
         <ProgressBar
             android:id="@+id/pane_progress"
             android:layout_width="36dp"
@@ -529,6 +513,20 @@
         android:layout_height="wrap_content"
         android:background="@drawable/bg_pane_composer_chrome"
         android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/error_text"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:accessibilityLiveRegion="polite"
+            android:background="@drawable/bg_pane_notice"
+            android:elevation="0dp"
+            android:maxLines="4"
+            android:paddingHorizontal="10dp"
+            android:paddingVertical="8dp"
+            android:textColor="@color/collie_error"
+            android:textSize="12sp"
+            android:visibility="gone" />
 
         <FrameLayout
             android:id="@+id/switcher_handle"

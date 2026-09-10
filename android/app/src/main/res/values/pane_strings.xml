@@ -240,4 +240,8 @@
     <string name="pane_body_showing_mirror_no_journal">Terminal</string>
     <string name="pane_body_switch_to_mirror">Show terminal</string>
     <string name="pane_body_switch_to_transcript">Show transcript</string>
+    <plurals name="pane_tabs_collapsed_count">
+        <item quantity="one">%d tab</item>
+        <item quantity="other">%d tabs</item>
+    </plurals>
 </resources>

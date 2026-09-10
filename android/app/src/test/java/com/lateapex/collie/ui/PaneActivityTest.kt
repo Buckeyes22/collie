@@ -22,6 +22,7 @@ import com.lateapex.collie.network.PaneReadResponse
 import com.lateapex.collie.network.AgentStatus
 import com.lateapex.collie.network.MuxConfigResponse
 import com.lateapex.collie.network.PaneSummary
+import com.lateapex.collie.network.TabSummary
 import com.lateapex.collie.network.TranscriptEntry
 import com.lateapex.collie.network.TranscriptPart
 import org.junit.Assert.assertEquals
@@ -1144,6 +1145,37 @@ class PaneActivityTest {
         assertEquals(MainActivity::class.java.name, shadowOf(recreated).nextStartedActivity.component?.className)
         assertTrue(recreated.isFinishing)
     }
+
+    @Test
+    fun noticeLivesInTheComposerBandNotOverTheMirror() {
+        val activity = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("notice:pane")).create().get()
+        val notice = activity.findViewById<View>(R.id.error_text)
+        assertSame(activity.findViewById<View>(R.id.composer_chrome), notice.parent)
+        assertEquals(0f, notice.elevation, 0f)
+    }
+
+    @Test
+    fun collapsedTabStripShowsTheTabCountNotTheTitle() {
+        val activity = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("tabs:pane")).create().start().resume().get()
+        render(
+            activity,
+            PaneUiState(
+                loading = false,
+                panes = listOf(paneSummary("tabs:pane")),
+                tabs = listOf(tab("t1", "alpha"), tab("t2", "beta")),
+            ),
+        )
+        assertEquals("2 tabs", activity.findViewById<TextView>(R.id.show_tabs_button).text.toString())
+    }
+
+    private fun tab(id: String, label: String) = TabSummary(
+        tabId = id,
+        workspaceId = "w1",
+        number = 1,
+        label = label,
+        focused = false,
+        paneCount = 1,
+    )
 
     @Test
     fun statuslineRowRendersUnderTheMirrorForClaude() {

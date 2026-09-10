@@ -8,6 +8,7 @@
     <color name="collie_surface">#FFFFFF</color>
     <color name="collie_chrome">#EBEBEB</color>
     <color name="collie_secondary">#EBEBEB</color>
+    <color name="collie_chrome_raised">#F1F1F1</color>
     <color name="collie_muted_surface">#EBEBEB</color>
     <color name="collie_accent">#E4E4E4</color>
     <color name="collie_primary">#171717</color>
