@@ -115,3 +115,140 @@ Zen, tap-to-type and the buffer affordances follow whichever body is on screen.
    for the dialog region), or should the whole body switch to the mirror? The first reads better;
    the second is simpler and is what the web does today.
 3. Should the transcript body be the default for Codex too, or Claude first?
+
+## Appendix A — the rest of the app through the same lens
+
+Reviewed from the captures taken during the two S25 Ultra walks on 2026-09-10 (all under
+`android/acceptance/2026-09-10-*.png`; the walk's full set sits in `/tmp/s25/` on ed8). The
+question for each screen is the one asked of the Claude pane: does it read as a native app that
+happens to talk to terminals, or as a terminal tool wearing an app's chrome? Functional defects
+found on the walk are already fixed and committed; what follows is design.
+
+### A.1 Dashboard (`2026-09-10-dashboard.png`)
+
+The strongest screen. "Nothing needs you", then Needs input, Ready · unseen, Working, Recent,
+Spaces: the triage order is right, the cards are quiet, and a blocked pane surfaces in red with a
+badge on Spaces. What holds it back:
+
+- **Titles are session-log names, truncated.** Four of five Working rows read "Codex session log
+  01a0…" with the identifier cut by the ellipsis, so the only distinguishing text is the space
+  beneath. The row should lead with the space and tab and demote the agent's auto-title, or
+  truncate in the middle so the tail of the id survives.
+- **Two ways to collapse, drawn two ways.** Recent has an up-arrow toggle at the left; Spaces has
+  the same toggle plus a "+" at the right; Working has none. The sort control ("Newest ↓") is a
+  text button in a header row otherwise made of icons.
+- **The Spaces list is the app's longest surface and the least informative.** Fourteen rows of
+  name, age and a pane count in a grey pill. Nothing says which panes are working, blocked or
+  done inside a space, which is the question the operator has when scanning it.
+- **The build stamp** ("Android app build 1.5.1-debug") sits in the scroll body of every list
+  screen. It belongs in Settings only.
+
+### A.2 Space (`2026-09-10-space.png`)
+
+Three horizontal strips stack under the header before any content: SPACES chips, then tab chips,
+then the overview title. That is 40% of the first screen spent on navigation the dashboard
+already did. Specifics:
+
+- **The spaces strip repeats the dashboard.** A "← Back" chip and every other space, when the
+  operator just chose this one. A back arrow in the header and the current space's name is
+  enough; the sibling switch belongs in the pane switcher, which already lists them.
+- **The tab chips truncate at the screen edge** ("track-guide-prose" clipped, the "+" half
+  visible) with no affordance that the row scrolls.
+- **The overview card** ("StormLens · 3 tabs · 3 panes") restates the header.
+- **Pane cards say "shell" three times.** A card should show something that distinguishes the
+  panes: the last command, the cwd difference, or the tab name in the card rather than as a
+  small grey label above it.
+
+### A.3 Pane, shell (`2026-09-10-*pane*` captures 39, 47, 98)
+
+Better than the Claude pane because a shell's grid is the information. Still:
+
+- **The pane title appears twice**: header and collapsed tab-strip label directly beneath it.
+- **Notices cover the mirror.** "Reply sent." and "Typed into terminal." float over the top rows of
+  the transcript, hiding the prompt they confirm. They should sit in the composer's own band.
+- **Three status vocabularies at once.** The header dot, the "SHELL / WORKING / BLOCKED / DONE"
+  label above the mode row, and the dashboard's coloured rings all encode the same state with
+  different words and colours.
+- **Landscape** keeps the tab strip and the full composer, leaving five rows of terminal.
+
+### A.4 Keys drawer (`2026-09-10-keys-drawer.png`)
+
+Functionally complete and now correct; visually it is the busiest surface in the app. In one
+drawer: a Keys/123 segment, a staged-chip row with Send keys and Clear, eight key buttons, a full
+width Space bar, three modifier toggles, a Presets disclosure, a Function keys disclosure. Opened,
+it covers two thirds of the screen and leaves one line of terminal. The modifiers read as plain
+text ("⇧ Shift  Ctrl  Alt") until armed, so their tappability is not visible. A phone keyboard
+solves the same problem with one row and a long-press: Ctrl and Alt as sticky keys on the mode
+row, arrows and Esc/Tab/Enter as one compact row, Presets and F-keys behind a single "More".
+
+### A.5 Display, Quick, Agent (captures 41, 54, 77)
+
+- **Display** is a settings panel inside the composer: three switches and a stepper. Wrap and Raw
+  are per-pane reading modes and belong in the pane's actions sheet; text size is already in
+  Settings. Tap-to-type is the only thing that earns a toggle here, and it could simply be on.
+- **Quick** shows one group, CONFIRM, with "y" and "n" as two wide buttons. On a shell that is
+  fine; on an agent pane the useful quick replies are "yes", "continue", "no, stop" as words.
+- **Agent commands** is a good sheet: search, common commands first, descriptions. It is the
+  model the other drawers should follow.
+
+### A.6 Switcher (`2026-09-10-switcher.png`)
+
+Rows carry space · tab on one line and agent · title on the next, so the identifier walls from
+the dashboard return here at three lines per row. The current pane is not marked. Working is a
+plain grey heading; Recent is a collapsible pill; the two groups look like different controls.
+
+### A.7 History (`2026-09-10-claude-pane-history.png`)
+
+The best screen in the app and the argument of §4. One gap: it is reachable only by scrolling a
+pane to its top and tapping "Show entire history". It deserves a place in the pane header.
+
+### A.8 Settings (`2026-09-10-settings.png`)
+
+Now coherent after the font removals: Appearance, Text size, Haptics, Zen mode, notifications,
+Updates, Paired devices, Connection. Remaining:
+
+- **Zen mode is a setting that adds a menu row**, explained in two lines. Either the row is
+  always in the pane menu or the feature is not worth a switch.
+- **Background notifications** is a card whose only content is "not configured on this build".
+  A card that can do nothing should not render.
+- **Paired devices** mixes the pairing form into the device list when unpaired. The form is the
+  first thing an unpaired phone needs and should be its own card at the top, not a footer of the
+  list it cannot yet join.
+- **Connection** is diagnostics presented as settings: five label/value rows and a red
+  "Disconnect this phone" text link. Diagnostics can collapse; the destructive action needs a
+  button, not a link.
+
+### A.9 Setup and pairing (captures 107, 109, 111, 124)
+
+The setup screen is clean. Two issues with the state after "Connect read-only": the banner "Not
+paired — pair this device in Settings" is the operator's only cue and it looks like a warning
+strip rather than the next step; and the pairing form it leads to sits mid-list in Settings, so
+the operator scrolls past every other card to find the code field.
+
+### A.10 Updates (capture 91)
+
+The preflight list is honest and useful. The card reads "Running 1.5.1 · Newest 1.8.0 · One update
+folds in 1.5.2, 1.5.3, 1.5.4, 1.5.5, 1.5.6, 1.6.0, 1.7.0, 1.8.0": eight version numbers in a
+sentence when "seven releases behind" would do. The disabled Update button now reads as disabled,
+but nothing says why in one line; the reason is three red rows above it.
+
+### A.11 Cross-cutting
+
+- **Two title fonts.** Aldrich for the app face, the system sans for a handful of strings that
+  arrive from views built in code, so headers and sheet titles do not always match.
+- **Colour carries state without a legend.** Amber dot working, green ready, red blocked, grey
+  idle, plus the same colours reused for banners (amber reconnecting, red unreachable, green
+  connected). Consistent, but never explained anywhere on the phone.
+- **Sheets and drawers coexist.** New Space, Rename, Pane actions, Switcher and Agent commands
+  are bottom sheets with a handle and a title; Keys, Quick and Display are in-composer drawers
+  with a × and a title. Two vocabularies for the same gesture.
+
+### A.12 Order of work, if §4 is approved
+
+1. §4 items 1–3 (transcript body, mirror switching, reflow + status row).
+2. A.3 and A.4: one status vocabulary, notices into the composer band, the compact Keys row.
+3. A.2: collapse the Space header to one strip.
+4. A.1 and A.6: row titles that lead with the space, middle truncation, current-pane marker.
+5. A.8 and A.9: pairing card first when unpaired, drop the empty notifications card, Zen row
+   unconditional, disconnect as a button.
+6. A.5 and A.11: fold Display into the actions sheet, unify sheets and drawers.
