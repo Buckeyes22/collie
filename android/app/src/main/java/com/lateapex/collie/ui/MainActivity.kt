@@ -16,7 +16,6 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.Gravity
 import android.view.ViewGroup
-import android.view.WindowManager
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -100,7 +99,6 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         window.prepareEdgeToEdgeContent()
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
@@ -310,8 +308,14 @@ class MainActivity : AppCompatActivity() {
         headerStatus.text = state.muxName?.let { getString(R.string.header_on, it) }.orEmpty()
         dashboardReadOnlyBanner.isVisible = state.configured && !state.writeAuthorized
         if (dashboardReadOnlyBanner.isVisible) {
+            // Offline is not "unauthorised": until a snapshot has answered, the device's standing is
+            // simply unknown, and the banner must say so rather than accuse the pairing.
             dashboardReadOnlyBanner.setText(
-                if (state.paired) R.string.read_only_device_unauthorised else R.string.read_only_not_paired,
+                when {
+                    !state.paired -> R.string.read_only_not_paired
+                    state.snapshot == null && (state.snapshotFailed || state.error != null) -> R.string.read_only_unreachable
+                    else -> R.string.read_only_device_unauthorised
+                },
             )
             dashboardReadOnlyBanner.setOnClickListener(
                 if (state.paired) null else View.OnClickListener {

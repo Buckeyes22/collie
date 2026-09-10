@@ -66,12 +66,12 @@ class SettingsRoutesTest {
     }
 
     @Test
-    fun updateAndPackSurfacesAreSecureAndExposeTheirPrimaryContent() {
+    fun updateAndPackSurfacesAreCapturableAndExposeTheirPrimaryContent() {
         val updates = Robolectric.buildActivity(UpdatesActivity::class.java).create().get()
         val pack = Robolectric.buildActivity(PackActivity::class.java).create().get()
 
-        assertTrue(updates.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE != 0)
-        assertTrue(pack.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE != 0)
+        assertTrue(updates.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE == 0)
+        assertTrue(pack.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE == 0)
         assertNotNull(updates.findViewById<android.view.View>(R.id.updates_checks))
         assertNotNull(updates.findViewById<android.view.View>(R.id.updates_start_button))
         assertFalse(updates.findViewById<android.view.View>(R.id.updates_start_button).isEnabled)

@@ -7,7 +7,6 @@ import android.text.format.DateUtils
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.view.WindowManager
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -51,7 +50,6 @@ class PackActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         window.prepareEdgeToEdgeContent()
 
         val root = FrameLayout(this).apply { setBackgroundColor(color(R.color.collie_background)) }

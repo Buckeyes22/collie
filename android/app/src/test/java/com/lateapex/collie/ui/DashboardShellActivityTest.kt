@@ -133,4 +133,21 @@ class DashboardShellActivityTest {
         assertEquals(activity.getString(R.string.read_only_not_paired), banner.text.toString())
         assertTrue(banner.isClickable)
     }
+
+    @Test
+    fun unreachableServerReadsAsWaitingNotAsAnUnauthorisedDevice() {
+        val activity = Robolectric.buildActivity(
+            MainActivity::class.java,
+            Intent(ApplicationProvider.getApplicationContext(), MainActivity::class.java),
+        ).create().get()
+        val render = MainActivity::class.java.getDeclaredMethod("render", MainUiState::class.java).apply { isAccessible = true }
+        val banner = activity.findViewById<android.widget.TextView>(R.id.dashboard_read_only_banner)
+
+        render.invoke(activity, MainUiState(configured = true, paired = true, writeAuthorized = false, snapshotFailed = true, error = "Can't reach Collie"))
+        assertEquals(View.VISIBLE, banner.visibility)
+        assertEquals(activity.getString(R.string.read_only_unreachable), banner.text.toString())
+
+        render.invoke(activity, MainUiState(configured = true, paired = true, writeAuthorized = false, snapshot = com.lateapex.collie.network.SnapshotResponse(bridge = "collie", agents = emptyList(), shellPanes = emptyList(), workspaces = emptyList(), tabs = emptyList(), ts = 1L)))
+        assertEquals(activity.getString(R.string.read_only_device_unauthorised), banner.text.toString())
+    }
 }

@@ -33,6 +33,14 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - The CLI integration harness now permits only the public-URL probes required by pairing QR codes.
 
 - Android Type mode preserves modified hardware and IME keys, Keys input survives polling, tapping terminal output opens the soft keyboard, and expanded Keys remain scrollable on small screens.
+- The Android app no longer sets `FLAG_SECURE`; screens and recents thumbnails are capturable again.
+- Android mirror follows the pane text instead of Herdr's always-zero revision, so it no longer freezes after its first paint.
+- Android "Wrap lines" measures the mirror at the viewport width, so long lines wrap instead of clipping past the screen edge.
+- Android Type mode sends keystrokes unbound, so a keystroke echoed between sends is no longer refused as "screen changed" and dropped.
+- Android confirmation notices ("Reply sent.", "Typed into terminal.") clear themselves after four seconds instead of sitting over the mirror.
+- Android "Find in output" focuses its field and raises the keyboard once the pane-actions sheet has released the window.
+- Android Keys drawer sizes "Send keys" and "Clear" by their labels, so neither wraps nor clips at high densities.
+- Android reads "Read-only until Collie answers" while the server is unreachable, instead of "device not authorised".
 
 ## [1.5.1] - 2026-09-04
 

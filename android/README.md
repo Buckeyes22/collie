@@ -165,9 +165,9 @@ recreation; Updates preflight behavior; and Space/tab selection and Back behavio
 tests covering agent artwork, launcher/pane insets, and composer wiring also passed. Neither the S25
 Ultra nor the connected Pixel was addressed during that final pass.
 
-Because every content Activity keeps `FLAG_SECURE`, ordinary emulator screenshots are black. The
-final pass used accessibility/view bounds, direct interaction, and logcat; it does not claim a
-pixel-identical protected screenshot comparison.
+Earlier passes ran with `FLAG_SECURE` set, so their emulator screenshots were black and they used
+accessibility/view bounds, direct interaction, and logcat instead. The flag was removed on
+2026-09-10; `adb exec-out screencap -p` now captures every screen.
 
 Before a distribution claim, finish the unchecked portions of this baseline and record the result
 separately:
@@ -185,8 +185,8 @@ separately:
    update test preserves progress through the bridge restart via the standby route.
 7. Insets work in both gesture and three-button navigation, and TalkBack/font scaling retain usable
    44 dp controls.
-8. Compare fixed web/native screens with an external camera when `FLAG_SECURE` prevents a reliable
-    screenshot. Automated layout assertions are not a substitute for that pending pixel comparison.
+8. Compare fixed web/native screens from `adb` screenshots. Automated layout assertions are not a
+   substitute for that pixel comparison.
 
 Keep the APK identity, signer, checksum, source commit, device/OS build, and acceptance timestamp in
 an operator-controlled record outside Git. Never include bearer tokens, pairing codes, terminal

@@ -37,6 +37,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 data class PaneUiState(
@@ -82,6 +85,13 @@ class PaneViewModel(
         ),
     )
     val state: StateFlow<PaneUiState> = mutableState.asStateFlow()
+    private var transientStatus: String? = null
+
+    /** A confirmation that clears itself after [STATUS_NOTICE_MS]. */
+    private fun confirmation(value: String): String {
+        transientStatus = value
+        return value
+    }
     private var pollingJob: Job? = null
     private val readInFlight = AtomicBoolean(false)
     private val writeInFlight = AtomicBoolean(false)
@@ -92,6 +102,16 @@ class PaneViewModel(
     private var paneRequestedLines = PaneScrollbackWindow.INITIAL_LINES
 
     init {
+        // A confirmation ("Reply sent.", "Typed into terminal.") is a notice, not a state: it used to
+        // sit over the mirror until the next mutation replaced it. Only confirmations expire; the
+        // authorization statuses stay until the fact they report changes.
+        viewModelScope.launch {
+            state.map { it.status }.distinctUntilChanged().collectLatest { status ->
+                if (status == null || status != transientStatus) return@collectLatest
+                delay(STATUS_NOTICE_MS)
+                if (mutableState.value.status == status) mutableState.value = mutableState.value.copy(status = null)
+            }
+        }
         viewModelScope.launch {
             repository.connection.collect { connection ->
                 if (connection != observedConnection) {
@@ -195,7 +215,7 @@ class PaneViewModel(
                     mutableState.value = if (response.ok) {
                         mutableState.value.copy(
                             sending = false,
-                            status = text(R.string.pane_reply_sent),
+                            status = confirmation(text(R.string.pane_reply_sent)),
                             clearReplyDraft = true,
                         )
                     } else if (response.textDelivered) {
@@ -302,7 +322,7 @@ class PaneViewModel(
                     is ApiResult.Success -> mutableState.value = if (result.value.ok) {
                         mutableState.value.copy(
                             sending = false,
-                            status = text(R.string.pane_dialog_sent, verified.label),
+                            status = confirmation(text(R.string.pane_dialog_sent, verified.label)),
                         )
                     } else if (result.value.code == "prompt_changed") {
                         mutableState.value.copy(
@@ -389,7 +409,7 @@ class PaneViewModel(
                 mutableState.value = when (outcome) {
                     SemanticInteractionResult.SENT -> mutableState.value.copy(
                         sending = false,
-                        status = text(R.string.pane_dialog_sent, semanticIntentLabel(intent)),
+                        status = confirmation(text(R.string.pane_dialog_sent, semanticIntentLabel(intent))),
                     )
                     SemanticInteractionResult.CHANGED -> mutableState.value.copy(
                         sending = false,
@@ -470,9 +490,14 @@ class PaneViewModel(
             if (direct) failDirectQueue(directGeneration)
             return
         }
-        val displayedPrompt = PromptBinding.tailRegion(displayed.text) ?: run {
-            if (direct) failDirectQueue(directGeneration)
-            return
+        // Type mode sends unbound, as the web's direct typing does: every keystroke changes the
+        // prompt line, so a tail-region binding refreshed between keystrokes raced Herdr's echo and
+        // refused every second key as "screen changed", dropping it on the floor (S25 Ultra,
+        // 2026-09-10). The tray and the bound prompt actions keep their binding.
+        val displayedPrompt = if (direct) {
+            null
+        } else {
+            PromptBinding.tailRegion(displayed.text) ?: return
         }
         if (!writeInFlight.compareAndSet(false, true)) {
             if (direct) batchBackToFront(keys)
@@ -487,8 +512,11 @@ class PaneViewModel(
                     mutationError = null,
                     status = null,
                 )
-                val expectedPrompt = refreshBinding(displayed, displayedPrompt, PromptBinding::tailRegion)
-                    ?: return@launch
+                val expectedPrompt = if (displayedPrompt == null) {
+                    null
+                } else {
+                    refreshBinding(displayed, displayedPrompt, PromptBinding::tailRegion) ?: return@launch
+                }
                 if (refuseTerminalWrite()) {
                     mutableState.value = mutableState.value.copy(sending = false)
                     return@launch
@@ -498,11 +526,9 @@ class PaneViewModel(
                     directSucceeded = true
                     mutableState.value.copy(
                         sending = false,
-                        status = if (direct) {
-                            text(R.string.pane_typed)
-                        } else {
-                            text(R.string.pane_keys_sent, keys.joinToString(" "))
-                        },
+                        status = confirmation(
+                            if (direct) text(R.string.pane_typed) else text(R.string.pane_keys_sent, keys.joinToString(" ")),
+                        ),
                     )
                 } else if (result.value.code == "prompt_changed") {
                     mutableState.value.copy(
@@ -863,6 +889,7 @@ class PaneViewModel(
         getApplication<Application>().getString(resource, *args)
 
     companion object {
+        const val STATUS_NOTICE_MS = 4_000L
         const val MAX_DIRECT_KEY_BATCH = 64
         const val MAX_DIRECT_KEYS_PENDING = 8_192
         const val MAX_REVIEWED_KEY_BATCH = 128

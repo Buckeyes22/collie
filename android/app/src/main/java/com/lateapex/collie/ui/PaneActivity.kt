@@ -20,7 +20,6 @@ import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.view.ViewTreeObserver
 import android.view.VelocityTracker
-import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.text.InputFilter
@@ -119,6 +118,11 @@ class PaneActivity : AppCompatActivity() {
     private var terminalRenderJob: Job? = null
     private var terminalRenderGeneration = 0L
     private var pendingTerminalRevision: Long? = null
+    // Herdr 0.7.x reports revision 0 for every pane (HERDR_API.md), so revision alone can never
+    // tell a changed grid from a repeated one. The rendered/pending TEXT is the change key; the
+    // revision rides along for the semantic guards that already compare both.
+    private var pendingTerminalText: String? = null
+    private var pendingKeyboardFocus: View? = null
     private var findMatches = emptyList<OutputFind.Match>()
     private var findCursor = -1
     private var renderedTerminalBlocks = emptyList<RenderedTerminalBlock>()
@@ -194,7 +198,6 @@ class PaneActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         window.prepareEdgeToEdgeContent()
         binding = ActivityPaneBinding.inflate(layoutInflater)
         setContentView(binding.root)
@@ -804,7 +807,14 @@ class PaneActivity : AppCompatActivity() {
                 renderKeyQueue()
                 if (keys.isNotEmpty()) viewModel.sendKeySequence(keys)
             }
-            queueActions.addView(this, LinearLayout.LayoutParams(dp(92), dp(44)).apply { marginEnd = dp(4) })
+            // Sized by the label, never by a fixed dp: at the S25 Ultra's density "Send keys" wrapped
+            // to two rows and "Clear" clipped to "Cl" inside fixed 92/68 dp boxes.
+            isSingleLine = true
+            minimumWidth = dp(92)
+            queueActions.addView(
+                this,
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)).apply { marginEnd = dp(4) },
+            )
         }
         outlinedButton(getString(R.string.pane_key_clear)).apply {
             id = R.id.pane_keys_queue_clear
@@ -815,7 +825,9 @@ class PaneActivity : AppCompatActivity() {
                 renderKeyQueue()
             }
             tag = KEY_QUEUE_CLEAR_TAG
-            queueActions.addView(this, LinearLayout.LayoutParams(dp(68), dp(44)))
+            isSingleLine = true
+            minimumWidth = dp(68)
+            queueActions.addView(this, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)))
         }
         queuePanel.addView(queueActions, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)))
         container.addView(
@@ -1399,7 +1411,9 @@ class PaneActivity : AppCompatActivity() {
         state.pane?.let { pane ->
             latestRawText = pane.text
             latestRevision = pane.revision
-            val renderedOrPending = renderedRevision == pane.revision || pendingTerminalRevision == pane.revision
+            val renderedOrPending =
+                (renderedRevision == pane.revision && lastRawText == pane.text) ||
+                    (pendingTerminalRevision == pane.revision && pendingTerminalText == pane.text)
             val changed = !renderedOrPending
             val grownTarget = pendingScrollbackTarget
             if (grownTarget != null && state.loadedLines >= grownTarget) {
@@ -1489,8 +1503,9 @@ class PaneActivity : AppCompatActivity() {
         scrollToBottom: Boolean,
         afterRender: (() -> Unit)? = null,
     ) {
-        if (pendingTerminalRevision == revision) return
+        if (pendingTerminalRevision == revision && pendingTerminalText == text) return
         pendingTerminalRevision = revision
+        pendingTerminalText = text
         val generation = ++terminalRenderGeneration
         val lightTheme = isLightTheme()
         val rawMode = displayPreferences.getBoolean(PREF_RAW, false)
@@ -1524,7 +1539,11 @@ class PaneActivity : AppCompatActivity() {
                     textMetrics,
                 )
             }
-            if (generation != terminalRenderGeneration || pendingTerminalRevision != revision) return@launch
+            if (generation != terminalRenderGeneration || pendingTerminalRevision != revision ||
+                pendingTerminalText != text
+            ) {
+                return@launch
+            }
             commitTerminalRender(text, revision, prepared, scrollToBottom, afterRender)
         }
     }
@@ -1537,6 +1556,7 @@ class PaneActivity : AppCompatActivity() {
         afterRender: (() -> Unit)?,
     ) {
         pendingTerminalRevision = null
+        pendingTerminalText = null
         lastRawText = text
         renderedRevision = revision
         renderedTerminalText = prepared
@@ -3080,9 +3100,32 @@ class PaneActivity : AppCompatActivity() {
         paneHeader.isVisible = false
         findBar.isVisible = true
         applyFindHighlights(resetCursor = true)
-        findQuery.requestFocus()
-        (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager)
-            .showSoftInput(findQuery, InputMethodManager.SHOW_IMPLICIT)
+        focusWithKeyboard(findQuery)
+    }
+
+    /**
+     * Focus a field and raise the keyboard once this window can take it. "Find in output" is
+     * chosen on the pane-actions sheet, whose window still holds focus while it dismisses, so a
+     * direct showSoftInput there left the field unfocused and the keyboard closed (S25 Ultra,
+     * 2026-09-10). The request waits for the activity window to regain focus when it must.
+     */
+    private fun focusWithKeyboard(view: View) {
+        pendingKeyboardFocus = null
+        view.requestFocus()
+        if (hasWindowFocus()) {
+            WindowCompat.getInsetsController(window, view).show(WindowInsetsCompat.Type.ime())
+        } else {
+            pendingKeyboardFocus = view
+        }
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (!hasFocus) return
+        val view = pendingKeyboardFocus ?: return
+        pendingKeyboardFocus = null
+        view.requestFocus()
+        WindowCompat.getInsetsController(window, view).show(WindowInsetsCompat.Type.ime())
     }
 
     private fun closeFind() = with(binding) {

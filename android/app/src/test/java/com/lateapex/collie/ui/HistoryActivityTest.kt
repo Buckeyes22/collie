@@ -38,7 +38,7 @@ class HistoryActivityTest {
         ).create().get()
 
         assertTrue(activity.isFinishing)
-        assertTrue(activity.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE != 0)
+        assertTrue(activity.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE == 0)
     }
 
     @Test

@@ -58,7 +58,7 @@ class SettingsActivityTest {
         shadowOf(activity.mainLooper).idle()
 
         assertTrue(
-            activity.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE != 0,
+            activity.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE == 0,
         )
         assertTrue(activity.findViewById<ScrollView>(R.id.settings_scroll).isVerticalScrollBarEnabled)
         assertEquals(

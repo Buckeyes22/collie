@@ -17,7 +17,6 @@ import android.util.AttributeSet
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.view.WindowManager
 import android.view.inputmethod.InputMethodManager
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
@@ -76,7 +75,6 @@ class HistoryActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         window.prepareEdgeToEdgeContent()
         binding = ActivityHistoryBinding.inflate(layoutInflater)
         setContentView(binding.root)

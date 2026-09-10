@@ -322,9 +322,8 @@ falls through to `/standby/update` during a bridge restart without erasing visib
 - All API redirects are rejected before a credential could cross origins.
 - TLS uses the platform trust store and hostname verification without bypasses or user-installed
   trust-all managers.
-- `FLAG_SECURE` protects screens that display terminal content or pairing credentials from ordinary
-  screenshots and recent-app previews. A user-visible setting may relax only terminal screenshots,
-  never the pairing-code/token screen.
+- No `FLAG_SECURE`. The operator unlocks their own phone, so screens and recents thumbnails stay
+  capturable; the flag was removed on 2026-09-10 at the operator's request.
 - Treat every terminal write as remote shell control. Structural mutations are capability-gated,
   require a paired bearer plus current or retained snapshot device authorization, never retry an
   ambiguous response, and require UI confirmation where destructive.
@@ -466,8 +465,8 @@ this final pass.
       were intentionally excluded from this retained-session run.
 - [x] Logcat contained no Collie fatal exception or ANR during the final route pass.
 
-`FLAG_SECURE` correctly makes ordinary emulator screenshots black. Final visual evidence therefore
-uses view/accessibility bounds and behavioral interaction, not a claim of pixel-identical captured
+At the time `FLAG_SECURE` made ordinary emulator screenshots black, so that visual evidence
+used view/accessibility bounds and behavioral interaction, not a claim of pixel-identical captured
 bitmaps. External-camera comparison on a physical device remains a distribution acceptance item.
 
 ### Source-parity remediation — implemented and integrated 2026-09-05
@@ -564,10 +563,7 @@ gate passed 389 JVM/Robolectric tests, Android lint, debug and instrumentation A
   colors, system-bar containment, terminal density, and composer height.
 - Test the dashboard and pane at 360 dp and 390 dp widths, with three-button and gesture navigation,
   with the keyboard open, and after rotation/background-resume.
-- Keep release screenshots protected by `FLAG_SECURE`; any debug-only screenshot exception used for
-  local comparison must be removed before the final APK is installed.
-- Compare the final secure build with an external camera when `FLAG_SECURE` prevents trustworthy
-  on-device capture. That pixel comparison is pending external evidence and must not be inferred
+- Compare the final build against the web references from `adb` screenshots. That pixel comparison is pending external evidence and must not be inferred
   from layout/resource tests.
 
 ### Phase 2 — route, interaction, and grammar parity — implemented
@@ -654,7 +650,7 @@ Implemented source requirements:
 - [x] `android/` is Kotlin/native Android with no TWA, WebView, Custom Tab, Capacitor, or browser
       helper runtime.
 - [x] HTTPS-only origin validation, redirect refusal, Android Keystore bearer encryption, backup
-      exclusion, `FLAG_SECURE`, and a minimal exported/permission surface are encoded and checked.
+      exclusion, and a minimal exported/permission surface are encoded and checked.
 - [x] Dashboard, Space, pane, history, Settings, Pack, and Updates routes have native dispositions.
 - [x] Pane content supports semantic agent adapters plus an explicit raw-terminal disposition;
       prompt-bound text and key writes fail closed when required evidence changes.
@@ -692,7 +688,7 @@ Verification status through 2026-09-05:
   pairing, destructive actions, terminal writes, STT, accessibility/font scaling, and alternate
   navigation mode are not claimed by this pass.
 - Screenshot/layout tests do not establish pixel identity. External-camera comparison of the final
-  `FLAG_SECURE` build against fixed web references remains pending.
+  build against fixed web references remains pending; screenshots capture normally since 2026-09-10.
 - The 2026-09-04 API 36 emulator pass above verified the live dashboard, OpenCode pane, header-takeover
   Find, canonical pull-up sheets, 60-entry History opening, Settings/Updates, Space tab behavior,
   cold-relaunch connection persistence, dark-theme recreation, and system-bar containment. It used
@@ -725,7 +721,7 @@ Verification status through 2026-09-05:
 | Risk | Control |
 | --- | --- |
 | Native behavior drifts from the web client | Mirror bridge wire models, API contract tests, tolerant additions/strict required fields |
-| Credential leaks through logs/state/backups | Keystore envelope, no body logger, `FLAG_SECURE`, backup disabled, tests and manifest audit |
+| Credential leaks through logs/state/backups | Keystore envelope, no body logger, backup disabled, tests and manifest audit |
 | Redirect sends bearer off-origin | Disable redirects at OkHttp client and classify 3xx before retry |
 | Duplicate terminal text after timeout | No automatic mutation retry; honor `textDelivered`; explicit operator retry only |
 | Host/session pane IDs collide or line windows reuse the wrong body | Scope every route by `(host, session, paneId)` and conditional pane bodies additionally by requested lines |

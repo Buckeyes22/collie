@@ -11,7 +11,6 @@ import android.text.InputType
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.view.WindowManager
 import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
@@ -83,7 +82,6 @@ class SpaceActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         window.prepareEdgeToEdgeContent()
         binding = ActivitySpaceBinding.inflate(layoutInflater)
         setContentView(binding.root)
@@ -151,7 +149,11 @@ class SpaceActivity : AppCompatActivity() {
         spaceReadOnlyBanner.isVisible = !state.writeAuthorized && (content != null || !state.loading)
         if (spaceReadOnlyBanner.isVisible) {
             spaceReadOnlyBanner.setText(
-                if (state.paired) R.string.read_only_device_unauthorised else R.string.read_only_not_paired,
+                when {
+                    !state.paired -> R.string.read_only_not_paired
+                    content == null && state.error != null -> R.string.read_only_unreachable
+                    else -> R.string.read_only_device_unauthorised
+                },
             )
             spaceReadOnlyBanner.setOnClickListener(
                 if (state.paired) null else View.OnClickListener {

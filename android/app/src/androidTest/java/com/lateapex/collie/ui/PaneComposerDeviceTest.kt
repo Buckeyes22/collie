@@ -22,7 +22,7 @@ class PaneComposerDeviceTest {
 
         ActivityScenario.launch<PaneActivity>(intent).use { scenario ->
             scenario.onActivity { activity ->
-                assertTrue(activity.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE != 0)
+                assertTrue(activity.window.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE == 0)
                 listOf(
                     R.id.keys_mode_button,
                     R.id.type_mode_button,

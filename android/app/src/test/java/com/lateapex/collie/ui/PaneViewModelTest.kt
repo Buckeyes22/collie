@@ -31,13 +31,16 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -179,6 +182,48 @@ class PaneViewModelTest {
 
         assertEquals(listOf("h", "i", "Space", "👋"), fixture.api.lastKeys)
         assertFalse(fixture.api.lastKeys.contains("Enter"))
+    }
+
+    @Test
+    fun aConfirmationNoticeClearsItselfInsteadOfSittingOverTheMirror() = runTest(dispatcher) {
+        val fixture = fixture(ApiResult.Success(ActionResponse(ok = true), 200))
+        fixture.viewModel.refresh()
+        advanceUntilIdle()
+
+        fixture.viewModel.beginDirectTyping()
+        fixture.viewModel.sendDirectKeys(listOf("a"))
+        advanceTimeBy(PaneViewModel.STATUS_NOTICE_MS / 2)
+        runCurrent()
+        assertEquals(text(com.lateapex.collie.R.string.pane_typed), fixture.viewModel.state.value.status)
+
+        advanceTimeBy(PaneViewModel.STATUS_NOTICE_MS)
+        runCurrent()
+        assertNull(fixture.viewModel.state.value.status)
+    }
+
+    @Test
+    fun directTypingIsUnboundSoAnEchoLandingBetweenKeystrokesDropsNothing() = runTest(dispatcher) {
+        // Herdr echoes each key onto the prompt line after the post-send read: with a tail-region
+        // binding every second key was refused as "screen changed" on the S25 Ultra (2026-09-10).
+        val fixture = fixture(ApiResult.Success(ActionResponse(ok = true), 200))
+        fixture.viewModel.refresh()
+        advanceUntilIdle()
+        fixture.api.keysHook = { keys ->
+            val typed = keys.joinToString("") { if (it == "Space") " " else it }
+            fixture.api.pane = fixture.api.pane.copy(text = fixture.api.pane.text + typed)
+        }
+
+        fixture.viewModel.beginDirectTyping()
+        fixture.viewModel.sendDirectKeys(listOf("x"))
+        advanceUntilIdle()
+        fixture.viewModel.sendDirectKeys(listOf("y"))
+        advanceUntilIdle()
+        fixture.viewModel.sendDirectKeys(listOf("Space"))
+        advanceUntilIdle()
+
+        assertEquals(listOf(listOf("x"), listOf("y"), listOf("Space")), fixture.api.keysCalls)
+        assertNull(fixture.api.lastExpectedPrompt)
+        assertNull(fixture.viewModel.state.value.mutationError)
     }
 
     @Test

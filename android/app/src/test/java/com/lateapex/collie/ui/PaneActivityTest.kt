@@ -757,6 +757,23 @@ class PaneActivityTest {
     }
 
     @Test
+    fun mirrorFollowsChangedTextWhenHerdrRepeatsRevisionZero() {
+        // Herdr 0.7.x stubs `revision` to 0 on every read (HERDR_API.md); only the text can key change.
+        val activity = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("rev0:pane")).create().get()
+        val render = PaneActivity::class.java.getDeclaredMethod("render", PaneUiState::class.java).apply { isAccessible = true }
+        val mirror = activity.findViewById<TextView>(R.id.terminal_text)
+
+        render.invoke(activity, PaneUiState(pane = PaneReadResponse("rev0:pane", "~\n❯ ", false, 0), loading = false))
+        assertTrue(mirror.text.toString().contains("❯"))
+
+        render.invoke(activity, PaneUiState(pane = PaneReadResponse("rev0:pane", "~\n❯ echo hi\nhi\n❯ ", false, 0), loading = false))
+        assertTrue(mirror.text.toString().contains("echo hi"))
+
+        render.invoke(activity, PaneUiState(pane = PaneReadResponse("rev0:pane", "", false, 0), loading = false))
+        assertEquals("", mirror.text.toString())
+    }
+
+    @Test
     fun microphoneOwnsThePrimaryActionOnlyWhileTheDraftIsEmpty() {
         val activity = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("mic:pane")).create().get()
         PaneActivity::class.java.getDeclaredField("speechAvailability").apply {

@@ -7,7 +7,6 @@ import android.graphics.Rect
 import android.os.Bundle
 import android.os.Vibrator
 import android.view.View
-import android.view.WindowManager
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
@@ -54,7 +53,6 @@ class SettingsActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         window.prepareEdgeToEdgeContent()
         binding = ActivitySettingsBinding.inflate(layoutInflater)
         setContentView(binding.root)
