@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item name="updates_native_peers" type="id" />
+    <item name="updates_native_preflight_toggle" type="id" />
+    <item name="updates_native_run_status" type="id" />
+    <item name="updates_native_recovery" type="id" />
+    <item name="updates_native_log_toggle" type="id" />
+    <item name="updates_native_log_tail" type="id" />
+    <item name="updates_native_retry_button" type="id" />
+    <item name="updates_native_major_button" type="id" />
+    <item name="updates_native_error" type="id" />
+    <item name="updates_native_standard_actions" type="id" />
+    <item name="updates_native_confirmation" type="id" />
+    <item name="updates_native_confirmation_title" type="id" />
+    <item name="updates_native_confirmation_body" type="id" />
+    <item name="updates_native_confirmation_confirm" type="id" />
+    <item name="updates_native_confirmation_cancel" type="id" />
+
+    <string name="updates_native_refresh_symbol" translatable="false">↻</string>
+    <string name="updates_native_update_symbol" translatable="false">↑</string>
+    <string name="updates_native_back">Back</string>
+    <string name="updates_native_check_title">Updates</string>
+    <string name="updates_native_check_prompt">Check whether a new Collie version is available.</string>
+    <string name="updates_native_check_running">Running v%1$s</string>
+    <string name="updates_native_check_running_checked">Running v%1$s · checked %2$s</string>
+    <string name="updates_native_check_error">Couldn’t check.</string>
+    <string name="updates_native_card_title">Update Collie</string>
+    <string name="updates_native_nothing_to_do">Up to date. Nothing to do.</string>
+    <string name="updates_native_running">Running %1$s</string>
+    <string name="updates_native_newest_suffix">\u0020· Newest %1$s</string>
+    <string name="updates_native_unknown_version">an unknown version</string>
+    <string name="updates_native_latest_unknown">The newest release isn’t known yet.</string>
+    <string name="updates_native_includes">One update folds in %1$s.</string>
+    <string name="updates_native_restart_required">Bridge restart needed.</string>
+    <string name="updates_native_as_of">checked %1$s</string>
+    <string name="updates_native_peer_unknown_reason">we could not check this machine</string>
+    <string name="updates_native_details">Details</string>
+    <string name="updates_native_details_show">Details · %1$s ⌄</string>
+    <string name="updates_native_details_hide">Details · %1$s ⌃</string>
+    <string name="updates_native_details_show_accessibility">Show preflight details, %1$s</string>
+    <string name="updates_native_details_hide_accessibility">Hide preflight details, %1$s</string>
+    <string name="updates_native_preflight_line">%1$s  %2$s</string>
+    <string name="updates_native_remedy">Fix: %1$s</string>
+    <plurals name="updates_native_summary_checks">
+        <item quantity="one">%1$d check</item>
+        <item quantity="other">%1$d checks</item>
+    </plurals>
+    <plurals name="updates_native_summary_red">
+        <item quantity="one">%1$d red</item>
+        <item quantity="other">%1$d red</item>
+    </plurals>
+    <plurals name="updates_native_summary_amber">
+        <item quantity="one">%1$d amber</item>
+        <item quantity="other">%1$d amber</item>
+    </plurals>
+    <string name="updates_native_summary_red_amber">%1$d red · %2$d amber</string>
+    <string name="updates_native_progress_note">Keep this screen open. Your terminal session is untouched.</string>
+    <string name="updates_native_log_show">Show log tail</string>
+    <string name="updates_native_log_hide">Hide log tail</string>
+    <string name="updates_native_retry">Retry</string>
+    <string name="updates_native_action">Update to %1$s</string>
+    <string name="updates_native_action_pack">Update pack to %1$s</string>
+    <string name="updates_native_retry_pack">Retry pack update</string>
+    <string name="updates_native_major_placeholder">Major server update</string>
+    <string name="updates_native_major_action">Cross to %1$s</string>
+    <string name="updates_native_starting">Starting…</string>
+    <string name="updates_native_dismiss">Remind me next digest</string>
+    <string name="updates_native_dismissed">Dismissed until the next digest.</string>
+    <string name="updates_native_major_note">%1$s is a new major.</string>
+    <string name="updates_native_confirm_title">Update to %1$s?</string>
+    <string name="updates_native_confirm_body">Your terminal session stays alive. The phone view drops for up to 30 seconds.</string>
+    <string name="updates_native_confirm_action">Yes, update</string>
+    <string name="updates_native_pack_confirm_title">Update the pack to %1$s?</string>
+    <string name="updates_native_pack_confirm_body">This machine goes first. Each peer then levels itself to the same release, checks its own health and rolls back on its own if it fails.</string>
+    <string name="updates_native_pack_confirm_action">Yes, update the pack</string>
+    <string name="updates_native_retry_pack_confirm_title">Retry the pack update?</string>
+    <string name="updates_native_retry_pack_confirm_body">This machine is already current, so only the peers run. Each one gets one more attempt.</string>
+    <string name="updates_native_retry_pack_confirm_action">Yes, retry</string>
+    <string name="updates_native_major_confirm_title">Cross the major to %1$s?</string>
+    <string name="updates_native_major_confirm_body">%1$s is a new major, so it is consented to on its own and never folded into a routine update. Read its release notes first. Your terminal session stays alive. The phone view drops for up to 30 seconds.</string>
+    <string name="updates_native_major_confirm_action">Yes, cross to %1$s</string>
+
+    <string name="updates_native_state_preflight">Checking this machine…</string>
+    <string name="updates_native_state_staging">Staging %1$s…</string>
+    <string name="updates_native_state_restarting">Restarting. This is not an outage.</string>
+    <string name="updates_native_state_verifying">Verifying the new build…</string>
+    <string name="updates_native_state_done">Updated to %1$s.</string>
+    <string name="updates_native_state_rolled_back">Rolled back. This machine is still on %1$s.</string>
+    <string name="updates_native_state_stuck">The update is stuck. Run this in a terminal:</string>
+    <string name="updates_native_state_interrupted">The update stopped before it finished. Nothing was left half-installed.</string>
+    <string name="updates_native_state_idle">No update is running.</string>
+
+    <string name="updates_native_peer_green">ready</string>
+    <string name="updates_native_peer_amber">warnings</string>
+    <string name="updates_native_peer_red">red</string>
+    <string name="updates_native_peer_unknown">unknown</string>
+    <string name="updates_native_peer_waiting">waiting</string>
+    <string name="updates_native_peer_updating">updating</string>
+    <string name="updates_native_peer_unreachable">unreachable</string>
+    <string name="updates_native_peer_preflight">checking</string>
+    <string name="updates_native_peer_staging">staging</string>
+    <string name="updates_native_peer_restarting">restarting</string>
+    <string name="updates_native_peer_verifying">verifying</string>
+    <string name="updates_native_peer_done">updated</string>
+    <string name="updates_native_peer_rolled_back">rolled back</string>
+    <string name="updates_native_peer_stuck">stuck</string>
+    <string name="updates_native_peer_interrupted">stopped</string>
+    <string name="updates_native_peer_idle">waiting</string>
+</resources>

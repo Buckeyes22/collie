@@ -8,11 +8,11 @@ describe("displayWidth", () => {
   });
 
   it("counts CJK ideographs/kana as two columns each", () => {
-    expect(displayWidth("日本語")).toBe(6);
+    expect(displayWidth("\u65e5\u672c\u8a9e")).toBe(6);
   });
 
   it("sums mixed ASCII + CJK correctly", () => {
-    expect(displayWidth("ab日本")).toBe(2 + 4);
+    expect(displayWidth("ab\u65e5\u672c")).toBe(2 + 4);
   });
 
   it("counts a combining mark as zero width (rides on its base)", () => {

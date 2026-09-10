@@ -35,12 +35,12 @@ import { cn } from "@/lib/utils";
 //
 // Shape follows the cards already in Settings rather than inventing a third one: the
 // icon/title/description header every row here shares, then the controls in their own band under a
-// `border-border` divider (ThemeControl), with the family on a native <select> for exactly the reason
-// LanguageControl gives — seven stacked 44px radios would make this the tallest card on the page for
-// a set-once preference, and the platform's own picker is better than one we could draw.
+// `border-border` divider (ThemeControl), with the family on a native <select>: seven stacked 44px
+// radios would make this the tallest card on the page for a set-once preference, and the platform's
+// own picker is better than one we could draw.
 //
 // The family names are PROPER NOUNS and are not translated; only "System default" is a phrase, and
-// only it has a message key. A font is named the same in every locale.
+// only it has a message key.
 
 const FAMILY_LABELS = {
   jetbrains: "JetBrains Mono",
@@ -81,7 +81,7 @@ export function FontSettingsControl() {
           <label htmlFor="pref-font-family" className="text-sm font-medium">
             {t("settings.fonts.family")}
           </label>
-          {/* Same construction as LanguageControl's select, for the same reasons: the wrapper owns
+          {/* The wrapper owns
               the border and the chevron, `appearance-none` removes the engine's own caret, and the
               box is `shrink-0` so a long family name never resizes the row. */}
           <div className="relative shrink-0">

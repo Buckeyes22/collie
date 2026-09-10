@@ -1,0 +1,347 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/collie_background">
+
+    <com.lateapex.collie.ui.CollieMaxWidthLinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_gravity="top|center_horizontal"
+        android:orientation="vertical">
+
+    <LinearLayout
+        android:id="@+id/settings_header"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:minHeight="@dimen/collie_header_height"
+        android:orientation="horizontal"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp">
+
+        <androidx.appcompat.widget.AppCompatImageButton
+            android:id="@+id/settings_back_button"
+            style="@style/Widget.Collie.Header.IconButton"
+            android:contentDescription="@string/settings_back"
+            android:padding="12dp"
+            android:src="@drawable/ic_collie_back"
+            app:tint="@color/collie_foreground" />
+
+        <com.lateapex.collie.ui.CollieHeadingTextView
+            android:id="@+id/settings_header_title"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:layout_weight="1"
+            android:text="@string/settings_title"
+            android:textAppearance="@style/TextAppearance.Collie.ScreenTitle"
+            android:textColor="@color/collie_foreground"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/collie_stroke"
+        android:background="@color/collie_rule" />
+
+    <ScrollView
+        android:id="@+id/settings_scroll"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:fillViewport="true">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingHorizontal="@dimen/collie_page_gutter"
+            android:paddingTop="16dp"
+            android:paddingBottom="24dp">
+
+            <LinearLayout
+                android:id="@+id/settings_theme_card"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_pane_card"
+                android:orientation="vertical">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="top"
+                    android:orientation="horizontal"
+                    android:padding="16dp">
+
+                    <androidx.appcompat.widget.AppCompatImageView
+                        android:id="@+id/settings_theme_icon"
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:layout_marginEnd="12dp"
+                        android:importantForAccessibility="no"
+                        android:src="@drawable/ic_settings"
+                        app:tint="@color/collie_muted" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <com.lateapex.collie.ui.CollieHeadingTextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/settings_appearance_title"
+                            android:textColor="@color/collie_foreground"
+                            android:textSize="16sp" />
+
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="@string/settings_appearance_description"
+                            android:textColor="@color/collie_muted"
+                            android:textSize="14sp" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/collie_stroke"
+                    android:background="@color/collie_border" />
+
+                <com.google.android.material.button.MaterialButtonToggleGroup
+                    android:id="@+id/theme_toggle"
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/collie_touch_target"
+                    android:layout_margin="8dp"
+                    app:selectionRequired="true"
+                    app:singleSelection="true">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/theme_system_button"
+                        style="@style/Widget.Collie.Button.Outlined"
+                        android:layout_width="0dp"
+                        android:layout_height="@dimen/collie_touch_target"
+                        android:layout_weight="1"
+                        android:text="@string/settings_theme_system" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/theme_light_button"
+                        style="@style/Widget.Collie.Button.Outlined"
+                        android:layout_width="0dp"
+                        android:layout_height="@dimen/collie_touch_target"
+                        android:layout_weight="1"
+                        android:text="@string/settings_theme_light" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/theme_dark_button"
+                        style="@style/Widget.Collie.Button.Outlined"
+                        android:layout_width="0dp"
+                        android:layout_height="@dimen/collie_touch_target"
+                        android:layout_weight="1"
+                        android:text="@string/settings_theme_dark" />
+                </com.google.android.material.button.MaterialButtonToggleGroup>
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/settings_local_preferences"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+
+            <LinearLayout
+                android:id="@+id/settings_haptics_card"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/collie_card_gap"
+                android:background="@drawable/bg_pane_card"
+                android:gravity="center_vertical"
+                android:minHeight="72dp"
+                android:orientation="horizontal"
+                android:padding="16dp">
+
+                <androidx.appcompat.widget.AppCompatImageView
+                    android:id="@+id/settings_haptics_icon"
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:layout_marginEnd="12dp"
+                    android:importantForAccessibility="no"
+                    android:src="@drawable/ic_composer_quick"
+                    app:tint="@color/collie_muted" />
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <com.lateapex.collie.ui.CollieHeadingTextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/settings_haptics_title"
+                        android:textColor="@color/collie_foreground"
+                        android:textSize="16sp" />
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="@string/settings_haptics_description"
+                        android:textColor="@color/collie_muted"
+                        android:textSize="14sp" />
+                </LinearLayout>
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/haptics_switch"
+                    android:layout_width="wrap_content"
+                    android:layout_height="@dimen/collie_touch_target"
+                    android:contentDescription="@string/settings_haptics_title" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/settings_behavior_preferences"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+
+            <LinearLayout
+                android:id="@+id/settings_server_controls"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+
+            <LinearLayout
+                android:id="@+id/settings_connection_card"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/collie_card_gap"
+                android:background="@drawable/bg_pane_card"
+                android:orientation="vertical"
+                android:paddingTop="16dp">
+
+                <LinearLayout
+                    android:id="@+id/settings_connection_header"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="top"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="16dp"
+                    android:paddingBottom="12dp">
+
+                    <androidx.appcompat.widget.AppCompatImageView
+                        android:id="@+id/settings_connection_icon"
+                        android:layout_width="20dp"
+                        android:layout_height="20dp"
+                        android:layout_marginEnd="12dp"
+                        android:importantForAccessibility="no"
+                        android:src="@drawable/ic_dashboard_plug"
+                        app:tint="@color/collie_muted" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <com.lateapex.collie.ui.CollieHeadingTextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/settings_connection_title"
+                            android:textColor="@color/collie_foreground"
+                            android:textSize="16sp" />
+
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:text="@string/settings_connection_description"
+                            android:textColor="@color/collie_muted"
+                            android:textSize="14sp" />
+                    </LinearLayout>
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/collie_stroke"
+                    android:background="@color/collie_border" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="@dimen/collie_touch_target"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="16dp"
+                    android:paddingVertical="8dp">
+                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/settings_parity_endpoint" android:textColor="@color/collie_muted" android:textSize="13sp" />
+                    <TextView android:id="@+id/connection_origin_value" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_marginStart="16dp" android:layout_weight="1" android:ellipsize="middle" android:fontFamily="monospace" android:gravity="end" android:maxLines="1" android:textColor="@color/collie_foreground" android:textSize="12sp" />
+                </LinearLayout>
+
+                <View android:layout_width="match_parent" android:layout_height="@dimen/collie_stroke" android:background="@color/collie_border" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="@dimen/collie_touch_target"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="16dp"
+                    android:paddingVertical="8dp">
+                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/settings_parity_secure" android:textColor="@color/collie_muted" android:textSize="13sp" />
+                    <TextView android:id="@+id/connection_label_value" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_marginStart="16dp" android:layout_weight="1" android:ellipsize="end" android:gravity="end" android:maxLines="1" android:textColor="@color/collie_foreground" android:textSize="13sp" />
+                </LinearLayout>
+
+                <View android:layout_width="match_parent" android:layout_height="@dimen/collie_stroke" android:background="@color/collie_border" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="@dimen/collie_touch_target"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="16dp"
+                    android:paddingVertical="8dp">
+                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/settings_parity_bridge" android:textColor="@color/collie_muted" android:textSize="13sp" />
+                    <TextView android:id="@+id/settings_connection_bridge_value" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_marginStart="16dp" android:layout_weight="1" android:gravity="end" android:textColor="@color/collie_muted" android:textSize="13sp" />
+                </LinearLayout>
+
+                <View android:layout_width="match_parent" android:layout_height="@dimen/collie_stroke" android:background="@color/collie_border" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:minHeight="@dimen/collie_touch_target"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="16dp"
+                    android:paddingVertical="8dp">
+                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/settings_parity_device_access" android:textColor="@color/collie_muted" android:textSize="13sp" />
+                    <TextView android:id="@+id/connection_access_value" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_marginStart="16dp" android:layout_weight="1" android:gravity="end" android:textColor="@color/collie_foreground" android:textSize="13sp" />
+                </LinearLayout>
+
+                <View android:layout_width="match_parent" android:layout_height="@dimen/collie_stroke" android:background="@color/collie_border" />
+                <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="@dimen/collie_touch_target" android:gravity="center_vertical" android:orientation="horizontal" android:paddingHorizontal="16dp" android:paddingVertical="8dp">
+                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/settings_parity_server_build" android:textColor="@color/collie_muted" android:textSize="13sp" />
+                    <TextView android:id="@+id/server_version_value" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_marginStart="16dp" android:layout_weight="1" android:fontFamily="monospace" android:gravity="end" android:textColor="@color/collie_foreground" android:textSize="12sp" />
+                </LinearLayout>
+
+                <View android:layout_width="match_parent" android:layout_height="@dimen/collie_stroke" android:background="@color/collie_border" />
+                <TextView android:id="@+id/settings_error" android:layout_width="match_parent" android:layout_height="wrap_content" android:paddingHorizontal="16dp" android:paddingTop="8dp" android:accessibilityLiveRegion="polite" android:textColor="@color/collie_error" android:textSize="12sp" android:visibility="gone" />
+                <com.google.android.material.button.MaterialButton android:id="@+id/disconnect_button" style="@style/Widget.Collie.Button.Borderless" android:layout_width="wrap_content" android:layout_height="@dimen/collie_touch_target" android:layout_marginHorizontal="8dp" android:layout_marginTop="4dp" android:text="@string/settings_disconnect" android:textColor="@color/collie_destructive" />
+                <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:paddingHorizontal="16dp" android:paddingBottom="12dp" android:text="@string/settings_disconnect_note" android:textColor="@color/collie_muted" android:textSize="11sp" />
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/settings_build_stamp"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="20dp"
+                android:fontFamily="monospace"
+                android:gravity="center"
+                android:textColor="@color/collie_muted"
+                android:textSize="11sp" />
+        </LinearLayout>
+    </ScrollView>
+    </com.lateapex.collie.ui.CollieMaxWidthLinearLayout>
+</FrameLayout>

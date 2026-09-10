@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="pane_direct_stop">Stop direct terminal typing</string>
+    <string name="pane_pending_sent">You sent: %1$s</string>
+</resources>

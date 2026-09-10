@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="semantic_choose_option" translatable="false">Choose an option</string>
+    <string name="semantic_selected" translatable="false">Selected</string>
+    <string name="semantic_current_preview" translatable="false">Preview: %1$s</string>
+    <string name="semantic_add_note" translatable="false">Add note</string>
+    <string name="semantic_edit_note" translatable="false">Edit note</string>
+    <string name="semantic_remove_note" translatable="false">Remove note</string>
+    <string name="semantic_note_title" translatable="false">Note for this question</string>
+    <string name="semantic_feedback_title" translatable="false">Tell Claude what to change</string>
+    <string name="semantic_feedback_offer" translatable="false">Suggest changes to this plan</string>
+    <string name="semantic_feedback_focused" translatable="false">The terminal is editing feedback. Controls are locked.</string>
+    <string name="semantic_note_focused" translatable="false">The terminal is editing this note. Controls are locked.</string>
+    <string name="semantic_controls_locked" translatable="false">The terminal currently owns this dialog. Controls are locked.</string>
+    <string name="semantic_save" translatable="false">Save</string>
+    <string name="semantic_send_feedback" translatable="false">Send feedback</string>
+    <string name="semantic_cancel" translatable="false">Cancel</string>
+    <string name="semantic_review_answers" translatable="false">Review your answers</string>
+    <string name="semantic_incomplete" translatable="false">Some questions are unanswered.</string>
+    <string name="semantic_submit_answers" translatable="false">Submit answers</string>
+    <string name="semantic_previous" translatable="false">Previous question</string>
+    <string name="semantic_next" translatable="false">Next question</string>
+    <string name="semantic_ends_questions" translatable="false">This ends the questions.</string>
+    <string name="semantic_move_up" translatable="false">Move up</string>
+    <string name="semantic_move_down" translatable="false">Move down</string>
+    <string name="semantic_previous_value" translatable="false">Previous value</string>
+    <string name="semantic_next_value" translatable="false">Next value</string>
+    <string name="semantic_suggestions" translatable="false">Suggestions</string>
+</resources>

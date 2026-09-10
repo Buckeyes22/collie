@@ -116,13 +116,12 @@ Outside `ring-*` for state is retired.
 The transparent-border technique reserves an *edge*. It has nothing to say about a caption whose
 text changes with the state — and that is the same fault: at 390px "needs you" is 54.6px and
 "done" is 27.9px, so a strip holding the word plus a host name moved the host name 33px sideways
-every time the pane changed state. A hard-coded width is not the fix either: the same slot is
-"braucht dich" (72.2px) in German and "desconocido" (70.0px) in Spanish, so any constant clips one
-locale or wastes another's space.
+every time the pane changed state. A hard-coded width is not the fix either: copy changes and font
+choices can still make a formerly sufficient constant clip or waste space.
 
-**Reserve the SLOT, sized by the widest word in the active locale.** `ui/one-of.tsx` renders every
-alternative in one grid cell and shows one; the layout engine measures the real glyphs of the real
-dictionary, so a new translation is correct on arrival. Call sites:
+**Reserve the SLOT, sized by the widest possible English state word.** `ui/one-of.tsx` renders every
+alternative in one grid cell and shows one; the layout engine measures the real glyphs of the
+catalog. Call sites:
 `status-badge.tsx`'s `StatusWordSlot` (the composer's status band) and `ui/strip-host.tsx` (the
 band above the header, where the same idiom was first written). A state with nothing to say —
 a gone pane, showing no word at all — keeps the slot rather than collapsing it, because

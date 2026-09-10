@@ -30,7 +30,7 @@ until explicitly configured.
 - **Image uploads** directly from the local camera roll
 - **Device pairing** as the write credential: once a device is paired, every write needs its token
 - **Packs**: several machines' Collies behind one URL, with operator-triggered failover
-- **Six UI languages** and a per-device typeface setting
+- **English-only UI** and a per-device typeface setting
 - **Herdr session switching** managed from the web interface
 - **PWA support** running locally on loopback with no external accounts or cloud dependencies
 
@@ -55,7 +55,7 @@ data without installation.
   </tr>
   <tr>
     <td align="center" width="50%"><img src="assets/quick.png" alt="The Quick dock — one-tap replies over a working pane" width="250"><br><sub><b>Quick</b> — your own one-tap replies, from <code>quick-replies.toml</code></sub></td>
-    <td align="center" width="50%"><img src="assets/settings.png" alt="Settings — appearance, language, typeface" width="250"><br><sub><b>Settings</b> — appearance, language, typeface, per device</sub></td>
+    <td align="center" width="50%"><img src="assets/settings.png" alt="Settings — appearance and typeface" width="250"><br><sub><b>Settings</b> — appearance and typeface, per device</sub></td>
   </tr>
 </table>
 
@@ -73,7 +73,7 @@ touchscreen. Collie lets you tap the agent that needs input, type normally, and 
 Collie is for developers running AI agents in a terminal multiplexer who want to resume sessions
 from a phone. Herdr is the primary supported target in 1.0. Support for **tmux and zellij is
 experimental**: both run, but testing is limited to a single operator on one machine. If you use
-either, [bug reports are welcome](./docs/multiplexers.md#using-the-app-on-tmux-or-zellij), including
+either, [bug reports are welcome](./docs/multiplexers.md#pointing-collie-at-a-multiplexer), including
 reports of working setups.
 
 The setup assumes a **[Tailscale](https://tailscale.com) tailnet**. Your phone and host must share a
@@ -116,12 +116,12 @@ requirements table, and what the initial run writes to the host.
 | | |
 | --- | --- |
 | [**Install**](./docs/install.md) | Requirements, the two ways in — fresh install or through Herdr — first run, and opening it on your phone |
-| [**Android app**](./android/README.md) | Build, sign, install, verify, and recover the private Trusted Web Activity package |
+| [**Android app**](./android/README.md) | Build, test, install, and operate the native Kotlin client |
 | [**Security**](./docs/security.md) | What a Collie exposes, the defenses, and pairing a device as the write credential |
-| [**Configure**](./docs/configure.md) | The `.env`, your own slash commands, keys, quick replies and typefaces; appearance, Zen mode, language |
+| [**Configure**](./docs/configure.md) | The `.env`, your own slash commands, keys, quick replies and typefaces; appearance and Zen mode |
 | [**Deployment**](./docs/deployment.md) | Front doors other than the default: an identity-aware proxy, a reverse proxy with no Tailscale, an off-host ingress, several Collies on one host (one per user, or several instances for one user), and a pack's standby door |
 | [**Commands**](./docs/commands.md) | Every `collie` verb, putting `collie` on your PATH, and the Herdr actions that mirror the verbs on a Herdr-managed install |
-| [**tmux and zellij**](./docs/multiplexers.md) | Running Collie without Herdr — both walkthroughs, what each multiplexer can answer, and agent beacons. Experimental in 1.0; bug reports wanted |
+| [**Multiplexers**](./docs/multiplexers.md) | Pointing Collie at Herdr, tmux or zellij, what each backend can answer, and agent beacons. Experimental in 1.0 for tmux and zellij; bug reports wanted |
 | [**Packs**](./docs/pack.md) | Several machines' Collies behind one URL: invite, join, deputy, failover |
 | [**Voice input and Web Push**](./docs/voice-and-push.md) | The microphone in the composer, and notifications when an agent is waiting on you |
 | [**Manage & update**](./docs/upgrading.md) | Update from the phone or the terminal, roll back, update a pack, cross a major, stop, uninstall, and upgrading a 0.x install to 1.0 |
@@ -130,6 +130,7 @@ requirements table, and what the initial run writes to the host.
 Repository-level specifications live at the root: [`ARCHITECTURE.md`](./ARCHITECTURE.md) ·
 [`docs/deployment.md`](./docs/deployment.md) · [`MUX_CONTRACT.md`](./MUX_CONTRACT.md) ·
 [`PACK_PROTOCOL.md`](./PACK_PROTOCOL.md) · [`HERDR_API.md`](./HERDR_API.md) ·
+[`ANDROID_NATIVE_IMPLEMENTATION_PLAN.md`](./ANDROID_NATIVE_IMPLEMENTATION_PLAN.md) ·
 [`DESIGN.md`](./DESIGN.md) · [`CONTRIBUTING.md`](./CONTRIBUTING.md).
 
 ## Deployment variants

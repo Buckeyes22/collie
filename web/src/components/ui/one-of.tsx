@@ -10,12 +10,12 @@ import { cn } from "@/lib/utils";
  * reach. §2's canonical fix reserves an *edge*; it says nothing about a run of TEXT whose word
  * changes with the state. "needs you" is 54.6px and "done" is 27.9px, so a strip that renders one
  * or the other has two widths, and everything beside it moves when the state changes. Reserving a
- * pixel number is not a fix either: the same slot is "braucht dich" (72.2px) in German and
- * "desconocido" (70.0px) in Spanish, so any constant clips one language or wastes space in another.
+ * pixel number is not a fix either: copy and font changes can make a formerly sufficient constant
+ * clip or waste space.
  *
  * The technique: every alternative is rendered, all of them in ONE grid cell (`[grid-area:1/1]`),
  * and the losers are held at `opacity-0`. The cell is therefore sized by the widest and tallest
- * occupant IN THE ACTIVE LOCALE, computed by the layout engine from the real glyphs, and a change
+ * English occupant, computed by the layout engine from the real glyphs, and a change
  * of `active` is a repaint of the cell rather than a resize of it. Nothing measures anything, and
  * there is no number to keep up to date.
  *

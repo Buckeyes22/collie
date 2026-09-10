@@ -220,10 +220,8 @@ const AGENT_WORDS = [
  *
  * So the slot reserves the widest word instead, by rendering all of them stacked in one grid cell
  * (`ui/one-of.tsx`) and showing one. A hard-coded width could not do this job: the same slot is
- * "braucht dich" (72.2px) in German and "desconocido" (70.0px) in Spanish, so any constant clips a
- * locale or wastes a locale's space. The layout engine measures the real glyphs of the real
- * dictionary, so a new translation is correct on arrival and a retranslation cannot silently
- * un-reserve the slot.
+ * copy and font changes can make any constant clip. The layout engine measures the real glyphs of
+ * every state, so a copy revision cannot silently un-reserve the slot.
  *
  * WHICH words are reserved is decided by what the PANE can become, not by the union of everything:
  *

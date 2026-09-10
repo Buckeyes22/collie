@@ -60,48 +60,47 @@ describe("draftCarriesSend", () => {
   });
 
   it("accepts a CJK draft wrapped mid-run (the fold fabricates a space the send never had)", () => {
-    // A Japanese draft has no word boundaries, so the input box wraps it mid-run and the
-    // space-joined fold yields a space absent from the sent text. This stalled every wrapped
-    // Japanese reply: the guard never verified the text and withheld the submit key.
-    const sent = "これちなみに電池寿命的にはどうなんだろね。";
-    expect(draftCarriesSend(sent, "これちなみに電池寿命的にはどうなん だろね。")).toBe(true);
+    // An unsegmented CJK draft can wrap mid-run, so the space-joined fold yields a space absent from
+    // the sent text. The guard must still verify the text and submit it.
+    const sent = "\u3053\u308c\u3061\u306a\u307f\u306b\u96fb\u6c60\u5bff\u547d\u7684\u306b\u306f\u3069\u3046\u306a\u3093\u3060\u308d\u306d\u3002";
+    expect(draftCarriesSend(sent, "\u3053\u308c\u3061\u306a\u307f\u306b\u96fb\u6c60\u5bff\u547d\u7684\u306b\u306f\u3069\u3046\u306a\u3093 \u3060\u308d\u306d\u3002")).toBe(true);
     // A windowed (tail-only) slice of a wrapped CJK draft still matches.
-    expect(draftCarriesSend(sent, "電池寿命的にはどうなん だろね。")).toBe(true);
+    expect(draftCarriesSend(sent, "\u96fb\u6c60\u5bff\u547d\u7684\u306b\u306f\u3069\u3046\u306a\u3093 \u3060\u308d\u306d\u3002")).toBe(true);
     // An unrelated CJK remnant still fails.
-    expect(draftCarriesSend(sent, "別の誰かの下書きです、これは。")).toBe(false);
+    expect(draftCarriesSend(sent, "\u5225\u306e\u8ab0\u304b\u306e\u4e0b\u66f8\u304d\u3067\u3059\u3001\u3053\u308c\u306f\u3002")).toBe(false);
   });
 
   it("accepts mixed CJK/latin text wrapped at either kind of seam", () => {
     // The case no language test could handle: ONE draft carrying both a genuine space (between
     // "pull" and "request") and a fabricated one (wherever the box broke the CJK run).
-    const sent = "これは pull request のテストです";
-    expect(draftCarriesSend(sent, "これは pull request のテ ストです")).toBe(true); // mid-CJK break
-    expect(draftCarriesSend(sent, "これは pull request のテストです")).toBe(true); // at the space
-    expect(draftCarriesSend(sent, "これは pull request のテストです")).toBe(true); // no wrap at all
+    const sent = "\u3053\u308c\u306f pull request \u306e\u30c6\u30b9\u30c8\u3067\u3059";
+    expect(draftCarriesSend(sent, "\u3053\u308c\u306f pull request \u306e\u30c6 \u30b9\u30c8\u3067\u3059")).toBe(true); // mid-CJK break
+    expect(draftCarriesSend(sent, "\u3053\u308c\u306f pull request \u306e\u30c6\u30b9\u30c8\u3067\u3059")).toBe(true); // at the space
+    expect(draftCarriesSend(sent, "\u3053\u308c\u306f pull request \u306e\u30c6\u30b9\u30c8\u3067\u3059")).toBe(true); // no wrap at all
   });
 
   it("still rejects a draft that lost or altered a non-space character", () => {
     // Only the WIDTH of a gap is unknowable — every visible character must still be there. A box
     // showing text with a space genuinely missing is NOT our text and must not be verified.
     expect(draftCarriesSend("deploy the app", "deploythe app")).toBe(false);
-    const sent = "これを実行して結果を教えてください";
-    expect(draftCarriesSend(sent, "これを実行して結果を")).toBe(true); // a prefix is a slice
-    expect(draftCarriesSend(sent, "これを実行させて結果を")).toBe(false); // an inserted char is not
+    const sent = "\u3053\u308c\u3092\u5b9f\u884c\u3057\u3066\u7d50\u679c\u3092\u6559\u3048\u3066\u304f\u3060\u3055\u3044";
+    expect(draftCarriesSend(sent, "\u3053\u308c\u3092\u5b9f\u884c\u3057\u3066\u7d50\u679c\u3092")).toBe(true); // a prefix is a slice
+    expect(draftCarriesSend(sent, "\u3053\u308c\u3092\u5b9f\u884c\u3055\u305b\u3066\u7d50\u679c\u3092")).toBe(false); // an inserted char is not
   });
 
   it("still requires the visible runs to be contiguous in the send", () => {
     // The relaxation must not degrade into a fuzzy "these words appear somewhere" match: whatever
     // sits between two runs in the send has to be whitespace, or it isn't a contiguous slice.
     expect(draftCarriesSend("deploy the app to prod", "deploy app")).toBe(false);
-    expect(draftCarriesSend("送信して、確認して", "送信して 確認して")).toBe(false);
+    expect(draftCarriesSend("\u9001\u4fe1\u3057\u3066\u3001\u78ba\u8a8d\u3057\u3066", "\u9001\u4fe1\u3057\u3066 \u78ba\u8a8d\u3057\u3066")).toBe(false);
   });
 
   it("only lets a gap the fold could have made collapse to nothing", () => {
     // The fold's seam is always exactly one plain space. Any other whitespace was really on screen,
     // so the send has to carry whitespace there too — otherwise the screen holds a different
-    // message. U+3000 between two CJK runs is the case that matters in Japanese.
-    expect(draftCarriesSend("危険実行してください", "危険　実行してください")).toBe(false);
-    expect(draftCarriesSend("危険　実行してください", "危険　実行してください")).toBe(true);
+    // message. U+3000 between two CJK runs is the important case.
+    expect(draftCarriesSend("\u5371\u967a\u5b9f\u884c\u3057\u3066\u304f\u3060\u3055\u3044", "\u5371\u967a\u3000\u5b9f\u884c\u3057\u3066\u304f\u3060\u3055\u3044")).toBe(false);
+    expect(draftCarriesSend("\u5371\u967a\u3000\u5b9f\u884c\u3057\u3066\u304f\u3060\u3055\u3044", "\u5371\u967a\u3000\u5b9f\u884c\u3057\u3066\u304f\u3060\u3055\u3044")).toBe(true);
     // A gap the fold cannot make is not loosened at all — it must appear in the send verbatim, so a
     // full-width space on screen never verifies a half-width one in the send, or vice versa.
     expect(draftCarriesSend("delete file now", "delete　file now")).toBe(false);
@@ -112,7 +111,7 @@ describe("draftCarriesSend", () => {
     expect(draftCarriesSend("deploy  the app now", "deploy the app now")).toBe(true);
     expect(draftCarriesSend("delete　file now", "delete file now")).toBe(true);
     // A single space still collapses — that is the wrapped-CJK case the guard exists for.
-    expect(draftCarriesSend("これを実行してください", "これを実行 してください")).toBe(true);
+    expect(draftCarriesSend("\u3053\u308c\u3092\u5b9f\u884c\u3057\u3066\u304f\u3060\u3055\u3044", "\u3053\u308c\u3092\u5b9f\u884c \u3057\u3066\u304f\u3060\u3055\u3044")).toBe(true);
   });
 
   it("counts the floor in visible characters, not UTF-16 code units", () => {
@@ -170,11 +169,11 @@ describe("draftCarriesSend", () => {
     vi.resetModules();
     try {
       const legacy = await import("./reply-action");
-      const sent = "これちなみに電池寿命的にはどうなんだろね。";
-      expect(legacy.draftCarriesSend(sent, "これちなみに電池寿命的にはどうなん だろね。")).toBe(
+      const sent = "\u3053\u308c\u3061\u306a\u307f\u306b\u96fb\u6c60\u5bff\u547d\u7684\u306b\u306f\u3069\u3046\u306a\u3093\u3060\u308d\u306d\u3002";
+      expect(legacy.draftCarriesSend(sent, "\u3053\u308c\u3061\u306a\u307f\u306b\u96fb\u6c60\u5bff\u547d\u7684\u306b\u306f\u3069\u3046\u306a\u3093 \u3060\u308d\u306d\u3002")).toBe(
         true,
       );
-      expect(legacy.draftCarriesSend(sent, "別の誰かの下書きです、これは。")).toBe(false);
+      expect(legacy.draftCarriesSend(sent, "\u5225\u306e\u8ab0\u304b\u306e\u4e0b\u66f8\u304d\u3067\u3059\u3001\u3053\u308c\u306f\u3002")).toBe(false);
     } finally {
       Object.defineProperty(Intl, "Segmenter", segmenter);
       vi.resetModules();

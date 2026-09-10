@@ -130,7 +130,7 @@ describe("StatusWordSlot — the word, in a slot every word it can hold fits int
     // The bare word's width is the state's — "needs you" is 54.6px and "done" 27.9px at 390px — so
     // a strip holding the word plus anything else re-lays-out on every status change and the thing
     // beside it slides (DESIGN.md §2). The slot renders all five and shows one, so the box is the
-    // widest word IN THE ACTIVE LOCALE and a change of state is paint.
+    // widest English state word and a change of state is paint.
     const { container } = render(<StatusWordSlot status="done" />);
     expect(layers(container).map((l) => l.textContent)).toEqual([
       "needs you",
@@ -177,8 +177,7 @@ describe("StatusWordSlot — the word, in a slot every word it can hold fits int
     // `shrink-0` is the pair to the host chip's `min-w-0`: the slot is the fixed budget and the
     // machine's name truncates into what is left. The word is the half of the pair a colour-blind
     // reader depends on, so it is never the half that gives up width. And there is no constant to
-    // give up — the same slot is "braucht dich" (72.2px) in German and "desconocido" (70.0px) in
-    // Spanish, so any hard-coded width clips one locale or wastes another's space.
+    // give up — copy and font changes can make any hard-coded width clip or waste space.
     const cls = render(<StatusWordSlot status="idle" />).container.firstElementChild?.className ?? "";
     expect(cls).toContain("shrink-0");
     expect(cls).toContain("justify-items-end"); // the visible word hugs the band's right inset

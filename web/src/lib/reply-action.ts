@@ -118,8 +118,8 @@ function characterBoundaries(s: string): Set<number> {
  * The fold is the subtle part. extractInputDraft joins the box's visual lines with a space, which
  * restores a REAL space only when the box happened to wrap at a word boundary; wrapping mid-run (CJK
  * has no spaces to break at) fabricates a space the sent text never had. The joined string cannot
- * say which kind each of its spaces is, and one string can hold both — "これは pull request です"
- * wrapped mid-CJK has a genuine space AND a fabricated one. So the ambiguity is per-SEAM, not
+ * say which kind each of its spaces is, and one string can contain both a genuine space and a
+ * fabricated mid-CJK one. So the ambiguity is per-SEAM, not
  * per-string, and no language test can resolve it.
  *
  * Hence: split the draft on whitespace and require its non-space runs to appear in `sent` in order,
@@ -130,8 +130,8 @@ function characterBoundaries(s: string): Set<number> {
  * Only a gap spelled exactly like the fold's own seam (one plain space) may collapse to nothing, and
  * only that gap is loosened at all. Any other gap — a run of spaces, a tab, an ideographic space —
  * is whitespace the terminal actually rendered, so `sent` must carry that same whitespace verbatim.
- * Without the distinction the guard would accept a screen holding "危険　実行" for a send of
- * "危険実行", or "delete　file" for "delete file": different messages, both authorised.
+ * Without the distinction the guard would accept a screen with an inserted ideographic space, or
+ * "delete　file" for "delete file": different messages, both authorised.
  *
  * The match must also land on visible-character boundaries, because a code-unit substring can cut a
  * character in half — "👩‍👧‍👦" sits inside "👨‍👩‍👧‍👦" without being it.

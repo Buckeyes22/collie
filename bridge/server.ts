@@ -794,6 +794,8 @@ export function startServer(opts: {
     // ── Worktrees: list / create / open / remove, all scoped to a space (ADR 0032) ──
     const worktreeListMatch = pathname.match(WORKTREE_LIST_ROUTE);
     if (worktreeListMatch && req.method === "GET") {
+      const denied = caller.gate("read");
+      if (denied) return denied;
       const rt = await caller.resolve();
       if (rt instanceof Response) return rt;
       return listWorktrees(rt.herdr, rt.engine, decodeURIComponent(worktreeListMatch[1]!), req);

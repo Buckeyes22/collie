@@ -46,22 +46,22 @@ describe("quickRepliesFor", () => {
 // The operator's own groups (their `quick-replies.toml`, ADR 0018): on a pane their rows address,
 // those rows ARE the dock.
 describe("quickRepliesFor with operator rows", () => {
-  const german = [{ title: "bestätigen", items: ["ja", "nein"] }];
+  const custom = [{ title: "confirm ✓", items: ["yes", "no"] }];
 
   it("replaces the shipped groups on a pane the rows address", () => {
-    expect(quickRepliesFor("claude", false, german)).toEqual(german);
+    expect(quickRepliesFor("claude", false, custom)).toEqual(custom);
   });
 
   it("leaves a pane untouched when no row addresses it", () => {
-    const scoped = [{ agent: "codex", title: "bestätigen", items: ["ja"] }];
+    const scoped = [{ agent: "codex", title: "confirm ✓", items: ["yes"] }];
     expect(quickRepliesFor("claude", false, scoped)).toEqual(quickRepliesFor("claude", false));
     expect(quickRepliesFor("codex", false, scoped)).toEqual([
-      { title: "bestätigen", items: ["ja"] },
+      { title: "confirm ✓", items: ["yes"] },
     ]);
   });
 
-  it("reaches a shell too — an operator's language is not an agent-only choice", () => {
-    expect(quickRepliesFor("shell", true, german)).toEqual(german);
+  it("reaches a shell too — operator copy is not an agent-only choice", () => {
+    expect(quickRepliesFor("shell", true, custom)).toEqual(custom);
     const shellOnly = [{ agent: "shell", title: "confirm", items: ["j", "n"] }];
     expect(quickRepliesFor("shell", true, shellOnly)).toEqual([
       { title: "confirm", items: ["j", "n"] },

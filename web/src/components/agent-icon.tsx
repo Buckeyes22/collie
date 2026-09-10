@@ -85,6 +85,7 @@ export function AgentIcon({
         strokeWidth={stroke ? 2 : undefined}
         strokeLinecap={stroke ? "square" : undefined}
       >
+        {brand.underlay && <path d={brand.underlay.d} fill={brand.underlay.color} stroke="none" />}
         <path d={brand.d} />
       </g>
     </svg>

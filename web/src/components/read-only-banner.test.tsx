@@ -53,8 +53,8 @@ describe("ReadOnlyBanner — the two write gates, one notice", () => {
     // Nothing on the phone can fix this one, so the copy explains rather than offering a remedy.
     //
     // THE DEVICE NAME IS DELIBERATELY GONE. A strip never wraps, by contract (ui/notice.tsx), so it
-    // gets the SHORT copy — the `space.readOnly.*` pair, already written and already translated into
-    // all six locales for the space route, where it was used by nothing. The suffix it drops was
+    // gets the SHORT copy — the `space.readOnly.*` pair, already written for the space route, where
+    // it was used by nothing. The suffix it drops was
     // answering "which device is this?" on the device the operator is holding, and the name is still
     // in Settings for the case where a proxy asserts something surprising. That is the price of the
     // ~30px, named here rather than discovered later.

@@ -1,249 +1,242 @@
 # Collie for Android
 
-This directory contains the Android shell for Collie. It is a Trusted Web Activity (TWA): Android
-launches the live PWA at `https://ed8.taile7b6b1.ts.net/` in a supporting browser. It does not
-bundle the React application, use a WebView, or expose a JavaScript/native bridge.
+This directory contains Collie's native Kotlin Android client. It connects directly to an
+operator-configured Collie HTTPS origin through the existing bridge API. It does not load the web
+application in a WebView, Custom Tab, Trusted Web Activity, or Capacitor container.
 
-The Android package is `com.lateapex.collie`. Browser-owned origin storage remains authoritative
-for pairing, service workers, site permissions, and Web Push subscriptions. The package never reads
-Collie's pairing token or terminal content.
+The Android package is `com.lateapex.collie`. The native client implements Collie's dashboard,
+Space/tab/pane navigation, semantic and raw pane views, safe terminal controls, history, launchers,
+worktrees, media/STT, Settings, devices, Pack, and Updates routes. See the
+[native implementation plan](../ANDROID_NATIVE_IMPLEMENTATION_PLAN.md)
+for the complete contract and [ADR 0036](../.adr/0036-the-android-app-is-a-native-rest-client.md)
+for the architecture decision. The former TWA [specification](../ANDROID_TWA_SPEC.md) and
+[implementation plan](../ANDROID_TWA_IMPLEMENTATION_PLAN.md) are retained only as superseded
+history.
 
-See [`../ANDROID_TWA_SPEC.md`](../ANDROID_TWA_SPEC.md) for normative requirements and
-[`../ANDROID_TWA_IMPLEMENTATION_PLAN.md`](../ANDROID_TWA_IMPLEMENTATION_PLAN.md) for the rollout and
-acceptance gates.
+## Architecture and security boundary
+
+- Native screens render immutable ViewModel state with View Binding. The bridge's rendered pane
+  grid is displayed as inert styled text; the app is not a terminal emulator.
+- One repository owns HTTP calls, pairing scope, lifecycle-aware polling, the in-memory pane cache,
+  and retained device-write authorization. OkHttp never follows API redirects.
+- Mutations send an `Origin` header that matches the configured HTTPS origin. Paired calls send the
+  bearer credential through `Authorization`; no Android-specific CORS exception is needed.
+- The pairing bearer is encrypted with an AES/GCM key held by Android Keystore. It must never enter
+  logs, saved-state bundles, screenshots, clipboard data, backups, or build artifacts.
+- Backups and cleartext traffic are disabled. The source manifest requests network access plus the
+  narrowly scoped runtime microphone permission used by speech transcription, and exports only its
+  launcher Activity.
+- There is no browser-helper, WebView, JavaScript bridge, Firebase, analytics, or crash-reporting
+  dependency.
+
+Browser Web Push belongs to the PWA and is not available to native code. The native client provides
+foreground polling and server notification preference/snooze controls, but not native background
+delivery. Background notifications remain pending an independently reviewed provider, delivery,
+registration, deduplication, and deep-link contract.
 
 ## Pinned toolchain
 
-The generated project was created from the live PWA manifest with these versions:
-
 | Component | Version |
 | --- | --- |
-| Node.js | 22.x |
-| `@bubblewrap/cli` | 1.25.0, exact pin in `package-lock.json` |
-| OpenJDK | 21 locally; generated Java source/target is 17 |
-| Compile SDK | 36 |
-| Target SDK | 36 |
-| Android build tools | 36.0.0 available locally |
+| JDK toolchain | 21 |
+| Java/Kotlin bytecode | 17 |
+| Compile and target SDK | 36 |
+| Minimum SDK | 26 |
 | Gradle wrapper | 8.11.1 |
 | Android Gradle Plugin | 8.9.1 |
-| Android Browser Helper | 2.6.2 |
-| AndroidX Browser | 1.9.0-alpha04, resolved transitively by Browser Helper |
+| Kotlin and serialization plugins | 2.0.21 |
 
-The Gradle wrapper is the build entry point. A global Gradle installation is neither needed nor
-supported. Bubblewrap is Android-only development tooling and must not be added to Collie's root
-dependency tree.
+The committed Gradle wrapper is the only supported build entry point. A global Gradle install is
+not required. Android dependencies stay under this directory; the root Bun install and Collie
+bridge build do not require an Android SDK.
 
-## Install the pinned generator
+## Validate and build
 
-From this directory:
-
-```bash
-npm ci --no-audit --no-fund
-npx --no-install bubblewrap --version
-```
-
-The second command must report `1.25.0`. On first use, Bubblewrap asks for a JDK and Android SDK;
-select the existing local installations. It stores those workstation-specific paths outside Git.
-Never commit `local.properties` or a Bubblewrap configuration containing absolute workstation
-paths. The install command deliberately avoids making reproducibility depend on npm's advisory and
-funding endpoints; run dependency auditing as a separate review step.
-
-`twa-manifest.json` is the reviewed generator input. Bubblewrap's `update` command overwrites
-generated source. After any regeneration, inspect the complete diff and preserve the intentional
-hardening in this tree: API 36, Java 17, Maven Central, `allowBackup=false`,
-`usesCleartextTraffic=false`, and no declared `WebViewFallbackActivity`. Never accept a generated
-keystore prompt.
-
-## Debug and CI build
-
-Point Gradle at an installed Android SDK without creating `local.properties`:
+Point Gradle at an installed Android SDK without creating a tracked `local.properties` file:
 
 ```bash
 export ANDROID_HOME=/path/to/Android/Sdk
 export ANDROID_SDK_ROOT="$ANDROID_HOME"
-./gradlew :app:processDebugMainManifest
-./gradlew :app:dependencies --configuration debugRuntimeClasspath
-./gradlew :app:assembleDebug
-./gradlew lint
 ```
 
-The debug APK is written below `app/build/` and is ignored by Git. A debug build is suitable for
-compile checks and emulator smoke tests only. Its debug certificate must not be published as the
-private release's Digital Asset Link.
-
-The reviewed merged manifest must show:
-
-- package `com.lateapex.collie`, version code `1`, and version name `1.5.0`;
-- minimum SDK 21 and target SDK 36;
-- launch URL `https://ed8.taile7b6b1.ts.net/` and no additional trusted origin;
-- only HTTPS navigation with cleartext traffic disabled;
-- `POST_NOTIFICATIONS` plus Android/library-internal signature permissions, with no camera,
-  microphone, storage, location, contacts, accessibility, overlay, or package-install permission;
-- the exported launcher activity and notification `DelegationService` required by the TWA;
-- the notification small-icon metadata; and
-- no WebView activity, Firebase, analytics, crash reporter, or native bridge.
-
-The shell itself does not need `INTERNET`: the selected browser performs network access. The
-optional AndroidX profile installer is excluded because it contributes an otherwise-unneeded
-exported receiver; it must remain absent from the merged manifest.
-
-## Release signing
-
-The repository contains no release key. Generate and back up the dedicated key outside the
-worktree, using the stable alias `collie-release`, before producing the installed baseline. Keep its
-store password and key password in the operator-controlled secret store. Do not put password values
-in shell history, Gradle files, logs, issue text, or this document.
-
-The checked-in `signingKey.path` is an ignored local placeholder. Never place the real key at that
-placeholder; keeping the actual key outside the worktree prevents accidental deletion with build
-cleanup. Override it for every release:
+Run the repository-owned configuration checker from the repository root:
 
 ```bash
-export COLLIE_KEYSTORE=/absolute/path/outside/the/repository/collie-release.keystore
-read -rs -p 'Keystore password: ' BUBBLEWRAP_KEYSTORE_PASSWORD; echo
-read -rs -p 'Key password: ' BUBBLEWRAP_KEY_PASSWORD; echo
-export BUBBLEWRAP_KEYSTORE_PASSWORD BUBBLEWRAP_KEY_PASSWORD
-npx --no-install bubblewrap build \
-  --signingKeyPath="$COLLIE_KEYSTORE" \
-  --signingKeyAlias=collie-release
-unset BUBBLEWRAP_KEYSTORE_PASSWORD BUBBLEWRAP_KEY_PASSWORD
+bun run check:android
 ```
 
-Do not run a release build until the operator has confirmed the external key path and recoverable
-backup. Bubblewrap's APK and AAB outputs are ignored and must remain untracked.
-
-## Digital Asset Links
-
-Fullscreen TWA behavior requires the live origin to associate this package with the certificate
-that signs the installed APK. A missing or mismatched association deliberately falls back to a
-Custom Tab with browser chrome.
-
-Obtain the public SHA-256 fingerprint without exposing the private key or password:
+Then run the native gates from this directory:
 
 ```bash
-keytool -list -v -keystore "$COLLIE_KEYSTORE" -alias collie-release
+./gradlew --no-daemon testDebugUnitTest lintDebug assembleDebug assembleDebugAndroidTest assembleRelease
 ```
 
-Use a disposable manifest copy to generate the statement. This keeps the tracked generator input
-and its checksum stable; mutating the tracked manifest would make a later Bubblewrap build offer to
-regenerate and overwrite the reviewed Android hardening.
+Current worktree status (2026-09-04): English resource checks, strict repository lint, root and web
+TypeScript typechecks, version consistency, and the Android native static checker pass. The final
+serialized Gradle gate also passes the complete JVM/Robolectric suite with zero failures/errors/skips,
+Android lint, debug APK assembly, and minified unsigned release APK assembly.
+
+The debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`. Build outputs,
+`local.properties`, IDE state, keystores, and local credentials are ignored and must stay
+untracked.
+
+When dependencies intentionally change, update and review the committed lock state rather than
+allowing CI to resolve an unreviewed graph:
 
 ```bash
-cp twa-manifest.json .local/twa-manifest.release.json
-npx --no-install bubblewrap fingerprint add \
-  'AA:BB:CC:REPLACE_WITH_THE_COMPLETE_SHA256' \
-  --name=private-release \
-  --manifest="$PWD/.local/twa-manifest.release.json" \
-  --output="$PWD/.local/assetlinks.generated.json"
-jq . .local/assetlinks.generated.json
+./gradlew --no-daemon :app:dependencies --write-locks
 ```
 
-Copy only the reviewed public statement to
-`../web/public/.well-known/assetlinks.json`. Never deploy the example fingerprint above. Collie's
-normal web build must copy it byte-for-byte to `web/dist/.well-known/assetlinks.json`.
+## Connect and pair
 
-From the repository root, build the web application and run the release-strict identity gate before
-deploying the association or installing a signed APK:
+On first launch, enter the root of a reachable Collie deployment, such as
+`https://ed8.taile7b6b1.ts.net/`. The app rejects HTTP, credentials embedded in a URL, query strings,
+fragments, and non-root paths; it never disables platform certificate or hostname validation.
+
+Generate a short-lived pairing code on the Collie host using the normal `collie pair` flow. Enter
+that code and a device label in the app. A read-only connection can inspect a deployment whose read
+policy permits it, but writes still require a valid paired bearer. An expired or rejected code does
+not weaken the connection policy.
+
+Terminal writes are deliberately conservative. Tokenless connections disable and hard-block all
+write controls. A token alone is insufficient: a successful snapshot must also establish that device
+enforcement is absent or that this device is authorized; unknown status fails closed and the last
+successful decision survives transient poll failures. Named keys are re-read and bound to the exact
+visible screen before they are sent. One-shot free-text input is bound to the exact visible composer
+for agent families with a native grammar. Agent families that have no web harness adapter use
+Collie's existing visible-tail fallback; known adapted families are never silently routed through
+that fallback. Existing drafts, modals, and changed screens are refused when the active grammar
+cannot prove that an ordinary composer is visible.
+
+Disconnect removes the encrypted local connection record after confirmation. It does not revoke
+the server-side device. Settings lists paired devices and provides a separately named, confirmed
+server revocation action.
+
+## Implemented native surface
+
+- Dashboard triage mirrors the web hierarchy and adds Recent/Spaces collapse and sorting, Space
+  filtering, server-approved launchers, workspace creation, and worktree list/create/open flows.
+- Space browsing exposes tabs and panes plus capability-gated tab/workspace creation, rename, and
+  close actions. Pane switching retains the active host/session scope.
+- Pane viewing supports ANSI-styled inert text, semantic dialogs/actions, raw-terminal display,
+  history pagination/search, quick replies, agent-command search, neutral named-key grammar,
+  direct typing, and prompt-bound replies. Codex, Claude, Grok, OMP, Agy, and Antigravity use exact
+  composer recognition; OpenCode, shell, and otherwise unadapted agents retain the bounded
+  visible-tail disposition used by the web client.
+- The system image picker uploads bounded images without storage permission. Operator-initiated
+  audio recording requests microphone permission at runtime and sends a bounded clip to `/api/stt`;
+  the resulting transcript returns to the draft for review.
+- Settings covers connection/reset, theme, typeface, terminal/draft sizing, notification
+  switches and snooze, paired-device revocation, connection state, Pack state, and Updates. Update start
+  requires preflight and device-write authorization; `/standby/update` retains the freshest visible
+  run while the bridge restarts.
+- The dashboard banner and Server updates screen manage the connected Collie server through its
+  update API. They do not download, install, or replace the Android APK. Settings reports the
+  server version separately from the Android app build.
+- The interface uses English base resources only. Static tests reject new visible hardcoded strings.
+
+## Emulator and physical-device acceptance
+
+The [2026-09-10 functional audit](acceptance/2026-09-10-functional-audit.md) records the newer
+Gboard/device-event regression, reproduced defects, and explicit remaining S25 Ultra acceptance.
+Run it from the repository root with `scripts/android-interaction-test.sh emulator-PORT`.
+
+Compilation is not acceptance. Install the debug APK on an API 26+ emulator or the target device:
 
 ```bash
-bun run build
-bun run check:android:release
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb shell am start -n com.lateapex.collie.debug/com.lateapex.collie.ui.MainActivity
 ```
 
-The strict check must fail while the Digital Asset Links source is absent, malformed, contains a
-placeholder, differs from the built copy, or names a different package or certificate format.
+A partial physical-device pass was recorded on 2026-09-04 against an upgrade-installed debug APK on
+the paired Samsung Galaxy S25 Ultra (`SM-S938U1`, Android/API 36). Native launch/live reads, one
+exactly-once harmless disposable write, Escape, Keys/Quick drawers, tab actions, the pull-up pane
+switcher, draft/process-death persistence, multiline input, image-picker cancellation, pane/history
+search, Settings/Updates, rotation, status/navigation/IME containment, and the packaged permission
+boundary passed. The serialized Gradle gate also passed the complete JVM/Robolectric suite, lint, debug
+assembly, and minified unsigned release assembly.
 
-Before installing a release, compare all three public identities:
+The final parity regression ran only on the API 36 `stormlens_api36` emulator. It verified live
+read-only dashboard data and cold-relaunch connection persistence; safe status/navigation bounds;
+the update ribbon; OpenCode naming/artwork; a large live pane without ANR; canonical pane/tab
+pull-up sheets; header-takeover Find; per-table horizontal panning; in-flow Display controls;
+History opening at 60 entries; canonical Settings order and live server-build id; dark-theme
+recreation; Updates preflight behavior; and Space/tab selection and Back behavior. Four safe device
+tests covering agent artwork, launcher/pane insets, and composer wiring also passed. Neither the S25
+Ultra nor the connected Pixel was addressed during that final pass.
 
-1. `keytool -list -v` for the external keystore;
-2. API 36 `apksigner verify --verbose --print-certs <apk>` for the final APK; and
-3. `sha256_cert_fingerprints` in the built and live `assetlinks.json`.
+Because every content Activity keeps `FLAG_SECURE`, ordinary emulator screenshots are black. The
+final pass used accessibility/view bounds, direct interaction, and logcat; it does not claim a
+pixel-identical protected screenshot comparison.
 
-They must resolve to the same uppercase, colon-separated SHA-256 fingerprint. Also verify the APK's
-package and version:
+Before a distribution claim, finish the unchecked portions of this baseline and record the result
+separately:
 
-```bash
-apkanalyzer manifest application-id /path/to/collie-release.apk
-apkanalyzer manifest version-code /path/to/collie-release.apk
-apkanalyzer manifest version-name /path/to/collie-release.apk
-apksigner verify --verbose --print-certs /path/to/collie-release.apk
-sha256sum /path/to/collie-release.apk
-```
+1. A clean reinstall and new short-lived pairing succeed without browser UI. The recorded pass used
+   an upgrade install to preserve the operator's encrypted connection.
+2. Polling stops in the background, resumes on return, and does not duplicate a write.
+3. Network loss keeps the last successful state visibly stale, then recovers when connectivity
+   returns.
+4. Process death preserves the encrypted connection without exposing the token in logs,
+   extras, saved state, screenshots, or the recent-app preview.
+5. Space/tab/pane switches, agent modes, and a harmless STT draft behave correctly without duplicate
+   writes when the live bridge advertises STT.
+6. Device revocation, notification preferences, Pack, and Updates reflect the live server; an
+   update test preserves progress through the bridge restart via the standby route.
+7. Insets work in both gesture and three-button navigation, and TalkBack/font scaling retain usable
+   44 dp controls.
+8. Compare fixed web/native screens with an external camera when `FLAG_SECURE` prevents a reliable
+    screenshot. Automated layout assertions are not a substitute for that pending pixel comparison.
 
-Verify the deployed association from a tailnet-connected machine without following redirects:
+Keep the APK identity, signer, checksum, source commit, device/OS build, and acceptance timestamp in
+an operator-controlled record outside Git. Never include bearer tokens, pairing codes, terminal
+content, passwords, or private signing material in that record.
 
-```bash
-curl -fsS -D .local/assetlinks.headers \
-  -o .local/assetlinks.live.json \
-  https://ed8.taile7b6b1.ts.net/.well-known/assetlinks.json
-jq . .local/assetlinks.live.json
-```
+## Release status
 
-The response must be a redirect-free `200` with `Content-Type: application/json`. Do not create a
-public Funnel or require a Collie pairing credential for this static file.
+Release signing and distribution remain pending. The repository contains no release keystore and
+CI publishes no release artifact. The minified, non-debuggable release variant exists for local
+verification; keep any future release key and passwords outside the worktree and repeat the
+physical-device acceptance matrix before distributing an APK or AAB.
 
-## Install and verify
+The current package is `versionName=1.5.1`, `versionCode=2`. Android `versionCode` is monotonic and
+independent of the Collie server release mechanism; every APK distributed as an update must use a
+higher code than the installed APK.
 
-Use the SDK's `adb`; its directory need not be placed permanently on `PATH`:
+Changing the application ID or signing key breaks in-place upgrade continuity. Treat either as an
+explicit migration, not a routine recovery step.
 
-```bash
-/path/to/Android/Sdk/platform-tools/adb devices
-/path/to/Android/Sdk/platform-tools/adb install /path/to/collie-release.apk
-```
+## Bundled artwork and typeface
 
-For an update, first verify that package and signer continuity match the installed application and
-that `versionCode` increased. Only then use:
+The Android UI bundles Aldrich Regular 1.002 from the
+[official Google Fonts repository](https://github.com/google/fonts/tree/main/ofl/aldrich). Aldrich
+is Copyright © 2011 Matthew Desmond and is distributed under the SIL Open Font License 1.1; the
+complete license is packaged at `app/src/main/res/raw/license_aldrich.txt`. Aldrich has one real
+weight, 400, so Android UI styles must not request or synthesize heavier variants.
 
-```bash
-/path/to/Android/Sdk/platform-tools/adb install -r /path/to/collie-release.apk
-```
+`app/src/main/res/drawable-nodpi/collie_mark.png` is derived from Collie's generated PWA artwork at
+`web/public/web-app-manifest-192x192.png`; only its fixed dark background is made transparent for
+use in app chrome. Keep the two in sync rather than redrawing or tracing the brand mark
+independently.
 
-Useful relationship-verification diagnostics are:
+The native dashboard and pane header reuse the agent marks documented in
+`web/src/components/agent-icon-data.ts`: Claude and Codex/OpenAI through Simple Icons, OpenCode from
+the project's current `favicon-v3.svg`, pi from pi.dev, OMP from omp.sh, and Antigravity from
+Google's product mark. Their Android vectors retain the same path geometry and brand colors where
+Android's vector format supports them; OMP's small native tile uses the official gradient's
+midpoint color.
 
-```bash
-/path/to/Android/Sdk/platform-tools/adb shell pm get-app-links com.lateapex.collie
-/path/to/Android/Sdk/platform-tools/adb shell am start \
-  -a android.intent.action.VIEW \
-  -d https://ed8.taile7b6b1.ts.net/
-/path/to/Android/Sdk/platform-tools/adb logcat \
-  | grep -E 'OriginVerifier|TrustedWebActivity|DigitalAssetLinks'
-```
-
-The release gate is visual and behavioral as well as diagnostic: the verified origin opens without
-browser chrome, off-origin navigation does not inherit trusted fullscreen treatment, the icon and
-dark splash render correctly, and the notification icon is legible in light and dark system themes.
-
-## Pairing and notifications
-
-The selected TWA browser owns Collie's origin storage. If its profile already visited the origin,
-the existing `collie:device-token` may be shared; otherwise the Android launch is a new device and
-must use the normal `collie pair` flow. Do not copy a token into Android storage. Clearing browser
-site data or switching the TWA provider can require pairing and notification subscription again.
-
-Notification delegation is enabled and uses Collie's existing VAPID/Web Push subscription. On
-Android 13 and later, denying the app notification permission is supported; re-enable it in Android
-App Info and then use Collie's Settings page if needed. Recovery must not introduce Firebase or a
-parallel native subscription.
-
-After pairing, exercise foreground, background, and cold-start delivery with Collie's existing
-push-test command. Confirm that Android attributes the notification to Collie and that pane and
-update deep links open the expected in-scope route without browser chrome. Check the Collie push
-subscription list before and after disable/re-enable to catch orphan subscriptions.
-
-## Updates and rollback
-
-A web-only Collie deployment does not require a new APK: the TWA renders the live origin, and the
-existing service worker controls web rollout. Rebuild the APK only when Android resources,
-configuration, dependencies, package metadata, or signing identity change. Increase `versionCode`
-for every APK that may update an installed build; keep `versionName` aligned with the source release
-used for that shell.
-
-An APK rollback is possible only when Android accepts its package, signer, and version ordering. In
-practice, restore service quickly with a web rollback first. Installing a lower-version APK usually
-requires uninstalling the package, which can discard package-level notification state. Losing the
-release key or changing the application ID also requires uninstall/reinstall; neither is a routine
-recovery path.
-
-Keep the last known-good signed APK, checksum, source commit, version metadata, and public signer
-fingerprint in an operator-controlled release record outside Git. Never include terminal content,
-pairing tokens, passwords, or private key material in that record.
+Additional native agent tiles cover the rest of Herdr's detected integrations and locally installed
+agent CLIs. GitHub Copilot uses the 24×24 path distributed by
+[Simple Icons](https://github.com/simple-icons/simple-icons) (Copilot's source icon is MIT). Kimi
+and Qwen use locally authored letter tiles rather than redistributing vendor artwork whose reuse
+terms are not explicit.
+Grok uses the monochrome vector maintained by [Lobe Icons](https://github.com/lobehub/lobe-icons)
+(MIT), derived from xAI's published brand asset. Hermes uses Font Awesome Free's Staff Snake glyph
+(CC BY 4.0, Copyright Fonticons, Inc.) to render the symbol used by Hermes Agent's official favicon.
+Goose uses the silhouette from the project's
+[Apache-2.0 desktop icon](https://github.com/block/goose/blob/main/ui/desktop/src/images/icon.svg).
+The applicable copyright notices, license terms, source links, and modification notices are
+packaged in `app/src/main/res/raw/third_party_notices.txt` so they travel inside every APK.
+All product names and marks remain trademarks of their respective owners; inclusion identifies the
+agent reported by Herdr and does not imply endorsement.

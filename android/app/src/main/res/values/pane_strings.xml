@@ -1,0 +1,236 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="pane_terminal_output_omitted">… earlier output omitted …</string>
+    <string name="pane_closed">Pane closed</string>
+    <string name="pane_back">Back to dashboard</string>
+    <string name="pane_actions">Pane actions</string>
+    <string name="pane_action_find">Find in output</string>
+    <string name="pane_action_history">History</string>
+    <string name="pane_action_zen">Zen mode</string>
+    <string name="pane_action_focus">Focus in terminal</string>
+    <string name="pane_action_rename">Rename pane</string>
+    <string name="pane_action_close">Close pane</string>
+    <string name="pane_action_read_only">Terminal actions are read-only</string>
+    <string name="pane_scrollback_show_history">Show entire history</string>
+    <string name="pane_scrollback_load_older">Load older</string>
+    <string name="pane_scrollback_loading">Loading…</string>
+    <string name="pane_scrollback_no_session">%1$s has not reported a session to Herdr. Install or update the Herdr integration for it, then restart the agent in this pane.</string>
+    <string name="pane_write_gone">This pane no longer exists. Terminal input is disabled.</string>
+    <string name="pane_write_missing_capability">The multiplexer does not support %1$s. Terminal input is disabled.</string>
+    <string name="pane_error_terminal_draft_changed">Terminal input changed. Nothing was sent.</string>
+    <string name="pane_error_terminal_draft_clear">Couldn’t clear the terminal input. Nothing was sent.</string>
+    <string name="pane_error_terminal_draft_not_cleared">The terminal input did not clear. Nothing was sent.</string>
+    <string name="pane_no_echo_dismiss">Dismiss password-input warning</string>
+    <string name="pane_find_hint">Find in output…</string>
+    <string name="pane_find_previous">Previous match</string>
+    <string name="pane_find_next">Next match</string>
+    <string name="pane_find_close">Close find</string>
+    <string name="pane_find_count_empty">0/0</string>
+    <string name="pane_find_count">%1$d/%2$d</string>
+    <string name="pane_rename_title">Rename pane</string>
+    <string name="pane_rename_hint">Pane label</string>
+    <string name="pane_rename_save">Save</string>
+    <string name="pane_action_cancel">Cancel</string>
+    <string name="pane_close_title">Close this pane?</string>
+    <string name="pane_close_message">This ends the terminal and anything running in it. This cannot be undone.</string>
+    <string name="pane_close_confirm">Close pane</string>
+    <string name="pane_close_again">Tap again to close</string>
+    <string name="pane_focus_done">Pane focused in the terminal.</string>
+    <string name="pane_rename_done">Pane label updated.</string>
+    <string name="pane_rename_cleared">Pane label cleared.</string>
+    <string name="pane_action_failed">Pane action failed.</string>
+    <string name="pane_action_uncertain">The outcome is uncertain. Return to the dashboard and refresh before retrying.</string>
+    <string name="pane_action_in_progress">Another terminal action is still in progress.</string>
+    <string name="pane_changes_unsupported">This multiplexer does not support pane changes.</string>
+    <string name="history_title">History</string>
+    <string name="history_back">Back to pane</string>
+    <string name="history_load_older">Load older</string>
+    <string name="history_loading">Loading history…</string>
+    <string name="history_empty">No transcript entries yet.</string>
+    <string name="history_unavailable_disabled">History is disabled on this Collie server.</string>
+    <string name="history_unavailable_no_session">This pane has no agent session.</string>
+    <string name="history_unavailable_no_log">No transcript log is available for this pane.</string>
+    <string name="history_unavailable">History is unavailable.</string>
+    <string name="history_load_failed">History could not be loaded.</string>
+    <string name="history_start">Start of conversation</string>
+    <string name="history_start_clipped">The beginning of this log was clipped.</string>
+    <string name="history_part_truncated">Part truncated</string>
+    <string name="history_output_truncated">Output truncated</string>
+    <string name="history_role_you">You</string>
+    <string name="history_role_agent">Agent</string>
+    <string name="history_role_summary">Summary</string>
+    <string name="history_role_system">System</string>
+    <string name="history_role_transcript">Transcript</string>
+    <string name="history_tool">Tool</string>
+    <string name="history_find_hint">Find in transcript…</string>
+    <string name="history_find_open">Find in history</string>
+    <string name="history_find_close">Close find</string>
+    <string name="history_close">Close history</string>
+    <string name="history_shown_count">%1$d/%2$d</string>
+    <string name="history_tool_expanded">%1$s, expanded</string>
+    <string name="history_tool_collapsed">%1$s, collapsed</string>
+    <string name="history_find_previous">Previous transcript match</string>
+    <string name="history_find_next">Next transcript match</string>
+    <string name="history_previous_user">Previous user turn</string>
+    <string name="history_next_user">Next user turn</string>
+    <string name="history_find_previous_symbol" translatable="false">↑</string>
+    <string name="history_find_next_symbol" translatable="false">↓</string>
+    <string name="history_previous_user_symbol" translatable="false">⇡</string>
+    <string name="history_next_user_symbol" translatable="false">⇣</string>
+    <string name="pane_key_escape">Esc</string>
+    <string name="pane_key_tab">Tab</string>
+    <string name="pane_key_up">↑</string>
+    <string name="pane_key_up_description">Up arrow</string>
+    <string name="pane_key_down">↓</string>
+    <string name="pane_key_down_description">Down arrow</string>
+    <string name="pane_key_left">←</string>
+    <string name="pane_key_left_description">Left arrow</string>
+    <string name="pane_key_right">→</string>
+    <string name="pane_key_right_description">Right arrow</string>
+    <string name="pane_key_interrupt" translatable="false">Ctrl C</string>
+    <string name="pane_key_enter">Enter</string>
+    <string name="pane_key_space">Space</string>
+    <string name="pane_keys_segment_keys">Keys</string>
+    <string name="pane_keys_segment_digits" translatable="false">123</string>
+    <string name="pane_keys_presets">Presets</string>
+    <string name="pane_keys_function_keys">Function keys</string>
+    <string name="pane_keys_expand_section">Expand %1$s</string>
+    <string name="pane_keys_collapse_section">Collapse %1$s</string>
+    <string name="pane_key_digit" translatable="false">%1$d</string>
+    <string name="pane_key_function" translatable="false">F%1$d</string>
+    <string name="pane_key_shift">⇧ Shift</string>
+    <string name="pane_key_ctrl">Ctrl</string>
+    <string name="pane_key_alt">Alt</string>
+    <string name="pane_key_modifier_description">%1$s modifier</string>
+    <string name="pane_key_preset_description">%1$s preset</string>
+    <string name="pane_key_clear">Clear</string>
+    <string name="pane_key_clear_description">Clear staged keys</string>
+    <string name="pane_key_send_staged">Send keys</string>
+    <string name="pane_key_send_staged_description">Send staged keys</string>
+    <string name="pane_key_remove_staged">Remove %1$s</string>
+    <string name="pane_key_base_placeholder">key</string>
+    <string name="pane_key_base_description">Type a key to combine</string>
+    <string name="pane_key_pending">%1$s …</string>
+    <string name="pane_key_accepted">%1$s accepted</string>
+    <string name="pane_key_confirm">Confirm</string>
+    <string name="pane_key_modifiers_armed">%1$s armed</string>
+    <string name="pane_key_modifier_once">%1$s · once</string>
+    <string name="pane_key_modifier_lock">%1$s · lock</string>
+    <string name="pane_key_repeat_count" translatable="false">×%1$d</string>
+    <string name="pane_key_ctrl_c" translatable="false">Ctrl C</string>
+    <string name="pane_key_ctrl_d" translatable="false">Ctrl D</string>
+    <string name="pane_key_ctrl_u" translatable="false">Ctrl U</string>
+    <string name="pane_key_ctrl_r" translatable="false">Ctrl R</string>
+    <string name="pane_key_ctrl_l" translatable="false">Ctrl L</string>
+    <string name="pane_key_ctrl_z" translatable="false">Ctrl Z</string>
+    <string name="pane_reply_hint">Reply…</string>
+    <string name="pane_send">Send reply</string>
+    <string name="pane_attach_image">Attach image</string>
+    <string name="pane_record_speech">Record speech</string>
+    <string name="pane_stop_recording">Stop recording and transcribe</string>
+    <string name="pane_recording">Recording… tap the microphone to transcribe.</string>
+    <string name="pane_microphone_denied">Microphone access was not granted.</string>
+    <string name="pane_microphone_unavailable">microphone unavailable</string>
+    <string name="pane_recording_start_failed">Recording could not start: %1$s</string>
+    <string name="pane_recording_unreadable">Recording could not be read. Try a slightly longer clip.</string>
+    <string name="pane_sending_transcript">Sending transcript…</string>
+    <string name="pane_new_output">New output ↓</string>
+    <string name="pane_new_output_description">Jump to new terminal output</string>
+    <string name="composer_media_host_path_missing">The host did not return an image path.</string>
+    <string name="composer_media_image_added">Image added — path in message.</string>
+    <string name="composer_media_image_upload">Image upload</string>
+    <string name="composer_media_image_no_result">Image upload returned no result.</string>
+    <string name="composer_media_no_speech">No speech was detected.</string>
+    <string name="composer_media_transcript_added">Transcript added for review.</string>
+    <string name="composer_media_transcription">Transcription</string>
+    <string name="composer_media_transcription_no_result">Transcription returned no result.</string>
+    <string name="composer_media_image_no_type">The selected image has no media type.</string>
+    <string name="composer_media_choose_image">Choose an image file.</string>
+    <string name="composer_media_image_unreadable">The selected image could not be read.</string>
+    <string name="composer_media_image_too_large">That image is too large — 10 MB is the limit.</string>
+    <string name="composer_media_image_empty">The selected image is empty.</string>
+    <string name="composer_media_provider_unavailable">%1$s is unavailable.</string>
+    <string name="composer_media_failure">%1$s: %2$s</string>
+    <string name="pane_quick_sent">✓ %1$s</string>
+    <string name="pane_quick_sending">Sending…</string>
+    <string name="pane_quick_unavailable">No quick replies are available for this pane.</string>
+    <string name="pane_agent_workspace_meta" translatable="false">%1$s · %2$s</string>
+    <string name="pane_more_symbol" translatable="false">⚙</string>
+    <string name="pane_close_symbol" translatable="false">×</string>
+    <string name="pane_switcher_open">Switch pane</string>
+    <string name="pane_switcher_title">Switch pane</string>
+    <string name="pane_switcher_available">Switch pane · %1$d available</string>
+    <string name="pane_switcher_needs">Needs you</string>
+    <string name="pane_switcher_ready">Ready · unseen</string>
+    <string name="pane_switcher_working">Working</string>
+    <string name="pane_switcher_recent">Recent</string>
+    <string name="pane_switcher_shells">Shells</string>
+    <string name="pane_switcher_launch">Launch</string>
+    <string name="pane_switcher_expand">Show %1$s</string>
+    <string name="pane_switcher_collapse">Hide %1$s</string>
+    <string name="pane_switcher_fold_label">%1$s  %2$s</string>
+    <string name="pane_switcher_pane_description">%1$s</string>
+    <string name="pane_switcher_current_description">%1$s, current pane</string>
+    <string name="pane_new_tab">New tab</string>
+    <string name="pane_new_tab_failed">The new tab could not be created.</string>
+    <string name="pane_launch_failed">The launcher could not be started.</string>
+    <string name="pane_hide_strips">Hide tabs and panes</string>
+    <string name="pane_show_strips">Show tabs and panes</string>
+    <string name="pane_tab_strip_description">%1$s tab strip, %2$s</string>
+    <string name="pane_tab_description">%1$s tab</string>
+    <string name="pane_tab_current_description">%1$s tab, current</string>
+    <string name="pane_strip_description">%1$s pane</string>
+    <string name="pane_strip_current_description">%1$s pane, current</string>
+    <string name="pane_created_shell_meta">shell · %1$s</string>
+    <string name="pane_host_incompatible">%1$s uses an incompatible pack protocol</string>
+    <string name="pane_host_incompatible_detail">%1$s uses an incompatible pack protocol — %2$s</string>
+    <string name="pane_host_unreachable">%1$s is unreachable; writes are disabled.</string>
+    <string name="pane_add_symbol" translatable="false">＋</string>
+    <string name="pane_hide_symbol" translatable="false">⌃</string>
+    <string name="pane_fold_open_symbol" translatable="false">⌄</string>
+    <string name="pane_fold_closed_symbol" translatable="false">›</string>
+    <string name="pane_dock_close">Close composer controls</string>
+    <string name="pane_display_wrap">Wrap lines</string>
+    <string name="pane_display_tap_to_type">Tap terminal to type</string>
+    <string name="pane_display_raw">Raw terminal</string>
+    <string name="pane_display_text_size">Text size</string>
+    <string name="pane_display_smaller">Decrease terminal text size</string>
+    <string name="pane_display_larger">Increase terminal text size</string>
+    <string name="pane_direct_hint">Typing directly into terminal…</string>
+    <string name="pane_direct_armed">Direct terminal typing armed</string>
+    <string name="pane_direct_wait">Wait for the current terminal input to finish before arming Type again.</string>
+    <string name="pane_direct_draft_refusal">Send or clear the reply draft before using Type.</string>
+    <string name="pane_draft_too_long">This draft is too long to survive closing the app. Shorten or send it first.</string>
+    <string name="pane_reply_unavailable">Free-text reply is unavailable until a recognized empty composer is visible.</string>
+    <string name="pane_agent_commands">Agent commands</string>
+    <string name="pane_agent_search">Search %1$d commands…</string>
+    <string name="pane_agent_common_hint">Common commands · search all %1$d</string>
+    <string name="pane_agent_icon_description">%1$s icon</string>
+    <string name="pane_agent_confirm">Tap again to run %1$s</string>
+    <string name="pane_destructive_confirm">Destructive: %1$s — tap Send again to confirm</string>
+    <string name="pane_display_size_value">%1$d sp</string>
+    <string name="pane_error_no_composer">A recognized free-text composer is not visible. Use only the named keys on this screen.</string>
+    <string name="pane_reply_sent">Reply sent.</string>
+    <string name="pane_error_text_delivered">Text was already typed, but submit did not complete. Check the pane; do not resend it blindly.</string>
+    <string name="pane_error_screen_changed_reply">The screen changed before the reply could be sent. Review it and try again.</string>
+    <string name="pane_error_reply_refused">The reply was refused.</string>
+    <string name="pane_action_send">Send</string>
+    <string name="pane_error_send_empty">The send returned no result.</string>
+    <string name="pane_error_direct_queue_full">Direct typing stopped because too much input was waiting to send. Review the pane before continuing.</string>
+    <string name="pane_error_direct_unavailable">Direct typing is no longer available for this pane.</string>
+    <string name="pane_typed">Typed into terminal.</string>
+    <string name="pane_keys_sent">%1$s sent.</string>
+    <string name="pane_error_screen_changed_key">The screen changed before the key could be sent. Review it and try again.</string>
+    <string name="pane_error_key_refused">The key was refused.</string>
+    <string name="pane_action_key">Key</string>
+    <string name="pane_error_key_empty">The key send returned no result.</string>
+    <string name="pane_error_direct_verify">Input was sent, but the updated pane could not be verified. Direct typing stopped.</string>
+    <string name="pane_error_wait_content">Wait for current pane content before sending terminal input.</string>
+    <string name="pane_error_verify">Could not verify the current screen; nothing was sent.</string>
+    <string name="pane_error_screen_changed_input">The screen changed before input could be sent. Review it and try again.</string>
+    <string name="pane_error_outcome_uncertain">%1$s outcome is uncertain. Check the pane before retrying.</string>
+    <string name="pane_error_submit_incomplete">Text was delivered, but submit did not complete. Check the pane before retrying.</string>
+    <string name="pane_status_not_paired">Read-only connection · pair this device to control the terminal.</string>
+    <string name="pane_status_checking_device">Checking device authorization before enabling terminal controls.</string>
+    <string name="pane_status_unauthorised">Read-only — device not authorised by the fronting proxy.</string>
+</resources>

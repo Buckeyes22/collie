@@ -68,7 +68,7 @@ const BOTTOM_PAD = 44;
 /** A node's caption baseline sits `NODE_R + 15` below its centre; this clears its descenders too. */
 const CAPTION_CLEAR = 22;
 
-/** Which slot a member occupies. Role names are not translated — see ADR 0030's exclusion list. */
+/** Which slot a member occupies. Role names are protocol vocabulary. */
 export type FormationRole = "lead" | "deputy" | "peer";
 
 /** One member's place in the drawing. `row` is 0 for the apex, 1 for the deputy, 2+ for fan ranks. */

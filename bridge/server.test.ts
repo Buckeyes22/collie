@@ -1691,6 +1691,22 @@ describe("the host gate — `?host=` selects among enrolled members and nothing 
     expect(src).not.toContain("per-pane proxying is not implemented in this build");
   });
 
+  test("the worktree listing clears the read gate before resolving its target", () => {
+    // This route used to be the sole session-scoped read that jumped straight to `resolve()`. On the
+    // browser caller that skipped `guard(req, cfg, "read")`, so a bad Host, a cross-origin request,
+    // or an untrusted/missing Tailscale identity could reach the local/peer target. Pin the complete
+    // short-circuit in the route block: every refusal returns before the first target call.
+    const start = src.indexOf("const worktreeListMatch = pathname.match(WORKTREE_LIST_ROUTE);");
+    const end = src.indexOf("const worktreeMatch = pathname.match(WORKTREE_ACTION_ROUTE);", start);
+    expect(start).toBeGreaterThan(-1);
+    expect(end).toBeGreaterThan(start);
+    const handler = src.slice(start, end);
+    expect(handler).toContain(
+      'const denied = caller.gate("read");\n      if (denied) return denied;\n      const rt = await caller.resolve();',
+    );
+    expect(handler.indexOf('caller.gate("read")')).toBeLessThan(handler.indexOf("caller.resolve()"));
+  });
+
   test("a peer's own routes are the SAME closure the browser's are (§5), with two callers", () => {
     // The 1:1 rule: `/pack/v1/pane/:id/reply` and `/api/pane/:id/reply` are not two handlers that
     // agree — they are one block reached by two callers. Exactly one definition, exactly two calls.

@@ -110,7 +110,7 @@ describe("isBoxBorder", () => {
   });
 
   it("rejects a spaced-out CJK dash-label separator (horizontal bar U+2015, not U+2500)", () => {
-    expect(isBoxBorder("―― 中略 ――")).toBe(false);
+    expect(isBoxBorder("―― \u4e2d\u7565 ――")).toBe(false);
   });
 
   it("rejects a spaced table divider (vertical bars, not the border glyph)", () => {
@@ -153,7 +153,7 @@ describe("isInputBoxTopBorder", () => {
 
   it("still rejects text that isn't the border glyph at all (wrong codepoint)", () => {
     expect(isInputBoxTopBorder("— quoted aside —")).toBe(false); // em dash, not U+2500
-    expect(isInputBoxTopBorder("―― 中略 ――")).toBe(false); // horizontal bar, not U+2500
+    expect(isInputBoxTopBorder("―― \u4e2d\u7565 ――")).toBe(false); // horizontal bar, not U+2500
     expect(isInputBoxTopBorder("│ │ │")).toBe(false); // vertical bar, not U+2500
     expect(isInputBoxTopBorder("foo — bar — baz")).toBe(false);
     expect(isInputBoxTopBorder("---")).toBe(false); // ASCII, not U+2500
@@ -202,13 +202,13 @@ describe("labelled borders below the shared total-width floor", () => {
   // undercount direction is the one that actually bites: a legitimate 8-cell CJK-labelled border must
   // not be rejected just because its `.length` reads as only 6.
   it("accepts an 8-cell CJK-labelled border whose .length (6) reads under the floor", () => {
-    const border = "─ 中文 ─"; // 1 + 1 + 2 + 2 + 1 + 1 = 8 display cells, but .length is only 6
+    const border = "─ \u65e5\u672c ─"; // 1 + 1 + 2 + 2 + 1 + 1 = 8 display cells, but .length is only 6
     expect(border.length).toBe(6);
     expect(isInputBoxTopBorder(border)).toBe(true); // 1-glyph flanks — loose predicate only
   });
 
   it("rejects a 6-cell CJK-labelled border by both predicates", () => {
-    const border = "─ 中 ─"; // 1 + 1 + 2 + 1 + 1 = 6 display cells
+    const border = "─ \u4e2d ─"; // 1 + 1 + 2 + 1 + 1 = 6 display cells
     expect(isBoxBorder(border)).toBe(false);
     expect(isInputBoxTopBorder(border)).toBe(false);
   });

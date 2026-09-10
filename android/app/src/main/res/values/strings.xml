@@ -1,42 +1,172 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!--
-    Copyright 2021 Google Inc. All Rights Reserved.
-
-     Licensed under the Apache License, Version 2.0 (the "License");
-     you may not use this file except in compliance with the License.
-     You may obtain a copy of the License at
-
-         http://www.apache.org/licenses/LICENSE-2.0
-
-     Unless required by applicable law or agreed to in writing, software
-     distributed under the License is distributed on an "AS IS" BASIS,
-     WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-     See the License for the specific language governing permissions and
-     limitations under the License.
--->
 <resources>
-
-
-  <!--
-    The "fullscreen" and "fullscreen-sticky" TWA manifest values correspond to "immersive" and "sticky-immersive"
-    AndroidManifest values.
-  -->
-
-
-  <!--
-    This variable below expresses the relationship between the app and the site,
-    as documented in the TWA documentation at
-    https://developers.google.com/web/updates/2017/10/using-twa#set_up_digital_asset_links_in_an_android_app
-    and is injected into the AndroidManifest.xml
-  -->
-  <string name="assetStatements">
-    [{
-        \"relation\": [\"delegate_permission/common.handle_all_urls\"],
-        \"target\": {
-            \"namespace\": \"web\",
-            \"site\": \"https://ed8.taile7b6b1.ts.net\"
-        }
-    }]
-
-  </string>
+    <string name="app_name">Collie</string>
+    <string name="collie_wordmark">COLLIE</string>
+    <string name="app_tagline">Your agents, within reach</string>
+    <string name="setup_title">Connect this phone</string>
+    <string name="origin_hint">Collie HTTPS origin</string>
+    <string name="device_label_hint">Device label</string>
+    <string name="pairing_code_hint">Pairing code</string>
+    <string name="pair_and_connect">Pair and connect</string>
+    <string name="connect_read_only">Connect read-only</string>
+    <string name="credential_note">Credentials stay encrypted on this device.</string>
+    <string name="connection_settings">Connection settings</string>
+    <string name="all_clear">Nothing needs you</string>
+    <string name="check_mark">✓</string>
+    <string name="empty_mark">◇</string>
+    <string name="spaces_title">SPACES</string>
+    <string name="spaces_empty">No spaces.</string>
+    <plurals name="space_needs_you">
+        <item quantity="one">%1$d space needs you</item>
+        <item quantity="other">%1$d spaces need you</item>
+    </plurals>
+    <string name="count_parenthesized">(%1$d)</string>
+    <string name="pane_count">%1$d</string>
+    <string name="pane_mode_keys">Keys</string>
+    <string name="pane_mode_type">Type</string>
+    <string name="pane_mode_quick">Quick</string>
+    <string name="pane_mode_agent">Agent</string>
+    <string name="pane_mode_settings">Display settings</string>
+    <string name="navigate_back">Back</string>
+    <string name="space_empty">No tabs in this space.</string>
+    <string name="space_tabs_title">TABS</string>
+    <string name="space_tab_all">All</string>
+    <string name="space_view_empty_tab">(empty tab)</string>
+    <string name="space_view_no_panes_space">This space has no panes.</string>
+    <string name="recent_sort">Newest ↓</string>
+    <string name="new_space">New Space</string>
+    <string name="new_tab">New Tab</string>
+    <string name="filter_spaces">Filter spaces</string>
+    <string name="launch_title">LAUNCH</string>
+    <string name="build_stamp">Android app build %1$s</string>
+    <string name="pack_footer_label">Pack · %1$s · %2$d reachable</string>
+    <string name="pack_footer_accessibility">Open the pack overview</string>
+    <string name="footer_update_open">%1$s. Open Updates.</string>
+    <plurals name="pack_machine_count">
+        <item quantity="one">%1$d machine</item>
+        <item quantity="other">%1$d machines</item>
+    </plurals>
+    <string name="header_on">on [%1$s]</string>
+    <string name="space_mode_plain">Space</string>
+    <string name="space_mode_worktree">Worktree</string>
+    <string name="space_create_unsupported">This multiplexer does not support creating spaces.</string>
+    <string name="space_directory_optional">Directory (optional)</string>
+    <string name="space_label_optional">Label (optional)</string>
+    <string name="action_create">Create</string>
+    <string name="worktree_choose_repository">Choose repository</string>
+    <string name="worktree_create_new_branch">Create new branch</string>
+    <string name="worktree_detached">Detached · %1$s</string>
+    <string name="worktree_branch_name">Branch name</string>
+    <string name="worktree_create">Create worktree</string>
+    <string name="worktree_open_title">Open worktree?</string>
+    <string name="action_open">Open</string>
+    <string name="created_pane_missing">The bridge did not identify the created pane.</string>
+    <string name="space_create_failed">The space was not created.</string>
+    <string name="space_creating">Creating space…</string>
+    <string name="worktree_pane_missing">The bridge did not identify the worktree pane.</string>
+    <string name="worktree_open_failed">The worktree was not opened.</string>
+    <string name="worktree_loading">Loading worktrees…</string>
+    <string name="worktree_creating">Creating worktree…</string>
+    <string name="worktree_opening">Opening worktree…</string>
+    <string name="pane_shell_meta">shell · %1$s</string>
+    <string name="pane_meta">%1$s · %2$s</string>
+    <string name="triage_needs_you">Needs you</string>
+    <string name="triage_ready_unseen">Ready · unseen</string>
+    <string name="triage_working">Working</string>
+    <string name="triage_recent">Recent</string>
+    <string name="dashboard_disconnected_empty">Disconnected · showing no cached panes</string>
+    <string name="dashboard_mux_disconnected">Multiplexer disconnected</string>
+    <string name="dashboard_no_agents">No agents running.</string>
+    <string name="age_now">now</string>
+    <string name="age_minutes">%1$dm</string>
+    <string name="age_hours">%1$dh</string>
+    <string name="age_days">%1$dd</string>
+    <string name="collapse_recent">Collapse Recent</string>
+    <string name="expand_recent">Expand Recent</string>
+    <string name="recent_newest">Newest ↓</string>
+    <string name="recent_oldest">Oldest ↑</string>
+    <string name="recent_switch_oldest">Switch to oldest first</string>
+    <string name="recent_switch_newest">Switch to newest first</string>
+    <string name="agent_icon_description">%1$s icon</string>
+    <string name="pane_accessibility">%1$s, %2$s, %3$s</string>
+    <string name="collapse_launch">Collapse Launch</string>
+    <string name="expand_launch">Expand Launch</string>
+    <string name="launcher_pending">%1$s…</string>
+    <string name="launcher_with_cwd">%1$s · %2$s\n%3$s</string>
+    <string name="launcher_without_cwd">%1$s\n%2$s</string>
+    <string name="launcher_accessibility">Launch %1$s</string>
+    <string name="collapse_spaces">Collapse Spaces</string>
+    <string name="expand_spaces">Expand Spaces</string>
+    <string name="space_accessibility">%1$s, %2$d panes</string>
+    <string name="status_needs_you">needs you</string>
+    <string name="status_working">working</string>
+    <string name="status_done">done</string>
+    <string name="status_idle">idle</string>
+    <string name="status_shell">shell</string>
+    <string name="status_unknown">unknown</string>
+    <string name="tab_default">Tab %1$d</string>
+    <string name="tab_accessibility">%1$s, %2$d panes, tab actions</string>
+    <string name="pane_agent_accessibility">%1$s, %2$s</string>
+    <string name="tab_action_rename">Rename</string>
+    <string name="tab_action_close">Close</string>
+    <string name="tab_close_one_pane">This closes 1 pane. This cannot be undone.</string>
+    <string name="tab_close_many_panes">This closes %1$d panes. This cannot be undone.</string>
+    <string name="tab_pair_required">Pair this device to change tabs.</string>
+    <string name="tab_changes_unsupported">This multiplexer does not support tab changes.</string>
+    <string name="tab_label_hint">Tab label</string>
+    <string name="tab_rename_title">Rename Tab</string>
+    <string name="tab_close_title">Close %1$s?</string>
+    <plurals name="tab_close_again">
+        <item quantity="one">Tap again to close %1$d pane</item>
+        <item quantity="other">Tap again to close %1$d panes</item>
+    </plurals>
+    <string name="tab_close_again_plain">Tap again to close</string>
+    <string name="created_item_failed">The item was not created.</string>
+    <string name="tab_change_failed">The tab was not changed.</string>
+    <string name="space_missing">This space is no longer available.</string>
+    <string name="health_empty">The health probe returned an unexpected empty response.</string>
+    <string name="pairing_code_required">Enter a pairing code.</string>
+    <string name="pairing_refused">Pairing refused: %1$s</string>
+    <string name="pairing_uncertain">Pairing outcome is uncertain. Generate a new code and retry with a new device label, or revoke the old label first.</string>
+    <string name="pairing_empty">Pairing returned an unexpected empty response.</string>
+    <string name="device_label_required">Enter a device label.</string>
+    <string name="device_label_too_long">Device labels may be at most 80 characters.</string>
+    <string name="origin_invalid_detail">Origin is invalid: %1$s</string>
+    <string name="origin_invalid">Enter a valid HTTPS Collie origin.</string>
+    <string name="error_proxy_sign_in">Sign-in is required by the fronting proxy (HTTP %1$d).</string>
+    <string name="error_device_not_paired">This device is not paired for terminal control.</string>
+    <string name="error_device_unauthorised">This device is read-only at the fronting proxy.</string>
+    <string name="error_http">Collie returned HTTP %1$d.</string>
+    <string name="error_network">Collie could not be reached.</string>
+    <string name="error_timeout">The request timed out. Last known data is retained.</string>
+    <string name="error_subject">%1$s: %2$s</string>
+    <string name="action_error">%1$s: %2$s</string>
+    <string name="unavailable">Unavailable</string>
+    <string name="pack_unavailable">Pack unavailable</string>
+    <string name="pane_take_over">Take over</string>
+    <string name="pane_use_type">Use Type</string>
+    <string name="pane_terminal_draft">Draft on terminal: %1$s</string>
+    <string name="pane_no_echo_prompt">Password input does not echo at “%1$s”. Send and hands-free are disabled; use Type explicitly.</string>
+    <string name="pane_semantic_prompt">PROMPT</string>
+    <string name="pane_semantic_wizard">QUESTION FLOW</string>
+    <string name="pane_semantic_preview">PREVIEW</string>
+    <string name="pane_semantic_multi">MULTI-SELECT</string>
+    <string name="pane_semantic_menu">TERMINAL MENU</string>
+    <string name="pane_semantic_suggestions">SUGGESTIONS</string>
+    <string name="pane_semantic_action_description">%1$s; sends %2$s</string>
+    <string name="pane_dialog_owns_input">The terminal dialog owns input. Use its reviewed actions or the Keys tray.</string>
+    <string name="pane_dialog_verify_failed">Could not verify the current dialog; nothing was sent.</string>
+    <string name="pane_dialog_changed">The dialog changed before the action could be sent. Review it and try again.</string>
+    <string name="pane_dialog_refused">The dialog action was refused.</string>
+    <string name="pane_dialog_empty">The dialog action returned no result.</string>
+    <string name="pane_dialog_sent">%1$s sent.</string>
+    <string name="pane_dialog_action">Dialog action</string>
+    <plurals name="space_pane_count">
+        <item quantity="one">%1$d pane</item>
+        <item quantity="other">%1$d panes</item>
+    </plurals>
+    <plurals name="space_tab_count">
+        <item quantity="one">%1$d tab</item>
+        <item quantity="other">%1$d tabs</item>
+    </plurals>
 </resources>

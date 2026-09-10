@@ -47,8 +47,8 @@ type Gate = "pairing" | "device";
 // place. This strip is the standing disclosure; the placeholder is the answer at the moment it
 // matters.
 //
-// The copy is the SHORT pair, `space.readOnly.*`, which was already written and already translated
-// into all six locales for the space route and used by nothing. A strip never wraps, by contract
+// The copy is the SHORT pair, `space.readOnly.*`, which was already written for the space route and
+// used by nothing. A strip never wraps, by contract
 // (ui/notice.tsx), so long copy would truncate rather than fit — and the short strings are what the
 // contract asks for. The one thing they drop is the device NAME suffix, which was answering "which
 // device is this?" on the device you are holding.

@@ -6,7 +6,7 @@
 // Nothing is lost: the pane's own name (a herdr `pane.rename` label, or Claude's own `/rename`
 // session name) moves down one line, where it displaces the cwd.
 import { baseName, shortCwd } from "./format";
-import { paneDisplayName, type AgentView } from "./types";
+import { displayAgentTitle, paneDisplayName, type AgentView } from "./types";
 
 /** A two-line row label. Only {@link paneTitleInTab} returns one — the herd list renders
  *  {@link PaneParts} instead, so the project can give up width before the tab does. */
@@ -100,7 +100,8 @@ export function paneParts(pane: AgentView): PaneParts {
   // because it is still the only trace of what ran, and the row's muted line is where a fact you
   // read second belongs.
   const stale = pane.terminalTitle !== undefined && pane.terminalTitleStale === true;
-  const own = pane.paneLabel || pane.sessionName || (stale ? "" : pane.terminalTitle);
+  const rawOwn = pane.paneLabel || pane.sessionName || (stale ? "" : pane.terminalTitle);
+  const own = rawOwn ? displayAgentTitle(pane.agent, rawOwn) : "";
   const secondary = own || informativeCwd(pane.cwd, project) || (stale ? pane.terminalTitle : null);
   return {
     project,

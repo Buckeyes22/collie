@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item name="pane_keys_segment_keys" type="id" />
+    <item name="pane_keys_segment_digits" type="id" />
+    <item name="pane_keys_primary" type="id" />
+    <item name="pane_keys_digits" type="id" />
+    <item name="pane_keys_queue" type="id" />
+    <item name="pane_keys_queue_clear" type="id" />
+    <item name="pane_keys_queue_send" type="id" />
+    <item name="pane_keys_queue_chips" type="id" />
+    <item name="pane_keys_base_input" type="id" />
+    <item name="pane_keys_modifiers" type="id" />
+    <item name="pane_keys_presets_toggle" type="id" />
+    <item name="pane_keys_presets" type="id" />
+    <item name="pane_keys_functions_toggle" type="id" />
+    <item name="pane_keys_functions" type="id" />
+</resources>

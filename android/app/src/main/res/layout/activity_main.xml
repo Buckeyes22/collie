@@ -1,0 +1,437 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/collie_background">
+
+    <com.lateapex.collie.ui.CollieMaxWidthScrollView
+        android:id="@+id/setup_panel"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_gravity="top|center_horizontal"
+        android:fillViewport="true">
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingHorizontal="16dp"
+            android:paddingTop="20dp"
+            android:paddingBottom="16dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:minHeight="@dimen/collie_header_height"
+                android:orientation="horizontal">
+                <ImageView
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:contentDescription="@null"
+                    android:scaleType="centerInside"
+                    android:src="@drawable/collie_mark" />
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="10dp"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/collie_wordmark"
+                        android:textColor="@color/collie_on_background"
+                        android:textSize="24sp" />
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/app_tagline"
+                        android:textColor="@color/collie_muted"
+                        android:textSize="12sp" />
+                </LinearLayout>
+                <ImageButton
+                    android:id="@+id/setup_settings_button"
+                    style="@style/Widget.Collie.Header.IconButton"
+                    android:contentDescription="@string/connection_settings"
+                    android:padding="12dp"
+                    android:src="@drawable/ic_collie_settings" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:background="@drawable/bg_pane_card"
+                android:orientation="vertical"
+                android:padding="16dp">
+                <com.lateapex.collie.ui.CollieHeadingTextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="12dp"
+                    android:text="@string/setup_title"
+                    android:textColor="@color/collie_on_background"
+                    android:textSize="16sp" />
+
+                <com.google.android.material.textfield.TextInputLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="@string/origin_hint"
+                    app:boxBackgroundMode="outline">
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/origin_input"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:inputType="textUri"
+                        android:maxLines="1" />
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <com.google.android.material.textfield.TextInputLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:hint="@string/device_label_hint"
+                    app:boxBackgroundMode="outline">
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/device_label_input"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:inputType="text"
+                        android:maxLength="80"
+                        android:maxLines="1" />
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <com.google.android.material.textfield.TextInputLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:hint="@string/pairing_code_hint"
+                    app:boxBackgroundMode="outline">
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/pairing_code_input"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:importantForAutofill="no"
+                        android:inputType="textPassword"
+                        android:maxLength="64"
+                        android:maxLines="1"
+                        android:saveEnabled="false" />
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <TextView
+                    android:id="@+id/error_text"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:accessibilityLiveRegion="polite"
+                    android:textColor="@color/collie_error"
+                    android:textSize="12sp"
+                    android:visibility="gone" />
+
+                <ProgressBar
+                    android:id="@+id/setup_progress"
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:layout_gravity="center_horizontal"
+                    android:layout_marginTop="10dp"
+                    android:visibility="gone" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/pair_button"
+                    style="@style/Widget.Collie.Button"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:layout_marginTop="12dp"
+                    android:text="@string/pair_and_connect" />
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/connect_button"
+                    style="@style/Widget.Collie.Button.Outlined"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:layout_marginTop="6dp"
+                    android:text="@string/connect_read_only" />
+            </LinearLayout>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:gravity="center"
+                android:text="@string/credential_note"
+                android:textColor="@color/collie_muted"
+                android:textSize="11sp" />
+        </LinearLayout>
+    </com.lateapex.collie.ui.CollieMaxWidthScrollView>
+
+    <com.lateapex.collie.ui.CollieMaxWidthLinearLayout
+        android:id="@+id/dashboard_panel"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:layout_gravity="top|center_horizontal"
+        android:orientation="vertical"
+        android:visibility="gone">
+        <LinearLayout
+            android:id="@+id/dashboard_update_ribbon"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/collie_touch_target"
+            android:background="@drawable/bg_dashboard_shell_working"
+            android:clickable="true"
+            android:focusable="true"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="16dp"
+            android:visibility="gone">
+            <ImageView
+                android:id="@+id/dashboard_update_icon"
+                android:layout_width="14dp"
+                android:layout_height="14dp"
+                android:contentDescription="@null"
+                android:src="@drawable/ic_dashboard_update" />
+            <TextView
+                android:id="@+id/dashboard_update_text"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:gravity="center_vertical"
+                android:maxLines="1"
+                android:textColor="@color/collie_foreground"
+                android:textSize="12sp" />
+            <ImageButton
+                android:id="@+id/dashboard_update_dismiss"
+                android:layout_width="@dimen/collie_touch_target"
+                android:layout_height="@dimen/collie_touch_target"
+                android:background="@drawable/bg_collie_icon_control"
+                android:contentDescription="@string/dashboard_update_dismiss"
+                android:padding="8dp"
+                android:src="@drawable/ic_collie_close"
+                android:visibility="gone" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/dashboard_connection_banner"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/collie_touch_target"
+            android:background="@drawable/bg_dashboard_shell_working"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="16dp"
+            android:paddingEnd="8dp"
+            android:visibility="gone">
+            <ImageView
+                android:id="@+id/dashboard_connection_icon"
+                android:layout_width="14dp"
+                android:layout_height="14dp"
+                android:contentDescription="@null"
+                android:src="@drawable/ic_dashboard_plug" />
+            <TextView
+                android:id="@+id/dashboard_connection_text"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:gravity="center_vertical"
+                android:maxLines="1"
+                android:textColor="@color/collie_foreground"
+                android:textSize="12sp" />
+            <Button
+                android:id="@+id/dashboard_connection_retry"
+                android:layout_width="wrap_content"
+                android:layout_height="@dimen/collie_touch_target"
+                android:background="@drawable/bg_collie_icon_control"
+                android:minWidth="0dp"
+                android:paddingHorizontal="8dp"
+                android:text="@string/dashboard_connection_retry"
+                android:textAllCaps="false"
+                android:textColor="@color/collie_foreground"
+                android:textSize="11sp"
+                android:visibility="gone" />
+            <ImageButton
+                android:id="@+id/dashboard_connection_reload"
+                android:layout_width="@dimen/collie_touch_target"
+                android:layout_height="@dimen/collie_touch_target"
+                android:background="@drawable/bg_collie_icon_control"
+                android:contentDescription="@string/dashboard_connection_reload"
+                android:padding="8dp"
+                android:src="@drawable/ic_dashboard_reload"
+                android:visibility="gone" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:minHeight="@dimen/collie_header_height"
+            android:orientation="horizontal"
+            android:paddingStart="16dp"
+            android:paddingEnd="8dp">
+            <ImageView
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:contentDescription="@null"
+                android:scaleType="centerInside"
+                android:src="@drawable/collie_mark" />
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:orientation="vertical">
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:includeFontPadding="false"
+                    android:text="@string/collie_wordmark"
+                    android:textColor="@color/collie_on_background"
+                    android:textSize="11sp" />
+                <TextView
+                    android:id="@+id/header_status"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:includeFontPadding="false"
+                    android:maxLines="1"
+                    android:minHeight="20dp"
+                    android:textColor="@color/collie_muted"
+                    android:textSize="16sp" />
+            </LinearLayout>
+            <androidx.appcompat.widget.AppCompatButton
+                android:id="@+id/host_switcher"
+                style="@style/Widget.Collie.Header.Pill"
+                android:drawableStart="@drawable/ic_collie_server"
+                android:contentDescription="@string/dashboard_host_switcher"
+                android:visibility="gone" />
+            <androidx.appcompat.widget.AppCompatButton
+                android:id="@+id/session_switcher"
+                style="@style/Widget.Collie.Header.Pill"
+                android:drawableStart="@drawable/ic_collie_layers"
+                android:contentDescription="@string/dashboard_session_switcher"
+                android:visibility="gone" />
+            <ImageButton
+                android:id="@+id/settings_button"
+                style="@style/Widget.Collie.Header.IconButton"
+                android:contentDescription="@string/connection_settings"
+                android:padding="12dp"
+                android:src="@drawable/ic_collie_settings" />
+        </LinearLayout>
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="@color/collie_rule" />
+
+        <TextView
+            android:id="@+id/dashboard_read_only_banner"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:accessibilityLiveRegion="polite"
+            android:background="@drawable/bg_dashboard_shell_working"
+            android:gravity="center_vertical"
+            android:minHeight="33dp"
+            android:paddingHorizontal="16dp"
+            android:textColor="@color/collie_foreground"
+            android:textSize="12sp"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/dashboard_error_text"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:accessibilityLiveRegion="polite"
+            android:background="@drawable/bg_pane_attention"
+            android:paddingHorizontal="16dp"
+            android:paddingVertical="8dp"
+            android:textColor="@color/collie_error"
+            android:textSize="12sp"
+            android:visibility="gone" />
+
+        <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+            android:id="@+id/swipe_refresh"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1">
+            <FrameLayout
+                android:layout_width="match_parent"
+                android:layout_height="match_parent">
+                <androidx.recyclerview.widget.RecyclerView
+                    android:id="@+id/pane_list"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:clipToPadding="false" />
+                <ProgressBar
+                    android:id="@+id/dashboard_progress"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
+                    android:layout_gravity="center"
+                    android:visibility="gone" />
+            </FrameLayout>
+        </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
+    </com.lateapex.collie.ui.CollieMaxWidthLinearLayout>
+
+    <FrameLayout
+        android:id="@+id/dashboard_idle_cover"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/dashboard_idle_scrim"
+        android:clickable="true"
+        android:focusable="true"
+        android:importantForAccessibility="yes"
+        android:visibility="gone">
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:layout_margin="24dp"
+            android:background="@drawable/bg_collie_card"
+            android:gravity="center_horizontal"
+            android:orientation="vertical"
+            android:paddingHorizontal="32dp"
+            android:paddingVertical="32dp">
+            <ImageView
+                android:layout_width="64dp"
+                android:layout_height="64dp"
+                android:contentDescription="@null"
+                android:src="@drawable/collie_mark" />
+            <com.lateapex.collie.ui.CollieHeadingTextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="@string/collie_wordmark"
+                android:textColor="@color/collie_foreground"
+                android:textSize="18sp" />
+            <TextView
+                android:id="@+id/dashboard_idle_title"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="24dp"
+                android:gravity="center"
+                android:text="@string/dashboard_idle_paused_title"
+                android:textColor="@color/collie_foreground"
+                android:textSize="16sp" />
+            <TextView
+                android:id="@+id/dashboard_idle_body"
+                android:layout_width="280dp"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:gravity="center"
+                android:text="@string/dashboard_idle_paused_body"
+                android:textColor="@color/collie_muted"
+                android:textSize="14sp" />
+            <ProgressBar
+                android:id="@+id/dashboard_idle_progress"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:layout_marginTop="20dp"
+                android:visibility="gone" />
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/dashboard_idle_resume"
+                style="@style/Widget.Collie.Button"
+                android:layout_width="wrap_content"
+                android:layout_height="44dp"
+                android:layout_marginTop="20dp"
+                android:text="@string/dashboard_idle_resume" />
+        </LinearLayout>
+    </FrameLayout>
+</FrameLayout>

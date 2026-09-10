@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- OpenCode favicon-v3; normalized, converted, and tiled for this Android UI. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="16dp"
+    android:height="16dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#131010"
+        android:pathData="M5.3,0H18.7C21.63,0 24,2.37 24,5.3V18.7C24,21.63 21.63,24 18.7,24H5.3C2.37,24 0,21.63 0,18.7V5.3C0,2.37 2.37,0 5.3,0Z" />
+    <group android:scaleX="0.617" android:scaleY="0.617" android:translateX="4.6" android:translateY="4.6">
+        <path
+            android:fillColor="#5A5858"
+            android:pathData="M7.5,9.6H16.5V19.2H7.5Z" />
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M3,0H21V24H3ZM7.5,4.8V19.2H16.5V4.8Z" />
+    </group>
+</vector>

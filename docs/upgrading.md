@@ -10,15 +10,20 @@ Herdr installs have no `collie` on PATH; use Herdr action IDs
 `~/.local/share/collie/current/bin/collie` or `<checkout>/bin/collie`:
 
 ```bash
-cd ~/.local/share/collie/current && bin/collie version    # the install script's layout
-cd ~/my/collie-checkout        && bin/collie version      # a source build or a linked clone
+# the install script's layout
+cd ~/.local/share/collie/current && bin/collie version
+# a source build or a linked clone
+cd ~/my/collie-checkout && bin/collie version
 ```
 
 Run `bin/collie link` to symlink the binary into `~/.local/bin`
 ([Put `collie` on your PATH](commands.md#put-collie-on-your-path)).
 
-Configuration files (`.env`, `tailscale serve` state, paired devices, `stt.json`) sit outside the
-checkout and persist across updates (`bridge/solo-baseline.test.ts`).
+Configuration and state sit outside the checkout and persist across updates
+(`bridge/solo-baseline.test.ts`). `.env` and the `tailscale serve` record are in the config dir,
+`~/.config/collie` on a binary install or Herdr's plugin config dir on a Herdr install; paired
+devices and `stt.json` are in the state dir, `~/.local/state/collie` unless `COLLIE_STATE_DIR`
+moves it.
 
 ## Update, from the phone or the terminal
 
@@ -32,6 +37,10 @@ the phone cannot level.
 Open **Settings** and select **Updates**. The card displays the running version, the newest release,
 and the intermediate versions included in the update. If the host is on the newest release, the card
 says so and offers nothing.
+
+![Settings with the Updates row reading Up to date.](images/updates/settings-updates-row.png)
+
+![The Updates page on a host running the newest release.](images/updates/updates-page-up-to-date.png)
 
 Under that sits the preflight, one line per check: `doctor`, `disk`, `bun`, `tree`, `upstream` and
 `service`. On a lead, every pack member is checked too.
@@ -83,10 +92,20 @@ There is no per-peer button and no second confirmation prompt. For details, the 
 and the one case the phone cannot fix, see
 [Updating the rest of the pack](#updating-the-rest-of-the-pack).
 
+![The Updates page on a lead, with the preflight per member and one button for the pack.](images/updates/updates-page-pack-available.png)
+
 A band across the top of every screen carries the run: the release on offer, then
 `Starting update…`, `Updating to <version>`, `Updated to <version>. Tap to reload.`, and finally
 `Updating <n> peers: <names>` as the peers follow. A peer that rolled back is named there too, with
-**See Updates.** as the way back to the page.
+**See Updates.** as the way back to the page. The band appears in this sequence:
+
+![The band when a new release is ready to install.](images/updates/band-available.png)
+
+![The band while the update installation runs.](images/updates/band-updating.png)
+
+![The band after the new version answered.](images/updates/band-updated-reload.png)
+
+![The band while the peers update.](images/updates/band-peers.png)
 
 ### From the terminal
 
@@ -196,12 +215,16 @@ Installs from GitHub prior to 0.23.1 lack a branch tracking ref
 ([#63](https://github.com/AltanS/collie/issues/63)). Reinstall to restore update functionality:
 
 ```bash
-herdr plugin install AltanS/collie --yes          # replaces the checkout, rebuilds the UI
-herdr plugin action invoke restart --plugin herdr.collie   # reinstall doesn't restart the service
-herdr plugin action invoke version --plugin herdr.collie   # expect 0.23.1 or newer
+# replaces the checkout, rebuilds the UI
+herdr plugin install AltanS/collie --yes
+# reinstall doesn't restart the service
+herdr plugin action invoke restart --plugin herdr.collie
+# expect 0.23.1 or newer
+herdr plugin action invoke version --plugin herdr.collie
 ```
 
-Config in the plugin directory is preserved.
+Your config in Herdr's plugin config dir, `~/.config/herdr/plugins/config/herdr.collie` by
+convention, is preserved.
 
 ### Updating the rest of the pack
 
@@ -225,6 +248,8 @@ Two requirements decide whether a peer can follow at all:
 
 A peer that rolls back says so on the Updates page and does not retry on its own. Two paths give it
 another attempt:
+
+![The Updates page after a peer rollback, with Retry pack update.](images/updates/updates-page-peer-rolled-back.png)
 
 - **From the phone.** Once the lead is current and a peer is behind, the button reads
   **Retry pack update**. It starts a new run whose only legs are the peers, and that new run is what
@@ -333,7 +358,8 @@ curl -fsSL https://colliepwa.dev/install.sh | sh -s -- --beta
 
 # Herdr-managed — install the tag; that is the whole opt-in
 herdr plugin install AltanS/collie --ref <tag> --yes
-herdr plugin action invoke restart --plugin herdr.collie   # a reinstall does not restart the service
+# a reinstall does not restart the service
+herdr plugin action invoke restart --plugin herdr.collie
 ```
 
 Resolve `<tag>` using [Resolving the newest release from a script](#resolving-the-newest-release-from-a-script).
@@ -468,7 +494,8 @@ git fetch upstream --tags
 git merge v1.0.0                                            # the tag you decided to take
 # resolve the conflicts, commit the merge, then rebuild and restart:
 bash scripts/collie-ctl.sh build
-bin/collie restart                                          # Herdr-managed: invoke the `restart` action
+# Herdr-managed: invoke the `restart` action instead
+bin/collie restart
 ```
 
 Do not use `update --major` on a fork; merge the `v1.*` tag manually. Run `collie doctor` to check

@@ -131,10 +131,24 @@ export interface AgentView {
  * and a past task standing in as a live pane's name is the bug this rule exists to stop. Such a pane
  * falls back to what it would be called with no title at all.
  */
+export function displayAgentTitle(agent: string, title: string): string {
+  const key = agent.toLowerCase().trim();
+  const openCode =
+    key === "opencode" ||
+    key.startsWith("opencode-") ||
+    key.startsWith("opencode.") ||
+    key.startsWith("opencode_");
+  if (!openCode) return title;
+  return title.replace(/^\s*OC\s*\|\s*/i, "").trimStart();
+}
+
 export function paneDisplayName(pane: AgentView): string {
-  if (pane.paneLabel) return pane.paneLabel;
-  if (pane.sessionName) return pane.sessionName;
-  if (pane.terminalTitle && !pane.terminalTitleStale) return pane.terminalTitle;
+  const raw =
+    pane.paneLabel ||
+    pane.sessionName ||
+    (pane.terminalTitle && !pane.terminalTitleStale ? pane.terminalTitle : "");
+  const title = raw ? displayAgentTitle(pane.agent, raw) : "";
+  if (title) return title;
   return pane.kind === "shell" ? "shell" : pane.agent;
 }
 
@@ -922,8 +936,7 @@ export const STATUS_RANK = {
   done: 4,
 } satisfies Record<AgentStatus, number>;
 
-/** Translated status labels, resolved fresh on every call — a caller that renders one must also
- *  call `useLocale()` so it re-renders when the active language changes (see hooks/use-locale.ts). */
+/** English status labels, resolved from the typed catalog on every call. */
 export function statusLabel(status: AgentStatus): string {
   return t(`status.label.${status}`);
 }
@@ -948,4 +961,3 @@ export type WorktreeListResponse =
 export type WorktreeOpenResponse =
   | { ok: true; pane: CreatedPane; alreadyOpen: boolean }
   | { ok: false; error: string; code?: ApiErrorCode; detail?: ApiErrorDetail };
-

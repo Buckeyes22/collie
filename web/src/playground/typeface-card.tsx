@@ -15,7 +15,7 @@
 //
 // That is a narrower job and a more useful one. Joining the shipped list is not free — a face costs
 // a subset in build-ui-font.sh, a computed fallback twin, an @font-face in index.css, an entry in
-// UI_FONT_URLS and a translated note in six dictionaries. This page is where you find out whether a
+// UI_FONT_URLS and an English catalog note. This page is where you find out whether a
 // face is worth all of that, at real sizes, against the faces already there. Judge it at the 11px
 // uppercase tracked label — which the header's own brand line now wears — and at the 16px
 // multiplexer line beside the mark, on a phone, in BOTH themes — that is where these
@@ -197,7 +197,7 @@ export function TypefaceCard() {
   return (
     <Card
       label="the ui typeface — live switcher, page-wide"
-      reach="Settings → Typeface, on the device — the app face is a per-device preference now (ADR 0033), not the maker's choice it used to be. So this card is not where the choice is made any more; it is where a CANDIDATE is auditioned before it joins the shipped list, which costs a subset, a computed twin, an index.css @font-face, a UI_FONT_URLS entry and a note in six dictionaries."
+      reach="Settings → Typeface, on the device — the app face is a per-device preference now (ADR 0033), not the maker's choice it used to be. So this card is not where the choice is made any more; it is where a CANDIDATE is auditioned before it joins the shipped list, which costs a subset, a computed twin, an index.css @font-face, a UI_FONT_URLS entry and an English catalog note."
       note="APPROXIMATION: a rebuild of the app's chrome at the app's real sizes, not the real components — the faces cannot all be mounted at once. The four self-hosted faces come from public/fonts/ with metric-matched fallbacks, so the swap you see for them is the swap the app does; two of them (Space Grotesk, Aldrich) are the shipped list and render the same bytes the app renders. The three techno candidates at the end load from the Google CDN with no fallback twin — a playground-only allowance, disqualifying in the shipped app."
     >
       <div className="space-y-2">

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item name="settings_parity_typeface_card" type="id" />
+    <item name="settings_parity_terminal_font_card" type="id" /><item name="settings_parity_hands_free_card" type="id" />
+    <item name="settings_parity_zen_card" type="id" /><item name="settings_parity_push_card" type="id" />
+    <item name="settings_parity_notify_card" type="id" /><item name="settings_parity_snooze_card" type="id" />
+    <item name="settings_parity_updates_card" type="id" /><item name="settings_parity_devices_card" type="id" />
+    <item name="settings_parity_pack_card" type="id" />
+    <string name="settings_parity_unknown" translatable="false">—</string>
+    <string name="settings_parity_endpoint">Endpoint</string><string name="settings_parity_secure">Secure</string>
+    <string name="settings_parity_bridge">Bridge</string><string name="settings_parity_device_access">Device access</string>
+    <string name="settings_parity_server_build">Server version</string><string name="settings_parity_secure_yes">Yes · HTTPS</string>
+    <string name="settings_parity_secure_no">No · HTTPS required</string><string name="settings_parity_build_stamp">Android app build %1$s</string>
+    <string name="settings_parity_selected_choice">✓ %1$s</string><string name="settings_parity_bridge_connected">Connected</string>
+    <string name="settings_parity_bridge_offline">Offline</string><string name="settings_parity_bridge_connecting">Connecting…</string>
+    <string name="settings_parity_access_not_enforced">Not enforced</string><string name="settings_parity_access_full_named">Full access · %1$s</string>
+    <string name="settings_parity_access_full_local">Full access · local</string><string name="settings_parity_access_read_only_named">Read-only · %1$s</string>
+    <string name="settings_parity_access_read_only">Read-only</string>
+    <string name="settings_parity_devices_enforced">Review and revoke terminal-control credentials.</string>
+    <string name="settings_parity_devices_open">Pairing enforcement is off; requests are open on this origin.</string>
+    <string name="settings_parity_device_meta">Paired %1$s · last seen %2$s</string>
+</resources>

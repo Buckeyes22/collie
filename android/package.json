@@ -1,9 +1,0 @@
-{
-  "name": "collie-android-tooling",
-  "private": true,
-  "version": "1.0.0",
-  "description": "Pinned tooling for generating the Collie Trusted Web Activity",
-  "devDependencies": {
-    "@bubblewrap/cli": "1.25.0"
-  }
-}

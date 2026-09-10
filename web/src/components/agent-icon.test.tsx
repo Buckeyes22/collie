@@ -76,6 +76,20 @@ describe("AgentIcon", () => {
     expect(container.querySelector("svg g")?.getAttribute("fill")).toBe("#FFFFFF");
   });
 
+  it("uses OpenCode's current block mark rather than the legacy thin outline", () => {
+    const { container } = render(<AgentIcon agent="opencode" />);
+    const svg = container.querySelector("svg")!;
+    expect(svg.querySelector("rect")?.getAttribute("fill")).toBe("#131010");
+    expect(svg.querySelector("g")?.getAttribute("fill")).toBe("#FFFFFF");
+    const paths = [...svg.querySelectorAll("g path")];
+    expect(paths.map((path) => path.getAttribute("d"))).toEqual([
+      "M7.5 9.6H16.5V19.2H7.5Z",
+      "M3 0H21V24H3ZM7.5 4.8V19.2H16.5V4.8Z",
+    ]);
+    expect(paths[0]?.getAttribute("fill")).toBe("#5A5858");
+    expect(paths.every((path) => path.getAttribute("stroke") !== "#FFFFFF")).toBe(true);
+  });
+
   it("falls back to an initials tile for unknown agents", () => {
     render(<AgentIcon agent="gemini" />);
     const el = screen.getByRole("img", { name: "gemini icon" });

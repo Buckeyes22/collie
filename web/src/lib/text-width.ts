@@ -6,8 +6,8 @@ import { graphemeSegmenter } from "./env";
 // `String.prototype.length` (UTF-16 code units) and even a code-point count both disagree with
 // what the pane's own renderer did. `markers.ts` needs this to measure a candidate input-box
 // border in the same units Claude's renderer draws it in — a border's minimum width is a claim
-// about screen columns, not characters, and a CJK label (`─ 中文 ─`, 8 columns) or a combining-mark
-// label (`── é ──`, 7 columns when decomposed) gets that claim wrong in opposite directions if
+// about screen columns, not characters, and a two-ideograph CJK label (8 columns with its border)
+// or a combining-mark label (`── é ──`, 7 columns when decomposed) gets that claim wrong if
 // measured by `.length`. The table below is written as explicit code-point ranges (no
 // `string-width`/`eastasianwidth` package) — it approximates the Unicode East Asian Width
 // property's Wide (W) and Fullwidth (F) categories, which is the same set most terminal emulators'

@@ -21,14 +21,14 @@ import { t } from "@/lib/i18n";
 // named for the terminal's, say the same thing with less furniture — and the ADJACENCY is the point,
 // because "which font does this change" is the only question either card raises.
 //
-// A NATIVE <select>, for exactly the reasons LanguageControl and the terminal family picker give:
+// A NATIVE <select>, for the same reason as the terminal family picker:
 // this is a set-once preference, stacked radios would make it the tallest card on the page, and the
 // platform's own picker is better than one we could draw.
 //
 // FAMILY NAMES ARE PROPER NOUNS and are not translated. The NOTE under the select is a phrase about
 // a face rather than the name of one, so it goes through the dictionary like every other sentence.
 
-/** The shipped faces' display names. Untranslated, and typed so a new key cannot skip one. */
+/** The shipped faces' display names, typed so a new key cannot skip one. */
 const FAMILY_LABELS = {
   grotesk: "Space Grotesk",
   aldrich: "Aldrich",
@@ -71,7 +71,7 @@ export function TypefaceControl() {
           <label htmlFor="pref-typeface" className="text-sm font-medium">
             {t("settings.typeface.family")}
           </label>
-          {/* Same construction as LanguageControl's select: the wrapper owns the border and the
+          {/* The wrapper owns the border and the
               chevron, `appearance-none` removes the engine's caret, `shrink-0` keeps a long family
               name from resizing the row. */}
           <div className="relative shrink-0">

@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item name="pack_formation" type="id" />
+    <plurals name="pack_formation_accessibility">
+        <item quantity="one">Pack formation with %d machine</item>
+        <item quantity="other">Pack formation with %d machines</item>
+    </plurals>
+    <plurals name="pack_machines">
+        <item quantity="one">%d machine</item>
+        <item quantity="other">%d machines</item>
+    </plurals>
+    <string name="pack_formation_summary">%1$s · %2$s · %3$d reachable</string>
+    <string name="pack_solo_title">This collie is not leading a pack</string>
+    <string name="pack_solo_description">A pack is created and changed from the command line.</string>
+    <string name="pack_error_title">Could not load pack status</string>
+    <string name="pack_error_description">The bridge did not answer. Collie tries again on the next poll.</string>
+    <string name="pack_role_lead">LEAD</string>
+    <string name="pack_role_deputy">DEPUTY</string>
+    <string name="pack_member_health">State</string>
+    <string name="pack_member_reason">Reason</string>
+    <string name="pack_member_conflict">Conflict</string>
+    <string name="pack_member_version">Version</string>
+    <string name="pack_member_address">Address</string>
+    <string name="pack_member_enrolled">Enrolled</string>
+    <string name="pack_conflict_no_warrant">%1$s also leads · no warrant</string>
+    <string name="pack_conflict_value">%1$s also leads · warrant %2$d</string>
+    <string name="pack_version_differs">%1$s · differs from lead</string>
+    <string name="pack_no_deputy">no deputy named</string>
+    <string name="pack_deputy_warrant">%1$s · warrant %2$d</string>
+    <string name="pack_summary_deputy">Deputy</string>
+    <string name="pack_summary_secret">Secret</string>
+    <string name="pack_secret_value">generation %1$d · rotated %2$s</string>
+    <string name="pack_member_secret_behind">Has not picked up the current secret.</string>
+    <string name="pack_member_provisional">Enrolled but never reached.</string>
+    <string name="pack_go_to_machine">Go to this machine</string>
+    <string name="pack_node_accessibility">%1$s, %2$s, %3$s</string>
+    <string name="pack_node_accessibility_plain">%1$s, %2$s</string>
+    <string name="close">Close</string>
+</resources>

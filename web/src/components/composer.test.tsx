@@ -1445,7 +1445,7 @@ describe("Composer — the machine and the state, on a band of their own", () =>
     // "Controls" was doing two jobs and only one of them was visual. Sighted it labelled five
     // self-labelling buttons; in the accessibility tree it is the ONLY thing naming the group. So it
     // is `sr-only`, not deleted — which is also why `composer.controls.label` is still a live key in
-    // all six dictionaries. Delete the label and this group announces as an unnamed run of buttons.
+    // the catalog. Delete the label and this group announces as an unnamed run of buttons.
     renderComposerWithStatus({ scope: { host: "workshop" } }, fixtureServers);
     expect(screen.getByRole("group", { name: "Controls" })).toBe(row());
     expect(row().getAttribute("aria-labelledby")).toBe("composer-controls-label");
@@ -1481,7 +1481,7 @@ describe("Composer — the machine and the state, on a band of their own", () =>
     // status change slid the host sideways — DESIGN.md §2, verbatim: a state may repaint, it may not
     // re-lay-out. MEASURED in the playground at a true 390px content width, pack pane, host chip's
     // left edge: it was 262.92 / 271.89 / 290.86 / 296.28 / 267.33px for the five statuses (a 33.4px
-    // swing) and is 262.92px for all five now. In German the swing was 41.3px and is zero.
+    // swing) and is 262.92px in every state now.
     //
     // jsdom has no layout, so what is pinned here is the STRUCTURE that makes it true: the slot
     // renders every word it could ever hold, always, and a status change only moves `data-active`
@@ -1501,9 +1501,8 @@ describe("Composer — the machine and the state, on a band of their own", () =>
     expect(new Set(dom.values()).size).toBe(1);
 
     // …and the reserve is NOT a number. A pixel width could not do this job: the same slot is
-    // "braucht dich" (72.2px) in German and "desconocido" (70.0px) in Spanish against "needs you"
-    // at 54.6px, so any constant clips one locale or wastes another's space. The layout engine
-    // measures the real glyphs of the real dictionary instead.
+    // wider catalog wording against "needs you", so any constant can clip or waste space. The
+    // layout engine measures the real glyphs of every state instead.
     renderComposerWithStatus({ scope: { host: "workshop" }, status: "done" }, fixtureServers);
     expect(slot().className).not.toMatch(/(?:^|\s)(?:min-)?w-\[/);
     expect(slot().className).not.toMatch(/(?:^|\s)(?:min-)?w-\d/);

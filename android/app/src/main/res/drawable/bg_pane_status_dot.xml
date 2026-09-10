@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="oval">
+    <solid android:color="@color/collie_unknown" />
+    <size android:width="@dimen/collie_status_dot_small" android:height="@dimen/collie_status_dot_small" />
+</shape>

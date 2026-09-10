@@ -1,7 +1,10 @@
 # Android Trusted Web Activity — comprehensive implementation plan
 
-**Status:** In execution; non-secret groundwork is complete, while release identity and physical
-device acceptance remain at their documented operator gates
+**Status:** Superseded by [ADR 0036](./.adr/0036-the-android-app-is-a-native-rest-client.md)
+and the [native Android implementation plan](./ANDROID_NATIVE_IMPLEMENTATION_PLAN.md) (2026-09-04)
+
+This document is retained as the execution record for the abandoned TWA implementation. Its open
+release-identity and device gates are cancelled, not current work.
 
 **Plan date:** 2026-09-04
 

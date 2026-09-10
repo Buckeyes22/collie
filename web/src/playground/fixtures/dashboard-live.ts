@@ -112,7 +112,7 @@ export const dashboardLive: SnapshotResponse = {
         "focused": false,
         "kind": "agent",
         "tabLabel": "translate",
-        "terminalTitle": "Vocabulary translation PWA",
+        "terminalTitle": "Vocabulary review PWA",
         "readableLines": 59,
         "lastActiveAt": 1788341934249,
         "lastSeenAt": 1788297318046,

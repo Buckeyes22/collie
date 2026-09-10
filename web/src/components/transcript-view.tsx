@@ -6,7 +6,7 @@ import { MarkdownText } from "@/components/markdown-text";
 import { cn } from "@/lib/utils";
 import { splitHighlight } from "@/lib/transcript-search";
 import type { TranscriptEntry, TranscriptPart } from "@/lib/types";
-import { getLocaleSnapshot, t } from "@/lib/i18n";
+import { t } from "@/lib/i18n";
 import { useLocale } from "@/hooks/use-locale";
 
 // Renders an agent transcript — the conversation history a Claude pane's terminal structurally
@@ -20,22 +20,19 @@ import { useLocale } from "@/hooks/use-locale";
 // AST which the renderer maps to React elements, so no HTML string is ever constructed. Do not
 // "improve" this by swapping in a markdown→HTML library without re-deriving that boundary.
 
-/** Times only — the date lives on the day divider, and a phone row has no width to spare. Keyed on
- *  the active app locale (not the browser default) so the clock format follows a language switch. */
+/** Times only — the date lives on the day divider, and a phone row has no width to spare. */
 function clockTime(iso: string): string {
   if (!iso) return "";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
-  const locale = getLocaleSnapshot().locale;
-  return new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit" }).format(d);
+  return new Intl.DateTimeFormat("en", { hour: "2-digit", minute: "2-digit" }).format(d);
 }
 
 function dayKey(iso: string): string {
   if (!iso) return "";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
-  const locale = getLocaleSnapshot().locale;
-  return new Intl.DateTimeFormat(locale, { dateStyle: "medium" }).format(d);
+  return new Intl.DateTimeFormat("en", { dateStyle: "medium" }).format(d);
 }
 
 /** Plain text with find hits marked — for strings that are NOT Markdown (shell commands, output). */

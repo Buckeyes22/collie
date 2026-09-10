@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="20dp"
+    android:height="20dp"
+    android:tint="@color/collie_foreground"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="@android:color/transparent"
+        android:pathData="M12,15.5A3.5,3.5 0,1 0,12 8.5a3.5,3.5 0,0 0,0 7zM19.4,15a1.65,1.65 0,0 0,0.33 1.82l0.06,0.06a2,2 0,1 1,-2.83 2.83l-0.06,-0.06A1.65,1.65 0,0 0,15.08 19a1.65,1.65 0,0 0,-1 1.51V20.7a2,2 0,1 1,-4 0v-0.09A1.65,1.65 0,0 0,9 19.1a1.65,1.65 0,0 0,-1.82 0.33l-0.06,0.06a2,2 0,1 1,-2.83 -2.83l0.06,-0.06A1.65,1.65 0,0 0,5 14.78a1.65,1.65 0,0 0,-1.51 -1H3.3a2,2 0,1 1,0 -4h0.09A1.65,1.65 0,0 0,4.9 8.7a1.65,1.65 0,0 0,-0.33 -1.82l-0.06,-0.06A2,2 0,1 1,7.34 4l0.06,0.06a1.65,1.65 0,0 0,1.82 0.33h0.02a1.65,1.65 0,0 0,1 -1.51V2.7a2,2 0,1 1,4 0v0.09a1.65,1.65 0,0 0,1 1.51a1.65,1.65 0,0 0,1.82 -0.33l0.06,-0.06a2,2 0,1 1,2.83 2.83l-0.06,0.06a1.65,1.65 0,0 0,-0.33 1.82v0.02a1.65,1.65 0,0 0,1.51 1h0.19a2,2 0,1 1,0 4h-0.09A1.65,1.65 0,0 0,19.4 15z"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:strokeWidth="2" />
+</vector>

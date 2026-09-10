@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <dimen name="dashboard_card_gap">8dp</dimen>
+    <dimen name="collie_corner_radius">2dp</dimen>
+    <dimen name="collie_stroke">1dp</dimen>
+    <dimen name="collie_focus_stroke">2dp</dimen>
+    <dimen name="collie_page_gutter">16dp</dimen>
+    <dimen name="collie_content_max_width">640dp</dimen>
+    <dimen name="collie_wide_content_max_width">768dp</dimen>
+    <dimen name="collie_touch_target">44dp</dimen>
+    <dimen name="collie_header_height">60dp</dimen>
+    <dimen name="collie_header_icon">20dp</dimen>
+    <dimen name="collie_header_mark">40dp</dimen>
+    <dimen name="collie_status_dot">10dp</dimen>
+    <dimen name="collie_status_dot_small">8dp</dimen>
+    <dimen name="collie_section_gap">20dp</dimen>
+    <dimen name="collie_card_gap">16dp</dimen>
+    <dimen name="collie_row_padding_horizontal">14dp</dimen>
+    <dimen name="collie_row_padding_vertical">10dp</dimen>
+    <dimen name="collie_attention_padding_vertical">12dp</dimen>
+    <dimen name="collie_sheet_grip_width">36dp</dimen>
+    <dimen name="collie_sheet_grip_height">4dp</dimen>
+</resources>

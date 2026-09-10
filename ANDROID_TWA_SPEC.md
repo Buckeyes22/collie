@@ -1,6 +1,10 @@
 # Android Trusted Web Activity — implementation specification
 
-**Status:** Accepted (2026-09-04)
+**Status:** Superseded by [ADR 0036](./.adr/0036-the-android-app-is-a-native-rest-client.md)
+and the [native Android implementation plan](./ANDROID_NATIVE_IMPLEMENTATION_PLAN.md) (2026-09-04)
+
+This document is retained as the historical specification for the abandoned TWA implementation.
+It is not a current implementation requirement.
 
 **Specification date:** 2026-09-04
 

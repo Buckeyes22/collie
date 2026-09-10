@@ -50,7 +50,7 @@ jobs:
         run: cd web && bun run test
 
   android:
-    name: Android lint + unsigned build
+    name: Native Android test + lint + debug build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -58,27 +58,17 @@ jobs:
         with:
           distribution: temurin
           java-version: "21"
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: android/package-lock.json
       - uses: oven-sh/setup-bun@v2
       - uses: android-actions/setup-android@v3
 
       - name: Install Android SDK 36
         run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
 
-      - name: Install Android tooling
-        # Installation must not depend on npm's advisory or funding endpoints. Dependency review
-        # is a separate operation; this job proves the exact lockfile can build the Android shell.
-        run: cd android && npm ci --no-audit --no-fund
-
-      - name: Validate public Android configuration
+      - name: Validate native Android configuration
         run: bun run check:android
 
-      - name: Android lint and unsigned build
-        run: cd android && ./gradlew lint :app:assembleDebug --no-daemon
+      - name: Native unit tests, lint, and debug build
+        run: cd android && ./gradlew --no-daemon testDebugUnitTest lintDebug assembleDebug
 
       - name: Validate merged Android manifest
         run: |

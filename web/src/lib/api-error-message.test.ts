@@ -3,7 +3,7 @@ import { http, HttpResponse } from "msw";
 import { server } from "@/test/setup";
 import { sendReply } from "./api";
 import { describeApiError, describeThrownError } from "./api-error-message";
-import { __resetLocale, setLocale, whenLocaleReady } from "./i18n";
+import { __resetLocale } from "./i18n";
 
 // The one place a bridge refusal becomes words. What is pinned here is the FALLBACK LADDER, because
 // every rung of it is a case that only shows up against a bridge of a different age than this app:
@@ -59,16 +59,6 @@ describe("describeApiError", () => {
     expect(describeApiError({})).toBe("Something went wrong. Try again.");
   });
 
-  it("renders the active language", async () => {
-    setLocale("de");
-    await whenLocaleReady("de");
-    expect(describeApiError({ error: "no file", code: "upload.no_file" })).toBe(
-      "Es wurde keine Datei übermittelt.",
-    );
-    expect(
-      describeApiError({ error: "x", code: "session.unknown", detail: { session: "work" } }),
-    ).toBe("Keine Sitzung namens work auf diesem collie vorhanden.");
-  });
 });
 
 describe("describeThrownError", () => {

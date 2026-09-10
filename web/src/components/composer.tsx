@@ -149,7 +149,7 @@ const CONTROL_OFF = "text-muted-foreground";
 // `shrink` is the load-bearing word. `ui/button.tsx`'s base string carries `shrink-0`, so `flex-1`
 // (which does set flex-shrink:1, in a shorthand) lost to the longhand and every button sat at its
 // CONTENT width. Measured on the pane screen at 390px: the row's scrollWidth ran 18px past its
-// clientWidth in English and 70px past in Japanese, and the overflow-x-hidden ancestor on the pane
+// clientWidth with short labels and much farther with full-width labels; the overflow-x-hidden ancestor on the pane
 // column cut the ⚙ in half rather than letting it scroll — the control was not reachable at all.
 // Restoring flex-shrink, plus `min-w-0` to lift the flex item's min-content floor, plus `truncate`
 // on the label span (below) makes the row structurally incapable of exceeding its container: the
@@ -162,7 +162,7 @@ const CONTROL_OFF = "text-muted-foreground";
 // The icon sits ABOVE the word (`flex-col`) rather than beside it, and that is a MEASUREMENT, not a
 // taste. Side by side, a 74.5px button spends 16px on the icon and its gap before the first letter,
 // which leaves ~38px of text — and four of the six shipped locales ellipsised at 390px, CJK worst
-// (`エージェント` is six full-width glyphs). Stacked, the word gets the button's whole width and a
+// (a six-glyph full-width label is much wider). Stacked, the word gets the button's whole width and a
 // 10px size, so all six draw in full at 390px and only ja's longest ellipsises at 320px. A fix that
 // only reads in English is not a fix.
 const CONTROL_BUTTON =

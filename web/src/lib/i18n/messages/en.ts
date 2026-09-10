@@ -13,8 +13,6 @@
 // Seeded with the language-selector copy only — the full string sweep lands separately.
 
 export const en = {
-  "settings.language.title": "Language",
-  "settings.language.description": "The terminal mirror is never translated.",
 
   // --- settings (page chrome) ---
   "settings.title": "Settings",
@@ -98,7 +96,8 @@ export const en = {
   "settings.devices.revoke": "Revoke",
   "settings.devices.revokeAria": "Revoke {label}",
   "settings.devices.pair.title": "Pair this device",
-  "settings.devices.pair.hint": "Run {command} on the host and type the code it prints.",
+  "settings.devices.pair.hint":
+    "Run {command} on the host, then scan the code it prints or type it here.",
   "settings.devices.pair.codeLabel": "Pairing code",
   "settings.devices.pair.codePlaceholder": "8 characters",
   "settings.devices.pair.nameLabel": "Name for this device",
@@ -153,8 +152,8 @@ export const en = {
 
   // --- settings.typeface (the APP's own face — a per-device preference since ADR 0033) ---
   // FAMILY NAMES ARE NOT HERE, and must not be added: "Space Grotesk" and "Aldrich" are proper
-  // nouns and are named the same in every locale, exactly like the terminal families below. The
-  // NOTES are phrases about a face rather than the name of one, so they are translated.
+  // nouns, exactly like the terminal families below. The NOTES remain in this catalog because they
+  // are product copy rather than names.
   "settings.typeface.title": "Typeface",
   "settings.typeface.description": "The app's own face, on this device.",
   "settings.typeface.family": "Family",
@@ -699,8 +698,7 @@ export const en = {
   // English sentence that body already carries.
   //
   // `{reason}` is NEVER Collie's text: it is the multiplexer's own refusal, passed through byte for
-  // byte (bridge/error-codes.ts). Those messages are a translated FRAME around a raw remainder —
-  // translate the frame, leave the slot where the sentence reads naturally in your language.
+  // byte (bridge/error-codes.ts). Those messages are an English FRAME around a raw remainder.
   "apiError.unknown": "Something went wrong. Try again.",
   "apiError.reply.not_submitted":
     "Your message was typed into the pane but not sent — check the pane before sending it again.",
@@ -859,10 +857,9 @@ export const en = {
   "updates.entry.status.upToDate": "Up to date",
 
   // --- updateRibbon (the ONE top-of-app update band), M16/02 ---
-  // Every string in this block is held to a 40-CHARACTER BUDGET in all six locales, enforced by
-  // `update-ribbon-i18n.test.ts`. One truncating row on a phone is about forty characters wide, and
-  // a line that overflows it in German or Japanese is a line nobody can read. The budget is measured
-  // with the slots filled: a version, a peer name, a count. `{reason}` is a peer's own prose of
+  // Every string in this block is held to a 40-CHARACTER BUDGET by
+  // `update-ribbon-budget.test.ts`. One truncating row on a phone is about forty characters wide.
+  // The budget is measured with the slots filled: a version, a peer name, a count. `{reason}` is a peer's own prose of
   // unbounded length, so it is cut on a word boundary before it ever reaches a string here and the
   // Updates page carries it whole.
   "updateRibbon.starting": "Starting update…",
@@ -881,10 +878,8 @@ export const en = {
 /** Every key that exists, as a union of string literals. The completeness contract. */
 export type MessageKey = keyof typeof en;
 
-/** The English bundle's exact shape (literal values). Other locales are `Dictionary`, not this. */
+/** The English catalog's exact shape. */
 export type Messages = typeof en;
 
-/** What a translated bundle must be: every key, any string. `Record` over a finite union of
- *  literals is complete in BOTH directions — a missing key fails the assignment, an extra one is
- *  caught as an excess property. That is the entire enforcement mechanism; don't loosen it. */
+/** A complete copy catalog shape for tooling that consumes the English source. */
 export type Dictionary = Record<MessageKey, string>;

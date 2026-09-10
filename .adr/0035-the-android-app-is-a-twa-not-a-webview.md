@@ -1,6 +1,6 @@
 # 0035 — The Android app is a TWA, not a WebView
 
-Status: **Accepted** (2026-09-04)
+Status: **Superseded by [ADR 0036](./0036-the-android-app-is-a-native-rest-client.md)** (2026-09-04)
 
 Governing requirements: [Android TWA implementation specification](../ANDROID_TWA_SPEC.md)
 

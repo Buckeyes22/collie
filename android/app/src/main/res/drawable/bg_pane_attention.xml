@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="@color/collie_blocked_tint" />
+    <stroke android:width="@dimen/collie_stroke" android:color="@color/collie_blocked_border" />
+    <corners android:radius="@dimen/collie_corner_radius" />
+</shape>

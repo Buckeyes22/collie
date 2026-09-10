@@ -29,7 +29,7 @@ export interface PromptSelectBlockProps {
 // Family-aware caption above the options — orients the reader ("the terminal is asking you
 // something") without repeating the question, which stays in the raw scrollback just above.
 // A function, not a module-level object, so it re-reads the current locale on every call — a
-// component that calls `useLocale()` re-renders on a language switch and this is called fresh.
+// component subscribes to the catalog singleton and calls this fresh at render time.
 function familyCaption(family: PromptFamily): string {
   switch (family) {
     case "select":

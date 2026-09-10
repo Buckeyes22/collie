@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Collie.Base" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="android:fontFamily">@font/collie_ui</item>
+        <item name="fontFamily">@font/collie_ui</item>
+        <item name="android:textColorPrimary">@color/collie_foreground</item>
+        <item name="android:textColorSecondary">@color/collie_muted</item>
+        <item name="android:statusBarColor">@color/collie_background</item>
+        <item name="android:navigationBarColor">@color/collie_background</item>
+        <item name="android:windowBackground">@color/collie_background</item>
+        <item name="android:colorAccent">@color/collie_primary</item>
+        <item name="colorPrimary">@color/collie_primary</item>
+        <item name="colorOnPrimary">@color/collie_on_primary</item>
+        <item name="colorSecondary">@color/collie_secondary</item>
+        <item name="colorOnSecondary">@color/collie_foreground</item>
+        <item name="colorSurface">@color/collie_surface</item>
+        <item name="colorOnSurface">@color/collie_foreground</item>
+        <item name="colorSurfaceVariant">@color/collie_muted_surface</item>
+        <item name="colorOnSurfaceVariant">@color/collie_muted</item>
+        <item name="colorOutline">@color/collie_border</item>
+        <item name="colorError">@color/collie_destructive</item>
+        <item name="colorOnError">@color/collie_on_destructive</item>
+        <item name="shapeAppearanceSmallComponent">@style/ShapeAppearance.Collie</item>
+        <item name="shapeAppearanceMediumComponent">@style/ShapeAppearance.Collie</item>
+        <item name="shapeAppearanceLargeComponent">@style/ShapeAppearance.Collie</item>
+        <item name="materialButtonStyle">@style/Widget.Collie.Button</item>
+        <item name="borderlessButtonStyle">@style/Widget.Collie.Button.Borderless</item>
+    </style>
+
+    <!-- API 26 has no light-navigation-bar appearance attribute. -->
+    <style name="Theme.Collie" parent="Theme.Collie.Base">
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+
+    <style name="ShapeAppearance.Collie" parent="">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSize">@dimen/collie_corner_radius</item>
+    </style>
+
+    <style name="TextAppearance.Collie.Chrome" parent="TextAppearance.Material3.BodyLarge">
+        <item name="android:fontFamily">@font/collie_ui</item>
+        <item name="fontFamily">@font/collie_ui</item>
+        <item name="android:textStyle">normal</item>
+        <item name="android:textColor">@color/collie_foreground</item>
+    </style>
+
+    <style name="TextAppearance.Collie.Metadata" parent="TextAppearance.Material3.BodySmall">
+        <item name="android:fontFamily">@font/collie_ui</item>
+        <item name="fontFamily">@font/collie_ui</item>
+        <item name="android:textStyle">normal</item>
+        <item name="android:textSize">12sp</item>
+        <item name="android:textColor">@color/collie_muted</item>
+    </style>
+
+    <style name="TextAppearance.Collie.ScreenTitle" parent="TextAppearance.Material3.TitleMedium">
+        <item name="android:fontFamily">@font/collie_ui</item>
+        <item name="fontFamily">@font/collie_ui</item>
+        <item name="android:textStyle">normal</item>
+        <item name="android:textSize">18sp</item>
+        <item name="android:textColor">@color/collie_foreground</item>
+    </style>
+
+    <style name="TextAppearance.Collie.SectionTitle" parent="TextAppearance.Material3.LabelMedium">
+        <item name="android:fontFamily">@font/collie_ui</item>
+        <item name="fontFamily">@font/collie_ui</item>
+        <item name="android:textStyle">normal</item>
+        <item name="android:textSize">12sp</item>
+        <item name="android:textColor">@color/collie_muted</item>
+        <item name="android:letterSpacing">0.025</item>
+    </style>
+
+    <style name="Widget.Collie.Button" parent="Widget.Material3.Button">
+        <item name="android:fontFamily">@font/collie_ui</item>
+        <item name="fontFamily">@font/collie_ui</item>
+        <item name="android:minHeight">@dimen/collie_touch_target</item>
+        <item name="minHeight">@dimen/collie_touch_target</item>
+        <item name="android:insetTop">0dp</item>
+        <item name="android:insetBottom">0dp</item>
+        <item name="cornerRadius">@dimen/collie_corner_radius</item>
+        <item name="backgroundTint">@color/collie_primary</item>
+        <item name="android:textColor">@color/collie_on_primary</item>
+        <item name="android:textAllCaps">false</item>
+    </style>
+
+    <style name="Widget.Collie.Button.Outlined" parent="Widget.Material3.Button.OutlinedButton">
+        <item name="android:fontFamily">@font/collie_ui</item>
+        <item name="fontFamily">@font/collie_ui</item>
+        <item name="android:minHeight">@dimen/collie_touch_target</item>
+        <item name="minHeight">@dimen/collie_touch_target</item>
+        <item name="android:insetTop">0dp</item>
+        <item name="android:insetBottom">0dp</item>
+        <item name="cornerRadius">@dimen/collie_corner_radius</item>
+        <item name="strokeColor">@color/collie_border</item>
+        <item name="strokeWidth">@dimen/collie_stroke</item>
+        <item name="android:textColor">@color/collie_foreground</item>
+        <item name="android:textAllCaps">false</item>
+    </style>
+
+    <style name="Widget.Collie.Button.Borderless" parent="Widget.Material3.Button.TextButton">
+        <item name="android:fontFamily">@font/collie_ui</item>
+        <item name="fontFamily">@font/collie_ui</item>
+        <item name="android:minHeight">@dimen/collie_touch_target</item>
+        <item name="minHeight">@dimen/collie_touch_target</item>
+        <item name="android:insetTop">0dp</item>
+        <item name="android:insetBottom">0dp</item>
+        <item name="cornerRadius">@dimen/collie_corner_radius</item>
+        <item name="android:textColor">@color/collie_foreground</item>
+        <item name="android:textAllCaps">false</item>
+    </style>
+
+    <style name="Widget.Collie.Header.IconButton" parent="Widget.AppCompat.ImageButton">
+        <item name="android:layout_width">@dimen/collie_touch_target</item>
+        <item name="android:layout_height">@dimen/collie_touch_target</item>
+        <item name="android:background">@drawable/bg_collie_icon_control</item>
+        <item name="android:padding">10dp</item>
+        <item name="android:tint">@color/collie_foreground</item>
+    </style>
+
+    <style name="Widget.Collie.TextInputLayout" parent="Widget.Material3.TextInputLayout.OutlinedBox">
+        <item name="boxCornerRadiusTopStart">@dimen/collie_corner_radius</item>
+        <item name="boxCornerRadiusTopEnd">@dimen/collie_corner_radius</item>
+        <item name="boxCornerRadiusBottomStart">@dimen/collie_corner_radius</item>
+        <item name="boxCornerRadiusBottomEnd">@dimen/collie_corner_radius</item>
+        <item name="boxStrokeColor">@color/collie_input</item>
+        <item name="boxStrokeWidth">@dimen/collie_stroke</item>
+        <item name="boxStrokeWidthFocused">@dimen/collie_stroke</item>
+        <item name="hintTextColor">@color/collie_muted</item>
+    </style>
+</resources>

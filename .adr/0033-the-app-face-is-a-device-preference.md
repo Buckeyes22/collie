@@ -4,8 +4,7 @@ Status: **Accepted** (2026-08-31)
 
 Related: [ADR 0018](./0018-operator-command-rows-replace-the-catalog.md) (the trio's replace-law,
 which this file deliberately does **not** extend) ·
-[ADR 0030](./0030-the-ui-is-translated-by-a-typed-dictionary-not-a-library.md) (why the family
-names here are untranslated and the notes are not) ·
+[ADR 0037](./0037-the-interface-is-english-only.md) (the English-only interface contract) ·
 [ADR 0029](./0029-speech-to-text-is-a-provider-seam-collie-owns.md) (the other place a feature
 opts into touching the operator's disk, and how it stays declinable).
 

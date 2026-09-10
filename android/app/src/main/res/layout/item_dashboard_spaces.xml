@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingHorizontal="16dp"
+    android:paddingTop="20dp">
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/collie_touch_target"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+        <ImageButton
+            android:id="@+id/spaces_toggle"
+            android:layout_width="@dimen/collie_touch_target"
+            android:layout_height="@dimen/collie_touch_target"
+            android:background="@drawable/bg_collie_icon_control"
+            android:contentDescription="@string/spaces_title"
+            android:padding="11dp"
+            android:src="@drawable/ic_collie_back" />
+        <com.lateapex.collie.ui.CollieHeadingTextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:letterSpacing="0.025"
+            android:text="@string/spaces_title"
+            android:textColor="@color/collie_muted"
+            android:textSize="12sp" />
+        <TextView
+            android:id="@+id/spaces_count"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="5dp"
+            android:textColor="@color/collie_muted"
+            android:textSize="12sp" />
+        <TextView
+            android:id="@+id/spaces_blocked_count"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:drawableStart="@drawable/ic_collie_status_filled"
+            android:drawablePadding="4dp"
+            android:drawableTint="@color/collie_blocked"
+            android:fontFamily="@font/collie_ui"
+            android:textColor="@color/collie_blocked"
+            android:textSize="11sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+        <Space
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1" />
+        <ImageButton
+            android:id="@+id/new_space"
+            android:layout_width="@dimen/collie_touch_target"
+            android:layout_height="@dimen/collie_touch_target"
+            android:background="@drawable/bg_collie_icon_control"
+            android:contentDescription="@string/new_space"
+            android:padding="9dp"
+            android:src="@drawable/ic_collie_add" />
+        <ProgressBar
+            android:id="@+id/new_space_progress"
+            style="?android:attr/progressBarStyleSmall"
+            android:layout_width="@dimen/collie_touch_target"
+            android:layout_height="@dimen/collie_touch_target"
+            android:contentDescription="@string/space_creating"
+            android:padding="10dp"
+            android:visibility="gone" />
+    </LinearLayout>
+    <EditText
+        android:id="@+id/space_filter"
+        android:layout_width="match_parent"
+        android:layout_height="44dp"
+        android:background="@drawable/bg_collie_input"
+        android:hint="@string/filter_spaces"
+        android:imeOptions="actionDone"
+        android:inputType="text"
+        android:maxLines="1"
+        android:paddingHorizontal="14dp"
+        android:textColor="@color/collie_on_background"
+        android:textColorHint="@color/collie_muted"
+        android:textSize="14sp"
+        android:visibility="gone" />
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@drawable/bg_dashboard_group">
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
+            <TextView
+                android:id="@+id/spaces_capability_note"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:paddingHorizontal="14dp"
+                android:paddingVertical="8dp"
+                android:textColor="@color/collie_muted"
+                android:textSize="12sp"
+                android:visibility="gone" />
+            <LinearLayout
+                android:id="@+id/spaces_rows"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+            <TextView
+                android:id="@+id/spaces_empty"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:padding="24dp"
+                android:text="@string/spaces_empty"
+                android:textColor="@color/collie_muted"
+                android:textSize="14sp"
+                android:visibility="gone" />
+        </LinearLayout>
+    </FrameLayout>
+</LinearLayout>

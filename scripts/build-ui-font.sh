@@ -25,9 +25,7 @@
 #
 #   * INSTANCE first. Pin every axis the app does not use (wdth, opsz) and clamp wght to 400–700.
 #     The design uses two weights (500 / 600); 400–700 leaves room without carrying 100–900.
-#   * SUBSET second. Latin + Latin-Ext-A + the punctuation the app actually prints. The ja/ko/zh
-#     dictionaries are deliberately NOT covered: no sane build ships a CJK webfont, and those
-#     locales fall through to the system face, which is what they should do.
+#   * SUBSET second. Latin + Latin-Ext-A + the punctuation the English interface actually prints.
 #   * KEEP `tnum`. Every count in the app is `tabular-nums`; dropping the feature would silently
 #     turn "14m (6) p1" back into proportional figures.
 #   * PRINT the fallback metric overrides. index.css declares a metric-matched stand-in per face so
@@ -60,8 +58,8 @@ CANDIDATES=(
   "geist:Geist[wght].ttf:1.800:geist:"
 )
 
-# What the app prints. Basic Latin + Latin-1 + Latin-Ext-A (German and Spanish copy, and any Latin
-# name a session carries), the general-punctuation block (· — – … ‹ › • and the real quotes),
+# What the app prints. Basic Latin + Latin-1 + Latin-Ext-A (including any Latin name a session
+# carries), the general-punctuation block (· — – … ‹ › • and the real quotes),
 # currency, arrows (the Keys tray prints ⇧), and the handful of maths/symbol codepoints in the
 # dictionaries. A codepoint in range but absent from the face falls through to the next family,
 # which is the correct outcome — the range is allowed to be wider than the font.

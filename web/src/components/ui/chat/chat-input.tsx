@@ -38,7 +38,7 @@ function ChatInput({ className, ref, ...props }: React.ComponentProps<"textarea"
         // `overflow-hidden` is NOT decoration and must not be tidied away — it is what makes the
         // clip happen at the CONTENT box. With `whitespace-nowrap` alone the overrun keeps painting
         // out through the padding and straight under the attach button, which is the very collision
-        // `pr-11` exists to prevent (composer.tsx:1160-1163); measured in German, where the string
+        // `pr-11` exists to prevent (composer.tsx:1160-1163); measured with the longest catalog string, which
         // overruns by 81px, the last word rendered on top of the icon. There is no ellipsis to go
         // with it: Chromium renders none on a clipped `::placeholder` in a textarea (`text-overflow`
         // and `-webkit-line-clamp` were both measured here and do nothing), so the budget is real

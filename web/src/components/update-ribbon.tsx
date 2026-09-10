@@ -36,7 +36,7 @@ import { cn } from "@/lib/utils";
 // shrank as a run progressed would reflow the whole route under the operator's thumb mid-update,
 // which is the one moment they are least able to tolerate it. Hence an explicit height rather than
 // vertical padding, and one truncating line rather than a wrapping paragraph. The strings are held
-// to a 40-character budget in all six locales for the same reason (see the i18n test).
+// to a 40-character budget for the same reason (see the catalog budget test).
 //
 // ── MOUNTED UNCONDITIONALLY ──────────────────────────────────────────────────
 // `useSelfUpdate()` is a CONTROLLER as well as a flag: it drives the bundle auto-reload for the

@@ -332,15 +332,14 @@ graph TD
   their own session-scoped `GET /api/launchers` instead — rows must come from the host that runs
   them, which a lead-only `/api/config` field cannot say in a pack (PACK_PROTOCOL.md §5).
 
-- **UI strings are translated by a typed dictionary, not a library** (`web/src/lib/i18n/`, six
-  locales, English the compile-time source of truth) — `t()`/`tn()` plus the `useLocale()` hook
-  (`web/src/hooks/use-locale.ts`), lazy per-locale chunks with an English fallback while one loads.
+- **UI strings come from one typed English catalog** (`web/src/lib/i18n/`) through `t()`/`tn()`.
+  There are no alternate locale chunks, language selector, or locale persistence.
   **The bridge answers every refusal with a stable `code`** — plus an optional `detail` carrying the
   machine half (the multiplexer's own words, a limit, a reason) — from `bridge/error-codes.ts`,
   mirrored at `web/src/lib/api-error-codes.ts` because the two trees cannot import each other; a
   drift test (`bridge/error-codes.test.ts`) fails the build if the two catalogues disagree. The phone
-  translates the **code** and falls back to the bridge's own English sentence for one it doesn't know
-  ([ADR 0030](./.adr/0030-the-ui-is-translated-by-a-typed-dictionary-not-a-library.md)).
+  maps the **code** to English and falls back to the bridge's own English sentence for one it doesn't
+  know ([ADR 0037](./.adr/0037-the-interface-is-english-only.md)).
 
 ## 6. Security model
 

@@ -1,18 +1,51 @@
-<!--
-    Copyright 2020 Google Inc. All Rights Reserved.
-
-     Licensed under the Apache License, Version 2.0 (the "License");
-     you may not use this file except in compliance with the License.
-     You may obtain a copy of the License at
-
-         http://www.apache.org/licenses/LICENSE-2.0
-
-     Unless required by applicable law or agreed to in writing, software
-     distributed under the License is distributed on an "AS IS" BASIS,
-     WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-     See the License for the specific language governing permissions and
-     limitations under the License.
--->
+<?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <!-- Collie's light-mode tokens. Keep these in sync with web/src/index.css. -->
+    <color name="collie_background">#F5F5F5</color>
+    <color name="collie_foreground">#0A0A0A</color>
+    <color name="collie_on_background">#0A0A0A</color>
+    <color name="collie_card">#FFFFFF</color>
+    <color name="collie_surface">#FFFFFF</color>
+    <color name="collie_chrome">#EBEBEB</color>
+    <color name="collie_secondary">#EBEBEB</color>
+    <color name="collie_muted_surface">#EBEBEB</color>
+    <color name="collie_accent">#E4E4E4</color>
+    <color name="collie_primary">#171717</color>
+    <color name="collie_on_primary">#FAFAFA</color>
+    <color name="collie_muted">#5D5D5D</color>
+    <color name="collie_border">#E5E5E5</color>
+    <color name="collie_input">#E5E5E5</color>
+    <color name="collie_rule">#D6D6D6</color>
+    <color name="collie_ring">#868686</color>
+    <color name="collie_sheet_grip">#665D5D5D</color>
+    <color name="collie_destructive">#E7000B</color>
+    <color name="collie_on_destructive">#FAFAFA</color>
+    <color name="collie_error">#E7000B</color>
+    <color name="collie_blocked">#AC0010</color>
+    <color name="collie_working">#804A00</color>
+    <color name="collie_done">#006A29</color>
+    <color name="collie_idle">#4D5660</color>
+    <color name="collie_unknown">#48515B</color>
+    <color name="collie_info">#006396</color>
+    <color name="collie_control_on">#B8E5FF</color>
+    <color name="collie_on_control_on">#00457D</color>
+    <color name="collie_find_match">#99FDE047</color>
+    <color name="collie_find_current">#FFF59D</color>
+    <color name="collie_blocked_tint">#0DAC0010</color>
+    <color name="collie_blocked_border">#66AC0010</color>
+    <!-- Per-host identity tints. Identity only: a visible host name must accompany the tint. -->
+    <color name="collie_host_0">#006279</color>
+    <color name="collie_host_1">#963300</color>
+    <color name="collie_host_2">#6F2AB2</color>
+    <color name="collie_host_3">#3B6600</color>
+    <color name="collie_host_4">#9F0063</color>
+    <color name="collie_host_5">#00675E</color>
+    <color name="collie_host_6">#0A4AC5</color>
+    <color name="collie_host_7">#8B1693</color>
+    <color name="collie_host_8">#005E8E</color>
+    <color name="collie_host_9">#4A3CC2</color>
+    <!-- ANSI is authored in dark space. Native light-theme transformation is applied at render. -->
+    <color name="collie_terminal">#0A0A0A</color>
+    <color name="collie_terminal_foreground">#FAFAFA</color>
     <color name="shortcut_background">#F5F5F5</color>
 </resources>

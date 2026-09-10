@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_enabled="false">
+        <shape android:shape="oval"><solid android:color="@color/collie_muted" /></shape>
+    </item>
+    <item android:state_focused="true">
+        <shape android:shape="oval">
+            <solid android:color="@color/collie_primary" />
+            <stroke android:width="@dimen/collie_focus_stroke" android:color="@color/collie_ring" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="oval"><solid android:color="@color/collie_primary" /></shape>
+    </item>
+</selector>

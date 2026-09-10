@@ -1,0 +1,188 @@
+<?xml version="1.0" encoding="utf-8"?>
+<com.lateapex.collie.ui.CollieMaxWidthLinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:layout_gravity="top|center_horizontal"
+    android:background="@color/collie_background"
+    android:orientation="vertical">
+
+    <!-- Same wordmark shell as Home. The mark is the route's home/back door. -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/collie_header_height"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp">
+
+        <ImageButton
+            android:id="@+id/back_button"
+            android:layout_width="@dimen/collie_touch_target"
+            android:layout_height="@dimen/collie_touch_target"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/navigate_back"
+            android:padding="2dp"
+            android:scaleType="centerInside"
+            android:src="@drawable/collie_mark" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="4dp"
+            android:layout_weight="1"
+            android:orientation="vertical">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFamily="@font/collie_ui"
+                android:includeFontPadding="false"
+                android:text="@string/collie_wordmark"
+                android:textColor="@color/collie_on_background"
+                android:textSize="11sp" />
+
+            <TextView
+                android:id="@+id/header_status"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:fontFamily="@font/collie_ui"
+                android:includeFontPadding="false"
+                android:maxLines="1"
+                android:minHeight="20dp"
+                android:textColor="@color/collie_muted"
+                android:textSize="16sp" />
+        </LinearLayout>
+
+        <ImageButton
+            android:id="@+id/settings_button"
+            android:layout_width="@dimen/collie_touch_target"
+            android:layout_height="@dimen/collie_touch_target"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/connection_settings"
+            android:padding="10dp"
+            android:src="@drawable/ic_collie_settings" />
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="@color/collie_rule" />
+
+    <TextView
+        android:id="@+id/space_read_only_banner"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:accessibilityLiveRegion="polite"
+        android:background="@drawable/bg_dashboard_shell_working"
+        android:gravity="center_vertical"
+        android:minHeight="33dp"
+        android:paddingHorizontal="@dimen/collie_page_gutter"
+        android:textColor="@color/collie_foreground"
+        android:textSize="12sp"
+        android:visibility="gone" />
+
+    <TextView
+        android:id="@+id/error_text"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:accessibilityLiveRegion="polite"
+        android:background="@drawable/bg_pane_attention"
+        android:paddingHorizontal="@dimen/collie_page_gutter"
+        android:paddingVertical="8dp"
+        android:textColor="@color/collie_error"
+        android:textSize="12sp"
+        android:visibility="gone" />
+
+    <LinearLayout
+        android:id="@+id/spaces_strip"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingTop="6dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="17dp"
+            android:fontFamily="@font/collie_ui"
+            android:gravity="center_vertical"
+            android:paddingHorizontal="@dimen/collie_page_gutter"
+            android:text="@string/spaces_title"
+            android:textColor="@color/collie_muted"
+            android:textSize="11sp" />
+
+        <HorizontalScrollView
+            android:layout_width="match_parent"
+            android:layout_height="46dp"
+            android:clipToPadding="false"
+            android:fillViewport="false"
+            android:paddingHorizontal="@dimen/collie_page_gutter"
+            android:scrollbars="none">
+
+            <LinearLayout
+                android:id="@+id/space_chips"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:gravity="center_vertical"
+                android:orientation="horizontal" />
+        </HorizontalScrollView>
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="@color/collie_rule" />
+
+    <LinearLayout
+        android:id="@+id/tabs_strip"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <HorizontalScrollView
+            android:layout_width="match_parent"
+            android:layout_height="50dp"
+            android:clipToPadding="false"
+            android:fillViewport="false"
+            android:paddingHorizontal="@dimen/collie_page_gutter"
+            android:scrollbars="none">
+
+            <LinearLayout
+                android:id="@+id/tab_chips"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:gravity="bottom"
+                android:orientation="horizontal" />
+        </HorizontalScrollView>
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="@color/collie_rule" />
+
+    <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+        android:id="@+id/swipe_refresh"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1">
+
+        <FrameLayout
+            android:layout_width="match_parent"
+            android:layout_height="match_parent">
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/space_list"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:clipToPadding="false"
+                android:paddingBottom="16dp" />
+
+            <ProgressBar
+                android:id="@+id/progress"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_gravity="center" />
+        </FrameLayout>
+    </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
+</com.lateapex.collie.ui.CollieMaxWidthLinearLayout>

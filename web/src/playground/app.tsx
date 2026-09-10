@@ -1294,7 +1294,7 @@ function WriteGateCard() {
       <div className="mb-2">
         <Segmented value={gate} options={GATE_OPTIONS} onChange={setGate} />
       </div>
-      {/* 390px and the routes' own `mx-4 mt-3`: this box WRAPS in five of six locales, so its
+      {/* 390px and the routes' own `mx-4 mt-3`: this box WRAPS under long content, so its
           height is a function of the width it is read at, and a card-wide stage measures a box
           nobody has. The gutter rides the component the way home.tsx and space.tsx pass it. */}
       <div className="mx-auto w-[390px] max-w-full">

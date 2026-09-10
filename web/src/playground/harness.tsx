@@ -4,7 +4,7 @@
 // Copy is plain English and does not go through `t()`. That is the one deliberate departure from the
 // repo rule, and it is bounded: none of this text ships — the file is unreachable from the app entry
 // and absent from `dist`. The components it mounts do their own translating, so switching the app's
-// locale still repaints every state below.
+// catalog state still repaints every state below.
 
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { createMemoryRouter, Outlet, RouterProvider } from "react-router";

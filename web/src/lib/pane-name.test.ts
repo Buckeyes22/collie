@@ -62,6 +62,18 @@ describe("paneParts — the second line", () => {
     );
   });
 
+  it("drops OpenCode's redundant OC prefix without changing other agents", () => {
+    for (const terminalTitle of ["OC | Codebase review", "oc|Codebase review", "  OC   |   Codebase review"]) {
+      const openCode = pane({ agent: "opencode", terminalTitle });
+      expect(paneParts(openCode).secondary).toBe("Codebase review");
+      expect(paneTitleInTab(openCode).primary).toBe("Codebase review");
+      expect(openCode.terminalTitle).toBe(terminalTitle);
+    }
+    expect(paneParts(pane({ agent: "codex", terminalTitle: "OC | Keep this" })).secondary).toBe(
+      "OC | Keep this",
+    );
+  });
+
   it("lets a hand-set name outrank the terminal title", () => {
     // A name you chose must not be overwritten by one the process rewrites every turn.
     const over = { terminalTitle: "Reconcile the book lists" };

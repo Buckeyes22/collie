@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/collie_card" />
+            <corners
+                android:topLeftRadius="@dimen/collie_corner_radius"
+                android:topRightRadius="@dimen/collie_corner_radius" />
+        </shape>
+    </item>
+    <item android:gravity="top" android:height="@dimen/collie_stroke">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/collie_rule" />
+        </shape>
+    </item>
+</layer-list>

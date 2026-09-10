@@ -439,7 +439,7 @@ describe("extractInputDraft — recovers a stranded prompt-line draft", () => {
   // to break at), so EVERY seam in a real CJK draft is fabricated by the fold, never a genuine space —
   // this is the case that actually needs the loosening.
   it("extracts a ~40-row wrapped CJK draft (no natural spaces) verified through the fold-seam path", () => {
-    const PHRASE = "これはとても長いテストメッセージですのでどうぞよろしくお願いします"; // no spaces
+    const PHRASE = "\u3053\u308c\u306f\u3068\u3066\u3082\u9577\u3044\u30c6\u30b9\u30c8\u30e1\u30c3\u30bb\u30fc\u30b8\u3067\u3059\u306e\u3067\u3069\u3046\u305e\u3088\u308d\u3057\u304f\u304a\u9858\u3044\u3057\u307e\u3059"; // no spaces
     const sentJa = PHRASE.repeat(Math.ceil(640 / PHRASE.length)).slice(0, 640); // exactly 640 chars
     const CHARS_PER_ROW = 16; // simulates a narrow pane, where 2-cell-wide CJK glyphs wrap often
     const rows: string[] = [];

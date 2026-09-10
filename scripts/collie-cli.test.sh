@@ -404,7 +404,7 @@ firstrun HERDR_SOCKET_PATH="${F_HOME}/absent.sock" "$BIN" start \
   && fail "\`collie start\` came up with no multiplexer to mirror"
 assert_contains "$STDERR" "no COLLIE_MUX is set"
 assert_contains "$STDERR" "no multiplexers are running"
-assert_contains "$STDERR" "printf 'COLLIE_MUX=<herdr|tmux|zellij>\\n' >> ${F_CONFIG}/.env && collie start"
+assert_contains "$STDERR" "COLLIE_MUX=<herdr|tmux|zellij> collie start"
 [ -f "${F_CONFIG}/.env" ] && fail "a refused start still wrote a config"
 
 # Exactly one found, and no terminal to ask at: auto-selected, said out loud, and written down.
@@ -1699,8 +1699,13 @@ for args in "devices" "devices nonsense" "devices revoke"; do
 done
 assert_contains "$(cat "${TMP_ROOT}/err")" "usage: collie devices revoke <label>"
 
-# Not one of them shelled out to anything: no systemctl, no tailscale, no herdr.
-assert_eq "$(cat "$PAIR_CALLS")" ""
+# Pairing now asks Tailscale for the public front door once per minted code so it can print the
+# v1.5.1 QR URL. Nothing else in this section may shell out.
+assert_eq "$(cat "$PAIR_CALLS")" "$(cat <<'EOF'
+tailscale status --json
+tailscale status --json
+EOF
+)"
 
 # ── Speech-to-text (ADR 0029) ────────────────────────────────────────────────
 # `stt setup` is the third verb that writes a CREDENTIAL to disk, and — on the codex provider — the

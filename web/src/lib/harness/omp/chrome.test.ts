@@ -327,7 +327,7 @@ describe("locateComposer — Unicode anywhere in the box must never produce a nu
       "and finally print the total count",
       ["the standup went well today 👨‍👩‍👧‍👦 everyone showed up and we closed the sprint"],
     ],
-    ["wide CJK in both borders", "作業中 > ~/scratchpad > master", "これはプルリクエストです", []],
+    ["wide CJK in both borders", "\u4f5c\u696d\u4e2d > ~/scratchpad > master", "\u3053\u308c\u306f\u30d7\u30eb\u30ea\u30af\u30a8\u30b9\u30c8\u3067\u3059", []],
     ["nerd-font PUA and ambiguous arrows", `  ${STATUS} `, "→→→ ship it →→→", []],
     ["combining marks, decomposed", `café ${STATUS}`, "résumé the run", []],
     ["a regional-indicator flag", `🇯🇵 ${STATUS}`, "ship it", []],
