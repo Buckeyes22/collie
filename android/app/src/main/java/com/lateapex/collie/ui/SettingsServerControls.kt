@@ -399,9 +399,17 @@ internal class SettingsServerControls(
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(10), dp(16), dp(14))
         }
-        val code = EditText(activity).apply {
+        val codeLayout = com.google.android.material.textfield.TextInputLayout(
+            activity,
+            null,
+            com.google.android.material.R.attr.textInputOutlinedStyle,
+        ).apply {
+            id = R.id.settings_pair_input_layout
+            hint = text(R.string.settings_pair_code)
+            helperText = text(R.string.settings_pair_code_hint)
+        }
+        val code = com.google.android.material.textfield.TextInputEditText(codeLayout.context).apply {
             id = R.id.settings_pair_code
-            setHint(R.string.settings_pair_code_hint)
             isSingleLine = true
             maxEms = 12
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS or
@@ -410,14 +418,23 @@ internal class SettingsServerControls(
             setText(pairCodeDraft)
             doAfterTextChanged { pairCodeDraft = it?.toString().orEmpty() }
         }
-        val label = EditText(activity).apply {
+        codeLayout.addView(code)
+        val labelLayout = com.google.android.material.textfield.TextInputLayout(
+            activity,
+            null,
+            com.google.android.material.R.attr.textInputOutlinedStyle,
+        ).apply {
+            setPadding(0, dp(8), 0, 0)
+            hint = text(R.string.device_label_hint)
+        }
+        val label = com.google.android.material.textfield.TextInputEditText(labelLayout.context).apply {
             id = R.id.settings_pair_label
-            setHint(R.string.device_label_hint)
             isSingleLine = true
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
             setText(pairLabelDraft)
             doAfterTextChanged { pairLabelDraft = it?.toString().orEmpty() }
         }
+        labelLayout.addView(label)
         // The outcome is reported under the form itself. The shared status line sits at the end
         // of the server controls, below the connection card, where a refused code went unseen.
         val outcome = TextView(activity).apply {
@@ -455,8 +472,8 @@ internal class SettingsServerControls(
                 },
             ) { repository.pair(origin.value, label.text.toString(), code.text.toString()) }
         }
-        form.addView(code)
-        form.addView(label)
+        form.addView(codeLayout)
+        form.addView(labelLayout)
         form.addView(submit)
         form.addView(outcome)
         return PairFormView(form, code, label)
@@ -522,8 +539,8 @@ internal class SettingsServerControls(
                 )) { revokeConfirming = null; revoke() }.apply { setTextColor(color(R.color.collie_destructive)) })
             } else {
                 controls.addView(actionButton(
-                    View.generateViewId(),
-                    text(R.string.settings_revoke),
+                    if (device.current) R.id.settings_device_current_action else View.generateViewId(),
+                    text(if (device.current) R.string.settings_unpair else R.string.settings_revoke),
                     enabled = writesAllowed,
                 ) { renderChoice(true) }.apply {
                     contentDescription = if (device.current) {

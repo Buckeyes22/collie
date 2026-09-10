@@ -258,10 +258,53 @@ class SettingsActivityTest {
         assertNull(activity.findViewById<View?>(R.id.settings_parity_zen_card))
     }
 
-    private fun launchSettings(paired: Boolean): SettingsActivity {
-        seedConnection(paired)
-        return Robolectric.buildActivity(SettingsActivity::class.java).create().get()
+    @Test
+    fun disconnectIsARedFilledButton() {
+        val activity = launchSettings(paired = true)
+        val button = activity.findViewById<com.google.android.material.button.MaterialButton>(R.id.disconnect_button)
+        assertEquals(
+            androidx.core.content.ContextCompat.getColor(activity, R.color.collie_destructive),
+            button.backgroundTintList!!.defaultColor,
+        )
     }
+
+    @Test
+    fun ownDeviceRowSaysUnpair() {
+        val activity = launchSettings(paired = true, devices = listOf(device("S25U-native", current = true)))
+        val row = activity.findViewById<View>(R.id.settings_device_current_action) as TextView
+        assertEquals(activity.getString(R.string.settings_unpair), row.text.toString())
+    }
+
+    @Test
+    fun pairingFieldIsOutlined() {
+        val activity = launchSettings(paired = false)
+        assertNotNull(activity.findViewById<com.google.android.material.textfield.TextInputLayout>(R.id.settings_pair_input_layout))
+    }
+
+    private fun launchSettings(paired: Boolean, devices: List<com.lateapex.collie.network.DeviceRecord> = emptyList()): SettingsActivity {
+        seedConnection(paired)
+        val activity = Robolectric.buildActivity(SettingsActivity::class.java).create().get()
+        if (devices.isNotEmpty()) {
+            activity.renderDevicesForTest(
+                com.lateapex.collie.network.ApiResult.Success(
+                    com.lateapex.collie.network.DevicesResponse(
+                        enforced = true,
+                        current = devices.firstOrNull { it.current }?.label,
+                        devices = devices,
+                    ),
+                    status = 200,
+                ),
+            )
+        }
+        return activity
+    }
+
+    private fun device(label: String, current: Boolean) = com.lateapex.collie.network.DeviceRecord(
+        label = label,
+        createdAt = 0,
+        lastSeenAt = 0,
+        current = current,
+    )
 
     private fun seedConnection(paired: Boolean) {
         val store = (context.applicationContext as CollieApplication).container.connectionStore

@@ -56,6 +56,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - Android re-analyses a pane's dialog whenever its text changes, not only on Herdr's always-zero revision, so an answered dialog's buttons leave the screen without reopening the pane.
 - Android no longer offers to take over Claude's faint ghost suggestion as a terminal draft; only typed text in the box counts, as on the web.
 - Android: Settings leads with the pairing card when unpaired, drops the empty notifications card, and the Zen switch is gone (the row is always in the pane menu).
+- Android: Disconnect is a red filled button, this phone's row says Unpair, and the pairing field uses the setup screen's outlined style.
 
 ## [1.5.1] - 2026-09-04
 

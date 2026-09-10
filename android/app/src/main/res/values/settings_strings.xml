@@ -119,6 +119,7 @@
     <string name="settings_phone_not_paired">This phone is not paired</string>
     <string name="settings_enforcement_off">Pairing enforcement is off</string>
     <string name="settings_pair_phone">Pair this phone</string>
+    <string name="settings_pair_code">Pairing code</string>
     <string name="settings_pair_code_hint">8-character pairing code</string>
     <string name="settings_pair_fields_required">Enter a pairing code and device label.</string>
     <string name="settings_pairing_phone">Pairing this phone…</string>

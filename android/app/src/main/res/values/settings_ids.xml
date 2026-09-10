@@ -18,9 +18,11 @@
     <item name="settings_snooze_resume" type="id" />
     <item name="settings_devices_list" type="id" />
     <item name="settings_pair_code" type="id" />
+    <item name="settings_pair_input_layout" type="id" />
     <item name="settings_pair_label" type="id" />
     <item name="settings_pair_button" type="id" />
     <item name="settings_pair_status" type="id" />
+    <item name="settings_device_current_action" type="id" />
     <item name="settings_updates_button" type="id" />
     <item name="settings_pack_button" type="id" />
     <item name="settings_server_diagnostics" type="id" />
