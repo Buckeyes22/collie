@@ -14,6 +14,28 @@ import org.junit.Test
 
 class PaneSwitcherModelTest {
     @Test
+    fun switcherMarksTheCurrentPane() {
+        val address = PaneAddress(Scope(host = "desk", session = "work"), "b")
+        val rows = PaneSwitcherModel.sections(
+            panes = listOf(pane("a", AgentStatus.IDLE, seen = 8), pane("b", AgentStatus.IDLE, seen = 2)),
+            current = address,
+            recentOpen = true,
+            recentNewest = true,
+            shellsPreference = null,
+            launchers = emptyList(),
+            launcherHome = "/home/chris",
+            launchPreference = null,
+            writesAuthorized = true,
+            mux = null,
+            servers = null,
+            launching = emptySet(),
+        ).filterIsInstance<PaneSwitcherSection.Agents>().flatMap { it.rows }
+
+        assertTrue(rows.single { it.pane.paneId == "b" }.active)
+        assertFalse(rows.single { it.pane.paneId == "a" }.active)
+    }
+
+    @Test
     fun opencodeSwitcherSecondaryDropsProcessOwnedTitlePrefix() {
         val pane = pane("p1", AgentStatus.IDLE).copy(
             agent = "opencode",

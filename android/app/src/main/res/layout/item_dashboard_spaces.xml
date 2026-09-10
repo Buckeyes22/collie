@@ -17,7 +17,7 @@
             android:background="@drawable/bg_collie_icon_control"
             android:contentDescription="@string/spaces_title"
             android:padding="11dp"
-            android:src="@drawable/ic_collie_back" />
+            android:src="@drawable/ic_history_chevron_right" />
         <com.lateapex.collie.ui.CollieHeadingTextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"

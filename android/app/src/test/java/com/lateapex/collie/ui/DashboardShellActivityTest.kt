@@ -1,10 +1,16 @@
 package com.lateapex.collie.ui
 
+import android.content.Context
 import android.content.Intent
+import android.view.ContextThemeWrapper
 import android.view.View
+import android.widget.FrameLayout
+import android.widget.ImageView
 import androidx.core.view.ViewCompat
 import androidx.test.core.app.ApplicationProvider
 import com.lateapex.collie.R
+import com.lateapex.collie.network.AgentStatus
+import com.lateapex.collie.network.PaneSummary
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -114,6 +120,55 @@ class DashboardShellActivityTest {
         assertEquals(activity.getString(R.string.read_only_not_paired), banner.text.toString())
         assertTrue(banner.isClickable)
     }
+
+    @Test
+    fun sectionToggleIsAChevronThatDoesNotRotate() {
+        val toggle = boundSectionToggle(open = false)
+        assertEquals(View.VISIBLE, toggle.visibility)
+        assertEquals(0f, toggle.rotation, 0f)
+        assertEquals(R.drawable.ic_history_chevron_right, shadowOf(toggle.drawable).createdFromResId)
+    }
+
+    @Test
+    fun openSectionToggleIsADownChevron() {
+        val toggle = boundSectionToggle(open = true)
+        assertEquals(0f, toggle.rotation, 0f)
+        assertEquals(R.drawable.ic_history_chevron_down, shadowOf(toggle.drawable).createdFromResId)
+    }
+
+    private fun boundSectionToggle(open: Boolean): ImageView {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val parent = FrameLayout(ContextThemeWrapper(context, R.style.Theme_Collie))
+        val adapter = DashboardAdapter(onPane = {}, onSpace = {})
+        adapter.submitList(
+            listOf(
+                DashboardItem.PaneSection(
+                    bucket = TriageBucket.RECENT,
+                    panes = listOf(
+                        PaneRow(pane = pane("recent", AgentStatus.IDLE, seen = 1_000), title = "recent", metadata = "", age = null),
+                    ),
+                    open = open,
+                ),
+            ),
+        )
+        shadowOf(android.os.Looper.getMainLooper()).idle()
+        val holder = adapter.onCreateViewHolder(parent, adapter.getItemViewType(0))
+        adapter.onBindViewHolder(holder, 0)
+        return holder.itemView.findViewById(R.id.section_toggle)
+    }
+
+    private fun pane(id: String, status: AgentStatus, seen: Long?) = PaneSummary(
+        paneId = id,
+        workspaceId = "w1",
+        workspaceLabel = "project",
+        workspaceNumber = 1,
+        tabId = "w1:t1",
+        agent = "codex",
+        status = status,
+        cwd = "/repo/project",
+        focused = false,
+        lastSeenAt = seen,
+    )
 
     @Test
     fun unreachableServerReadsAsWaitingNotAsAnUnauthorisedDevice() {

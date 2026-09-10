@@ -137,6 +137,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - Dashboard rows lead with the pane title beside a small agent tile, with the space and tab as the address beneath; the big tile, the bold space name and its truncation are gone ([c442429](https://github.com/AltanS/collie/commit/c442429))
 - Android: the Space screen drops the sibling strip and overview card, and scrolls the current tab into view.
 - Android: dashboard and switcher rows lead with space › tab, demote the agent's auto-title, and truncate in the middle.
+- Android: the switcher marks the current pane, section toggles are chevrons, and every status dot and ring shares one palette.
 
 ## [1.1.0] - 2026-09-01
 

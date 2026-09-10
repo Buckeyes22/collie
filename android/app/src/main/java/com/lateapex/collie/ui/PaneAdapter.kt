@@ -47,7 +47,7 @@ internal enum class TriageBucket(
     NEEDS_YOU(R.string.triage_needs_you, R.color.collie_blocked, true),
     READY_UNSEEN(R.string.triage_ready_unseen, R.color.collie_done, true),
     WORKING(R.string.triage_working, R.color.collie_working, false),
-    RECENT(R.string.triage_recent, R.color.collie_muted, false),
+    RECENT(R.string.triage_recent, R.color.collie_idle, false),
 }
 
 internal data class CompactAge(@StringRes val resource: Int, val value: Long? = null) {
@@ -428,7 +428,10 @@ internal class DashboardAdapter(
             )
             sectionDot.background = dot(root, item.bucket.colour)
             sectionToggle.visibility = if (item.bucket == TriageBucket.RECENT) View.VISIBLE else View.GONE
-            sectionToggle.rotation = if (item.open) 90f else 0f
+            sectionToggle.setImageResource(
+                if (item.open) R.drawable.ic_history_chevron_down else R.drawable.ic_history_chevron_right,
+            )
+            sectionToggle.rotation = 0f
             sectionToggle.contentDescription = root.resources.getString(
                 if (item.open) R.string.collapse_recent else R.string.expand_recent,
             )
@@ -565,7 +568,10 @@ internal class DashboardAdapter(
     ) : RecyclerView.ViewHolder(binding.root) {
         fun bind(item: DashboardItem.Launchers) = with(binding) {
             launcherCount.text = root.resources.getString(R.string.count_parenthesized, item.rows.size)
-            launchToggle.rotation = if (item.open) 90f else 0f
+            launchToggle.setImageResource(
+                if (item.open) R.drawable.ic_history_chevron_down else R.drawable.ic_history_chevron_right,
+            )
+            launchToggle.rotation = 0f
             launchToggle.contentDescription = root.resources.getString(
                 if (item.open) R.string.collapse_launch else R.string.expand_launch,
             )
@@ -637,7 +643,10 @@ internal class DashboardAdapter(
                 root.resources.getQuantityString(R.plurals.space_needs_you, count, count)
             }
             spacesBlockedCount.isVisible = item.blockedCount > 0
-            spacesToggle.rotation = if (item.open) 90f else 0f
+            spacesToggle.setImageResource(
+                if (item.open) R.drawable.ic_history_chevron_down else R.drawable.ic_history_chevron_right,
+            )
+            spacesToggle.rotation = 0f
             spacesToggle.contentDescription = root.resources.getString(
                 if (item.open) R.string.collapse_spaces else R.string.expand_spaces,
             )
@@ -744,7 +753,7 @@ internal class DashboardAdapter(
             AgentStatus.BLOCKED -> dot(view, R.color.collie_blocked)
             AgentStatus.WORKING -> dot(view, R.color.collie_working)
             AgentStatus.DONE -> dot(view, R.color.collie_done)
-            AgentStatus.IDLE, AgentStatus.UNKNOWN -> dot(view, R.color.collie_muted, hollow = true)
+            AgentStatus.IDLE, AgentStatus.UNKNOWN -> dot(view, R.color.collie_idle, hollow = true)
         }
 
         private fun dot(view: View, @ColorRes colour: Int, hollow: Boolean = false): GradientDrawable =
