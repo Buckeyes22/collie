@@ -149,6 +149,11 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - Android push notifications show a proper small badge glyph and a full-size Collie mark; the maskable home-screen tile was doing both jobs and rendered as a grey block on the notification ([177a8a9](https://github.com/AltanS/collie/commit/177a8a9))
 - Renaming a tab or pane from its sheet works on the phone again; the rename field's own keyboard used to fold the strip band and unmount the sheet mid-edit ([93373ce](https://github.com/AltanS/collie/commit/93373ce))
 - Dashboard rows lead with the pane title beside a small agent tile, with the space and tab as the address beneath; the big tile, the bold space name and its truncation are gone ([c442429](https://github.com/AltanS/collie/commit/c442429))
+- Android: the Space screen drops the sibling strip and overview card, and scrolls the current tab into view.
+- Android: dashboard and switcher rows lead with space › tab, demote the agent's auto-title, and truncate in the middle.
+- Android: the switcher marks the current pane, section toggles are chevrons, and every status dot and ring shares one palette.
+- Android: each Spaces row shows how many panes are working or need input.
+- Android: worktree creation is one sheet showing the repository and base branch.
 
 ## [1.1.0] - 2026-09-01
 

@@ -16,7 +16,7 @@
             android:layout_height="@dimen/collie_touch_target"
             android:background="@drawable/bg_collie_icon_control"
             android:padding="11dp"
-            android:src="@drawable/ic_collie_back"
+            android:src="@drawable/ic_history_chevron_right"
             android:visibility="gone" />
         <View
             android:id="@+id/section_dot"
