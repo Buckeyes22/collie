@@ -70,10 +70,6 @@ class SettingsActivityTest {
             "Android app build ${BuildConfig.VERSION_NAME}",
             activity.findViewById<android.widget.TextView>(R.id.settings_build_stamp).text,
         )
-        assertEquals(
-            "Collie server 1.5.2 available. Tap to update the server.",
-            activity.getString(R.string.dashboard_update_available, "1.5.2"),
-        )
         assertEquals("Update Collie", activity.getString(R.string.updates_native_card_title))
         assertFalse(activity.findViewById<android.view.View>(R.id.disconnect_button).isEnabled)
     }

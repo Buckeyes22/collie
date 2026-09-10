@@ -45,7 +45,7 @@ class DashboardShellActivityTest {
     }
 
     @Test
-    fun updateAndConnectionBannerActionsKeepTheFortyFourDpTouchFloor() {
+    fun connectionBannerActionsKeepTheFortyFourDpTouchFloor() {
         val activity = Robolectric.buildActivity(
             MainActivity::class.java,
             Intent(ApplicationProvider.getApplicationContext(), MainActivity::class.java),
@@ -53,33 +53,14 @@ class DashboardShellActivityTest {
         val floor = activity.resources.getDimensionPixelSize(R.dimen.collie_touch_target)
 
         listOf(
-            R.id.dashboard_update_dismiss,
             R.id.dashboard_connection_retry,
             R.id.dashboard_connection_reload,
         ).forEach { id ->
             val control = activity.findViewById<View>(id)
             assertTrue("view $id should retain a 44dp height", control.layoutParams.height >= floor)
         }
-        assertTrue(activity.findViewById<View>(R.id.dashboard_update_dismiss).layoutParams.width >= floor)
         assertTrue(activity.findViewById<View>(R.id.dashboard_connection_reload).layoutParams.width >= floor)
-        assertTrue(activity.findViewById<View>(R.id.dashboard_update_ribbon).layoutParams.height >= floor)
         assertTrue(activity.findViewById<View>(R.id.dashboard_connection_banner).layoutParams.height >= floor)
-    }
-
-    @Test
-    fun updateBandNavigatesToUpdatesAndDoesNotOwnAnUpdateAction() {
-        val activity = Robolectric.buildActivity(
-            MainActivity::class.java,
-            Intent(ApplicationProvider.getApplicationContext(), MainActivity::class.java),
-        ).create().get()
-
-        assertTrue(activity.findViewById<View>(R.id.dashboard_update_ribbon).hasOnClickListeners())
-        activity.findViewById<View>(R.id.dashboard_update_ribbon).callOnClick()
-
-        assertEquals(
-            UpdatesActivity::class.java.name,
-            shadowOf(activity).nextStartedActivity.component?.className,
-        )
     }
 
     @Test

@@ -46,6 +46,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - The Android app has no font settings at all now: the Typeface picker, the Space Grotesk face and the terminal sample are gone, and the app face is fixed to Aldrich.
 - Android Updates draws a refused "Update to x.y.z" button as disabled instead of solid black.
 - The Android pane's back arrow is described as "Back", since it returns to wherever the pane was opened from.
+- The Android dashboard no longer shows the update ribbon at the top; Settings → Updates and the footer notice remain the way to an update.
 
 ## [1.5.1] - 2026-09-04
 

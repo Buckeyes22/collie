@@ -129,22 +129,6 @@ class MainActivity : AppCompatActivity() {
         binding.setupSettingsButton.setOnClickListener {
             startActivity(Intent(this, SettingsActivity::class.java))
         }
-        binding.dashboardUpdateRibbon.setOnClickListener {
-            startActivity(Intent(this, UpdatesActivity::class.java))
-        }
-        binding.dashboardUpdateDismiss.setOnClickListener {
-            val view = DashboardUpdateRibbonPresentation.view(
-                viewModel.state.value.snapshot?.update,
-                dismissedUpdateVersion(),
-                System.currentTimeMillis(),
-            )
-            if (view.dismissable && view.version.isNotEmpty()) {
-                getSharedPreferences(SHELL_PREFS, MODE_PRIVATE).edit()
-                    .putString(DISMISSED_UPDATE, view.version)
-                    .apply()
-                renderUpdateRibbon(viewModel.state.value)
-            }
-        }
         binding.dashboardConnectionRetry.setOnClickListener {
             if (viewModel.state.value.authError) openProxySignIn() else viewModel.retryConnection()
         }
@@ -346,57 +330,8 @@ class MainActivity : AppCompatActivity() {
             lastHealthStamp = it
             connectionHealth.markLive(it)
         }
-        renderUpdateRibbon(state)
         renderConnectionBanner(state)
         renderIdleCover()
-    }
-
-    private fun renderUpdateRibbon(state: MainUiState) = with(binding) {
-        val view = DashboardUpdateRibbonPresentation.view(
-            state.snapshot?.update,
-            dismissedUpdateVersion(),
-            System.currentTimeMillis(),
-        )
-        dashboardUpdateRibbon.isVisible = view.kind != DashboardRibbonKind.SILENT
-        if (!dashboardUpdateRibbon.isVisible) return@with
-        val text = when (view.kind) {
-            DashboardRibbonKind.UPDATING -> getString(
-                when (view.reason) {
-                    "fetching" -> R.string.dashboard_update_fetching
-                    "building" -> R.string.dashboard_update_building
-                    else -> R.string.dashboard_update_restarting
-                },
-                view.version,
-            )
-            DashboardRibbonKind.PEERS -> getString(
-                R.string.dashboard_update_peers,
-                view.names.size,
-                view.names.joinToString(", "),
-            )
-            DashboardRibbonKind.PEER_FAILED -> getString(
-                R.string.dashboard_update_peer_failed,
-                view.peer,
-                view.reason.ifBlank { getString(R.string.updates_native_peer_unknown_reason) },
-            )
-            DashboardRibbonKind.RESTART_REQUIRED -> getString(R.string.dashboard_update_restart_required)
-            DashboardRibbonKind.AVAILABLE -> getString(R.string.dashboard_update_available, view.version)
-            DashboardRibbonKind.MAJOR_AVAILABLE -> getString(R.string.dashboard_update_major_available, view.version)
-            DashboardRibbonKind.SILENT -> ""
-        }
-        dashboardUpdateText.text = text
-        dashboardUpdateRibbon.contentDescription = text
-        dashboardUpdateDismiss.isVisible = view.dismissable
-        dashboardUpdateRibbon.setBackgroundResource(
-            if (view.kind == DashboardRibbonKind.PEER_FAILED) {
-                R.drawable.bg_dashboard_shell_blocked
-            } else {
-                R.drawable.bg_dashboard_shell_working
-            },
-        )
-        dashboardUpdateIcon.setImageResource(
-            if (view.kind == DashboardRibbonKind.PEER_FAILED) R.drawable.ic_dashboard_warning
-            else R.drawable.ic_dashboard_update,
-        )
     }
 
     private fun renderConnectionBanner(state: MainUiState) = with(binding) {
@@ -531,9 +466,6 @@ class MainActivity : AppCompatActivity() {
         dashboardIdleCover.contentDescription = getString(R.string.dashboard_idle_dialog)
         if (covered) dashboardIdleCover.requestFocus()
     }
-
-    private fun dismissedUpdateVersion(): String? =
-        getSharedPreferences(SHELL_PREFS, MODE_PRIVATE).getString(DISMISSED_UPDATE, null)
 
     private fun openProxySignIn() {
         val origin = viewModel.state.value.origin ?: return
@@ -1207,7 +1139,5 @@ class MainActivity : AppCompatActivity() {
         const val COLLAPSE_THRESHOLD = 8
         const val IDLE_MS = 30 * 60_000L
         const val CATCH_UP_CAP_MS = 8_000L
-        const val SHELL_PREFS = "dashboard-shell"
-        const val DISMISSED_UPDATE = "dismissed-update"
     }
 }

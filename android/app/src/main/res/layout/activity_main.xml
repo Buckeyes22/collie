@@ -171,45 +171,6 @@
         android:orientation="vertical"
         android:visibility="gone">
         <LinearLayout
-            android:id="@+id/dashboard_update_ribbon"
-            android:layout_width="match_parent"
-            android:layout_height="@dimen/collie_touch_target"
-            android:background="@drawable/bg_dashboard_shell_working"
-            android:clickable="true"
-            android:focusable="true"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:paddingStart="16dp"
-            android:visibility="gone">
-            <ImageView
-                android:id="@+id/dashboard_update_icon"
-                android:layout_width="14dp"
-                android:layout_height="14dp"
-                android:contentDescription="@null"
-                android:src="@drawable/ic_dashboard_update" />
-            <TextView
-                android:id="@+id/dashboard_update_text"
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_marginStart="8dp"
-                android:layout_weight="1"
-                android:ellipsize="end"
-                android:gravity="center_vertical"
-                android:maxLines="1"
-                android:textColor="@color/collie_foreground"
-                android:textSize="12sp" />
-            <ImageButton
-                android:id="@+id/dashboard_update_dismiss"
-                android:layout_width="@dimen/collie_touch_target"
-                android:layout_height="@dimen/collie_touch_target"
-                android:background="@drawable/bg_collie_icon_control"
-                android:contentDescription="@string/dashboard_update_dismiss"
-                android:padding="8dp"
-                android:src="@drawable/ic_collie_close"
-                android:visibility="gone" />
-        </LinearLayout>
-
-        <LinearLayout
             android:id="@+id/dashboard_connection_banner"
             android:layout_width="match_parent"
             android:layout_height="@dimen/collie_touch_target"

@@ -1,15 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="dashboard_scope_current">Current</string>
-    <string name="dashboard_update_dismiss">Dismiss this server version</string>
-    <string name="dashboard_update_fetching">Updating Collie server to %1$s. Fetching</string>
-    <string name="dashboard_update_building">Updating Collie server to %1$s. Building</string>
-    <string name="dashboard_update_restarting">Updating Collie server to %1$s. Restarting</string>
-    <string name="dashboard_update_peers">Updating Collie servers on %1$d peers: %2$s</string>
-    <string name="dashboard_update_peer_failed">%1$s server update rolled back: %2$s. See Server updates.</string>
-    <string name="dashboard_update_restart_required">Collie server changes ready. See Server updates to restart.</string>
-    <string name="dashboard_update_available">Collie server %1$s available. Tap to update the server.</string>
-    <string name="dashboard_update_major_available">Collie server %1$s available. See Server updates.</string>
     <string name="dashboard_connection_auth">Access refused. This is not a connection problem.</string>
     <string name="dashboard_connection_sign_in">Sign in</string>
     <string name="dashboard_connection_retry">Retry</string>
