@@ -48,6 +48,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - The Android pane's back arrow is described as "Back", since it returns to wherever the pane was opened from.
 - The Android dashboard and Space screens show nothing about server updates any more, neither the top ribbon nor the footer notice; Settings → Updates is the only update surface on the phone.
 - The Android pairing form reports a refused or failed code right under its button instead of on a status line at the far end of Settings.
+- The Android pairing form keeps its fields across Settings refreshes, so the code field no longer loses focus and its keyboard every couple of seconds while you type.
 
 ## [1.5.1] - 2026-09-04
 

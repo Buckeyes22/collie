@@ -111,6 +111,7 @@ internal class SettingsServerControls(
     // The devices card is rebuilt on every refresh, and the form with it; a refused code's message
     // has to outlive that rebuild or the operator never sees it.
     private var pairOutcome: Pair<String, Boolean>? = null
+    private var pairFormView: PairFormView? = null
     private var devicesRevealPending = focusDevices || initialPairCode != null
     private var pairNameFocusPending = initialPairCode != null
     private var refreshing = false
@@ -354,6 +355,11 @@ internal class SettingsServerControls(
     }
 
     internal fun renderDevices(result: ApiResult<DevicesResponse>, writesAllowed: Boolean) {
+        // Detaching a focused field drops its focus, so the field that had it is re-focused once the
+        // card is rebuilt; the form instance itself is kept (below), so it is the same view.
+        val focusedField = pairFormView?.let { form ->
+            activity.currentFocus?.takeIf { it === form.code || it === form.label }
+        }
         while (devicesCard.childCount > 1) devicesCard.removeViewAt(devicesCard.childCount - 1)
         devicesCard.addView(divider())
         val list = LinearLayout(activity).apply {
@@ -380,16 +386,23 @@ internal class SettingsServerControls(
         }
         devicesCard.addView(list)
         if (data.enforced && data.current == null) {
-            val form = pairForm()
+            // One form instance for as long as the phone stays unpaired: rebuilding it on every
+            // refresh recreated the code field under the operator's finger, dropping focus and the
+            // keyboard every couple of seconds (S25 Ultra, 2026-09-10).
+            val form = pairFormView ?: pairForm().also { pairFormView = it }
+            (form.root.parent as? ViewGroup)?.removeView(form.root)
             devicesCard.addView(form.root)
+            focusedField?.requestFocus()
             if (pairNameFocusPending) {
                 onRevealDevices(devicesCard, form.label)
                 pairNameFocusPending = false
             }
+        } else {
+            pairFormView = null
         }
     }
 
-    private data class PairFormView(val root: View, val label: EditText)
+    private data class PairFormView(val root: View, val code: EditText, val label: EditText)
 
     private fun pairForm(): PairFormView {
         val form = LinearLayout(activity).apply {
@@ -461,7 +474,7 @@ internal class SettingsServerControls(
         form.addView(label)
         form.addView(submit)
         form.addView(outcome)
-        return PairFormView(form, label)
+        return PairFormView(form, code, label)
     }
 
     private fun deviceRow(device: DeviceRecord, writesAllowed: Boolean): View {
