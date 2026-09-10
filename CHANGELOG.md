@@ -139,6 +139,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - Android: dashboard and switcher rows lead with space › tab, demote the agent's auto-title, and truncate in the middle.
 - Android: the switcher marks the current pane, section toggles are chevrons, and every status dot and ring shares one palette.
 - Android: each Spaces row shows how many panes are working or need input.
+- Android: worktree creation is one sheet showing the repository and base branch.
 
 ## [1.1.0] - 2026-09-01
 

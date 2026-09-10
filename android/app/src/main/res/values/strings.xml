@@ -52,11 +52,12 @@
     <string name="space_directory_optional">Directory (optional)</string>
     <string name="space_label_optional">Label (optional)</string>
     <string name="action_create">Create</string>
-    <string name="worktree_choose_repository">Choose repository</string>
+    <!-- Kept: the androidTest suite still walks the legacy worktree choice flow. -->
     <string name="worktree_create_new_branch">Create new branch</string>
-    <string name="worktree_detached">Detached · %1$s</string>
     <string name="worktree_branch_name">Branch name</string>
     <string name="worktree_create">Create worktree</string>
+    <string name="worktree_repository_caption">In %1$s</string>
+    <string name="worktree_base_caption">New branch from %1$s</string>
     <string name="worktree_open_title">Open worktree?</string>
     <string name="action_open">Open</string>
     <string name="created_pane_missing">The bridge did not identify the created pane.</string>
@@ -64,9 +65,7 @@
     <string name="space_creating">Creating space…</string>
     <string name="worktree_pane_missing">The bridge did not identify the worktree pane.</string>
     <string name="worktree_open_failed">The worktree was not opened.</string>
-    <string name="worktree_loading">Loading worktrees…</string>
     <string name="worktree_creating">Creating worktree…</string>
-    <string name="worktree_opening">Opening worktree…</string>
     <string name="pane_shell_meta">shell · %1$s</string>
     <string name="pane_meta">%1$s · %2$s</string>
     <string name="triage_needs_you">Needs you</string>

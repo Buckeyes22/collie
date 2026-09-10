@@ -4,21 +4,26 @@ import android.content.Context
 import android.content.Intent
 import android.view.ContextThemeWrapper
 import android.view.View
+import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
+import android.widget.TextView
 import androidx.core.view.ViewCompat
 import androidx.test.core.app.ApplicationProvider
 import com.lateapex.collie.R
 import com.lateapex.collie.network.AgentStatus
 import com.lateapex.collie.network.PaneSummary
+import com.lateapex.collie.network.WorkspaceSummary
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
+import org.robolectric.shadows.ShadowDialog
 
 @RunWith(RobolectricTestRunner::class)
 class DashboardShellActivityTest {
@@ -168,6 +173,57 @@ class DashboardShellActivityTest {
         cwd = "/repo/project",
         focused = false,
         lastSeenAt = seen,
+    )
+
+    @Test
+    fun worktreeFlowIsOneSheet() {
+        val activity = launchDashboardWithWorktreeRepos(listOf(repo("collie-app")))
+        activity.startWorktreeFlowForTest()
+        val sheet = ShadowDialog.getLatestDialog() as CollieBottomSheetDialog
+        assertNotNull(sheet.findViewById<EditText>(R.id.worktree_branch_input))
+        assertEquals(
+            "New branch from /repos/collie-app",
+            sheet.findViewById<TextView>(R.id.worktree_base_caption)!!.text.toString(),
+        )
+        assertEquals(1, ShadowDialog.getShownDialogs().size)
+    }
+
+    private fun launchDashboardWithWorktreeRepos(repos: List<WorkspaceSummary>): MainActivity {
+        val activity = Robolectric.buildActivity(
+            MainActivity::class.java,
+            Intent(ApplicationProvider.getApplicationContext(), MainActivity::class.java),
+        ).create().start().resume().get()
+        MainActivity::class.java.getDeclaredField("latestShellState").apply {
+            isAccessible = true
+        }.set(
+            activity,
+            MainUiState(
+                configured = true,
+                paired = true,
+                writeAuthorized = true,
+                snapshot = com.lateapex.collie.network.SnapshotResponse(
+                    bridge = "connected",
+                    agents = emptyList(),
+                    shellPanes = emptyList(),
+                    workspaces = repos,
+                    tabs = emptyList(),
+                    ts = 1,
+                ),
+            ),
+        )
+        return activity
+    }
+
+    private fun repo(label: String) = WorkspaceSummary(
+        workspaceId = label,
+        number = 1,
+        label = label,
+        focused = false,
+        activeTabId = "",
+        tabCount = 0,
+        paneCount = 0,
+        repoRoot = "/repos/$label",
+        isWorktree = false,
     )
 
     @Test

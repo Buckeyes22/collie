@@ -40,7 +40,6 @@ import com.lateapex.collie.network.CreatedPane
 import com.lateapex.collie.network.Launcher
 import com.lateapex.collie.network.ServerSummary
 import com.lateapex.collie.network.SessionSummary
-import com.lateapex.collie.network.Worktree
 import com.lateapex.collie.network.WorkspaceSummary
 import com.lateapex.collie.domain.PaneAddress
 import com.lateapex.collie.domain.Scope
@@ -925,78 +924,89 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun chooseWorktreeRepo(repos: List<WorkspaceSummary>, scope: Scope) {
-        showChoiceSheet(
-            title = getString(R.string.worktree_choose_repository),
-            choices = repos.map { workspace -> workspace.label to { showWorktreeOptions(workspace, scope) } },
+        showCreateWorktree(repos, scope)
+    }
+
+    @androidx.annotation.VisibleForTesting
+    internal fun startWorktreeFlowForTest() {
+        chooseWorktreeRepo(
+            latestShellState.snapshot?.workspaces?.filter(::isEligibleWorktreeRoot).orEmpty(),
+            viewModel.currentScope,
         )
     }
 
-    private fun showWorktreeOptions(workspace: WorkspaceSummary, scope: Scope) {
-        lifecycleScope.launch {
-            when (val result = structuralRequest(R.string.worktree_loading) {
-                viewModel.listWorktrees(workspace.workspaceId, scope)
-            }) {
-                is ApiResult.Success -> {
-                    val unopened = result.value.worktrees.filter { it.linked && it.openWorkspaceId == null }
-                    showChoiceSheet(
-                        title = workspace.label,
-                        choices = listOf(
-                            getString(R.string.worktree_create_new_branch) to { showCreateWorktree(workspace, scope) },
-                        ) + unopened.map { worktree ->
-                            (worktree.branch ?: getString(R.string.worktree_detached, worktree.path)) to {
-                                confirmOpenWorktree(workspace, worktree, scope)
-                            }
-                        },
-                    )
-                }
-                is ApiResult.Failure -> viewModel.report(MainViewModel.describe(resources, result.error))
-                is ApiResult.NotModified -> Unit
-            }
-        }
-    }
-
-    private fun showCreateWorktree(workspace: WorkspaceSummary, scope: Scope) {
+    /** B.3: one sheet that names the repository and the base it branches from. */
+    private fun showCreateWorktree(repos: List<WorkspaceSummary>, scope: Scope) {
         val dialog = CollieBottomSheetDialog(this, getString(R.string.worktree_create))
         val body = sheetBody()
-        val branch = sheetTextField(R.string.worktree_branch_name)
-        val create = sheetActionButton(getString(R.string.action_create)) {
+        var selected = repos.first()
+
+        fun baseCaption() = getString(
+            R.string.worktree_base_caption,
+            selected.repoRoot?.takeIf(String::isNotBlank) ?: selected.workspaceId,
+        )
+        val baseCaption = TextView(this).apply {
+            id = R.id.worktree_base_caption
+            text = baseCaption()
+            textSize = 12f
+            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.collie_muted))
+        }
+        if (repos.size > 1) {
+            val group = com.google.android.material.button.MaterialButtonToggleGroup(this).apply {
+                id = R.id.worktree_repo_group
+                isSingleSelection = true
+                orientation = LinearLayout.VERTICAL
+            }
+            repos.forEach { repo ->
+                group.addView(
+                    MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+                        tag = repo
+                        text = repo.label
+                        isAllCaps = false
+                        isCheckable = true
+                        gravity = Gravity.START or Gravity.CENTER_VERTICAL
+                        minHeight = dp(44)
+                    },
+                    LinearLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ),
+                )
+            }
+            group.addOnButtonCheckedListener { _, checkedId, isChecked ->
+                if (isChecked) {
+                    (group.findViewById<MaterialButton>(checkedId).tag as? WorkspaceSummary)?.let { repo ->
+                        selected = repo
+                        baseCaption.text = baseCaption()
+                    }
+                }
+            }
+            (group.getChildAt(0) as? MaterialButton)?.let { it.isChecked = true }
+            body.addView(group, sheetRowParams(top = 4))
+        } else {
+            body.addView(TextView(this).apply {
+                text = getString(R.string.worktree_repository_caption, selected.label)
+                textSize = 13f
+                setTextColor(ContextCompat.getColor(this@MainActivity, R.color.collie_foreground))
+            }, sheetRowParams(top = 4))
+        }
+        val branch = sheetTextField(R.string.worktree_branch_name).apply { id = R.id.worktree_branch_input }
+        body.addView(baseCaption, sheetRowParams(top = 6))
+        body.addView(branch, sheetRowParams(top = 4))
+        body.addView(sheetActionButton(getString(R.string.action_create)) {
             val name = branch.text.toString().trim()
             if (name.isEmpty()) return@sheetActionButton
             val target = revalidatedStructuralScope(scope) ?: return@sheetActionButton
             dialog.dismiss()
             lifecycleScope.launch {
                 handleWorktree(structuralRequest(R.string.worktree_creating) {
-                    viewModel.createWorktree(workspace.workspaceId, name, target)
+                    viewModel.createWorktree(selected.workspaceId, name, target)
                 }, target)
             }
-        }
-        body.addView(branch, sheetRowParams(top = 4))
-        body.addView(create, sheetRowParams(top = 12))
+        }, sheetRowParams(top = 12))
         dialog.setSheetContent(body)
         dialog.show()
         branch.post { branch.requestFocus() }
-    }
-
-    private fun confirmOpenWorktree(workspace: WorkspaceSummary, worktree: Worktree, scope: Scope) {
-        val dialog = CollieBottomSheetDialog(this, getString(R.string.worktree_open_title))
-        val body = sheetBody()
-        body.addView(TextView(this).apply {
-            text = worktree.path
-            textSize = 14f
-            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.collie_muted))
-            setPadding(0, dp(8), 0, dp(8))
-        }, sheetRowParams())
-        body.addView(sheetActionButton(getString(R.string.action_open)) {
-            val target = revalidatedStructuralScope(scope) ?: return@sheetActionButton
-            dialog.dismiss()
-            lifecycleScope.launch {
-                handleWorktree(structuralRequest(R.string.worktree_opening) {
-                    viewModel.openWorktree(workspace.workspaceId, worktree.path, target)
-                }, target)
-            }
-        }, sheetRowParams(top = 8))
-        dialog.setSheetContent(body)
-        dialog.show()
     }
 
     private fun showChoiceSheet(title: String, choices: List<Pair<String, () -> Unit>>) {
