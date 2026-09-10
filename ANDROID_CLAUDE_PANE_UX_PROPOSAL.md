@@ -100,6 +100,11 @@ Zen, tap-to-type and the buffer affordances follow whichever body is on screen.
 
 ## 6. Acceptance
 
+> **Not run.** 2026-09-10: every task landed with its tests and gates green (Android unit +
+> lint + assemble, web harness, both typechecks, oxlint, bridge prompt-binding), and the debug
+> APK installed `Success`; but the §6 walk itself did not run — the S25 Ultra's wireless ADB
+> refused connection and the operator deferred the device walk. No capture below is claimed.
+
 - The pane in `2026-09-10-claude-pane-mirror.png`, re-captured after the work, shows the
   conversation as cards and prose with no line wrapped twice.
 - Raising an AskUserQuestion from the phone switches the body to the mirror with the prompt panel,
