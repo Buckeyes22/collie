@@ -112,6 +112,7 @@ internal class SettingsServerControls(
     // has to outlive that rebuild or the operator never sees it.
     private var pairOutcome: Pair<String, Boolean>? = null
     private var pairFormView: PairFormView? = null
+    private var revokeConfirming: String? = null
     private var devicesRevealPending = focusDevices || initialPairCode != null
     private var pairNameFocusPending = initialPairCode != null
     private var refreshing = false
@@ -524,13 +525,17 @@ internal class SettingsServerControls(
                 },
             ) { repository.revokeDevice(device.label) }
         }
+        // The card is rebuilt on every refresh, so the row's confirm state is remembered by label:
+        // a rebuilt row comes back still asking, instead of snapping back to "Revoke" a second
+        // after the tap (S25 Ultra, 2026-09-10).
         fun renderChoice(confirming: Boolean) {
+            revokeConfirming = if (confirming) device.label else revokeConfirming?.takeIf { it != device.label }
             controls.removeAllViews()
             if (confirming) {
                 controls.addView(actionButton(View.generateViewId(), text(R.string.settings_cancel)) { renderChoice(false) })
                 controls.addView(actionButton(View.generateViewId(), text(
                     if (device.current) R.string.settings_unpair else R.string.settings_revoke,
-                )) { revoke() }.apply { setTextColor(color(R.color.collie_destructive)) })
+                )) { revokeConfirming = null; revoke() }.apply { setTextColor(color(R.color.collie_destructive)) })
             } else {
                 controls.addView(actionButton(
                     View.generateViewId(),
@@ -545,7 +550,7 @@ internal class SettingsServerControls(
                 })
             }
         }
-        renderChoice(false)
+        renderChoice(revokeConfirming == device.label)
         row.addView(controls)
         return row
     }

@@ -3215,10 +3215,12 @@ class PaneActivity : AppCompatActivity() {
         terminalBlockContent.removeAllViews()
         renderedTerminalBlocks = emptyList()
         if (runs.isEmpty()) {
-            if (highlighted is PrecomputedTextCompat) {
+            if (highlighted is PrecomputedTextCompat && highlighted.params == TextViewCompat.getTextMetricsParams(terminalText)) {
                 TextViewCompat.setPrecomputedText(terminalText, highlighted)
             } else {
-                terminalText.text = highlighted
+                // A precomputed layout whose parameters no longer match is still a Spannable: the
+                // view re-lays it out rather than throwing.
+                terminalText.text = if (highlighted is PrecomputedTextCompat) SpannableString(highlighted) else highlighted
             }
             return@with
         }
@@ -3502,7 +3504,10 @@ class PaneActivity : AppCompatActivity() {
         binding.fontSizeValue.text = getString(R.string.pane_display_size_value, size)
         binding.fontSmallerButton.isEnabled = size > MIN_FONT_SIZE
         binding.fontLargerButton.isEnabled = size < MAX_FONT_SIZE
-        if (renderedTerminalText.isNotEmpty()) applyFindHighlights(resetCursor = false)
+        // The rendered text was precomputed for the previous size and typeface; setting it again
+        // throws (PrecomputedText parameters must match the view), which crashed the pane on the
+        // Display drawer's +/- (S25 Ultra, 2026-09-10). Lay it out afresh from the raw text.
+        if (renderedTerminalText.isNotEmpty()) renderTerminal(lastRawText.ifEmpty { latestRawText })
     }
 
     private fun isLightTheme(): Boolean =
