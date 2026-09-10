@@ -119,6 +119,9 @@ class PaneActivity : AppCompatActivity() {
     private var currentState = PaneUiState()
     private var renderedTerminalText: CharSequence = ""
     private var renderedStatusRows: List<String> = emptyList()
+    private val blockMonoTypeface: Typeface by lazy {
+        androidx.core.content.res.ResourcesCompat.getFont(this, R.font.collie_mono) ?: Typeface.MONOSPACE
+    }
     private var terminalRenderJob: Job? = null
     private var terminalRenderGeneration = 0L
     private var pendingTerminalRevision: Long? = null
@@ -3293,7 +3296,7 @@ class PaneActivity : AppCompatActivity() {
         hyphenationFrequency = android.text.Layout.HYPHENATION_FREQUENCY_NONE
         setLineSpacing(0f, 1.25f)
         setHorizontallyScrolling(pans)
-        typeface = Typeface.MONOSPACE
+        typeface = blockMonoTypeface
         textSize = nativePreferences.terminalFontSize.toFloat()
         setTextColor(if (isLightTheme()) LIGHT_MIRROR_FOREGROUND else DARK_MIRROR_FOREGROUND)
         setTextIsSelectable(true)
@@ -3521,7 +3524,9 @@ class PaneActivity : AppCompatActivity() {
         binding.terminalText.highlightColor = Color.TRANSPARENT
         binding.terminalSurface.setBackgroundColor(if (isLightTheme()) LIGHT_MIRROR_BACKGROUND else DARK_MIRROR_BACKGROUND)
         binding.terminalText.setTextColor(if (isLightTheme()) LIGHT_MIRROR_FOREGROUND else DARK_MIRROR_FOREGROUND)
-        binding.terminalText.typeface = Typeface.MONOSPACE
+        val mono = androidx.core.content.res.ResourcesCompat.getFont(this, R.font.collie_mono) ?: Typeface.MONOSPACE
+        binding.terminalText.typeface = mono
+        binding.terminalStatusline.typeface = mono
         binding.terminalText.textSize = size.toFloat()
         binding.replyInput.textSize = nativePreferences.draftFontSize.toFloat()
         binding.fontSizeValue.text = getString(R.string.pane_display_size_value, size)

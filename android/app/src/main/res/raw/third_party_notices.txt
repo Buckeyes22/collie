@@ -268,3 +268,12 @@ revision. The complete Apache License 2.0 follows.
    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
    See the License for the specific language governing permissions and
    limitations under the License.
+
+JETBRAINS MONO FONT
+Source: JetBrains Mono 2.304
+https://github.com/JetBrains/JetBrainsMono/releases/download/v2.304/JetBrainsMono-2.304.zip
+Copyright (c) 2020 The JetBrains Mono Project Authors
+Bundled here unmodified as res/font/jetbrains_mono_regular.ttf to render the
+terminal mirror's box-drawing and tree-marker glyphs correctly. Licensed under
+the SIL Open Font License 1.1; the complete licence text ships in
+res/raw/license_jetbrains_mono.txt.

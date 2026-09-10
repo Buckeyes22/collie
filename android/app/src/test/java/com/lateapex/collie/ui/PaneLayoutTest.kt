@@ -92,6 +92,16 @@ class PaneLayoutTest {
         assertEquals(View.GONE, binding.newOutputButton.visibility)
     }
 
+    @Test
+    fun mirrorUsesTheBundledMonoFace() {
+        val intent = android.content.Intent(ApplicationProvider.getApplicationContext(), PaneActivity::class.java)
+            .putExtra(PaneActivity.EXTRA_PANE_ID, "font:pane")
+            .putExtra(PaneActivity.EXTRA_AGENT, "opencode")
+        val activity = org.robolectric.Robolectric.buildActivity(PaneActivity::class.java, intent).create().get()
+        val expected = androidx.core.content.res.ResourcesCompat.getFont(activity, R.font.collie_mono)
+        assertSame(expected, activity.findViewById<android.widget.TextView>(R.id.terminal_text).typeface)
+    }
+
     private fun dp(value: Int): Int = (value * context.resources.displayMetrics.density).roundToInt()
 
     private fun sp(value: Int): Float = value * context.resources.displayMetrics.scaledDensity
