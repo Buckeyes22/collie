@@ -32,15 +32,13 @@
         android:textColor="@color/collie_muted"
         android:textSize="12sp" />
     <TextView
-        android:id="@+id/space_count"
+        android:id="@+id/space_counts"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginStart="8dp"
-        android:background="@drawable/bg_count_chip"
-        android:gravity="center"
-        android:minWidth="28dp"
-        android:paddingHorizontal="6dp"
-        android:paddingVertical="2dp"
+        android:ellipsize="end"
+        android:fontFamily="@font/collie_ui"
+        android:maxLines="1"
         android:textColor="@color/collie_muted"
         android:textSize="12sp" />
 </LinearLayout>

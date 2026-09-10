@@ -168,4 +168,17 @@
         <item quantity="one">%1$d tab</item>
         <item quantity="other">%1$d tabs</item>
     </plurals>
+    <string name="space_row_status">%1$s · %2$s</string>
+    <plurals name="space_row_working">
+        <item quantity="one">%1$d working</item>
+        <item quantity="other">%1$d working</item>
+    </plurals>
+    <plurals name="space_row_blocked">
+        <item quantity="one">%1$d needs input</item>
+        <item quantity="other">%1$d needs input</item>
+    </plurals>
+    <plurals name="space_row_ready">
+        <item quantity="one">%1$d ready</item>
+        <item quantity="other">%1$d ready</item>
+    </plurals>
 </resources>

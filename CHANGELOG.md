@@ -138,6 +138,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - Android: the Space screen drops the sibling strip and overview card, and scrolls the current tab into view.
 - Android: dashboard and switcher rows lead with space › tab, demote the agent's auto-title, and truncate in the middle.
 - Android: the switcher marks the current pane, section toggles are chevrons, and every status dot and ring shares one palette.
+- Android: each Spaces row shows how many panes are working or need input.
 
 ## [1.1.0] - 2026-09-01
 

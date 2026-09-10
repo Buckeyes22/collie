@@ -6,6 +6,7 @@ import android.text.Editable
 import android.text.Spannable
 import android.text.SpannableStringBuilder
 import android.text.TextWatcher
+import android.text.style.ForegroundColorSpan
 import android.text.style.RelativeSizeSpan
 import android.text.style.TypefaceSpan
 import android.view.LayoutInflater
@@ -77,6 +78,9 @@ internal data class SpaceRow(
     val status: AgentStatus?,
     val age: CompactAge?,
     val depth: Int = 0,
+    val working: Int = 0,
+    val blocked: Int = 0,
+    val ready: Int = 0,
 )
 
 internal data class PackFooterSummary(val machines: Int, val reachable: Int)
@@ -299,10 +303,8 @@ internal object DashboardModel {
                     pane.workspaceId == workspace.workspaceId &&
                         (workspace.host == null || pane.host == workspace.host)
                 }
-                val status = panes.minOfOrNull { bucketOf(it).ordinal }?.let(TriageBucket.entries::get)
-                    ?.let(::representativeStatus)
                 val seen = panes.mapNotNull(PaneSummary::lastSeenAt).maxOrNull()
-                SpaceRow(workspace, status, compactAge(seen, snapshot.ts))
+                spaceRow(workspace, panes).copy(age = compactAge(seen, snapshot.ts))
             }
             .sortedByDescending { row ->
                 allPanes
@@ -313,6 +315,20 @@ internal object DashboardModel {
                     .mapNotNull(PaneSummary::lastSeenAt)
                     .maxOrNull() ?: 0
             }
+    }
+
+    /** A.1: one Spaces row says what is inside — the worst status plus per-status counts. */
+    fun spaceRow(workspace: WorkspaceSummary, panes: List<PaneSummary>): SpaceRow {
+        val status = panes.minOfOrNull { bucketOf(it).ordinal }?.let(TriageBucket.entries::get)
+            ?.let(::representativeStatus)
+        return SpaceRow(
+            workspace = workspace,
+            status = status,
+            age = null,
+            working = panes.count { it.status == AgentStatus.WORKING },
+            blocked = panes.count { it.status == AgentStatus.BLOCKED },
+            ready = panes.count { it.status == AgentStatus.DONE },
+        )
     }
 
     private fun nestWorktrees(ordered: List<SpaceRow>): List<SpaceRow> {
@@ -681,7 +697,7 @@ internal class DashboardAdapter(
                 rowBinding.spaceTitle.text = row.workspace.label
                 rowBinding.spaceAge.text = row.age?.resolve(root).orEmpty()
                 rowBinding.spaceAge.isVisible = row.age != null
-                rowBinding.spaceCount.text = root.resources.getString(R.string.pane_count, row.workspace.paneCount)
+                rowBinding.spaceCounts.text = spaceCountsText(root, row)
                 rowBinding.root.setPadding(
                     root.resources.getDimensionPixelSize(R.dimen.dashboard_row_padding) +
                         if (row.depth == 1) root.resources.getDimensionPixelSize(R.dimen.dashboard_worktree_indent) else 0,
@@ -741,6 +757,39 @@ internal class DashboardAdapter(
         private const val TYPE_LAUNCHERS = 3
         private const val TYPE_SPACES = 4
         private const val TYPE_FOOTER = 5
+
+        /**
+         * A.1: a Spaces row says what is inside — up to three dot-counts from the shared status
+         * palette; a space with nothing active shows only its pane count.
+         */
+        private fun spaceCountsText(view: View, row: SpaceRow): CharSequence {
+            val counts = buildList {
+                if (row.working > 0) add(Triple(R.color.collie_working, R.plurals.space_row_working, row.working))
+                if (row.blocked > 0) add(Triple(R.color.collie_blocked, R.plurals.space_row_blocked, row.blocked))
+                if (row.ready > 0) add(Triple(R.color.collie_done, R.plurals.space_row_ready, row.ready))
+            }
+            if (counts.isEmpty()) {
+                return view.resources.getQuantityString(
+                    R.plurals.space_pane_count,
+                    row.workspace.paneCount,
+                    row.workspace.paneCount,
+                )
+            }
+            val text = SpannableStringBuilder()
+            counts.forEachIndexed { index, (colour, plural, count) ->
+                if (index > 0) text.append(view.context.getString(R.string.space_row_status, "", ""))
+                val dotStart = text.length
+                text.append("●")
+                text.setSpan(
+                    ForegroundColorSpan(ContextCompat.getColor(view.context, colour)),
+                    dotStart,
+                    text.length,
+                    Spannable.SPAN_EXCLUSIVE_EXCLUSIVE,
+                )
+                text.append(' ').append(view.resources.getQuantityString(plural, count, count))
+            }
+            return text
+        }
 
         private fun addDivider(parent: LinearLayout) {
             parent.addView(View(parent.context).apply {
