@@ -12,6 +12,7 @@ import android.view.ViewGroup
 import android.widget.EditText
 import android.widget.GridLayout
 import android.widget.HorizontalScrollView
+import android.widget.ImageView
 import android.widget.TextView
 import com.google.android.material.button.MaterialButton
 import java.io.File
@@ -26,6 +27,7 @@ import com.lateapex.collie.network.TabSummary
 import com.lateapex.collie.network.TranscriptEntry
 import com.lateapex.collie.network.TranscriptPart
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -1176,6 +1178,43 @@ class PaneActivityTest {
         focused = false,
         paneCount = 1,
     )
+
+    @Test
+    fun directTypingSwapsSendForStopAndShowsOneLabel() {
+        val activity = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("direct:pane")).create().start().resume().get()
+        val writable = PaneUiState(
+            pane = PaneReadResponse("direct:pane", "prompt", false, 1),
+            loading = false,
+            canWrite = true,
+            panes = listOf(paneSummary("direct:pane")),
+        )
+        setViewModelState(activity, writable)
+        render(activity, writable)
+        activity.setDirectTypingForTest(true)
+        assertEquals(activity.getString(R.string.pane_direct_stop), activity.findViewById<View>(R.id.send_button).contentDescription)
+        assertEquals(R.drawable.ic_composer_stop, shadowOf(activity.findViewById<ImageView>(R.id.send_button).drawable).createdFromResId)
+        activity.setDirectTypingForTest(false)
+        assertEquals(R.drawable.ic_pane_send, shadowOf(activity.findViewById<ImageView>(R.id.send_button).drawable).createdFromResId)
+    }
+
+    @Test
+    fun attachmentIsAChipNotAPathInTheDraft() {
+        val activity = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("attach:pane")).create().start().resume().get()
+        activity.acceptUploadForTest("/home/x/.local/state/collie/uploads/wM_p1.png")
+        assertEquals("", activity.findViewById<EditText>(R.id.reply_input).text.toString())
+        val chip = activity.findViewById<com.google.android.material.chip.Chip>(R.id.composer_attachment_chip)
+        assertEquals(View.VISIBLE, chip.visibility)
+        assertEquals("wM_p1.png", chip.text.toString())
+        assertEquals("/home/x/.local/state/collie/uploads/wM_p1.png\nhello", activity.outgoingReplyForTest("hello"))
+    }
+
+    @Test
+    fun stagedChipsRowFadesAtTheEdge() {
+        val activity = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("chips:pane")).create().start().resume().get()
+        activity.findViewById<View>(R.id.keys_mode_button).performClick()
+        val scroller = activity.findViewById<View>(R.id.pane_key_queue_scroll) as HorizontalScrollView
+        assertTrue(scroller.isHorizontalFadingEdgeEnabled)
+    }
 
     @Test
     fun statuslineRowRendersUnderTheMirrorForClaude() {

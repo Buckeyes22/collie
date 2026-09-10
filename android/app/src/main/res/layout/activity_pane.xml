@@ -923,6 +923,15 @@
             android:textSize="12sp"
             android:visibility="gone" />
 
+        <com.google.android.material.chip.Chip
+            android:id="@+id/composer_attachment_chip"
+            style="@style/Widget.MaterialComponents.Chip.Entry"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="12dp"
+            android:textSize="12sp"
+            android:visibility="gone" />
+
         <TextView
             android:id="@+id/composer_media_status"
             android:layout_width="match_parent"

@@ -197,7 +197,6 @@
     <string name="pane_display_smaller">Decrease terminal text size</string>
     <string name="pane_display_larger">Increase terminal text size</string>
     <string name="pane_direct_hint">Typing directly into terminal…</string>
-    <string name="pane_direct_armed">Direct terminal typing armed</string>
     <string name="pane_direct_wait">Wait for the current terminal input to finish before arming Type again.</string>
     <string name="pane_direct_draft_refusal">Send or clear the reply draft before using Type.</string>
     <string name="pane_draft_too_long">This draft is too long to survive closing the app. Shorten or send it first.</string>

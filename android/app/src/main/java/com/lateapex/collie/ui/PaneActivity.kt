@@ -82,6 +82,8 @@ import com.lateapex.collie.ui.terminal.TerminalDraft
 import com.lateapex.collie.ui.terminal.TerminalLinks
 import com.lateapex.collie.ui.terminal.TerminalRenderWindow
 import com.lateapex.collie.ui.terminal.TerminalTableRuns
+import androidx.annotation.VisibleForTesting
+import java.io.File
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -123,6 +125,7 @@ class PaneActivity : AppCompatActivity() {
     private var lastBodyReason: PaneBodyReason? = null
     private var showingTranscriptBody = false
     private var lastRenderedState: PaneUiState? = null
+    private var pendingAttachment: String? = null
     private val blockMonoTypeface: Typeface by lazy {
         androidx.core.content.res.ResourcesCompat.getFont(this, R.font.collie_mono) ?: Typeface.MONOSPACE
     }
@@ -632,6 +635,13 @@ class PaneActivity : AppCompatActivity() {
         )
         when (guarded) {
             is ComposerMediaResult.Draft -> {
+                if (guarded.message == getString(R.string.composer_media_image_added)) {
+                    // The upload path is what the bridge needs on send; it is shown as a chip and
+                    // never written into the draft (B.2).
+                    pendingAttachment = guarded.insertion
+                    renderAttachmentChip()
+                    return
+                }
                 val current = binding.replyInput.text?.toString().orEmpty()
                 val insertion = if (guarded.atCaret) {
                     ComposerMedia.insertAtCaret(
@@ -694,7 +704,7 @@ class PaneActivity : AppCompatActivity() {
         speechButton.imageTintList = ColorStateList.valueOf(
             getColor(if (speechRecorder.isRecording) R.color.collie_on_control_on else R.color.collie_on_primary),
         )
-        val mediaStatus = if (directTyping) getString(R.string.pane_direct_armed) else composerMediaMessage
+        val mediaStatus = composerMediaMessage
         composerMediaStatus.text = mediaStatus.orEmpty()
         composerMediaStatus.isVisible = !mediaStatus.isNullOrBlank()
     }
@@ -791,7 +801,10 @@ class PaneActivity : AppCompatActivity() {
         }
         keyQueueContainer = queuePanel
         val chipScroll = HorizontalScrollView(this).apply {
+            id = R.id.pane_key_queue_scroll
             isHorizontalScrollBarEnabled = false
+            isHorizontalFadingEdgeEnabled = true
+            setFadingEdgeLength(dp(24))
             overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
         }
         keyQueueChips = LinearLayout(this).apply {
@@ -2058,9 +2071,42 @@ class PaneActivity : AppCompatActivity() {
 
     private fun beginReplySend(text: String) {
         val pane = currentState.pane
-        pendingReplyAttempt = PendingReplyAttempt(text, pane?.revision, pane?.text)
-        viewModel.sendReply(text, takenOverTerminalDraft)
+        val outgoing = outgoingReply(text)
+        pendingReplyAttempt = PendingReplyAttempt(outgoing, pane?.revision, pane?.text)
+        viewModel.sendReply(outgoing, takenOverTerminalDraft)
+        if (pendingAttachment != null) {
+            pendingAttachment = null
+            renderAttachmentChip()
+        }
     }
+
+    private fun outgoingReply(text: String): String =
+        pendingAttachment?.let { "$it\n$text" } ?: text
+
+    /** The attached upload shows as a removable chip; the path joins the outgoing text on send. */
+    private fun renderAttachmentChip(): Unit = with(binding) {
+        val path = pendingAttachment
+        composerAttachmentChip.isVisible = path != null
+        if (path != null) {
+            composerAttachmentChip.text = File(path).name
+            composerAttachmentChip.setOnCloseIconClickListener {
+                pendingAttachment = null
+                renderAttachmentChip()
+            }
+        }
+    }
+
+    @VisibleForTesting
+    internal fun acceptUploadForTest(path: String) {
+        pendingAttachment = path
+        renderAttachmentChip()
+    }
+
+    @VisibleForTesting
+    internal fun outgoingReplyForTest(text: String): String = outgoingReply(text)
+
+    @VisibleForTesting
+    internal fun setDirectTypingForTest(active: Boolean) = setDirectTyping(active, announce = false)
 
     private fun renderPendingSent() {
         if (!::binding.isInitialized) return
@@ -2167,6 +2213,7 @@ class PaneActivity : AppCompatActivity() {
             directTyping = active
             setControlState(typeModeButton, active)
             replyInput.hint = getString(if (active) R.string.pane_direct_hint else R.string.pane_reply_hint)
+            sendButton.setImageResource(if (active) R.drawable.ic_composer_stop else R.drawable.ic_pane_send)
             sendButton.isEnabled = active || terminalWriteBlock() == null &&
                 (currentState.composerReady || takenOverTerminalDraft != null) && !currentState.sending
             sendButton.contentDescription = getString(if (active) R.string.pane_direct_stop else R.string.pane_send)
@@ -2179,7 +2226,6 @@ class PaneActivity : AppCompatActivity() {
                             .showSoftInput(replyInput, InputMethodManager.SHOW_IMPLICIT)
                     }
                 }
-                if (announce) showTransientMessage(getString(R.string.pane_direct_armed))
             } else {
                 val terminalWritable = terminalWriteBlock() == null
                 typeModeButton.isEnabled = terminalWritable && currentState.pane != null && !currentState.sending

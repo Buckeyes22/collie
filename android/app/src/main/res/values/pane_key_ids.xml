@@ -15,4 +15,5 @@
     <item name="pane_keys_functions_toggle" type="id" />
     <item name="pane_keys_functions" type="id" />
     <item name="transcript_load_older" type="id" />
+    <item name="pane_key_queue_scroll" type="id" />
 </resources>
