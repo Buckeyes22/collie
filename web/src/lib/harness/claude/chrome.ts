@@ -12,6 +12,11 @@ import type { StyledLine } from "../../blocks";
 import { findAutocompleteRun } from "./autocomplete";
 import { isBlank, isBoxBorder, isInputBoxTopBorder, lineText } from "./markers";
 
+// Re-exported so the Claude grammars that build on the strip (reflow.ts) keep this module as their
+// one import site for the shared line probe, the same way markers.ts re-exports it for the grammars
+// above.
+export { lineText };
+
 // Rows allowed DIRECTLY under the input box's bottom border: the statusline plus its hint row(s)
 // ("← for agents", "⏵⏵ bypass permissions on …"). A statusline is an arbitrary user command's output,
 // so this run is as tall as the user made it. The ceiling only stops a borderless buffer matching

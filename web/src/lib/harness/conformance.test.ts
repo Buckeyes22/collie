@@ -53,6 +53,9 @@ const NEUTRAL = new Set([
   // thing separating it from a draft; see harness/claude/chrome.ts.
   "claude--ghost-suggestion.txt",
   "claude--ghost-typed-over.txt",
+  // The soft-wrap reflow capture (reflow.test.ts): an ordinary idle screen — soft-wrapped prose
+  // above a live input box, no dialog — so it belongs to the neutral cohort, not ownFixtures.
+  "claude--soft-wrapped-paragraph.txt",
 ]);
 
 const allClaudeFixtures = readdirSync(PANES_DIR)

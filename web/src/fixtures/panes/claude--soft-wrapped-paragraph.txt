@@ -1,0 +1,65 @@
+  p='.ai/active-context.md'; s=open(p).read()
+  entry="""## 2026-09-10 Claude — Track coordinates filled/corrected from StormLens "USA
+  Circuits.kml"
+
+  - Source (per Chris): `~/git/StormLens/services/stormlens-grib2/data/external/USA Circuits.kml`
+    — 108 Point placemarks (name + lon,lat). Matched to prod `tracks` by normalised name with a small
+    alias map (Laguna Seca, Road Atlanta, Willow Springs, Hallett, Putnam Park, Waterford Hills,
+  NJMP).
+  - Filled 10 tracks that had no coordinates: laguna-seca, michelin-raceway-road-atlanta,
+  road-atlanta
+    (duplicate rows, same point), new-hampshire-motor-speedway, new-jersey-motorsports-park-lightning
+    and -thunderbolt (same KML point), pittsburgh-international-race-complex,
+    portland-international-raceway, the-ridge-motorsports-park, willow-springs-international-raceway.
+  - Corrected 3 where KML and a Nominatim name geocode agreed against prod: hallett (2.3 km off),
+    high-plains-raceway (11 km off), putnam-park-road-course (8.9 km off).
+  - Left alone: motorsports-park-hastings (2.4 km prod↔KML, geocode useless) and
+    waterford-hills-road-course (2.8 km, no geocode) — ambiguous, either could be right.
+  - Remaining without coordinates: msr-cresson, podium-club-at-attesa (not in the KML).
+    Positive longitudes: 0. AMP's KML point is 0.9 km from the prod row (fine; S/F line separate).
+  - Duplicate rows noted: road-atlanta vs michelin-raceway-road-atlanta; NJMP lightning/thunderbolt
+    share one point (two layouts of one venue — correct).
+
+  """
+  open(p,'w').write(entry+s); print('ok')
+  EOF
+  corepack pnpm exec prettier --write .ai/active-context.md >/dev/null; echo done)
+[0m[38;2;153;153;153m  ⎿  [0mok
+     done
+
+[0m[38;2;255;255;255m● [0mFound it and applied it. The file is [0m[38;2;177;185;249mservices/stormlens-grib2/data/external/USA Circuits.kml [0min
+  StormLens, with 108 point placemarks.
+
+  [0m[1mFilled 10 tracks that had no coordinates[0m, matched by exact name: Road Atlanta (both the
+  [0m[38;2;177;185;249mroad-atlanta [0mand [0m[38;2;177;185;249mmichelin-raceway-road-atlanta [0mrows), Laguna Seca, New Hampshire Motor Speedway,
+  both NJMP layouts, Pittsburgh International Race Complex, Portland International Raceway, The
+  Ridge, and Willow Springs.
+
+  [0m[1mCorrected 3 that already had coordinates [0mwhere the KML and a Nominatim name geocode agreed with
+  each other against prod: Hallett was 2.3 km off, Putnam Park 8.9 km, High Plains 11 km.
+
+  [0m[1mLeft alone, on purpose: [0mHastings and Waterford Hills. Prod and the KML disagree by about 2.5 km
+  each, and the geocode tiebreak was useless for both, so either source could be right.
+
+  [0m[1mState now[0m
+
+  ┌────────────────────┬──────────────┬─────┐
+  │                    │ Before today │ Now │
+  │ Positive longitude │ 14           │ 0   │
+  │ No coordinates     │ 12           │ 2   │
+  └────────────────────┴──────────────┴─────┘
+
+  The two still empty are MSR Cresson and Podium Club at Attesa, which are not in the KML. Two data
+  observations for later: Road Atlanta exists as two prod rows, and AMP's KML point sits 0.9 km from
+  the prod row, which is fine since the start/finish line is stored separately.
+
+  Nothing in the repo changed for this; it was prod data only. The KML path and every change are in
+  the ledger.
+
+[0m[38;2;153;153;153m✻ Worked for 1m 47s · done 5:10 PM[0m
+                          [0m[38;2;153;153;153mcurrent: 2.1.267 · latest: 2.1.268[0m [0m[38;2;78;186;101m✔ Update installed · Restart to update[0m
+[0m[38;2;136;136;136m─────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+❯ 
+[0m[38;2;136;136;136m─────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+  [0m[1m[38;5;2mchris@ed8[0m[38;2;153;153;153m:[0m[1m[38;5;4m/home/chris/git/PaddockLink[0m                                                         [0m[38;2;78;186;101m/rc[0m
+  [0m[38;2;255;107;128m⏵⏵ bypass permissions on[0m[38;2;153;153;153m (shift+tab to cycle) · ← for agents[0m
