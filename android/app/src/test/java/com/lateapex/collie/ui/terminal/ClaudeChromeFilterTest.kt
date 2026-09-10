@@ -156,4 +156,23 @@ class ClaudeChromeFilterTest {
 
         assertSame(parsed, filter.filter(parsed))
     }
+
+    @Test
+    fun filterReflowsBodySoftWrapsButNotStatusRows() {
+        val body1 = "⏺ " + "a".repeat(28)
+        val body2 = "  tail"
+        val box = listOf("╭" + "─".repeat(28) + "╮", "│ > " + " ".repeat(25) + "│", "╰" + "─".repeat(28) + "╯")
+        val status = "  ~/repo main " + "·".repeat(16)
+        val input = (listOf(body1, body2) + box + listOf(status)).joinToString("\n")
+        val out = ClaudeChromeFilter().filter(input).toString().lines()
+        assertEquals("$body1 tail", out[0])
+        assertEquals(status, out.last())
+    }
+
+    @Test
+    fun filterWithReflowOffKeepsRows() {
+        val body1 = "⏺ " + "a".repeat(28)
+        val input = listOf(body1, "  tail").joinToString("\n")
+        assertEquals(input, ClaudeChromeFilter().filter(input, reflow = false).toString())
+    }
 }

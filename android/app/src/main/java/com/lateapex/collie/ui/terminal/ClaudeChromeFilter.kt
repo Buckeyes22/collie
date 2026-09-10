@@ -10,28 +10,59 @@ import android.text.SpannableStringBuilder
  * re-surfaces above its composer. Unrecognised variants are returned unchanged.
  */
 class ClaudeChromeFilter {
-    fun filter(input: CharSequence): CharSequence {
+    fun filter(input: CharSequence, reflow: Boolean = true): CharSequence {
         val lines = splitLines(input)
         var end = lines.size
         while (end > 0 && lines[end - 1].text.isBlank()) end--
         if (end == 0) return input
+        val width = SoftWrapReflow.gridWidth(lines.map { it.text })
 
         // No box at the tail (a dialog is up, or the buffer is torn): still collapse the padding
         // Claude leaves under the dialog, otherwise the mirror above the native panel reads blank.
         val box = locateInputBox(lines, end) ?: run {
-            val collapsed = collapsePadding(lines)
-            return if (collapsed.size == lines.size) input else joinLines(input, collapsed)
+            val collapsed = reflowLines(collapsePadding(lines), width, reflow)
+            return if (collapsed == lines) input else joinLines(input, collapsed)
         }
         var bodyEnd = box.top
         while (bodyEnd > 0 && lines[bodyEnd - 1].text.isBlank()) bodyEnd--
 
         val kept = buildList {
-            addAll(collapsePadding(lines.subList(0, bodyEnd)))
+            addAll(reflowLines(collapsePadding(lines.subList(0, bodyEnd)), width, reflow))
             for (index in box.bottomBorder + 1 until box.statusEnd) {
                 if (lines[index].text.isNotBlank()) add(lines[index])
             }
         }
         return joinLines(input, kept)
+    }
+
+    /**
+     * A joined row keeps the span of its first source row; the joined text is carried in
+     * [Line.text] and [joinLines] re-emits it from the source rows so colour spans survive.
+     */
+    private fun reflowLines(body: List<Line>, width: Int, enabled: Boolean): List<Line> {
+        if (!enabled) return body
+        val texts = SoftWrapReflow.reflow(body.map { it.text }, width)
+        if (texts.size == body.size) return body
+        val out = ArrayList<Line>(texts.size)
+        var source = 0
+        for (text in texts) {
+            val first = body[source]
+            var consumed = 1
+            var acc = first.text.trimEnd()
+            while (acc != text && source + consumed < body.size) {
+                acc = acc + " " + body[source + consumed].text.trim(); consumed++
+            }
+            out.add(
+                Line(
+                    first.start,
+                    body[source + consumed - 1].end,
+                    text,
+                    body.subList(source, source + consumed).toList(),
+                ),
+            )
+            source += consumed
+        }
+        return out
     }
 
     /**
@@ -156,12 +187,26 @@ class ClaudeChromeFilter {
         val output = SpannableStringBuilder()
         lines.forEachIndexed { index, line ->
             if (index > 0) output.append('\n')
-            output.append(input, line.start, line.end)
+            val sources = line.sources
+            if (sources.size == 1) {
+                output.append(input, line.start, line.end)
+            } else {
+                sources.forEachIndexed { sourceIndex, source ->
+                    if (sourceIndex > 0) output.append(' ')
+                    val text = input.substring(source.start, source.end)
+                    val leading = text.length - text.trimStart().length
+                    val trailing = text.length - text.trimEnd().length
+                    output.append(input, source.start + leading, source.end - trailing)
+                }
+            }
         }
         return output
     }
 
-    private data class Line(val start: Int, val end: Int, val text: String)
+    private data class Line(val start: Int, val end: Int, val text: String, val joinedFrom: List<Line>? = null) {
+        /** A row split out of the grid is re-emitted from its source rows so the spans survive. */
+        val sources: List<Line> get() = joinedFrom ?: listOf(this)
+    }
 
     private data class InputBox(val top: Int, val bottomBorder: Int, val statusEnd: Int)
 

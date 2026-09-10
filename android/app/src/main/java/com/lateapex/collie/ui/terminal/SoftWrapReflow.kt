@@ -7,7 +7,7 @@ package com.lateapex.collie.ui.terminal
  * (tables, rules, fences, bullets, tree markers) is never joined in either direction.
  */
 object SoftWrapReflow {
-    private val structural = Regex("^\\s*(?:[│┃|┌└├┬┴┼─━═]|```|[•\\-*☐☒⎿]\\s|\\d+\\.\\s)")
+    private val structural = Regex("^\\s*(?:[│┃|┌└├┬┴┼─━═╭╮╰╯]|```|[•\\-*☐☒⎿]\\s|\\d+\\.\\s)")
 
     fun gridWidth(lines: List<String>): Int = lines.maxOfOrNull { it.trimEnd().length } ?: 0
 

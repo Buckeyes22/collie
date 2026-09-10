@@ -1658,7 +1658,10 @@ class PaneActivity : AppCompatActivity() {
             rawMode,
         )
         val projectedChrome = if (claudePane && !rawMode) {
-            ClaudeChromeFilter().filter(projected)
+            ClaudeChromeFilter().filter(
+                projected,
+                reflow = displayPreferences.getBoolean(PREF_WRAP, true),
+            )
         } else {
             projected
         }
