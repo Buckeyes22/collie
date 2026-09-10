@@ -119,6 +119,10 @@ class PaneActivity : AppCompatActivity() {
     private var currentState = PaneUiState()
     private var renderedTerminalText: CharSequence = ""
     private var renderedStatusRows: List<String> = emptyList()
+    private var bodyOverride: PaneBody? = null
+    private var lastBodyReason: PaneBodyReason? = null
+    private var showingTranscriptBody = false
+    private var lastRenderedState: PaneUiState? = null
     private val blockMonoTypeface: Typeface by lazy {
         androidx.core.content.res.ResourcesCompat.getFont(this, R.font.collie_mono) ?: Typeface.MONOSPACE
     }
@@ -235,6 +239,7 @@ class PaneActivity : AppCompatActivity() {
             this,
             PaneViewModel.Factory(application, address, intent.getStringExtra(EXTRA_AGENT)),
         )[PaneViewModel::class.java]
+        binding.transcriptBody.onLoadOlder = viewModel::loadOlderTranscript
         composerMediaText = AndroidComposerMediaText(this)
         composerMediaActions = ComposerMediaActions(
             config = repository::config,
@@ -1301,6 +1306,7 @@ class PaneActivity : AppCompatActivity() {
 
     private fun render(state: PaneUiState) = with(binding) {
         currentState = state
+        lastRenderedState = state
         if (recoverFromClosedPane(state)) return@with
         pendingSent?.let { sent ->
             state.pane?.let { pane ->
@@ -1366,6 +1372,7 @@ class PaneActivity : AppCompatActivity() {
         } else {
             updateSemanticActionState(state)
         }
+        renderPaneBody(state)
         val dialogPresent = detectedSurface?.ownsKeyboard == true
         val ordinaryInputBlocked = dialogPresent || noEchoPrompt != null
         if (dialogPresent && directTyping) setDirectTyping(false, announce = false)
@@ -3211,6 +3218,49 @@ class PaneActivity : AppCompatActivity() {
         terminalText.post { scrollToCurrentFindMatch(selected) }
     }
 
+    /** §4 item 2: one rule picks transcript or mirror; a one-tap override survives until the reason changes. */
+    private fun renderPaneBody(state: PaneUiState): Unit = with(binding) {
+        val decided = PaneBodyDecision.decide(
+            analyzedSemanticSurface,
+            state.transcriptAvailable,
+            displayPreferences.getBoolean(PREF_RAW, false),
+            agentName,
+        )
+        if (decided.reason != lastBodyReason) {
+            bodyOverride = null
+            lastBodyReason = decided.reason
+        }
+        val body = bodyOverride ?: decided.body
+        showingTranscriptBody = body == PaneBody.TRANSCRIPT
+        renderBodyModeRow(decided, body)
+        transcriptBody.isVisible = showingTranscriptBody
+        terminalScroll.isVisible = body == PaneBody.MIRROR
+        terminalStatusline.isVisible = body == PaneBody.MIRROR &&
+            renderedStatusRows.isNotEmpty() && !displayPreferences.getBoolean(PREF_RAW, false)
+        if (showingTranscriptBody) {
+            transcriptBody.bind(agentName, state.transcript, state.transcriptHasMore)
+            terminalScroll.updatePadding(bottom = 0)
+        }
+    }
+
+    private fun renderBodyModeRow(decided: PaneBodyMode, body: PaneBody): Unit = with(binding) {
+        bodyModeRow.isVisible = decided.reason != PaneBodyReason.NO_JOURNAL && decided.reason != PaneBodyReason.PENDING
+        bodyModeLabel.text = when (decided.reason) {
+            PaneBodyReason.DIALOG -> getString(R.string.pane_body_showing_mirror_dialog)
+            PaneBodyReason.RAW -> getString(R.string.pane_body_showing_mirror_raw)
+            PaneBodyReason.NO_JOURNAL -> getString(R.string.pane_body_showing_mirror_no_journal)
+            else -> getString(R.string.pane_body_showing_transcript)
+        }
+        bodyModeSwitch.text = getString(
+            if (body == PaneBody.TRANSCRIPT) R.string.pane_body_switch_to_mirror else R.string.pane_body_switch_to_transcript,
+        )
+        bodyModeSwitch.setOnClickListener {
+            bodyOverride = if (body == PaneBody.TRANSCRIPT) PaneBody.MIRROR else PaneBody.TRANSCRIPT
+            lastRenderedState?.let { render(it) }
+        }
+        bodyModeLabel.setOnClickListener { if (body == PaneBody.TRANSCRIPT) openHistory() }
+    }
+
     private fun renderTerminalContent(highlighted: CharSequence) = with(binding) {
         // The mirror is text-selectable, so replacing its text pulls focus onto it: every keystroke
         // in Type mode re-rendered the mirror and the operator had to tap the field again for the
@@ -3218,7 +3268,7 @@ class PaneActivity : AppCompatActivity() {
         val focusedBefore = currentFocus?.takeIf { it !== terminalText && it !== terminalBlockContent }
         renderTerminalBlocks(highlighted)
         terminalStatusline.text = renderedStatusRows.joinToString(" · ")
-        terminalStatusline.isVisible = renderedStatusRows.isNotEmpty() &&
+        terminalStatusline.isVisible = !showingTranscriptBody && renderedStatusRows.isNotEmpty() &&
             !displayPreferences.getBoolean(PREF_RAW, false)
         if (terminalStatusline.isVisible) {
             terminalStatusline.doOnLayout { terminalScroll.updatePadding(bottom = it.height) }

@@ -33,6 +33,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - Android: the history turn renderer is a reusable class so the pane body can share it.
 - Android: the pane view model polls the journal transcript with the mirror and merges entries by uuid.
 - Android: one rule picks transcript or mirror for the pane body.
+- Android: an agent pane with a journal shows its transcript as the body and drops to the mirror only for a dialog, Raw, or no journal.
 - A native Kotlin Android client mirrors Collie's existing HTTP API without a WebView or browser shell.
 - Android CI builds and validates the native app with pinned Gradle tooling independent of npm's advisory and funding endpoints.
 - The web and native Android interfaces are English-only; language selectors, alternate catalogs,

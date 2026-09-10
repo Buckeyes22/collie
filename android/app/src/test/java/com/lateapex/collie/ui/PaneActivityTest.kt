@@ -14,6 +14,7 @@ import android.widget.GridLayout
 import android.widget.HorizontalScrollView
 import android.widget.TextView
 import com.google.android.material.button.MaterialButton
+import java.io.File
 import java.time.Duration
 import androidx.test.core.app.ApplicationProvider
 import com.lateapex.collie.R
@@ -21,6 +22,8 @@ import com.lateapex.collie.network.PaneReadResponse
 import com.lateapex.collie.network.AgentStatus
 import com.lateapex.collie.network.MuxConfigResponse
 import com.lateapex.collie.network.PaneSummary
+import com.lateapex.collie.network.TranscriptEntry
+import com.lateapex.collie.network.TranscriptPart
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
@@ -1150,6 +1153,40 @@ class PaneActivityTest {
         val row = activity.findViewById<TextView>(R.id.terminal_statusline)
         assertEquals(View.VISIBLE, row.visibility)
         assertEquals("Opus 5 · 12%", row.text.toString())
+    }
+
+    @Test
+    fun claudePaneShowsTranscriptWhenJournalIsAvailableAndNoDialog() {
+        val activity = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("body:pane", agent = "claude")).create().start().resume().get()
+        render(
+            activity,
+            PaneUiState(
+                pane = PaneReadResponse("body:pane", "⏺ done\n", truncated = false, revision = 0),
+                loading = false,
+                transcript = listOf(TranscriptEntry("a", "2026-09-10T00:00:00Z", "assistant", listOf(TranscriptPart("text", text = "done")))),
+                transcriptAvailable = true,
+            ),
+        )
+        assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.transcript_body).visibility)
+        assertEquals(View.GONE, activity.findViewById<View>(R.id.terminal_scroll).visibility)
+    }
+
+    @Test
+    fun dialogSwitchesTheWholeBodyToTheMirror() {
+        val activity = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("body:dialog", agent = "claude")).create().start().resume().get()
+        val fixture = File("../../web/src/fixtures/panes/claude--select-ask-no-question-mark.txt").readText()
+        render(
+            activity,
+            PaneUiState(
+                pane = PaneReadResponse("body:dialog", fixture, truncated = false, revision = 0),
+                loading = false,
+                transcript = emptyList(),
+                transcriptAvailable = true,
+            ),
+        )
+        assertEquals(View.GONE, activity.findViewById<View>(R.id.transcript_body).visibility)
+        assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.terminal_scroll).visibility)
+        assertEquals(activity.getString(R.string.pane_body_showing_mirror_dialog), activity.findViewById<TextView>(R.id.body_mode_label).text.toString())
     }
 
     private fun paneIntent(paneId: String, agent: String = "opencode"): Intent =

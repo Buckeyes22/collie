@@ -233,4 +233,11 @@
     <string name="pane_status_not_paired">Read-only connection · pair this device to control the terminal.</string>
     <string name="pane_status_checking_device">Checking device authorization before enabling terminal controls.</string>
     <string name="pane_status_unauthorised">Read-only — device not authorised by the fronting proxy.</string>
+    <string name="pane_transcript_load_older">Load older</string>
+    <string name="pane_body_showing_transcript">Transcript</string>
+    <string name="pane_body_showing_mirror_dialog">Terminal · agent is asking</string>
+    <string name="pane_body_showing_mirror_raw">Terminal · raw</string>
+    <string name="pane_body_showing_mirror_no_journal">Terminal</string>
+    <string name="pane_body_switch_to_mirror">Show terminal</string>
+    <string name="pane_body_switch_to_transcript">Show transcript</string>
 </resources>
