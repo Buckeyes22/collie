@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <item name="space_build_stamp" type="id" />
+    <!-- Removed with the sibling strip; kept so tests can assert the row no longer exists. -->
+    <item name="spaces_strip" type="id" />
+    <string name="space_header_counts">%1$s · %2$s</string>
     <string name="read_only_not_paired">Not paired — pair this device in Settings</string>
     <string name="read_only_device_unauthorised">Read-only — device not authorised</string>
     <string name="read_only_unreachable">Read-only until Collie answers</string>

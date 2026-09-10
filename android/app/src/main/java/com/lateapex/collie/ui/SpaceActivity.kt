@@ -140,7 +140,6 @@ class SpaceActivity : AppCompatActivity() {
         progress.isVisible = state.loading
         errorText.text = state.error.orEmpty()
         errorText.isVisible = state.error != null
-        headerStatus.text = state.mux?.name?.takeIf(String::isNotBlank)?.let { getString(R.string.header_on, it) }.orEmpty()
 
         val content = state.content
         if (content != null) everRenderedSpace = true
@@ -161,40 +160,23 @@ class SpaceActivity : AppCompatActivity() {
             spaceReadOnlyBanner.isClickable = !state.paired
         }
         selectedTabId = SpacePresentationModel.retainedSelection(content, selectedTabId)
-        spacesStrip.isVisible = content != null
-        tabsStrip.isVisible = content?.tabs?.isNotEmpty() == true
+        headerStatus.text = content?.workspace?.label?.takeIf(String::isNotBlank).orEmpty()
         if (content != null) {
-            renderSpaceStrip(content, state)
+            val tabs = resources.getQuantityString(R.plurals.space_tab_count, content.workspace.tabCount, content.workspace.tabCount)
+            val panes = resources.getQuantityString(R.plurals.space_pane_count, content.workspace.paneCount, content.workspace.paneCount)
+            spaceSubtitle.text = getString(R.string.space_header_counts, tabs, panes)
+            spaceSubtitle.isVisible = true
+            tabsStrip.isVisible = content.tabs.isNotEmpty()
             renderTabStrip(content, state)
+        } else {
+            spaceSubtitle.isVisible = false
+            tabsStrip.isVisible = false
         }
-        adapter.submitList(SpacePresentationModel.rows(content, selectedTabId))
-    }
-
-    private fun renderSpaceStrip(content: SpaceContent, state: SpaceUiState) = with(binding.spaceChips) {
-        removeAllViews()
-        addView(spaceBackChip(), stripParams(4))
-        if (state.mux?.spaces != "one") {
-            content.workspaces.forEach { workspace ->
-                val agents = content.agents.filter { it.workspaceId == workspace.workspaceId }
-                addView(
-                    spaceChip(
-                        label = workspace.label,
-                        active = workspace.workspaceId == content.workspace.workspaceId,
-                        focused = workspace.focused,
-                        status = SpacePresentationModel.worstStatus(agents),
-                        contentDescription = getString(R.string.space_accessibility, workspace.label, workspace.paneCount),
-                    ) {
-                        if (workspace.workspaceId != content.workspace.workspaceId) {
-                            startActivity(SpaceActivity.intent(this@SpaceActivity, workspace, scope.session))
-                        }
-                    },
-                    stripParams(8),
-                )
-            }
-        }
-        if (SpaceActionModel.canUse(state.writeAuthorized, state.mux, "createSpace")) {
-            addView(addButton(R.string.new_space, creatingSpace, ::showNewWorkspace), stripParams(8))
-        }
+        // The overview card left with the sibling strip: the header now carries the space's name
+        // and counts, so the list renders only tabs and panes.
+        adapter.submitList(
+            SpacePresentationModel.rows(content, selectedTabId).filterNot { it is SpaceListItem.Overview },
+        )
     }
 
     private fun renderTabStrip(content: SpaceContent, state: SpaceUiState) {
@@ -203,7 +185,7 @@ class SpaceActivity : AppCompatActivity() {
         addView(
             tabChip(getString(R.string.space_tab_all), active = selectedTabId == null) {
                 selectedTabId = null
-                adapter.submitList(SpacePresentationModel.rows(content, null))
+                adapter.submitList(SpacePresentationModel.rows(content, null).filterNot { it is SpaceListItem.Overview })
                 renderTabStrip(content, state)
             },
             stripParams(4),
@@ -225,7 +207,7 @@ class SpaceActivity : AppCompatActivity() {
                     showTabActions(tab)
                 } else {
                     selectedTabId = tab.tabId
-                    adapter.submitList(SpacePresentationModel.rows(content, tab.tabId))
+                    adapter.submitList(SpacePresentationModel.rows(content, tab.tabId).filterNot { it is SpaceListItem.Overview })
                     renderTabStrip(content, state)
                 }
             }
@@ -234,48 +216,17 @@ class SpaceActivity : AppCompatActivity() {
                 true
             }
             addView(chip, stripParams(4))
+            if (active) {
+                post { binding.tabsStrip.smoothScrollTo(chip.left - dp(24), 0) }
+            }
         }
         if (SpaceActionModel.canUse(state.writeAuthorized, state.mux, "createTab")) {
             addView(addButton(R.string.new_tab, creatingTab, ::showNewTab), stripParams(4))
         }
+        if (SpaceActionModel.canUse(state.writeAuthorized, state.mux, "createSpace")) {
+            addView(addButton(R.string.new_space, creatingSpace, ::showNewWorkspace), stripParams(8))
         }
-    }
-
-    private fun spaceBackChip(): View = spaceChip(
-        label = getString(R.string.navigate_back),
-        active = false,
-        leadingDrawable = R.drawable.ic_collie_back,
-        contentDescription = getString(R.string.navigate_back),
-    ) { returnToDashboard() }
-
-    private fun spaceChip(
-        label: String,
-        active: Boolean,
-        focused: Boolean = false,
-        status: com.lateapex.collie.network.AgentStatus? = null,
-        leadingDrawable: Int? = null,
-        contentDescription: String = label,
-        onClick: () -> Unit,
-    ): LinearLayout = LinearLayout(this).apply {
-        orientation = LinearLayout.HORIZONTAL
-        gravity = Gravity.CENTER
-        minimumWidth = dp(44)
-        isClickable = true
-        isFocusable = true
-        isSelected = active
-        this.contentDescription = contentDescription
-        background = chipBackground(active, focused, tab = false)
-        foreground = selectableForeground()
-        setPadding(dp(if (leadingDrawable == null && status == null) 12 else 8), 0, dp(12), 0)
-        leadingDrawable?.let { icon ->
-            addView(ImageView(this@SpaceActivity).apply {
-                setImageResource(icon)
-                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-            }, LinearLayout.LayoutParams(dp(16), dp(16)).apply { marginEnd = dp(2) })
         }
-        status?.let { addStatusDot(this, it, active, tab = false) }
-        addView(chipLabel(label, active), LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-        setOnClickListener { onClick() }
     }
 
     private fun tabChip(
@@ -399,13 +350,13 @@ class SpaceActivity : AppCompatActivity() {
         body.addView(sheetActionButton(getString(R.string.action_create)) {
             dialog.dismiss()
             creatingSpace = true
-            viewModel.state.value.content?.let { renderSpaceStrip(it, viewModel.state.value) }
+            viewModel.state.value.content?.let { renderTabStrip(it, viewModel.state.value) }
             lifecycleScope.launch {
                 try {
                     handleCreate(viewModel.createWorkspace(label.valueOrNull(), cwd.valueOrNull()))
                 } finally {
                     creatingSpace = false
-                    viewModel.state.value.content?.let { renderSpaceStrip(it, viewModel.state.value) }
+                    viewModel.state.value.content?.let { renderTabStrip(it, viewModel.state.value) }
                 }
             }
         }, matchRow(top = 12))

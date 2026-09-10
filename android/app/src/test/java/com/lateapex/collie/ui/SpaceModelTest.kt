@@ -117,19 +117,17 @@ class SpaceModelTest {
     }
 
     @Test
-    fun paneTextInSpaceUsesCanonicalNameAndShortenedCwd() {
+    fun paneTextInSpaceUsesCanonicalNameAndTheTabsMirrorPreview() {
         val named = pane("p1", "t1", "desk", "work").copy(
             paneLabel = "hand named",
             sessionName = "session name",
             terminalTitle = "live title",
+            tabLabel = "build",
             cwd = "/home/chris/projects/a-very-long-parent-directory/collie/android",
         )
 
         assertEquals("hand named", spacePaneText(named).primary)
-        assertEquals(
-            "…/collie/android",
-            spacePaneText(named).secondary,
-        )
+        assertEquals("build · live title", spacePaneText(named).secondary)
         assertEquals("session name", spacePaneText(named.copy(paneLabel = null)).primary)
         assertEquals(
             "live title",
@@ -138,7 +136,7 @@ class SpaceModelTest {
     }
 
     @Test
-    fun paneTextInSpaceFallsBackToAgentOrShellAndIgnoresStaleTitles() {
+    fun paneTextInSpaceFallsBackToAgentOrShellAndStillShowsTheMirrorLine() {
         val agent = pane("p1", "t1", "desk", "work").copy(
             terminalTitle = "old title",
             terminalTitleStale = true,
@@ -146,8 +144,8 @@ class SpaceModelTest {
         )
         val shell = agent.copy(agent = "shell", kind = "shell")
 
-        assertEquals(SpacePaneText("codex", null), spacePaneText(agent))
-        assertEquals(SpacePaneText("shell", null), spacePaneText(shell))
+        assertEquals(SpacePaneText("codex", "old title"), spacePaneText(agent))
+        assertEquals(SpacePaneText("shell", "old title"), spacePaneText(shell))
     }
 
     @Test

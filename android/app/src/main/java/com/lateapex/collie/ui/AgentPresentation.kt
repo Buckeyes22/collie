@@ -72,5 +72,10 @@ internal fun dashboardPaneText(pane: PaneSummary): DashboardPaneText {
 
 internal fun spacePaneText(pane: PaneSummary): SpacePaneText = SpacePaneText(
     primary = paneDisplayName(pane),
-    secondary = pane.cwd.takeIf(String::isNotBlank)?.let(::shortCwd),
+    // The card's metadata line carries where the pane sits (tab) and what it last showed
+    // (the final non-blank mirror line the wire reports as terminalTitle).
+    secondary = listOfNotNull(
+        pane.tabLabel?.takeIf(String::isNotBlank),
+        pane.terminalTitle?.takeIf(String::isNotBlank),
+    ).joinToString(" · ").ifEmpty { null },
 )
