@@ -38,6 +38,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - Android "Wrap lines" measures the mirror at the viewport width, so long lines wrap instead of clipping past the screen edge.
 - Android Type mode sends keystrokes unbound, so a keystroke echoed between sends is no longer refused as "screen changed" and dropped.
 - Android confirmation notices ("Reply sent.", "Typed into terminal.") clear themselves after four seconds instead of sitting over the mirror.
+- Web: the Claude mirror joins the grid's soft wraps so a paragraph wraps once on a phone.
 - Android "Find in output" focuses its field and raises the keyboard once the pane-actions sheet has released the window.
 - Android Keys drawer sizes "Send keys" and "Clear" by their labels, so neither wraps nor clips at high densities.
 - Android reads "Read-only until Collie answers" while the server is unreachable, instead of "device not authorised".

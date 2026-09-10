@@ -17,6 +17,7 @@ import { detectPromptSelectRegion } from "./prompt-select";
 import { detectMenuRegion } from "./menu";
 import { detectAutocompleteRegion } from "./autocomplete";
 import { stripChrome, extractStatusLines, extractInputDraft, hasInputBox } from "./chrome";
+import { reflowSoftWraps } from "./reflow";
 import { isPastePlaceholderOnly, pasteCarriesSend } from "./paste";
 
 /**
@@ -100,7 +101,7 @@ export function claudeBuildBlocks(lines: StyledLine[]): Block[] {
   if (hasInputBox(lines)) {
     const autoRegion = detectAutocompleteRegion(lines);
     if (autoRegion) {
-      const before = trimTrailingBlank(stripChrome(lines));
+      const before = reflowSoftWraps(trimTrailingBlank(stripChrome(lines)));
       const blocks: Block[] = [];
       if (before.length > 0) blocks.push({ kind: "raw", lines: before });
       blocks.push({
@@ -112,7 +113,7 @@ export function claudeBuildBlocks(lines: StyledLine[]): Block[] {
     }
   }
 
-  return [{ kind: "raw", lines: stripChrome(lines) }];
+  return [{ kind: "raw", lines: reflowSoftWraps(stripChrome(lines)) }];
 }
 
 export { extractStatusLines, extractInputDraft };
