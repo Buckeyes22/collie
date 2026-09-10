@@ -74,6 +74,64 @@ class UpdatesActivityParityTest {
     }
 
     @Test
+    fun cardSaysReleasesBehindNotAVersionList() {
+        val activity = launchUpdates(
+            running = "1.5.1",
+            latest = "1.8.0",
+            newer = listOf("1.5.2", "1.5.3", "1.5.4", "1.5.5", "1.5.6", "1.6.0", "1.7.0", "1.8.0"),
+        )
+        val summary = activity.findViewById<TextView>(R.id.updates_native_summary).text.toString()
+        assertTrue(summary.contains("8 releases behind"))
+        assertFalse(summary.contains("1.5.2"))
+    }
+
+    @Test
+    fun remindIsAButtonAndBlockedReasonIsOneLine() {
+        val activity = launchUpdates(preflightRed = 3)
+        assertTrue(activity.findViewById<View>(R.id.updates_snooze_button) is com.google.android.material.button.MaterialButton)
+        assertEquals(
+            "Blocked by 3 preflight checks",
+            activity.findViewById<TextView>(R.id.updates_native_blocked_reason).text.toString(),
+        )
+    }
+
+    private fun launchUpdates(
+        running: String = "1.5.1",
+        latest: String? = null,
+        newer: List<String> = emptyList(),
+        preflightRed: Int = 0,
+    ): UpdatesActivity {
+        val activity = Robolectric.buildActivity(UpdatesActivity::class.java).create().get()
+        val checks = (0 until preflightRed).map { index ->
+            com.lateapex.collie.network.PreflightCheck(
+                id = "check-$index",
+                verdict = "red",
+                reason = "check $index failed",
+                remedy = "collie doctor --fix --step $index",
+            )
+        }
+        activity.renderForTest(
+            com.lateapex.collie.network.UpdateCheckResponse(
+                current = running,
+                latest = latest,
+                latestUrl = null,
+                releaseAvailable = latest != null && latest != running,
+                majorAvailable = null,
+                majorUrl = null,
+                bridgeStale = false,
+                checkedAt = 1,
+                newerVersions = newer,
+                preflight = com.lateapex.collie.network.PreflightReport(
+                    schema = 1,
+                    verdict = if (preflightRed > 0) "red" else "green",
+                    checks = checks,
+                ),
+            ),
+        )
+        return activity
+    }
+
+    @Test
     fun restartProgressAndPackActionCopyMatchesTheWebContract() {
         val resources = application.resources
 

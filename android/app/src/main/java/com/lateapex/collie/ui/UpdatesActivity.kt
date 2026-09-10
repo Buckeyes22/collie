@@ -46,6 +46,7 @@ class UpdatesActivity : AppCompatActivity() {
     private lateinit var preflightBody: LinearLayout
     private lateinit var actions: LinearLayout
     private lateinit var standardActions: LinearLayout
+    private lateinit var blockedReason: TextView
     private lateinit var confirmation: LinearLayout
     private lateinit var confirmationTitle: TextView
     private lateinit var confirmationBody: TextView
@@ -146,7 +147,7 @@ class UpdatesActivity : AppCompatActivity() {
             addView(LinearLayout(this@UpdatesActivity).apply {
                 orientation = LinearLayout.VERTICAL
                 addView(title(getString(R.string.updates_native_card_title)))
-                status = body(getString(R.string.loading)).apply { id = R.id.updates_status }
+                status = body(getString(R.string.loading)).apply { id = R.id.updates_native_summary }
                 addView(status)
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         })
@@ -157,12 +158,17 @@ class UpdatesActivity : AppCompatActivity() {
         addView(peers)
         checks = section().apply {
             id = R.id.updates_checks
-            preflightToggle = borderlessButton(
-                R.id.updates_native_preflight_toggle,
-                getString(R.string.updates_native_details),
-            ) {
-                preflightOpen = !preflightOpen
-                renderPreflight(latestState)
+            preflightToggle = MaterialButton(
+                this@UpdatesActivity,
+                null,
+                com.google.android.material.R.attr.borderlessButtonStyle,
+            ).apply {
+                id = R.id.updates_native_preflight_toggle
+                isAllCaps = false
+                setOnClickListener {
+                    preflightOpen = !preflightOpen
+                    renderPreflight(latestState)
+                }
             }
             addView(preflightToggle, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)))
             preflightBody = LinearLayout(this@UpdatesActivity).apply { orientation = LinearLayout.VERTICAL }
@@ -185,8 +191,18 @@ class UpdatesActivity : AppCompatActivity() {
                     addView(start, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)).apply { marginEnd = dp(8) })
                     addView(major, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)).apply { marginEnd = dp(4) })
                 })
-                dismiss = borderlessButton(R.id.updates_snooze_button, getString(R.string.updates_native_dismiss)) { snooze() }
-                addView(dismiss, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)))
+                blockedReason = metadata("").apply {
+                    id = R.id.updates_native_blocked_reason
+                    setTextColor(color(R.color.collie_blocked))
+                    setPadding(0, dp(6), 0, 0)
+                    visibility = View.GONE
+                }
+                addView(blockedReason, LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                ))
+                dismiss = outlinedButton(R.id.updates_snooze_button, getString(R.string.updates_native_dismiss)) { snooze() }
+                addView(dismiss, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)).apply { topMargin = dp(4) })
             }
             addView(standardActions)
             confirmation = LinearLayout(this@UpdatesActivity).apply {
@@ -242,6 +258,11 @@ class UpdatesActivity : AppCompatActivity() {
             addView(error)
         }
         addView(actions)
+    }
+
+    @androidx.annotation.VisibleForTesting
+    internal fun renderForTest(value: UpdateCheckResponse) {
+        render(value)
     }
 
     private suspend fun load() {
@@ -315,8 +336,9 @@ class UpdatesActivity : AppCompatActivity() {
             append(getString(R.string.updates_native_running, value.current.ifBlank { getString(R.string.updates_native_unknown_version) }))
             value.latest?.let { append(getString(R.string.updates_native_newest_suffix, it)) }
             if (value.latest == null) append('\n').append(getString(R.string.updates_native_latest_unknown))
-            if (value.newerVersions.orEmpty().size > 1) {
-                append('\n').append(getString(R.string.updates_native_includes, value.newerVersions.orEmpty().joinToString(", ")))
+            val newer = value.newerVersions.orEmpty()
+            if (newer.isNotEmpty()) {
+                append('\n').append(resources.getQuantityString(R.plurals.updates_native_behind, newer.size, newer.size))
             }
             if (value.bridgeStale) append('\n').append(getString(R.string.updates_native_restart_required))
         }
@@ -389,16 +411,23 @@ class UpdatesActivity : AppCompatActivity() {
         checks.visibility = if (running || rows.isEmpty()) View.GONE else View.VISIBLE
         if (rows.isEmpty()) return
         val summary = preflightSummary(rows)
-        preflightToggle.text = getString(
-            if (preflightOpen) R.string.updates_native_details_hide else R.string.updates_native_details_show,
-            summary,
-        )
+        preflightToggle.text = getString(R.string.updates_native_details_summary, summary)
         preflightToggle.contentDescription = getString(
             if (preflightOpen) R.string.updates_native_details_hide_accessibility else R.string.updates_native_details_show_accessibility,
             summary,
         )
+        preflightToggle.setCompoundDrawablesRelativeWithIntrinsicBounds(
+            0,
+            0,
+            if (preflightOpen) R.drawable.ic_history_chevron_up else R.drawable.ic_history_chevron_down,
+            0,
+        )
         preflightBody.visibility = if (preflightOpen) View.VISIBLE else View.GONE
         if (!preflightOpen) return
+        val newer = value?.newerVersions.orEmpty()
+        if (newer.size > 1) {
+            preflightBody.addView(metadata(getString(R.string.updates_native_includes, newer.joinToString(", "))))
+        }
         rows.forEach { check -> preflightBody.addView(preflightRow(check)) }
     }
 
@@ -413,7 +442,9 @@ class UpdatesActivity : AppCompatActivity() {
             addView(metadata(getString(R.string.updates_native_preflight_line, check.id, check.reason)).apply {
                 setTextColor(color(R.color.collie_foreground))
             })
-            check.remedy?.let { remedy -> addView(code(getString(R.string.updates_native_remedy, remedy))) }
+            check.remedy?.let { remedy ->
+                addView(metadata(getString(R.string.updates_native_fix_on_host, remedy.lineSequence().first())))
+            }
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
     }
 
@@ -499,12 +530,14 @@ class UpdatesActivity : AppCompatActivity() {
         major.text = value.majorAvailable?.let { getString(R.string.updates_native_major_action, it) }.orEmpty()
         major.isEnabled = UpdateNativePresentation.canStartMajor(value, busy, repository.writesAllowed())
         dismiss.visibility = if (!dismissed && (value.releaseAvailable || value.majorAvailable != null)) View.VISIBLE else View.GONE
-        val blockedReason = UpdateNativePresentation.redCheck(value)?.reason
-            ?: getString(R.string.updates_preflight_unavailable).takeIf { value.preflight == null }
-        val actionBlocked = blockedReason != null && action != NativeUpdateAction.RETRY_PACK
+        val redCount = value.preflight?.checks?.count { it.verdict == "red" } ?: 0
+        val preflightUnavailable = getString(R.string.updates_preflight_unavailable).takeIf { value.preflight == null }
+        val actionBlocked = (redCount > 0 || preflightUnavailable != null) && action != NativeUpdateAction.RETRY_PACK
+        blockedReason.text = resources.getQuantityString(R.plurals.updates_native_blocked_reason, redCount, redCount)
+        blockedReason.visibility = if (!running && !confirming && redCount > 0) View.VISIBLE else View.GONE
         error.text = listOfNotNull(
             actionError,
-            blockedReason.takeIf { actionBlocked },
+            preflightUnavailable?.takeIf { actionBlocked },
             getString(R.string.updates_native_dismissed).takeIf { dismissed },
             value.majorAvailable?.let { getString(R.string.updates_native_major_note, it) },
         ).joinToString("\n")

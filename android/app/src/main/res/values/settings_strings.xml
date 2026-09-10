@@ -47,7 +47,6 @@
     <string name="updates_preflight_title">Preflight</string>
     <string name="updates_check_now">Check now</string>
     <string name="updates_update">Update server</string>
-    <string name="updates_remind_digest">Remind me next digest</string>
     <string name="updates_current">Server current %1$s</string>
     <string name="updates_latest">\nLatest server %1$s</string>
     <string name="updates_major_available">\nMajor server version available %1$s</string>

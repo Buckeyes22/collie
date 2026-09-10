@@ -57,6 +57,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - Android no longer offers to take over Claude's faint ghost suggestion as a terminal draft; only typed text in the box counts, as on the web.
 - Android: Settings leads with the pairing card when unpaired, drops the empty notifications card, and the Zen switch is gone (the row is always in the pane menu).
 - Android: Disconnect is a red filled button, this phone's row says Unpair, and the pairing field uses the setup screen's outlined style.
+- Android: Updates counts releases behind, shows the blocked reason in one line, makes Remind a button, and stops printing host shell remedies as code.
 
 ## [1.5.1] - 2026-09-04
 
