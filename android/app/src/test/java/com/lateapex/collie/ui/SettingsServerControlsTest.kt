@@ -5,10 +5,9 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import androidx.test.core.app.ApplicationProvider
 import com.google.android.material.materialswitch.MaterialSwitch
+import com.lateapex.collie.BuildConfig
 import com.lateapex.collie.CollieApplication
 import com.lateapex.collie.R
-import com.lateapex.collie.network.ApiResult
-import com.lateapex.collie.network.DevicesResponse
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -67,6 +66,7 @@ class SettingsServerControlsTest {
     @Test
     fun pairEntryScrollsThenPrefillsCodeAndTargetsTheDeviceName() {
         val application = ApplicationProvider.getApplicationContext<CollieApplication>()
+        seedUnpairedConnection(application)
         val activity = Robolectric.buildActivity(SettingsActivity::class.java).create().get()
         val reveals = mutableListOf<Pair<View, View?>>()
         val parent = LinearLayout(activity)
@@ -81,21 +81,25 @@ class SettingsServerControlsTest {
         )
 
         controls.bind(parent)
+
         assertEquals(1, reveals.size)
-        assertNull(reveals.single().second)
-
-        controls.renderDevices(
-            ApiResult.Success(
-                DevicesResponse(enforced = true, current = null, devices = emptyList()),
-                status = 200,
-            ),
-            writesAllowed = false,
-        )
-
-        assertEquals("AB12-CD34", parent.findViewById<EditText>(R.id.settings_pair_code).text.toString())
+        assertEquals(R.id.settings_parity_pairing_card, reveals.single().first.id)
         val name = parent.findViewById<EditText>(R.id.settings_pair_label)
-        assertEquals("", name.text.toString())
-        assertEquals(2, reveals.size)
-        assertSame(name, reveals.last().second)
+        assertSame(name, reveals.single().second)
+        assertEquals("AB12-CD34", parent.findViewById<EditText>(R.id.settings_pair_code).text.toString())
+    }
+
+    private fun seedUnpairedConnection(application: CollieApplication) {
+        val store = application.container.connectionStore
+        @Suppress("UNCHECKED_CAST")
+        val flow = com.lateapex.collie.data.EncryptedConnectionStore::class.java
+            .getDeclaredField("mutableConnection")
+            .apply { isAccessible = true }
+            .get(store) as kotlinx.coroutines.flow.MutableStateFlow<com.lateapex.collie.domain.Connection?>
+        flow.value = com.lateapex.collie.domain.Connection(
+            com.lateapex.collie.domain.CollieOrigin(BuildConfig.DEFAULT_ORIGIN),
+            "S25U-native",
+            token = null,
+        )
     }
 }

@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <item name="settings_parity_terminal_font_card" type="id" /><item name="settings_parity_hands_free_card" type="id" />
+    <item name="settings_parity_pairing_card" type="id" />
     <item name="settings_parity_zen_card" type="id" /><item name="settings_parity_push_card" type="id" />
     <item name="settings_parity_notify_card" type="id" /><item name="settings_parity_snooze_card" type="id" />
     <item name="settings_parity_updates_card" type="id" /><item name="settings_parity_devices_card" type="id" />
@@ -18,4 +19,17 @@
     <string name="settings_parity_devices_enforced">Review and revoke terminal-control credentials.</string>
     <string name="settings_parity_devices_open">Pairing enforcement is off; requests are open on this origin.</string>
     <string name="settings_parity_device_meta">Paired %1$s · last seen %2$s</string>
+
+    <style name="Widget.Collie.DestructiveButton" parent="Widget.Material3.Button">
+        <item name="android:fontFamily">@font/collie_ui</item>
+        <item name="fontFamily">@font/collie_ui</item>
+        <item name="android:minHeight">@dimen/collie_touch_target</item>
+        <item name="minHeight">@dimen/collie_touch_target</item>
+        <item name="android:insetTop">0dp</item>
+        <item name="android:insetBottom">0dp</item>
+        <item name="cornerRadius">@dimen/collie_corner_radius</item>
+        <item name="backgroundTint">@color/collie_destructive</item>
+        <item name="android:textColor">@color/collie_on_destructive</item>
+        <item name="android:textAllCaps">false</item>
+    </style>
 </resources>

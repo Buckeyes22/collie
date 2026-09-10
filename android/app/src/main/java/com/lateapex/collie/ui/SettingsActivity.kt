@@ -104,6 +104,11 @@ class SettingsActivity : AppCompatActivity() {
         }
     }
 
+    @androidx.annotation.VisibleForTesting
+    internal fun renderDevicesForTest(result: com.lateapex.collie.network.ApiResult<com.lateapex.collie.network.DevicesResponse>) {
+        serverControls.renderDevices(result, repository.writesAllowed())
+    }
+
     private fun returnToDashboard() {
         startActivity(Intent(this, MainActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
@@ -160,7 +165,11 @@ class SettingsActivity : AppCompatActivity() {
             })
             addView(com.google.android.material.button.MaterialButton(this@SettingsActivity).apply {
                 setText(R.string.settings_disconnect)
-                setTextColor(ContextCompat.getColor(this@SettingsActivity, R.color.collie_destructive))
+                backgroundTintList = android.content.res.ColorStateList.valueOf(
+                    ContextCompat.getColor(this@SettingsActivity, R.color.collie_destructive),
+                )
+                setTextColor(ContextCompat.getColor(this@SettingsActivity, R.color.collie_on_destructive))
+                isAllCaps = false
                 setOnClickListener {
                     sheet.dismiss()
                     disconnectLocally()

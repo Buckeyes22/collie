@@ -328,7 +328,7 @@
 
                 <View android:layout_width="match_parent" android:layout_height="@dimen/collie_stroke" android:background="@color/collie_border" />
                 <TextView android:id="@+id/settings_error" android:layout_width="match_parent" android:layout_height="wrap_content" android:paddingHorizontal="16dp" android:paddingTop="8dp" android:accessibilityLiveRegion="polite" android:textColor="@color/collie_error" android:textSize="12sp" android:visibility="gone" />
-                <com.google.android.material.button.MaterialButton android:id="@+id/disconnect_button" style="@style/Widget.Collie.Button.Borderless" android:layout_width="wrap_content" android:layout_height="@dimen/collie_touch_target" android:layout_marginHorizontal="8dp" android:layout_marginTop="4dp" android:text="@string/settings_disconnect" android:textColor="@color/collie_destructive" />
+                <com.google.android.material.button.MaterialButton android:id="@+id/disconnect_button" style="@style/Widget.Collie.DestructiveButton" android:layout_width="wrap_content" android:layout_height="@dimen/collie_touch_target" android:layout_marginHorizontal="8dp" android:layout_marginTop="4dp" android:text="@string/settings_disconnect" />
                 <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:paddingHorizontal="16dp" android:paddingBottom="12dp" android:text="@string/settings_disconnect_note" android:textColor="@color/collie_muted" android:textSize="11sp" />
             </LinearLayout>
 

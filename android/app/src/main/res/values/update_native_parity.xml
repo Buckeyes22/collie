@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <item name="updates_native_peers" type="id" />
+    <item name="updates_native_summary" type="id" />
+    <item name="updates_native_blocked_reason" type="id" />
     <item name="updates_native_preflight_toggle" type="id" />
     <item name="updates_native_run_status" type="id" />
     <item name="updates_native_recovery" type="id" />
@@ -31,16 +33,23 @@
     <string name="updates_native_unknown_version">an unknown version</string>
     <string name="updates_native_latest_unknown">The newest release isn’t known yet.</string>
     <string name="updates_native_includes">One update folds in %1$s.</string>
+    <plurals name="updates_native_behind">
+        <item quantity="one">one release behind</item>
+        <item quantity="other">%d releases behind</item>
+    </plurals>
+    <plurals name="updates_native_blocked_reason">
+        <item quantity="one">Blocked by %d preflight check</item>
+        <item quantity="other">Blocked by %d preflight checks</item>
+    </plurals>
     <string name="updates_native_restart_required">Bridge restart needed.</string>
     <string name="updates_native_as_of">checked %1$s</string>
     <string name="updates_native_peer_unknown_reason">we could not check this machine</string>
     <string name="updates_native_details">Details</string>
-    <string name="updates_native_details_show">Details · %1$s ⌄</string>
-    <string name="updates_native_details_hide">Details · %1$s ⌃</string>
+    <string name="updates_native_details_summary">Details · %1$s</string>
     <string name="updates_native_details_show_accessibility">Show preflight details, %1$s</string>
     <string name="updates_native_details_hide_accessibility">Hide preflight details, %1$s</string>
     <string name="updates_native_preflight_line">%1$s  %2$s</string>
-    <string name="updates_native_remedy">Fix: %1$s</string>
+    <string name="updates_native_fix_on_host">Fix on the host: %1$s</string>
     <plurals name="updates_native_summary_checks">
         <item quantity="one">%1$d check</item>
         <item quantity="other">%1$d checks</item>
