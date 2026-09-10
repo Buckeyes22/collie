@@ -136,6 +136,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - Renaming a tab or pane from its sheet works on the phone again; the rename field's own keyboard used to fold the strip band and unmount the sheet mid-edit ([93373ce](https://github.com/AltanS/collie/commit/93373ce))
 - Dashboard rows lead with the pane title beside a small agent tile, with the space and tab as the address beneath; the big tile, the bold space name and its truncation are gone ([c442429](https://github.com/AltanS/collie/commit/c442429))
 - Android: the Space screen drops the sibling strip and overview card, and scrolls the current tab into view.
+- Android: dashboard and switcher rows lead with space › tab, demote the agent's auto-title, and truncate in the middle.
 
 ## [1.1.0] - 2026-09-01
 

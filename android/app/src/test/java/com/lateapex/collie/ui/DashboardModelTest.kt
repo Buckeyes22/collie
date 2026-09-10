@@ -175,7 +175,34 @@ class DashboardModelTest {
     }
 
     @Test
-    fun paneNamingDemotesAStaleTerminalTitleBelowAnInformativeCwd() {
+    fun autoTitledPaneLeadsWithSpaceAndTab() {
+        val text = dashboardPaneText(
+            pane("p", AgentStatus.IDLE).copy(
+                paneLabel = null,
+                sessionName = "Codex session log 01a089a8",
+                workspaceLabel = "StormLens",
+                tabLabel = "api",
+            ),
+        )
+        assertEquals("StormLens › api", text.primary)
+        assertEquals("Codex session log 01a089a8", text.secondary)
+    }
+
+    @Test
+    fun operatorLabelStaysPrimary() {
+        val text = dashboardPaneText(
+            pane("p", AgentStatus.IDLE).copy(
+                paneLabel = "billing fix",
+                sessionName = "x",
+                workspaceLabel = "StormLens",
+                tabLabel = "api",
+            ),
+        )
+        assertEquals("billing fix", text.primary)
+    }
+
+    @Test
+    fun paneNamingDemotesAStaleTerminalTitleBelowTheAddress() {
         val pane = pane("p", AgentStatus.IDLE).copy(
             workspaceLabel = "collie",
             tabLabel = "android",
@@ -185,12 +212,12 @@ class DashboardModelTest {
             session = "review",
         )
 
-        assertEquals("/repo/w1", DashboardModel.paneTitle(pane))
-        assertEquals("collie · android", DashboardModel.paneMetadata(pane))
+        assertEquals("collie › android", DashboardModel.paneTitle(pane))
+        assertNull(DashboardModel.paneMetadata(pane).ifEmpty { null })
     }
 
     @Test
-    fun paneNamingUsesWebLabelSessionLiveTitleAndLocationPrecedence() {
+    fun paneNamingLeadsWithSpaceAndTabAndDemotesTheAutoTitle() {
         val base = pane("p", AgentStatus.IDLE).copy(
             workspaceLabel = "Collie",
             tabLabel = "android",
@@ -201,18 +228,15 @@ class DashboardModelTest {
         )
 
         assertEquals("pane label", DashboardModel.paneTitle(base))
-        assertEquals("Collie · android", DashboardModel.paneMetadata(base))
-        assertEquals("session name", DashboardModel.paneTitle(base.copy(paneLabel = null)))
-        assertEquals(
-            "live title",
-            DashboardModel.paneTitle(base.copy(paneLabel = null, sessionName = null)),
-        )
-        assertEquals(
-            "android",
-            DashboardModel.paneTitle(
-                base.copy(paneLabel = null, sessionName = null, terminalTitle = null),
-            ),
-        )
+        assertEquals("session name", DashboardModel.paneMetadata(base))
+        assertEquals("Collie › android", DashboardModel.paneTitle(base.copy(paneLabel = null)))
+        assertEquals("session name", DashboardModel.paneMetadata(base.copy(paneLabel = null)))
+        val autoTitled = base.copy(paneLabel = null, sessionName = null)
+        assertEquals("Collie › android", DashboardModel.paneTitle(autoTitled))
+        assertEquals("live title", DashboardModel.paneMetadata(autoTitled))
+        val addressOnly = autoTitled.copy(terminalTitle = null)
+        assertEquals("Collie › android", DashboardModel.paneTitle(addressOnly))
+        assertNull(DashboardModel.paneMetadata(addressOnly).ifEmpty { null })
     }
 
     @Test
@@ -291,18 +315,19 @@ class DashboardModelTest {
             val openCode = pane("p", AgentStatus.IDLE, agent = "opencode").copy(
                 terminalTitle = title,
             )
-            assertEquals("Codebase review", DashboardModel.paneTitle(openCode))
-            assertEquals("w1", DashboardModel.paneMetadata(openCode))
+            assertEquals("w1", DashboardModel.paneTitle(openCode))
+            assertEquals("Codebase review", DashboardModel.paneMetadata(openCode))
             assertEquals(title, openCode.terminalTitle)
         }
 
         val codex = pane("p", AgentStatus.IDLE).copy(terminalTitle = "OC | Keep this")
-        assertEquals("OC | Keep this", DashboardModel.paneTitle(codex))
+        assertEquals("OC | Keep this", DashboardModel.paneMetadata(codex))
         val emptyPrefix = pane("p", AgentStatus.IDLE, agent = "opencode").copy(
             terminalTitle = "OC |",
             tabLabel = "fallback-tab",
         )
-        assertEquals("fallback-tab", DashboardModel.paneTitle(emptyPrefix))
+        assertEquals("w1 › fallback-tab", DashboardModel.paneTitle(emptyPrefix))
+        assertNull(DashboardModel.paneMetadata(emptyPrefix).ifEmpty { null })
     }
 
     @Test

@@ -219,13 +219,7 @@ internal object DashboardModel {
         return dashboardPaneText(pane).primary
     }
 
-    fun paneMetadata(pane: PaneSummary): String {
-        val text = dashboardPaneText(pane)
-        return buildList {
-            text.detailLead?.let(::add)
-            text.detailTail?.let(::add)
-        }.joinToString(" · ")
-    }
+    fun paneMetadata(pane: PaneSummary): String = dashboardPaneText(pane).secondary.orEmpty()
 
     fun compactAge(at: Long?, now: Long): CompactAge? {
         if (at == null) return null

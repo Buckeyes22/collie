@@ -42,31 +42,28 @@ internal fun shortCwd(cwd: String, max: Int = 32): String {
 
 internal data class DashboardPaneText(
     val primary: String,
-    val detailLead: String?,
-    val detailTail: String?,
+    val secondary: String?,
 )
 
 internal data class SpacePaneText(val primary: String, val secondary: String?)
 
-/** Mirrors paneParts plus AgentCard's mobile promotion of the secondary text. */
+/**
+ * A.1: the operator's name leads when there is one; otherwise the row leads with where the
+ * pane lives (`space › tab`) and the agent's auto-title is demoted to the second line.
+ * The same helper serves the dashboard rows and the pane switcher.
+ */
 internal fun dashboardPaneText(pane: PaneSummary): DashboardPaneText {
     val project = pane.workspaceLabel.ifBlank { pane.workspaceId }
+    val tab = pane.tabLabel?.takeIf(String::isNotBlank)
     val stale = pane.terminalTitle != null && pane.terminalTitleStale == true
-    val rawOwn = pane.paneLabel?.takeIf(String::isNotBlank)
-        ?: pane.sessionName?.takeIf(String::isNotBlank)
+    val own = pane.sessionName?.takeIf(String::isNotBlank)
         ?: pane.terminalTitle?.takeIf { it.isNotBlank() && !stale }
-    val own = displayAgentTitle(pane.agent, rawOwn)
-    val cwd = pane.cwd.takeIf(String::isNotBlank)?.let { path ->
-        path.split('/').lastOrNull(String::isNotBlank)
-            ?.takeUnless { it.equals(project.trim(), ignoreCase = true) }
-            ?.let { shortCwd(path) }
-    }
-    val secondary = own ?: cwd ?: pane.terminalTitle?.takeIf { stale && it.isNotBlank() }
-    val tab = pane.tabLabel
-    return when {
-        secondary != null -> DashboardPaneText(secondary, project, tab)
-        tab != null -> DashboardPaneText(tab, project, null)
-        else -> DashboardPaneText(project, null, null)
+    val secondary = displayAgentTitle(pane.agent, own)
+    val label = displayAgentTitle(pane.agent, pane.paneLabel?.takeIf(String::isNotBlank))
+    return if (label != null) {
+        DashboardPaneText(label, secondary)
+    } else {
+        DashboardPaneText(if (tab != null) "$project › $tab" else project, secondary)
     }
 }
 
