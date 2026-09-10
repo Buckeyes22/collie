@@ -30,8 +30,9 @@ object TerminalComposerSemantics {
         val tail = analysisTail(rawText)
         val lines = TerminalPlainText.strip(tail).replace("\r\n", "\n").replace('\r', '\n')
             .split('\n').map(String::trimEnd)
+        val rawLines = tail.replace("\r\n", "\n").replace('\r', '\n').split('\n')
         return when (agent?.trim()?.lowercase()) {
-            "claude" -> claudeDraft(lines)
+            "claude" -> claudeDraft(rawLines, lines)
             "codex" -> codexDraft(tail, lines)
             "grok" -> grokDraft(lines)
             "agy", "antigravity" -> agyDraft(lines)
@@ -39,7 +40,7 @@ object TerminalComposerSemantics {
         }
     }
 
-    private fun claudeDraft(lines: List<String>): TerminalDraft? {
+    private fun claudeDraft(rawLines: List<String>, lines: List<String>): TerminalDraft? {
         val last = lines.indexOfLast(String::isNotBlank)
         if (last < 0) return null
         val bottom = (last downTo maxOf(0, last - 8)).firstOrNull { rule.matches(lines[it].trim()) } ?: return null
@@ -50,6 +51,11 @@ object TerminalComposerSemantics {
         if (top < 0) return null
         val prompt = (top + 1 until bottom).firstOrNull { lines[it].trimStart().startsWith("❯") } ?: return null
         if ((top + 1 until prompt).any { lines[it].isNotBlank() }) return null
+        // Claude's ghost suggestion (the generated "next prompt" painted faint, SGR 2, in an empty
+        // box) is not a draft: the operator never wrote it and it is not editable text. The web
+        // grammar classifies it by style for the same reason (chrome.ts, inputBoxHoldsGhostText);
+        // offering "Take over" on it here surfaced a draft nobody typed (S25 Ultra, 2026-09-10).
+        if (boxHoldsOnlyFaintText(rawLines, prompt, bottom)) return null
         val head = lines[prompt].trimStart().removePrefix("❯").trim()
         val parts = buildList {
             if (head.isNotEmpty()) add(head)
@@ -58,6 +64,47 @@ object TerminalComposerSemantics {
         val draft = parts.joinToString(" ").trim()
         if (draft.isEmpty() || draft == "Press up to edit queued messages") return null
         return TerminalDraft(draft, opaque = Regex("^\\[Pasted text #\\d+ \\+\\d+ lines]$").matches(draft))
+    }
+
+    /** True when every visible character between the prompt marker and the bottom border is faint. */
+    private fun boxHoldsOnlyFaintText(rawLines: List<String>, prompt: Int, bottom: Int): Boolean {
+        var sawContent = false
+        for (index in prompt until minOf(bottom, rawLines.size)) {
+            var dim = false
+            var beforeMarker = index == prompt
+            var i = 0
+            val line = rawLines[index]
+            while (i < line.length) {
+                val ch = line[i]
+                if (ch == '\u001b' && i + 1 < line.length && line[i + 1] == '[') {
+                    val end = line.indexOfFirst(i) { it in 'A'..'Z' || it in 'a'..'z' }
+                    if (end < 0) break
+                    if (line[end] == 'm') {
+                        val params = line.substring(i + 2, end).split(';').mapNotNull(String::toIntOrNull)
+                        if (params.isEmpty() || 0 in params || 22 in params) dim = false
+                        if (2 in params) dim = true
+                    }
+                    i = end + 1
+                    continue
+                }
+                if (beforeMarker) {
+                    if (ch == '❯') beforeMarker = false
+                    i++
+                    continue
+                }
+                if (!ch.isWhitespace()) {
+                    if (!dim) return false
+                    sawContent = true
+                }
+                i++
+            }
+        }
+        return sawContent
+    }
+
+    private fun String.indexOfFirst(from: Int, predicate: (Char) -> Boolean): Int {
+        for (j in from until length) if (predicate(this[j])) return j
+        return -1
     }
 
     private fun codexDraft(rawTail: String, lines: List<String>): TerminalDraft? {

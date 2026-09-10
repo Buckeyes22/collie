@@ -54,6 +54,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - The Android mirror collapses the blank rows Claude pads between its transcript and its input box, so a short conversation no longer reads as an empty screen with a footer.
 - Android and web recognise an AskUserQuestion whose prompt is not phrased as a question ("Pick a colour:"), so its options render as buttons.
 - Android re-analyses a pane's dialog whenever its text changes, not only on Herdr's always-zero revision, so an answered dialog's buttons leave the screen without reopening the pane.
+- Android no longer offers to take over Claude's faint ghost suggestion as a terminal draft; only typed text in the box counts, as on the web.
 
 ## [1.5.1] - 2026-09-04
 
