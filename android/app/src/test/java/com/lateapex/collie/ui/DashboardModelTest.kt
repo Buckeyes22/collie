@@ -331,6 +331,22 @@ class DashboardModelTest {
     }
 
     @Test
+    fun spaceRowCountsStatuses() {
+        val row = DashboardModel.spaceRow(
+            workspace("w", "W", 4),
+            panes = listOf(
+                pane("working-a", AgentStatus.WORKING, workspaceId = "w"),
+                pane("working-b", AgentStatus.WORKING, workspaceId = "w"),
+                pane("blocked", AgentStatus.BLOCKED, workspaceId = "w"),
+                pane("idle", AgentStatus.IDLE, workspaceId = "w"),
+            ),
+        )
+        assertEquals(2, row.working)
+        assertEquals(1, row.blocked)
+        assertEquals(0, row.ready)
+    }
+
+    @Test
     fun spacesComeFromSnapshotInRecencyOrderWithTheirWorstStatus() {
         val workspaces = listOf(
             workspace("quiet", "Quiet", paneCount = 1),
