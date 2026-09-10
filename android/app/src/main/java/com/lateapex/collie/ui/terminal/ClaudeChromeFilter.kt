@@ -9,30 +9,37 @@ import android.text.SpannableStringBuilder
  * complete top-border -> prompt -> bottom-border shape and keeps the status rows that the web client
  * re-surfaces above its composer. Unrecognised variants are returned unchanged.
  */
+data class ChromeSplit(val body: CharSequence, val statusRows: List<CharSequence>)
+
 class ClaudeChromeFilter {
-    fun filter(input: CharSequence, reflow: Boolean = true): CharSequence {
+    fun filter(input: CharSequence, reflow: Boolean = true): CharSequence = split(input, reflow).body
+
+    /** The pane renders [statusRows] as one pinned chrome row under the mirror body. */
+    fun split(input: CharSequence, reflow: Boolean = true): ChromeSplit {
         val lines = splitLines(input)
         var end = lines.size
         while (end > 0 && lines[end - 1].text.isBlank()) end--
-        if (end == 0) return input
+        if (end == 0) return ChromeSplit(input, emptyList())
         val width = SoftWrapReflow.gridWidth(lines.map { it.text })
 
         // No box at the tail (a dialog is up, or the buffer is torn): still collapse the padding
         // Claude leaves under the dialog, otherwise the mirror above the native panel reads blank.
         val box = locateInputBox(lines, end) ?: run {
             val collapsed = reflowLines(collapsePadding(lines), width, reflow)
-            return if (collapsed == lines) input else joinLines(input, collapsed)
+            return ChromeSplit(
+                if (collapsed == lines) input else joinLines(input, collapsed),
+                emptyList(),
+            )
         }
         var bodyEnd = box.top
         while (bodyEnd > 0 && lines[bodyEnd - 1].text.isBlank()) bodyEnd--
 
-        val kept = buildList {
-            addAll(reflowLines(collapsePadding(lines.subList(0, bodyEnd)), width, reflow))
-            for (index in box.bottomBorder + 1 until box.statusEnd) {
-                if (lines[index].text.isNotBlank()) add(lines[index])
-            }
-        }
-        return joinLines(input, kept)
+        val body = joinLines(input, reflowLines(collapsePadding(lines.subList(0, bodyEnd)), width, reflow))
+        val rows = (box.bottomBorder + 1 until box.statusEnd)
+            .map { lines[it] }
+            .filter { it.text.isNotBlank() }
+            .map { input.subSequence(it.start, it.end).trim() }
+        return ChromeSplit(body, rows)
     }
 
     /**

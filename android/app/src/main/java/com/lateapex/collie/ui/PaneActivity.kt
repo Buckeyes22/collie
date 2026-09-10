@@ -41,6 +41,8 @@ import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.view.children
+import androidx.core.view.doOnLayout
+import androidx.core.view.updatePadding
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isVisible
@@ -116,6 +118,7 @@ class PaneActivity : AppCompatActivity() {
     private var directTyping = false
     private var currentState = PaneUiState()
     private var renderedTerminalText: CharSequence = ""
+    private var renderedStatusRows: List<String> = emptyList()
     private var terminalRenderJob: Job? = null
     private var terminalRenderGeneration = 0L
     private var pendingTerminalRevision: Long? = null
@@ -1657,12 +1660,15 @@ class PaneActivity : AppCompatActivity() {
             AgentSemanticParser.detect(displayAgent, boundedText, revision)?.takeIf(::hasNativeSemanticPresentation),
             rawMode,
         )
-        val projectedChrome = if (claudePane && !rawMode) {
-            ClaudeChromeFilter().filter(
+        val projectedChrome: CharSequence = if (claudePane && !rawMode) {
+            val chrome = ClaudeChromeFilter().split(
                 projected,
                 reflow = displayPreferences.getBoolean(PREF_WRAP, true),
             )
+            renderedStatusRows = chrome.statusRows.map { it.toString() }
+            chrome.body
         } else {
+            renderedStatusRows = emptyList()
             projected
         }
         return TerminalLinks.apply(projectedChrome)
@@ -3208,6 +3214,14 @@ class PaneActivity : AppCompatActivity() {
         // next letter (S25 Ultra, 2026-09-10). Whatever owned focus before the render keeps it.
         val focusedBefore = currentFocus?.takeIf { it !== terminalText && it !== terminalBlockContent }
         renderTerminalBlocks(highlighted)
+        terminalStatusline.text = renderedStatusRows.joinToString(" · ")
+        terminalStatusline.isVisible = renderedStatusRows.isNotEmpty() &&
+            !displayPreferences.getBoolean(PREF_RAW, false)
+        if (terminalStatusline.isVisible) {
+            terminalStatusline.doOnLayout { terminalScroll.updatePadding(bottom = it.height) }
+        } else {
+            terminalScroll.updatePadding(bottom = 0)
+        }
         if (focusedBefore != null && !focusedBefore.hasFocus()) focusedBefore.requestFocus()
     }
 

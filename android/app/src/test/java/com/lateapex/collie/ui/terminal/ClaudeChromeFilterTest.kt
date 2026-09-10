@@ -34,17 +34,25 @@ class ClaudeChromeFilterTest {
             ).joinToString("\n"),
         )
 
-        val result = filter.filter(parsed)
+        val result = filter.split(parsed)
 
         assertEquals(
-            "last real output\n329780 tokens\nchris@ed8:/home/chris/git/prometheus\n" +
-                "bypass permissions on · 1 shell, 1 monitor · ← for agents",
-            result.toString(),
+            "last real output\n329780 tokens",
+            result.body.toString(),
         )
-        assertFalse(result.toString().contains("❯"))
-        assertFalse(result.toString().contains("● main"))
+        assertEquals(
+            listOf(
+                "chris@ed8:/home/chris/git/prometheus",
+                "bypass permissions on · 1 shell, 1 monitor · ← for agents",
+            ),
+            result.statusRows.map { it.toString() },
+        )
+        assertFalse(result.body.toString().contains("❯"))
+        assertFalse(result.body.toString().contains("● main"))
         assertTrue(
-            (result as Spanned).getSpans(0, result.length, ForegroundColorSpan::class.java).size >= 2,
+            result.statusRows.all { row ->
+                (row as Spanned).getSpans(0, row.length, ForegroundColorSpan::class.java).isNotEmpty()
+            },
         )
     }
 
@@ -57,11 +65,15 @@ class ClaudeChromeFilterTest {
             ).joinToString("\n"),
         )
 
-        val result = filter.filter(parsed).toString()
+        val result = filter.split(parsed)
 
         assertEquals(
-            "❯ Reply with PONG\n\n● PONG\n\n✻ Cooked for 2s\n\n\n66083 tokens\nchris@ed8:/home/chris/git/collie\nbypass permissions on",
-            result,
+            "❯ Reply with PONG\n\n● PONG\n\n✻ Cooked for 2s\n\n\n66083 tokens",
+            result.body.toString(),
+        )
+        assertEquals(
+            listOf("chris@ed8:/home/chris/git/collie", "bypass permissions on"),
+            result.statusRows.map { it.toString() },
         )
     }
 
@@ -91,7 +103,8 @@ class ClaudeChromeFilterTest {
             ).joinToString("\n"),
         )
 
-        assertEquals("answer\nstatus", filter.filter(parsed).toString())
+        assertEquals("answer", filter.filter(parsed).toString())
+        assertEquals(listOf("status"), filter.split(parsed).statusRows.map { it.toString() })
     }
 
     @Test
@@ -106,7 +119,8 @@ class ClaudeChromeFilterTest {
             ).joinToString("\n"),
         )
 
-        assertEquals("answer\nstatus", filter.filter(parsed).toString())
+        assertEquals("answer", filter.filter(parsed).toString())
+        assertEquals(listOf("status"), filter.split(parsed).statusRows.map { it.toString() })
     }
 
     @Test
@@ -174,5 +188,16 @@ class ClaudeChromeFilterTest {
         val body1 = "⏺ " + "a".repeat(28)
         val input = listOf(body1, "  tail").joinToString("\n")
         assertEquals(input, ClaudeChromeFilter().filter(input, reflow = false).toString())
+    }
+
+    @Test
+    fun splitPeelsStatusRowsOffTheBody() {
+        val body = "⏺ hello"
+        val rule = "─".repeat(30)
+        val box = listOf(rule, "❯ ", rule)
+        val status1 = "  Opus 5 · 12% ctx"; val status2 = "  ~/repo main"
+        val split = ClaudeChromeFilter().split((listOf(body) + box + listOf(status1, status2)).joinToString("\n"))
+        assertEquals(body, split.body.toString())
+        assertEquals(listOf(status1.trim(), status2.trim()), split.statusRows.map { it.toString() })
     }
 }

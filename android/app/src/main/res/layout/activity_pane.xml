@@ -334,6 +334,22 @@
         </ScrollView>
 
         <TextView
+            android:id="@+id/terminal_statusline"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom"
+            android:background="@drawable/bg_pane_status_band"
+            android:contentDescription="@string/pane_statusline_description"
+            android:ellipsize="end"
+            android:fontFamily="monospace"
+            android:maxLines="2"
+            android:paddingHorizontal="12dp"
+            android:paddingVertical="4dp"
+            android:textColor="@color/collie_muted"
+            android:textSize="11sp"
+            android:visibility="gone" />
+
+        <TextView
             android:id="@+id/error_text"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

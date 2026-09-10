@@ -1142,10 +1142,20 @@ class PaneActivityTest {
         assertTrue(recreated.isFinishing)
     }
 
-    private fun paneIntent(paneId: String): Intent =
+    @Test
+    fun statuslineRowRendersUnderTheMirrorForClaude() {
+        val activity = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("status:pane", agent = "claude")).create().start().resume().get()
+        val text = listOf("⏺ hi", "─".repeat(30), "❯ ", "─".repeat(30), "  Opus 5 · 12%").joinToString("\n")
+        render(activity, PaneUiState(pane = PaneReadResponse("status:pane", text, truncated = false, revision = 0), loading = false))
+        val row = activity.findViewById<TextView>(R.id.terminal_statusline)
+        assertEquals(View.VISIBLE, row.visibility)
+        assertEquals("Opus 5 · 12%", row.text.toString())
+    }
+
+    private fun paneIntent(paneId: String, agent: String = "opencode"): Intent =
         Intent(ApplicationProvider.getApplicationContext(), PaneActivity::class.java)
             .putExtra(PaneActivity.EXTRA_PANE_ID, paneId)
-            .putExtra(PaneActivity.EXTRA_AGENT, "opencode")
+            .putExtra(PaneActivity.EXTRA_AGENT, agent)
 
     private fun paneSummary(paneId: String) = PaneSummary(
         paneId = paneId,
