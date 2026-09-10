@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <item name="settings_typeface_spinner" type="id" />
-    <item name="settings_terminal_font_spinner" type="id" />
     <item name="settings_typeface_note" type="id" />
     <item name="settings_terminal_sample" type="id" />
     <item name="settings_terminal_size_value" type="id" />

@@ -88,12 +88,6 @@
     <string name="settings_increase">Increase %1$s</string>
     <string name="symbol_minus" translatable="false">−</string>
     <string name="symbol_plus" translatable="false">+</string>
-    <string name="font_jetbrains" translatable="false">JetBrains Mono</string>
-    <string name="font_cascadia" translatable="false">Cascadia Mono</string>
-    <string name="font_menlo" translatable="false">Menlo / SF Mono</string>
-    <string name="font_roboto" translatable="false">Roboto Mono</string>
-    <string name="font_dejavu" translatable="false">DejaVu Sans Mono</string>
-    <string name="font_courier" translatable="false">Courier New</string>
     <string name="settings_notify_title">Notify when</string>
     <string name="settings_notify_description">Applies to all devices.</string>
     <string name="settings_snooze_title">Do not disturb</string>

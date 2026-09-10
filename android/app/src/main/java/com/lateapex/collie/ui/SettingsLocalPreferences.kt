@@ -62,7 +62,6 @@ internal class SettingsLocalPreferences(
             R.drawable.ic_composer_terminal,
         ))
         card.addView(divider())
-        val family = horizontalRow(text(R.string.settings_font_family))
         val sample = TextView(activity).apply {
             id = R.id.settings_terminal_sample
             setText(R.string.settings_terminal_sample)
@@ -73,20 +72,8 @@ internal class SettingsLocalPreferences(
             setPadding(dp(16), 0, dp(16), 0)
             isSingleLine = true
             importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-            typeface = Typeface.create(preferences.terminalFont.androidFamily, Typeface.NORMAL)
+            typeface = Typeface.MONOSPACE
         }
-        val fontControl = choiceButton(
-            R.id.settings_terminal_font_spinner,
-            text(R.string.settings_terminal_font_title),
-            NativePreferences.TerminalFont.entries.map { text(it.nameRes) },
-            NativePreferences.TerminalFont.entries.indexOf(preferences.terminalFont),
-        ) { index ->
-            preferences.terminalFont = NativePreferences.TerminalFont.entries[index]
-            sample.typeface = Typeface.create(preferences.terminalFont.androidFamily, Typeface.NORMAL)
-        }
-        family.addView(fontControl, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)))
-        card.addView(family)
-        card.addView(divider())
         card.addView(stepperRow(
             label = text(R.string.settings_terminal_size),
             valueId = R.id.settings_terminal_size_value,

@@ -3248,7 +3248,7 @@ class PaneActivity : AppCompatActivity() {
         hyphenationFrequency = android.text.Layout.HYPHENATION_FREQUENCY_NONE
         setLineSpacing(0f, 1.25f)
         setHorizontallyScrolling(pans)
-        typeface = Typeface.create(nativePreferences.terminalFont.androidFamily, Typeface.NORMAL)
+        typeface = Typeface.MONOSPACE
         textSize = nativePreferences.terminalFontSize.toFloat()
         setTextColor(if (isLightTheme()) LIGHT_MIRROR_FOREGROUND else DARK_MIRROR_FOREGROUND)
         setTextIsSelectable(true)
@@ -3476,7 +3476,7 @@ class PaneActivity : AppCompatActivity() {
         binding.terminalText.highlightColor = Color.TRANSPARENT
         binding.terminalSurface.setBackgroundColor(if (isLightTheme()) LIGHT_MIRROR_BACKGROUND else DARK_MIRROR_BACKGROUND)
         binding.terminalText.setTextColor(if (isLightTheme()) LIGHT_MIRROR_FOREGROUND else DARK_MIRROR_FOREGROUND)
-        binding.terminalText.typeface = Typeface.create(nativePreferences.terminalFont.androidFamily, Typeface.NORMAL)
+        binding.terminalText.typeface = Typeface.MONOSPACE
         binding.terminalText.textSize = size.toFloat()
         binding.replyInput.textSize = nativePreferences.draftFontSize.toFloat()
         binding.fontSizeValue.text = getString(R.string.pane_display_size_value, size)

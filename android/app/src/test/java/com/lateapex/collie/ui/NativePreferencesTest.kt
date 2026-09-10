@@ -69,7 +69,6 @@ class NativePreferencesTest {
     fun completePresentationPreferencesPersistAndClamp() {
         NativePreferences(context).apply {
             appTypeface = NativePreferences.AppTypeface.SPACE_GROTESK
-            terminalFont = NativePreferences.TerminalFont.ROBOTO
             terminalFontSize = 99
             draftFontSize = 1
             handsFreeEnabled = true
@@ -78,7 +77,6 @@ class NativePreferencesTest {
 
         val restored = NativePreferences(context)
         assertEquals(NativePreferences.AppTypeface.SPACE_GROTESK, restored.appTypeface)
-        assertEquals(NativePreferences.TerminalFont.ROBOTO, restored.terminalFont)
         assertEquals(16, restored.terminalFontSize)
         assertEquals(13, restored.draftFontSize)
         assertTrue(restored.handsFreeEnabled)

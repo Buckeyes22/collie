@@ -105,7 +105,6 @@ class SettingsActivityTest {
         shadowOf(activity.mainLooper).idle()
 
         assertNotNull(activity.findViewById<com.google.android.material.button.MaterialButton>(R.id.settings_typeface_spinner))
-        assertNotNull(activity.findViewById<com.google.android.material.button.MaterialButton>(R.id.settings_terminal_font_spinner))
         assertEquals(
             activity.getString(R.string.settings_typeface_note_aldrich),
             activity.findViewById<TextView>(R.id.settings_typeface_note).text,
@@ -198,7 +197,6 @@ class SettingsActivityTest {
             R.id.theme_dark_button,
             R.id.haptics_switch,
             R.id.settings_typeface_spinner,
-            R.id.settings_terminal_font_spinner,
             R.id.settings_hands_free_switch,
             R.id.settings_zen_switch,
         ).forEach { viewId ->

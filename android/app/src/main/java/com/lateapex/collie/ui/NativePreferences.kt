@@ -21,19 +21,6 @@ class NativePreferences(
         ALDRICH("aldrich", com.lateapex.collie.R.string.settings_typeface_aldrich),
     }
 
-    enum class TerminalFont(
-        val storedValue: String,
-        @androidx.annotation.StringRes val nameRes: Int,
-        val androidFamily: String,
-    ) {
-        SYSTEM("system", com.lateapex.collie.R.string.settings_typeface_system, "monospace"),
-        JETBRAINS("jetbrains", com.lateapex.collie.R.string.font_jetbrains, "monospace"),
-        CASCADIA("cascadia", com.lateapex.collie.R.string.font_cascadia, "monospace"),
-        MENLO("menlo", com.lateapex.collie.R.string.font_menlo, "monospace"),
-        ROBOTO("roboto", com.lateapex.collie.R.string.font_roboto, "monospace"),
-        DEJAVU("dejavu", com.lateapex.collie.R.string.font_dejavu, "monospace"),
-        COURIER("courier", com.lateapex.collie.R.string.font_courier, "monospace"),
-    }
 
     private val preferences = context.applicationContext.getSharedPreferences(
         PREFERENCES,
@@ -64,14 +51,6 @@ class NativePreferences(
             preferences.edit().putString(APP_TYPEFACE, value.storedValue).apply()
         }
 
-    var terminalFont: TerminalFont
-        get() {
-            val stored = preferences.getString(TERMINAL_FONT, null)
-            return TerminalFont.entries.firstOrNull { it.storedValue == stored } ?: TerminalFont.SYSTEM
-        }
-        set(value) {
-            preferences.edit().putString(TERMINAL_FONT, value.storedValue).apply()
-        }
 
     var terminalFontSize: Int
         get() = preferences.getInt(TERMINAL_FONT_SIZE, 10).coerceIn(9, 16)
@@ -218,7 +197,6 @@ class NativePreferences(
         internal const val THEME_MODE = "theme_mode"
         internal const val HAPTICS_ENABLED = "haptics_enabled"
         internal const val APP_TYPEFACE = "app_typeface"
-        internal const val TERMINAL_FONT = "terminal_font"
         internal const val TERMINAL_FONT_SIZE = "terminal_font_size"
         internal const val DRAFT_FONT_SIZE = "draft_font_size"
         internal const val HANDS_FREE_ENABLED = "hands_free_enabled"
