@@ -757,6 +757,22 @@ class PaneActivityTest {
     }
 
     @Test
+    fun aMirrorRenderNeverTakesFocusFromTheComposer() {
+        val activity = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("focus:pane")).create().start().resume().get()
+        val render = PaneActivity::class.java.getDeclaredMethod("render", PaneUiState::class.java).apply { isAccessible = true }
+        val field = activity.findViewById<View>(R.id.reply_input)
+        render.invoke(activity, PaneUiState(pane = PaneReadResponse("focus:pane", "~\n❯ ", false, 0), loading = false, canWrite = true))
+        field.requestFocus()
+        assertTrue("composer must be focusable once a writable pane is shown", field.isFocused)
+
+        render.invoke(activity, PaneUiState(pane = PaneReadResponse("focus:pane", "~\n❯ a", false, 0), loading = false, canWrite = true))
+        render.invoke(activity, PaneUiState(pane = PaneReadResponse("focus:pane", "~\n❯ ab", false, 0), loading = false, canWrite = true))
+
+        assertTrue(field.isFocused)
+        assertFalse(activity.findViewById<View>(R.id.terminal_text).isFocused)
+    }
+
+    @Test
     fun mirrorFollowsChangedTextWhenHerdrRepeatsRevisionZero() {
         // Herdr 0.7.x stubs `revision` to 0 on every read (HERDR_API.md); only the text can key change.
         val activity = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("rev0:pane")).create().get()

@@ -42,6 +42,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - Android Keys drawer sizes "Send keys" and "Clear" by their labels, so neither wraps nor clips at high densities.
 - Android reads "Read-only until Collie answers" while the server is unreachable, instead of "device not authorised".
 - The Android terminal font picker is gone; its seven families all resolved to the one monospace face Android ships, so the mirror simply uses that face.
+- Android Type mode keeps the composer focused: the mirror's scroll-to-bottom moved focus onto the mirror after every keystroke, so each letter needed another tap on the field.
 
 ## [1.5.1] - 2026-09-04
 

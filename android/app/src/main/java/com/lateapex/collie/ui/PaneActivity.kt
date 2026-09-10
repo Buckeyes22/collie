@@ -1565,11 +1565,22 @@ class PaneActivity : AppCompatActivity() {
         if (!scrollToBottom) return
         suppressScrollTracking = true
         binding.terminalScroll.post {
-            binding.terminalScroll.fullScroll(View.FOCUS_DOWN)
+            scrollMirrorToBottom()
             followingOutput = true
             setNewOutputAvailable(false)
             binding.terminalScroll.post { suppressScrollTracking = false }
         }
+    }
+
+    /**
+     * ScrollView.fullScroll(FOCUS_DOWN) also moves FOCUS to the last focusable view it reaches,
+     * which is the selectable mirror: every re-render in Type mode pulled focus off the composer
+     * and the operator had to tap the field again per letter (S25 Ultra, 2026-09-10). Scroll the
+     * offset only.
+     */
+    private fun scrollMirrorToBottom() = with(binding.terminalScroll) {
+        val child = getChildAt(0) ?: return@with
+        scrollTo(0, (child.bottom + paddingBottom - height).coerceAtLeast(0))
     }
 
     private fun resumeLatestOutput() {
@@ -1577,7 +1588,7 @@ class PaneActivity : AppCompatActivity() {
         if (revision != null) showTerminalRevision(latestRawText, revision, scrollToBottom = true)
         else {
             followingOutput = true
-            binding.terminalScroll.fullScroll(View.FOCUS_DOWN)
+            scrollMirrorToBottom()
             setNewOutputAvailable(false)
         }
     }
@@ -3183,6 +3194,15 @@ class PaneActivity : AppCompatActivity() {
     }
 
     private fun renderTerminalContent(highlighted: CharSequence) = with(binding) {
+        // The mirror is text-selectable, so replacing its text pulls focus onto it: every keystroke
+        // in Type mode re-rendered the mirror and the operator had to tap the field again for the
+        // next letter (S25 Ultra, 2026-09-10). Whatever owned focus before the render keeps it.
+        val focusedBefore = currentFocus?.takeIf { it !== terminalText && it !== terminalBlockContent }
+        renderTerminalBlocks(highlighted)
+        if (focusedBefore != null && !focusedBefore.hasFocus()) focusedBefore.requestFocus()
+    }
+
+    private fun renderTerminalBlocks(highlighted: CharSequence) = with(binding) {
         val wrap = displayPreferences.getBoolean(PREF_WRAP, true)
         // The newest tables retain independent horizontal panning. Bounding the split prevents a
         // large coding transcript from recreating dozens of nested scroll containers every poll.
