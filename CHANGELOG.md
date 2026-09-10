@@ -38,6 +38,16 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - Android: direct typing shows one label and a stop icon, an attached image is a chip, and the staged-key row fades to show it scrolls.
 - Android: the Keys drawer is one compact row plus a More sheet, and Wrap/Raw live in the pane actions sheet; the Display drawer is gone.
 - Android: Rename opens a titled, prefilled sheet, Close confirms in its own sheet, and the pane status label uses one sentence-case vocabulary.
+- Web: the Claude mirror joins the grid's soft wraps so a paragraph wraps once on a phone.
+- Web: a phone-width Claude capture pins the soft-wrap reflow.
+- Android: the Space screen drops the sibling strip and overview card, and scrolls the current tab into view.
+- Android: dashboard and switcher rows lead with space › tab, demote the agent's auto-title, and truncate in the middle.
+- Android: the switcher marks the current pane, section toggles are chevrons, and every status dot and ring shares one palette.
+- Android: each Spaces row shows how many panes are working or need input.
+- Android: worktree creation is one sheet showing the repository and base branch.
+- Android: Settings leads with the pairing card when unpaired, drops the empty notifications card, and the Zen switch is gone (the row is always in the pane menu).
+- Android: Disconnect is a red filled button, this phone's row says Unpair, and the pairing field uses the setup screen's outlined style.
+- Android: Updates counts releases behind, shows the blocked reason in one line, makes Remind a button, and stops printing host shell remedies as code.
 - A native Kotlin Android client mirrors Collie's existing HTTP API without a WebView or browser shell.
 - Android CI builds and validates the native app with pinned Gradle tooling independent of npm's advisory and funding endpoints.
 - The web and native Android interfaces are English-only; language selectors, alternate catalogs,

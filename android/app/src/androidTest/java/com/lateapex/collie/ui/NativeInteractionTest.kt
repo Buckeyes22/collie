@@ -225,21 +225,17 @@ class NativeInteractionTest {
         api.speechAvailable = true
         val preferences = NativePreferences(app)
         val draftSize = preferences.draftFontSize
-        val zen = preferences.zenAvailable
         val handsFree = preferences.handsFreeEnabled
         try {
             ActivityScenario.launch(SettingsActivity::class.java).use {
                 onView(withId(R.id.settings_draft_size_increase)).perform(scrollTo(), click())
                 assertEquals((draftSize + 1).coerceAtMost(16), preferences.draftFontSize)
                 onView(withId(R.id.settings_draft_size_decrease)).perform(scrollTo(), click())
-                onView(withId(R.id.settings_zen_switch)).perform(scrollTo(), click())
-                assertEquals(!zen, preferences.zenAvailable)
                 onView(withId(R.id.settings_hands_free_switch)).perform(scrollTo(), click())
                 assertEquals(!handsFree, preferences.handsFreeEnabled)
             }
         } finally {
             preferences.draftFontSize = draftSize
-            preferences.zenAvailable = zen
             preferences.handsFreeEnabled = handsFree
         }
     }
@@ -608,22 +604,10 @@ class NativeInteractionTest {
         api.workspace = api.workspace.copy(repoRoot = "/fixture", isWorktree = false)
         ActivityScenario.launch(MainActivity::class.java).use {
             openWorktreeChoices()
-            onView(withText(R.string.worktree_create_new_branch)).perform(click())
-            onView(withHint(R.string.worktree_branch_name)).perform(typeText("fixture-branch"), closeSoftKeyboard())
+            onView(withId(R.id.worktree_branch_input)).perform(typeText("fixture-branch"), closeSoftKeyboard())
             onView(withText(R.string.action_create)).perform(click())
             assertEquals(listOf("fixture-branch"), api.worktreeBranches)
             onView(withId(R.id.composer_chrome)).check(matches(isDisplayed()))
-        }
-    }
-
-    @Test fun openWorktreeWaitsForConfirmation() {
-        api.workspace = api.workspace.copy(repoRoot = "/fixture", isWorktree = false)
-        ActivityScenario.launch(MainActivity::class.java).use {
-            openWorktreeChoices()
-            onView(withText("existing-fixture")).perform(click())
-            assertTrue(api.openedWorktrees.isEmpty())
-            onView(withText(R.string.action_open)).perform(click())
-            assertEquals(listOf("/fixture/existing"), api.openedWorktrees)
         }
     }
 

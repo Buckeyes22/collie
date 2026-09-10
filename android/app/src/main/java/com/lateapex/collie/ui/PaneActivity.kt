@@ -2759,14 +2759,7 @@ class PaneActivity : AppCompatActivity() {
                 when (section) {
                     is PaneSwitcherSection.Agents -> {
                         val title = switcherBucketLabel(section.bucket)
-                        if (section.bucket == TriageBucket.RECENT) {
-                            list.addView(switcherFoldHeader(title, section.open) {
-                                nativePreferences.dashboardRecentOpen = !section.open
-                                rebuild()
-                            })
-                        } else {
-                            list.addView(switcherSectionLabel(title))
-                        }
+                        list.addView(switcherSectionLabel(title))
                         if (section.open) section.rows.forEach { addSwitcherPaneRow(list, dialog, it) }
                     }
                     is PaneSwitcherSection.Shells -> {
@@ -2867,9 +2860,10 @@ class PaneActivity : AppCompatActivity() {
 
     private fun addSwitcherPaneRow(list: LinearLayout, dialog: CollieBottomSheetDialog, row: SwitcherPaneRow) {
         val label = switcherPaneLabel(row)
-        list.addView(outlinedButton(label).apply {
+        val button = outlinedButton(label).apply {
             gravity = Gravity.START or Gravity.CENTER_VERTICAL
             minHeight = dp(56)
+            isActivated = row.active
             applySelectedState(row.active)
             contentDescription = getString(
                 if (row.active) R.string.pane_switcher_current_description
@@ -2882,7 +2876,22 @@ class PaneActivity : AppCompatActivity() {
                 dialog.dismiss()
                 if (!row.active) openPane(row.pane)
             }
-        }, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        }
+        // A.6: the current pane carries a 3dp start bar in the accent colour.
+        val rowLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            if (row.active) {
+                addView(View(this@PaneActivity).apply {
+                    setBackgroundColor(getColor(R.color.collie_accent))
+                }, LinearLayout.LayoutParams(dp(3), ViewGroup.LayoutParams.MATCH_PARENT))
+            }
+        }
+        rowLayout.addView(
+            button,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
+        )
+        list.addView(rowLayout, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
     }
 
     private fun switcherPaneLabel(row: SwitcherPaneRow): String {

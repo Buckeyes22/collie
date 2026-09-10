@@ -53,12 +53,6 @@ class NativePreferences(
             preferences.edit().putBoolean(HANDS_FREE_ENABLED, value).apply()
         }
 
-    var zenAvailable: Boolean
-        get() = preferences.getBoolean(ZEN_AVAILABLE, false)
-        set(value) {
-            preferences.edit().putBoolean(ZEN_AVAILABLE, value).apply()
-        }
-
     var dashboardRecentOpen: Boolean
         get() = preferences.getBoolean(DASHBOARD_RECENT_OPEN, true)
         set(value) { preferences.edit().putBoolean(DASHBOARD_RECENT_OPEN, value).apply() }
@@ -182,7 +176,6 @@ class NativePreferences(
         internal const val TERMINAL_FONT_SIZE = "terminal_font_size"
         internal const val DRAFT_FONT_SIZE = "draft_font_size"
         internal const val HANDS_FREE_ENABLED = "hands_free_enabled"
-        internal const val ZEN_AVAILABLE = "zen_available"
         internal const val PANE_DRAFT_PREFIX = "pane_draft:"
         internal const val PANE_DRAFT_SAVED_PREFIX = "pane_draft_saved:"
         internal const val MAX_PERSISTED_DRAFT_CHARS = 8_192

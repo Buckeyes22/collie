@@ -70,14 +70,12 @@ class NativePreferencesTest {
             terminalFontSize = 99
             draftFontSize = 1
             handsFreeEnabled = true
-            zenAvailable = true
         }
 
         val restored = NativePreferences(context)
         assertEquals(16, restored.terminalFontSize)
         assertEquals(13, restored.draftFontSize)
         assertTrue(restored.handsFreeEnabled)
-        assertTrue(restored.zenAvailable)
 
     }
 
