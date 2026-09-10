@@ -27,7 +27,6 @@ import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
-import org.robolectric.shadows.ShadowDialog
 
 @RunWith(RobolectricTestRunner::class)
 class SettingsActivityTest {
@@ -104,12 +103,6 @@ class SettingsActivityTest {
         val activity = Robolectric.buildActivity(SettingsActivity::class.java).create().start().resume().get()
         shadowOf(activity.mainLooper).idle()
 
-        assertNotNull(activity.findViewById<com.google.android.material.button.MaterialButton>(R.id.settings_typeface_spinner))
-        assertEquals(
-            activity.getString(R.string.settings_typeface_note_aldrich),
-            activity.findViewById<TextView>(R.id.settings_typeface_note).text,
-        )
-        assertNotNull(activity.findViewById<TextView>(R.id.settings_terminal_sample))
         assertNotNull(activity.findViewById<android.view.View>(R.id.settings_hands_free_switch))
         assertNotNull(activity.findViewById<android.view.View>(R.id.settings_zen_switch))
         assertNotNull(activity.findViewById<android.view.View>(R.id.settings_notify_blocked_switch))
@@ -138,7 +131,7 @@ class SettingsActivityTest {
         )
         val local = activity.findViewById<LinearLayout>(R.id.settings_local_preferences)
         assertEquals(
-            listOf(R.id.settings_parity_typeface_card, R.id.settings_parity_terminal_font_card),
+            listOf(R.id.settings_parity_terminal_font_card),
             (0 until local.childCount).map { local.getChildAt(it).id },
         )
         val behavior = activity.findViewById<LinearLayout>(R.id.settings_behavior_preferences)
@@ -152,7 +145,6 @@ class SettingsActivityTest {
 
     @Test
     fun settingsCardsCarryWebStyleIdentityIconsAndCanonicalHeaderCopy() {
-        NativePreferences(context).appTypeface = NativePreferences.AppTypeface.SYSTEM
         val activity = Robolectric.buildActivity(SettingsActivity::class.java).create().get()
 
         assertEquals("Settings", activity.findViewById<TextView>(R.id.settings_header_title).text)
@@ -163,7 +155,6 @@ class SettingsActivityTest {
 
         listOf(
             R.id.settings_theme_card,
-            R.id.settings_parity_typeface_card,
             R.id.settings_parity_terminal_font_card,
             R.id.settings_haptics_card,
             R.id.settings_parity_hands_free_card,
@@ -196,7 +187,6 @@ class SettingsActivityTest {
             R.id.theme_light_button,
             R.id.theme_dark_button,
             R.id.haptics_switch,
-            R.id.settings_typeface_spinner,
             R.id.settings_hands_free_switch,
             R.id.settings_zen_switch,
         ).forEach { viewId ->
@@ -205,15 +195,6 @@ class SettingsActivityTest {
         }
         assertTrue(activity.findViewById<View>(R.id.settings_updates_button).minimumHeight >= floor)
         assertTrue(activity.findViewById<View>(R.id.settings_pack_button).minimumHeight >= floor)
-    }
-
-    @Test
-    fun choiceControlsUseCollieBottomSheetsInsteadOfPlatformSpinners() {
-        val activity = Robolectric.buildActivity(SettingsActivity::class.java).create().get()
-
-        activity.findViewById<View>(R.id.settings_typeface_spinner).performClick()
-
-        assertTrue(ShadowDialog.getLatestDialog() is CollieBottomSheetDialog)
     }
 
     @Test

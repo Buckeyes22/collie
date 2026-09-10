@@ -102,7 +102,7 @@ class MainActivity : AppCompatActivity() {
         window.prepareEdgeToEdgeContent()
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
-        binding.root.applyPreferredTypeface(nativePreferences)
+        binding.root.applyAppTypeface()
         window.applySafeContentInsets(binding.root)
         viewModel = ViewModelProvider(this)[MainViewModel::class.java]
 
@@ -743,7 +743,7 @@ class MainActivity : AppCompatActivity() {
         tag = action
         contentDescription = listOf(title, secondary.toString()).filter(String::isNotBlank).joinToString(". ")
         setOnClickListener { if (enabled) action() }
-        applyPreferredTypeface(nativePreferences)
+        applyAppTypeface()
     }
 
     private fun sessionsForCurrentHost(

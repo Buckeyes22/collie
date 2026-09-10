@@ -63,7 +63,7 @@ class VisualFoundationsTest {
         val root = LinearLayout(context)
         val initial = TextView(context).apply { setTypeface(typeface, Typeface.BOLD) }
         root.addView(initial)
-        root.applyPreferredTypeface(NativePreferences(context))
+        root.applyAppTypeface()
         assertEquals(Typeface.NORMAL, initial.typeface.style)
 
         val dynamic = TextView(context).apply { setTypeface(typeface, Typeface.BOLD) }

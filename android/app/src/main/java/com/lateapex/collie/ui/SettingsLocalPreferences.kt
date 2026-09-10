@@ -24,7 +24,6 @@ internal class SettingsLocalPreferences(
 
     fun bindDisplay(parent: LinearLayout) {
         parent.removeAllViews()
-        parent.addView(typefaceCard().apply { id = R.id.settings_parity_typeface_card })
         parent.addView(terminalCard().apply { id = R.id.settings_parity_terminal_font_card })
     }
 
@@ -62,18 +61,6 @@ internal class SettingsLocalPreferences(
             R.drawable.ic_composer_terminal,
         ))
         card.addView(divider())
-        val sample = TextView(activity).apply {
-            id = R.id.settings_terminal_sample
-            setText(R.string.settings_terminal_sample)
-            textSize = preferences.terminalFontSize.toFloat()
-            setTextColor(color(R.color.collie_terminal_foreground))
-            setBackgroundColor(color(R.color.collie_terminal))
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(16), 0, dp(16), 0)
-            isSingleLine = true
-            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-            typeface = Typeface.MONOSPACE
-        }
         card.addView(stepperRow(
             label = text(R.string.settings_terminal_size),
             valueId = R.id.settings_terminal_size_value,
@@ -83,7 +70,6 @@ internal class SettingsLocalPreferences(
             maximum = 16,
             read = { preferences.terminalFontSize },
             write = { preferences.terminalFontSize = it },
-            onRendered = { sample.textSize = it.toFloat() },
         ))
         card.addView(divider())
         card.addView(stepperRow(
@@ -96,46 +82,9 @@ internal class SettingsLocalPreferences(
             read = { preferences.draftFontSize },
             write = { preferences.draftFontSize = it },
         ))
-        card.addView(divider())
-        card.addView(sample, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)))
         return card
     }
 
-    private fun typefaceCard(): View = card().apply {
-        val selected = preferences.appTypeface
-        addView(header(
-            text(R.string.settings_typeface_title),
-            text(R.string.settings_typeface_description),
-            R.drawable.ic_composer_agent,
-        ))
-        addView(divider())
-        addView(horizontalRow(text(R.string.settings_font_family)).apply {
-            addView(choiceButton(
-                R.id.settings_typeface_spinner,
-                text(R.string.settings_typeface_title),
-                NativePreferences.AppTypeface.entries.map { text(it.nameRes) },
-                NativePreferences.AppTypeface.entries.indexOf(selected),
-            ) { index ->
-                val next = NativePreferences.AppTypeface.entries[index]
-                if (next != preferences.appTypeface) {
-                    preferences.appTypeface = next
-                    activity.recreate()
-                }
-            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)))
-        })
-        addView(divider())
-        addView(TextView(activity).apply {
-            id = R.id.settings_typeface_note
-            setText(when (selected) {
-                NativePreferences.AppTypeface.SYSTEM -> R.string.settings_typeface_note_system
-                NativePreferences.AppTypeface.SPACE_GROTESK -> R.string.settings_typeface_note_space_grotesk
-                NativePreferences.AppTypeface.ALDRICH -> R.string.settings_typeface_note_aldrich
-            })
-            textSize = 12f
-            setTextColor(color(R.color.collie_muted))
-            setPadding(dp(16), dp(10), dp(16), dp(10))
-        })
-    }
 
     private fun switchCard(
         title: String,

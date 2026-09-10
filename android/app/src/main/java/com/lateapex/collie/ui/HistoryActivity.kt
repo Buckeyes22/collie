@@ -141,7 +141,7 @@ class HistoryActivity : AppCompatActivity() {
                 growUpward()
             }
         }
-        binding.root.applyPreferredTypeface(NativePreferences(this))
+        binding.root.applyAppTypeface()
         if (entries.isNotEmpty()) {
             renderEntries()
             restoreFindChrome()

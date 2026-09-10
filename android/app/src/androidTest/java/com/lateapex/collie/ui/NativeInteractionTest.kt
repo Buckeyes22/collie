@@ -222,16 +222,6 @@ class NativeInteractionTest {
         }
     }
 
-    @Test fun settingsTypefacePickerSelectsAnActualOption() {
-        ActivityScenario.launch(SettingsActivity::class.java).use { scenario ->
-            val before = NativePreferences(app).appTypeface
-            onView(withId(R.id.settings_typeface_spinner)).perform(scrollTo(), click())
-            onView(withText(R.string.settings_typeface_system)).perform(click())
-            scenario.onActivity { assertEquals(NativePreferences.AppTypeface.SYSTEM, NativePreferences(it).appTypeface) }
-            NativePreferences(app).appTypeface = before
-        }
-    }
-
     @Test fun settingsBehaviorAndDraftControlsPersistTheirChoices() {
         api.speechAvailable = true
         val preferences = NativePreferences(app)

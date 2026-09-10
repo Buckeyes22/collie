@@ -94,7 +94,7 @@ class PackActivity : AppCompatActivity() {
         )
         setContentView(root)
         window.applySafeContentInsets(root)
-        root.applyPreferredTypeface(nativePreferences)
+        root.applyAppTypeface()
     }
 
     override fun onStart() {
@@ -309,7 +309,7 @@ class PackActivity : AppCompatActivity() {
                 setText(R.string.pack_go_to_machine)
                 setOnClickListener { goTo(member) }
             }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)).apply { topMargin = dp(12) })
-            applyPreferredTypeface(nativePreferences)
+            applyAppTypeface()
         }
     }
 

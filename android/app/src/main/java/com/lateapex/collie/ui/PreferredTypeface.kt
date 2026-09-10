@@ -8,19 +8,16 @@ import android.widget.TextView
 import androidx.core.content.res.ResourcesCompat
 import com.lateapex.collie.R
 
-/** Applies the device-local app face to chrome while preserving terminal-bound monospace text. */
-fun View.applyPreferredTypeface(preferences: NativePreferences) {
-    val face = when (preferences.appTypeface) {
-        NativePreferences.AppTypeface.SYSTEM -> Typeface.create("sans-serif", Typeface.NORMAL)
-        NativePreferences.AppTypeface.SPACE_GROTESK ->
-            ResourcesCompat.getFont(context, R.font.space_grotesk_variable)
-        NativePreferences.AppTypeface.ALDRICH -> ResourcesCompat.getFont(context, R.font.collie_ui)
-    } ?: return
-    applyTypefaceTree(face, preferences.appTypeface)
+/**
+ * Applies the app's one face (Aldrich, `@font/collie_ui`) to chrome built in code, while
+ * terminal-bound text keeps its monospace. There is no picker: the face is the design, not a
+ * preference.
+ */
+fun View.applyAppTypeface() {
+    val face = ResourcesCompat.getFont(context, R.font.collie_ui) ?: return
+    applyTypefaceTree(face)
     if (getTag(R.id.collie_typeface_listener) != null) return
-    val listener = ViewTreeObserver.OnGlobalLayoutListener {
-        applyTypefaceTree(face, preferences.appTypeface)
-    }
+    val listener = ViewTreeObserver.OnGlobalLayoutListener { applyTypefaceTree(face) }
     setTag(R.id.collie_typeface_listener, listener)
     viewTreeObserver.addOnGlobalLayoutListener(listener)
     addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
@@ -36,18 +33,11 @@ fun View.applyPreferredTypeface(preferences: NativePreferences) {
     })
 }
 
-private fun View.applyTypefaceTree(face: Typeface, selected: NativePreferences.AppTypeface) {
+private fun View.applyTypefaceTree(face: Typeface) {
     walkText { text ->
-        if (text.id !in TERMINAL_BOUND_IDS) {
-            // Aldrich ships one real weight. Asking Android for bold synthesises a distorted face
-            // that the canonical web UI explicitly disables with font-synthesis:none.
-            val style = if (selected == NativePreferences.AppTypeface.ALDRICH) {
-                Typeface.NORMAL
-            } else {
-                text.typeface?.style ?: Typeface.NORMAL
-            }
-            text.typeface = Typeface.create(face, style)
-        }
+        // Aldrich ships one real weight. Asking Android for bold synthesises a distorted face
+        // that the canonical web UI explicitly disables with font-synthesis:none.
+        if (text.id !in TERMINAL_BOUND_IDS) text.typeface = Typeface.create(face, Typeface.NORMAL)
     }
 }
 

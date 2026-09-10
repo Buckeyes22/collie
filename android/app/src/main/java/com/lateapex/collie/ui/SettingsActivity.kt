@@ -2,7 +2,6 @@ package com.lateapex.collie.ui
 
 import android.content.Context
 import android.content.Intent
-import android.graphics.Typeface
 import android.graphics.Rect
 import android.os.Bundle
 import android.os.Vibrator
@@ -75,15 +74,7 @@ class SettingsActivity : AppCompatActivity() {
             focusDevices = entry.focusDevices,
             onRevealDevices = ::revealDevices,
         ).also { it.bind(binding.settingsServerControls) }
-        binding.root.applyPreferredTypeface(nativePreferences)
-        binding.settingsHeaderTitle.setTypeface(
-            binding.settingsHeaderTitle.typeface,
-            if (nativePreferences.appTypeface == NativePreferences.AppTypeface.ALDRICH) {
-                Typeface.NORMAL
-            } else {
-                Typeface.BOLD
-            },
-        )
+        binding.root.applyAppTypeface()
         @Suppress("DEPRECATION")
         val vibrator = getSystemService(VIBRATOR_SERVICE) as? Vibrator
         binding.settingsHapticsCard.visibility = if (vibrator?.hasVibrator() == true) View.VISIBLE else View.GONE

@@ -299,7 +299,7 @@ freshly verified visible-tail evidence.
 
 ### 6.4 Settings, administration, and disconnect
 
-Settings show the origin, pairing label, app/build version, connection status, theme, typeface,
+Settings show the origin, pairing label, app/build version, connection status, theme,
 terminal and draft sizing, notification preferences/snooze, paired devices, pack status,
 and update status. Device revocation and local disconnect are separately named and confirmed.
 Updates require a usable preflight plus retained, snapshot-derived device authorization; polling

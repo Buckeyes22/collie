@@ -126,7 +126,7 @@ server revocation action.
 - The system image picker uploads bounded images without storage permission. Operator-initiated
   audio recording requests microphone permission at runtime and sends a bounded clip to `/api/stt`;
   the resulting transcript returns to the draft for review.
-- Settings covers connection/reset, theme, typeface, terminal/draft sizing, notification
+- Settings covers connection/reset, theme, terminal/draft sizing, notification
   switches and snooze, paired-device revocation, connection state, Pack state, and Updates. Update start
   requires preflight and device-write authorization; `/standby/update` retains the freshest visible
   run while the bridge restarts.

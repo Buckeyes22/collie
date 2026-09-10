@@ -55,7 +55,7 @@ class CollieBottomSheetDialog(
             behavior.maxHeight = (context.resources.displayMetrics.heightPixels * MAX_HEIGHT_FRACTION).toInt()
             findViewById<FrameLayout>(com.google.android.material.R.id.design_bottom_sheet)
                 ?.setBackgroundColor(Color.TRANSPARENT)
-            panel.applyPreferredTypeface(NativePreferences(context))
+            panel.applyAppTypeface()
             ViewCompat.requestApplyInsets(panel)
         }
     }

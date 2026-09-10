@@ -66,24 +66,14 @@
     <string name="updates_major_warning">This crosses a major server-version boundary.</string>
     <string name="updates_install_message">The Collie server will stage, restart, and verify this update.</string>
     <string name="updates_starting">Starting server update…</string>
-    <string name="settings_typeface_title">Typeface</string>
-    <string name="settings_typeface_description">The app\'s own face, on this device.</string>
-    <string name="settings_typeface_note_system">Your phone\'s own face. Downloads nothing.</string>
-    <string name="settings_typeface_note_space_grotesk">Collie\'s own voice, drawn to match the mark.</string>
-    <string name="settings_typeface_note_aldrich">One weight, so bold text looks the same as regular.</string>
-    <string name="settings_typeface_system">System default</string>
-    <string name="settings_typeface_space_grotesk" translatable="false">Space Grotesk</string>
-    <string name="settings_typeface_aldrich" translatable="false">Aldrich</string>
     <string name="settings_hands_free_title">Hands-free voice</string>
     <string name="settings_hands_free_description">Send the transcript immediately instead of putting it in the message box. Off by default — you normally read what was heard before it reaches the terminal.</string>
     <string name="settings_zen_title">Zen mode</string>
     <string name="settings_zen_description">Adds a row to the pane menu that hides everything but the terminal.</string>
-    <string name="settings_terminal_font_title">Terminal font</string>
+    <string name="settings_terminal_font_title">Text size</string>
     <string name="settings_terminal_font_description">The terminal mirror and the draft field, on this device.</string>
-    <string name="settings_font_family">Family</string>
     <string name="settings_terminal_size">Mirror text</string>
     <string name="settings_draft_size">Draft text</string>
-    <string name="settings_terminal_sample" translatable="false">~/collie  0O1lI │ ok</string>
     <string name="settings_decrease">Decrease %1$s</string>
     <string name="settings_increase">Increase %1$s</string>
     <string name="symbol_minus" translatable="false">−</string>

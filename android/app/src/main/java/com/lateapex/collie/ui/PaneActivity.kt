@@ -243,7 +243,7 @@ class PaneActivity : AppCompatActivity() {
         bindIdentity(paneId)
         bindActions()
         bindExpandedKeys(ComposerActions.keyPresets(intent.getStringExtra(EXTRA_AGENT), emptyList()))
-        binding.root.applyPreferredTypeface(nativePreferences)
+        binding.root.applyAppTypeface()
         bindBackNavigation()
         bindFind()
         binding.hideTabsButton.setOnClickListener {

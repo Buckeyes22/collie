@@ -99,7 +99,7 @@ class UpdatesActivity : AppCompatActivity() {
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
         setContentView(root)
         window.applySafeContentInsets(root)
-        root.applyPreferredTypeface(NativePreferences(this))
+        root.applyAppTypeface()
 
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -777,6 +777,13 @@ class UpdatesActivity : AppCompatActivity() {
         text = label
         isAllCaps = false
         minHeight = dp(44)
+        // A refused update is drawn as refused: the themed black fill had no disabled state.
+        val states = arrayOf(intArrayOf(android.R.attr.state_enabled), intArrayOf(-android.R.attr.state_enabled))
+        backgroundTintList = android.content.res.ColorStateList(
+            states,
+            intArrayOf(getColor(R.color.collie_foreground), getColor(R.color.collie_muted_surface)),
+        )
+        setTextColor(android.content.res.ColorStateList(states, intArrayOf(getColor(R.color.collie_surface), getColor(R.color.collie_muted))))
         setOnClickListener { action() }
     }
 

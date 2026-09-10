@@ -15,13 +15,6 @@ class NativePreferences(
         DARK("dark", AppCompatDelegate.MODE_NIGHT_YES),
     }
 
-    enum class AppTypeface(val storedValue: String, @androidx.annotation.StringRes val nameRes: Int) {
-        SYSTEM("system", com.lateapex.collie.R.string.settings_typeface_system),
-        SPACE_GROTESK("grotesk", com.lateapex.collie.R.string.settings_typeface_space_grotesk),
-        ALDRICH("aldrich", com.lateapex.collie.R.string.settings_typeface_aldrich),
-    }
-
-
     private val preferences = context.applicationContext.getSharedPreferences(
         PREFERENCES,
         Context.MODE_PRIVATE,
@@ -41,16 +34,6 @@ class NativePreferences(
         set(value) {
             preferences.edit().putBoolean(HAPTICS_ENABLED, value).apply()
         }
-
-    var appTypeface: AppTypeface
-        get() {
-            val stored = preferences.getString(APP_TYPEFACE, null)
-            return AppTypeface.entries.firstOrNull { it.storedValue == stored } ?: AppTypeface.ALDRICH
-        }
-        set(value) {
-            preferences.edit().putString(APP_TYPEFACE, value.storedValue).apply()
-        }
-
 
     var terminalFontSize: Int
         get() = preferences.getInt(TERMINAL_FONT_SIZE, 10).coerceIn(9, 16)
@@ -196,7 +179,6 @@ class NativePreferences(
         internal const val PREFERENCES = "collie_native_preferences"
         internal const val THEME_MODE = "theme_mode"
         internal const val HAPTICS_ENABLED = "haptics_enabled"
-        internal const val APP_TYPEFACE = "app_typeface"
         internal const val TERMINAL_FONT_SIZE = "terminal_font_size"
         internal const val DRAFT_FONT_SIZE = "draft_font_size"
         internal const val HANDS_FREE_ENABLED = "hands_free_enabled"

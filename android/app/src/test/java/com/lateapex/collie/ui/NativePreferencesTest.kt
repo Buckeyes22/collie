@@ -36,7 +36,6 @@ class NativePreferencesTest {
         val preferences = NativePreferences(context)
 
         assertEquals(NativePreferences.ThemeMode.SYSTEM, preferences.themeMode)
-        assertEquals(NativePreferences.AppTypeface.ALDRICH, preferences.appTypeface)
         assertTrue(preferences.hapticsEnabled)
     }
 
@@ -68,7 +67,6 @@ class NativePreferencesTest {
     @Test
     fun completePresentationPreferencesPersistAndClamp() {
         NativePreferences(context).apply {
-            appTypeface = NativePreferences.AppTypeface.SPACE_GROTESK
             terminalFontSize = 99
             draftFontSize = 1
             handsFreeEnabled = true
@@ -76,7 +74,6 @@ class NativePreferencesTest {
         }
 
         val restored = NativePreferences(context)
-        assertEquals(NativePreferences.AppTypeface.SPACE_GROTESK, restored.appTypeface)
         assertEquals(16, restored.terminalFontSize)
         assertEquals(13, restored.draftFontSize)
         assertTrue(restored.handsFreeEnabled)

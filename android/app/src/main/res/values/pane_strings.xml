@@ -2,7 +2,7 @@
 <resources>
     <string name="pane_terminal_output_omitted">… earlier output omitted …</string>
     <string name="pane_closed">Pane closed</string>
-    <string name="pane_back">Back to dashboard</string>
+    <string name="pane_back">Back</string>
     <string name="pane_actions">Pane actions</string>
     <string name="pane_action_find">Find in output</string>
     <string name="pane_action_history">History</string>

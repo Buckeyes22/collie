@@ -43,6 +43,9 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - Android reads "Read-only until Collie answers" while the server is unreachable, instead of "device not authorised".
 - The Android terminal font picker is gone; its seven families all resolved to the one monospace face Android ships, so the mirror simply uses that face.
 - Android Type mode keeps the composer focused: the mirror's scroll-to-bottom moved focus onto the mirror after every keystroke, so each letter needed another tap on the field.
+- The Android app has no font settings at all now: the Typeface picker, the Space Grotesk face and the terminal sample are gone, and the app face is fixed to Aldrich.
+- Android Updates draws a refused "Update to x.y.z" button as disabled instead of solid black.
+- The Android pane's back arrow is described as "Back", since it returns to wherever the pane was opened from.
 
 ## [1.5.1] - 2026-09-04
 

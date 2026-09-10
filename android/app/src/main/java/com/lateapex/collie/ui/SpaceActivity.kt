@@ -85,7 +85,7 @@ class SpaceActivity : AppCompatActivity() {
         window.prepareEdgeToEdgeContent()
         binding = ActivitySpaceBinding.inflate(layoutInflater)
         setContentView(binding.root)
-        binding.root.applyPreferredTypeface(NativePreferences(this))
+        binding.root.applyAppTypeface()
         window.applySafeContentInsets(binding.root)
 
         workspaceId = intent.getStringExtra(EXTRA_WORKSPACE_ID)?.takeIf(String::isNotBlank) ?: run {
