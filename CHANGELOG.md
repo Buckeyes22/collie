@@ -37,6 +37,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - Android: the Settings pairing card uses the setup screen's filled "Pair and connect" button and spacing, and keeps the card gap above Appearance.
 - Android: a Space card's meta line no longer shows a terminal title left behind by a program that has exited.
 - Android: the worktree sheet lists a repository's unopened worktrees again, each opened only after an "Open worktree?" confirm.
+- Android: Ctrl C and Space sit at the head of the Keys drawer's second row again instead of behind More.
 
 ## [Unreleased]
 

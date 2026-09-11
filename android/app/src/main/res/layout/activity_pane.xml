@@ -677,6 +677,7 @@
                     <com.google.android.material.button.MaterialButton android:id="@+id/left_button" style="@style/Widget.Collie.PaneKey" android:layout_width="44dp" android:contentDescription="@string/pane_key_left_description" android:text="@string/pane_key_left" />
                     <com.google.android.material.button.MaterialButton android:id="@+id/right_button" style="@style/Widget.Collie.PaneKey" android:layout_width="44dp" android:contentDescription="@string/pane_key_right_description" android:text="@string/pane_key_right" />
                     <com.google.android.material.button.MaterialButton android:id="@+id/ctrl_c_button" style="@style/Widget.Collie.PaneKey" android:layout_width="64dp" android:text="@string/pane_key_interrupt" />
+                    <com.google.android.material.button.MaterialButton android:id="@+id/space_button" style="@style/Widget.Collie.PaneKey" android:layout_width="64dp" android:contentDescription="@string/pane_key_space" android:text="@string/pane_key_space" />
                     <com.google.android.material.button.MaterialButton android:id="@+id/enter_button" style="@style/Widget.Collie.PaneKey" android:layout_width="60dp" android:text="@string/pane_key_enter" />
                 </LinearLayout>
             </ScrollView>

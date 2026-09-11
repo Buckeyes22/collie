@@ -522,6 +522,8 @@ class PaneActivity : AppCompatActivity() {
             leftButton to "Left",
             rightButton to "Right",
             enterButton to "Enter",
+            ctrlCButton to "ctrl+c",
+            spaceButton to "Space",
         ).forEach { (button, key) ->
             keyButtons[button] = listOf(key)
             button.setOnClickListener { pressPaneKeys(listOf(key), button) }
@@ -715,7 +717,10 @@ class PaneActivity : AppCompatActivity() {
         val primaryButtons = with(binding) {
             listOf(escapeButton, tabButton, upButton, downButton, leftButton, rightButton, enterButton)
         }
-        keyButtons.keys.filterNot { it in primaryButtons }.forEach(keyButtons::remove)
+        // The interrupt and Space stay one tap away, at the head of the second row; only
+        // Presets and F-keys go behind More (A.4).
+        val rowTwoKeys = with(binding) { listOf(ctrlCButton, spaceButton) }
+        keyButtons.keys.filterNot { it in primaryButtons || it in rowTwoKeys }.forEach(keyButtons::remove)
         keyModifierButtons.clear()
         container.removeAllViews()
         renderedKeyQueue = null
@@ -861,6 +866,11 @@ class PaneActivity : AppCompatActivity() {
             id = R.id.pane_keys_modifiers
             orientation = LinearLayout.HORIZONTAL
         }
+        rowTwoKeys.forEach { key ->
+            (key.parent as? ViewGroup)?.removeView(key)
+            key.minWidth = 0
+            modifiers.addView(key, rowParams(key))
+        }
         PaneKeyModifier.entries.forEach { modifier ->
             val label = getString(modifier.labelRes)
             val button = outlinedButton(label).apply {
@@ -868,6 +878,7 @@ class PaneActivity : AppCompatActivity() {
                 isCheckable = true
                 maxLines = 1
                 isSingleLine = true
+                setPaddingRelative(dp(4), 0, dp(4), 0)
                 strokeWidth = dp(2)
                 strokeColor = ColorStateList.valueOf(getColor(R.color.collie_accent))
                 contentDescription = getString(R.string.pane_key_modifier_description, label)
@@ -885,6 +896,8 @@ class PaneActivity : AppCompatActivity() {
         val moreButton = outlinedButton(getString(R.string.pane_keys_more)).apply {
             id = R.id.pane_keys_more
             minWidth = 0
+            maxLines = 1
+            setPaddingRelative(dp(4), 0, dp(4), 0)
             setOnClickListener {
                 resetKeyQueueDiscardConfirm()
                 showMoreKeysSheet()
@@ -942,25 +955,6 @@ class PaneActivity : AppCompatActivity() {
         content.addView(
             presetGrid,
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
-        )
-        val spaceRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        listOf(
-            getString(R.string.pane_key_space) to listOf("Space"),
-            getString(R.string.pane_key_interrupt) to listOf("ctrl+c"),
-        ).forEach { (label, keys) ->
-            val button = outlinedButton(label).apply {
-                minWidth = 0
-                keyButtons[this] = keys
-                contentDescription = label
-                setOnClickListener { pressPaneKeys(keys, this) }
-            }
-            spaceRow.addView(button, LinearLayout.LayoutParams(0, dp(44), 1f).apply {
-                marginStart = dp(2); marginEnd = dp(2)
-            })
-        }
-        content.addView(
-            spaceRow,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)),
         )
         val functionGrid = GridLayout(this).apply {
             id = R.id.pane_keys_functions

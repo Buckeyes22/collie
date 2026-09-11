@@ -1297,6 +1297,28 @@ class PaneActivityTest {
     }
 
     @Test
+    fun keysDrawerKeepsCtrlCAndSpaceOneTapAway() {
+        // The compact rework had moved the interrupt and Space into the More sheet, three taps
+        // from a runaway command; A.4 only sent Presets and F-keys there (S25 Ultra, 2026-09-10).
+        val activity = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("keys:ctrlc")).create().start().resume().get()
+        activity.findViewById<View>(R.id.keys_mode_button).performClick()
+        val row = activity.findViewById<ViewGroup>(R.id.pane_keys_modifiers)
+        assertEquals(
+            listOf("Ctrl C", "Space", "Shift", "Ctrl", "Alt", "More"),
+            (0 until row.childCount).map { (row.getChildAt(it) as TextView).text.toString() },
+        )
+        activity.showMoreKeysSheetForTest()
+        val sheet = ShadowDialog.getLatestDialog() as CollieBottomSheetDialog
+        val sheetLabels = generateSequence(listOf<View>(sheet.window!!.decorView)) { level ->
+            level.filterIsInstance<ViewGroup>().flatMap { group -> (0 until group.childCount).map(group::getChildAt) }.takeIf { it.isNotEmpty() }
+        }.flatten().filterIsInstance<TextView>().map { it.text.toString() }.toList()
+        // The sheet may still list the shipped "Ctrl C" preset (keys.toml can replace it); the
+        // fixed one-tap key itself lives in the drawer.
+        assertNull(sheet.findViewById<View?>(R.id.ctrl_c_button))
+        assertFalse(sheetLabels.contains("Space"))
+    }
+
+    @Test
     fun displayDrawerIsGoneAndActionsSheetHoldsWrapAndRaw() {
         val activity = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("display:pane")).create().start().resume().get()
         assertNull(activity.findViewById<View?>(R.id.display_prefs_container))
