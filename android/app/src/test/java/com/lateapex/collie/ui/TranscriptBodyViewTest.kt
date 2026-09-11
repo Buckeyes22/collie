@@ -51,4 +51,66 @@ class TranscriptBodyViewTest {
         assertSame(view.turnViewForTest("a"), container.getChildAt(1))
         assertSame(bView, container.getChildAt(2))
     }
+
+    @Test
+    fun appendingNewTurnsWhileScrolledUpDoesNotMoveTheReader() {
+        // S25 Ultra, 2026-09-10: scrolled to the top, every poll that appended a turn shoved the
+        // view down by the new turn's height and "Load older" slid out of reach.
+        val view = laidOutBody()
+        val entries = (0 until 60).map(::entry)
+        view.bind("claude", entries, hasMore = true)
+        layout(view)
+        val scroll = view.getChildAt(0) as android.widget.ScrollView
+        scroll.scrollTo(0, 0)
+        val anchor = view.turnViewForTest("e2")!!
+        val offset = anchor.top - scroll.scrollY
+
+        view.bind("claude", entries + entry(60) + entry(61), hasMore = true)
+        layout(view)
+
+        assertEquals("scrollY=${scroll.scrollY}", offset, anchor.top - scroll.scrollY)
+        assertEquals(0, scroll.scrollY)
+    }
+
+    @Test
+    fun loadingOlderTurnsKeepsTheReadersPlace() {
+        val view = laidOutBody()
+        val entries = (10 until 40).map(::entry)
+        view.bind("claude", entries, hasMore = true)
+        layout(view)
+        val scroll = view.getChildAt(0) as android.widget.ScrollView
+        val anchor = view.turnViewForTest("e12")!!
+        scroll.scrollTo(0, anchor.top)
+        val offset = anchor.top - scroll.scrollY
+
+        view.bind("claude", (0 until 10).map(::entry) + entries, hasMore = true)
+        layout(view)
+
+        assertEquals(offset, anchor.top - scroll.scrollY)
+    }
+
+    /** Hosted in a real window so posted work runs after layout, in the order a phone runs it. */
+    private fun laidOutBody(): TranscriptBodyView {
+        val activity = org.robolectric.Robolectric.buildActivity(android.app.Activity::class.java).setup().get()
+        val view = TranscriptBodyView(android.view.ContextThemeWrapper(activity, R.style.Theme_Collie))
+        activity.setContentView(
+            android.widget.FrameLayout(activity).apply {
+                addView(view, android.widget.FrameLayout.LayoutParams(1080, 1600))
+            },
+        )
+        layout(view)
+        return view
+    }
+
+    @Suppress("UNUSED_PARAMETER")
+    private fun layout(view: View) {
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(200))
+    }
+
+    private fun entry(index: Int) = TranscriptEntry(
+        "e$index",
+        "2026-09-10T00:00:00Z",
+        if (index % 2 == 0) "user" else "assistant",
+        listOf(TranscriptPart("text", text = "turn $index with enough words to take a line or two of height")),
+    )
 }

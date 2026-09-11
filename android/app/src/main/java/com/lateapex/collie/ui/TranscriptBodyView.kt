@@ -9,6 +9,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import androidx.annotation.VisibleForTesting
 import androidx.core.content.ContextCompat
+import androidx.core.view.doOnNextLayout
 import androidx.core.view.isVisible
 import com.google.android.material.button.MaterialButton
 import com.lateapex.collie.R
@@ -49,9 +50,16 @@ class TranscriptBodyView @JvmOverloads constructor(
     }
 
     fun bind(agent: String, entries: List<TranscriptEntry>, hasMore: Boolean) {
+        val atBottom = scroll.scrollY + scroll.height >= (scroll.getChildAt(0)?.height ?: 0) - dp(8)
+        // The reader's place is the first turn on screen and its offset from the top. Restoring
+        // that, rather than shifting by however much the list grew, keeps an append below from
+        // moving the view (S25 Ultra, 2026-09-10: every poll pushed "Load older" out of reach)
+        // and keeps a prepend above from shoving the rows being read out from under the reader.
+        val anchor = if (atBottom) null else firstVisibleTurn()
         loadOlder.isVisible = hasMore
         // A pane switch or a cleared journal starts the body over; a normal re-bind only appends.
-        if (turns.isNotEmpty() && turns.keys.any { key -> entries.none { it.uuid == key } }) {
+        val reset = turns.isNotEmpty() && turns.keys.any { key -> entries.none { it.uuid == key } }
+        if (reset) {
             turns.clear()
             turnsContainer.removeViews(1, turnsContainer.childCount - 1)
         }
@@ -60,8 +68,6 @@ class TranscriptBodyView @JvmOverloads constructor(
             renderer = HistoryTurnRenderer(context, agent, expandedTools, ::toggleTool)
         }
         boundEntries = entries
-        val atBottom = scroll.scrollY + scroll.height >= (scroll.getChildAt(0)?.height ?: 0) - dp(8)
-        val heightBefore = turnsContainer.height
         entries.forEachIndexed { index, entry ->
             if (turns[entry.uuid] != null) return@forEachIndexed
             val turn = HistoryPresentation.turn(entry, agent, resources)
@@ -71,15 +77,25 @@ class TranscriptBodyView @JvmOverloads constructor(
             // The "Load older" button is child 0; each turn sits at its entry's list position.
             turnsContainer.addView(view, index + 1)
         }
-        post {
-            if (atBottom) {
-                scroll.scrollTo(0, (turnsContainer.height - scroll.height).coerceAtLeast(0))
-            } else {
-                // A prepend must not shove the rows the reader was looking at out from under them.
-                val grown = turnsContainer.height - heightBefore
-                if (grown > 0) scroll.scrollTo(0, scroll.scrollY + grown)
+        val restore = {
+            if (reset || anchor == null) {
+                if (reset || atBottom) scroll.scrollTo(0, (turnsContainer.height - scroll.height).coerceAtLeast(0))
+            } else if (anchor.first.parent === turnsContainer) {
+                scroll.scrollTo(0, anchor.first.top - anchor.second)
             }
         }
+        // Posted work runs after the pending layout on a phone; if a layout is still due, wait for it.
+        post { if (turnsContainer.isLayoutRequested) turnsContainer.doOnNextLayout { restore() } else restore() }
+    }
+
+    /** The first turn whose bottom is below the scroll top, with its offset from that top. */
+    private fun firstVisibleTurn(): Pair<View, Int>? {
+        val top = scroll.scrollY
+        for (index in 1 until turnsContainer.childCount) {
+            val child = turnsContainer.getChildAt(index)
+            if (child.bottom > top) return child to (child.top - top)
+        }
+        return null
     }
 
     /** B.2: the operator's own message reads as a card in the pane body. */
