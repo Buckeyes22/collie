@@ -1436,6 +1436,25 @@ class PaneActivityTest {
     }
 
     @Test
+    fun aDialogBeforeAnyJournalOffersNoTranscriptSwitch() {
+        // A new Claude's first dialog (a trust prompt, an early question) comes before its session
+        // log exists; "Show transcript" then opened an empty body (S25 Ultra, 2026-09-11).
+        val activity = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("body:early", agent = "claude")).create().start().resume().get()
+        val fixture = File("../../web/src/fixtures/panes/claude--select-ask-no-question-mark.txt").readText()
+        render(
+            activity,
+            PaneUiState(
+                pane = PaneReadResponse("body:early", fixture, truncated = false, revision = 0),
+                loading = false,
+                transcriptAvailable = false,
+                transcriptReason = "no-session",
+            ),
+        )
+        assertEquals(activity.getString(R.string.pane_body_showing_mirror_dialog), activity.findViewById<TextView>(R.id.body_mode_label).text.toString())
+        assertEquals(View.GONE, activity.findViewById<View>(R.id.body_mode_switch).visibility)
+    }
+
+    @Test
     fun dialogSwitchesTheWholeBodyToTheMirror() {
         val activity = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("body:dialog", agent = "claude")).create().start().resume().get()
         val fixture = File("../../web/src/fixtures/panes/claude--select-ask-no-question-mark.txt").readText()

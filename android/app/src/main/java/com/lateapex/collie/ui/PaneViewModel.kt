@@ -664,16 +664,24 @@ class PaneViewModel(
         }
     }
 
-    /** One "no journal" answer is enough: the mirror shows and history polling stops for the pane. */
-    private var transcriptKnownUnavailable = false
+    /**
+     * Polls to skip before asking for history again after a "no journal" answer. A Claude started
+     * in an open pane has no session log until its first turn, so one answer cannot be final: the
+     * pane stayed on the mirror for good (S25 Ultra, 2026-09-11). The pause keeps an agent that
+     * genuinely has no journal from costing a history read on every poll.
+     */
+    private var transcriptSkipPolls = 0
 
     private suspend fun loadTranscript() {
-        if (transcriptKnownUnavailable) return
+        if (transcriptSkipPolls > 0) {
+            transcriptSkipPolls--
+            return
+        }
         when (val result = repository.history(address, limit = TRANSCRIPT_PAGE)) {
             is ApiResult.Success -> {
                 val page = result.value
                 if (!page.available) {
-                    transcriptKnownUnavailable = true
+                    transcriptSkipPolls = TRANSCRIPT_RETRY_POLLS
                     mutableState.value = mutableState.value.copy(
                         transcriptAvailable = false,
                         transcriptReason = page.reason,
@@ -951,6 +959,7 @@ class PaneViewModel(
     companion object {
         const val STATUS_NOTICE_MS = 4_000L
         const val TRANSCRIPT_PAGE = 60
+        const val TRANSCRIPT_RETRY_POLLS = 8
         const val MAX_DIRECT_KEY_BATCH = 64
         const val MAX_DIRECT_KEYS_PENDING = 8_192
         const val MAX_REVIEWED_KEY_BATCH = 128

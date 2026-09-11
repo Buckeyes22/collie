@@ -42,6 +42,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - Android: the Space tab strip scrolls only to bring an off-screen selected tab into view, so tapping a visible tab no longer pushes All off the edge.
 - Android: one tap on the pane mirror opens the composer; before, an unfocused mirror took the first tap for itself and tap-to-type needed two.
 - Android: the pane switcher's Recent heading folds again, so a Recent section collapsed on the dashboard can be opened from the switcher.
+- Android: a pane whose agent has no session log yet asks again after a pause, so a freshly started Claude's transcript appears without reopening the pane; the body switch hides while there is no transcript.
 
 ## [Unreleased]
 

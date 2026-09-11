@@ -3427,6 +3427,9 @@ class PaneActivity : AppCompatActivity() {
         bodyModeSwitch.text = getString(
             if (body == PaneBody.TRANSCRIPT) R.string.pane_body_switch_to_mirror else R.string.pane_body_switch_to_transcript,
         )
+        // No transcript yet (a new agent's first dialog comes before its session log): offer no
+        // switch to an empty body (S25 Ultra, 2026-09-11).
+        bodyModeSwitch.isVisible = body == PaneBody.TRANSCRIPT || currentState.transcriptAvailable == true
         bodyModeSwitch.setOnClickListener {
             bodyOverride = if (body == PaneBody.TRANSCRIPT) PaneBody.MIRROR else PaneBody.TRANSCRIPT
             lastRenderedState?.let { render(it) }

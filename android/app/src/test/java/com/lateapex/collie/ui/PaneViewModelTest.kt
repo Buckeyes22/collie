@@ -496,14 +496,21 @@ class PaneViewModelTest {
     }
 
     @Test
-    fun unavailableHistoryIsRecordedOnceAndNotPolledAgain() = runTest(dispatcher) {
+    fun unavailableHistoryIsRetriedAfterAPauseAndPicksUpANewJournal() = runTest(dispatcher) {
+        // A Claude started in an open pane has no session log until its first turn. Giving up
+        // after one "no-session" left the pane on the mirror for good (S25 Ultra, 2026-09-11).
         val f = fixture(ApiResult.Success(ActionResponse(ok = true), 200))
         f.api.historyPages += PaneHistoryResponse("w1:p1", available = false, reason = "no-session")
         f.viewModel.refresh(); advanceUntilIdle()
-        f.viewModel.refresh(); advanceUntilIdle()
         assertEquals(false, f.viewModel.state.value.transcriptAvailable)
         assertEquals("no-session", f.viewModel.state.value.transcriptReason)
-        assertEquals(1, f.api.historyCalls)
+        repeat(PaneViewModel.TRANSCRIPT_RETRY_POLLS) { f.viewModel.refresh(); advanceUntilIdle() }
+        assertEquals("the pause skips history", 1, f.api.historyCalls)
+        f.api.historyPages += PaneHistoryResponse("w1:p1", available = true, entries = listOf(entry("a")))
+        f.viewModel.refresh(); advanceUntilIdle()
+        assertEquals(2, f.api.historyCalls)
+        assertEquals(true, f.viewModel.state.value.transcriptAvailable)
+        assertEquals(listOf("a"), f.viewModel.state.value.transcript.map { it.uuid })
     }
 
     private fun entry(uuid: String) =
