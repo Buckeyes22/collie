@@ -40,6 +40,8 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - Android: Ctrl C and Space sit at the head of the Keys drawer's second row again instead of behind More.
 - Android: Settings offers the pairing card again when the bridge no longer recognises the phone's stored token, as after `collie devices revoke`.
 - Android: the Space tab strip scrolls only to bring an off-screen selected tab into view, so tapping a visible tab no longer pushes All off the edge.
+- Android: one tap on the pane mirror opens the composer; before, an unfocused mirror took the first tap for itself and tap-to-type needed two.
+- Android: the pane switcher's Recent heading folds again, so a Recent section collapsed on the dashboard can be opened from the switcher.
 
 ## [Unreleased]
 

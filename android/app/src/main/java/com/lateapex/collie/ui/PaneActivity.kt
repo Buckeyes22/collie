@@ -2787,7 +2787,17 @@ class PaneActivity : AppCompatActivity() {
                 when (section) {
                     is PaneSwitcherSection.Agents -> {
                         val title = switcherBucketLabel(section.bucket)
-                        list.addView(switcherSectionLabel(title))
+                        // Recent keeps the plain heading Working has (A.6) but stays foldable: its
+                        // rows follow the dashboard's Recent state, and without a toggle a
+                        // collapsed dashboard left the switcher's Recent empty (2026-09-11).
+                        if (section.bucket == TriageBucket.RECENT) {
+                            list.addView(switcherToggleLabel(title, section.open) {
+                                nativePreferences.dashboardRecentOpen = !section.open
+                                rebuild()
+                            })
+                        } else {
+                            list.addView(switcherSectionLabel(title))
+                        }
                         if (section.open) section.rows.forEach { addSwitcherPaneRow(list, dialog, it) }
                     }
                     is PaneSwitcherSection.Shells -> {
@@ -2989,6 +2999,23 @@ class PaneActivity : AppCompatActivity() {
         setTextColor(getColor(R.color.collie_muted))
         setTypeface(typeface, Typeface.BOLD)
         setPadding(dp(4), dp(16), dp(4), dp(5))
+    }
+
+    /** A plain section heading with the dashboard's chevron, for a section that folds. */
+    private fun switcherToggleLabel(label: String, open: Boolean, onClick: () -> Unit) = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        minimumHeight = dp(44)
+        isClickable = true
+        isFocusable = true
+        background = ContextCompat.getDrawable(this@PaneActivity, android.R.drawable.list_selector_background)
+        contentDescription = getString(if (open) R.string.collapse_recent else R.string.expand_recent)
+        addView(switcherSectionLabel(label), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        addView(android.widget.ImageView(this@PaneActivity).apply {
+            setImageResource(if (open) R.drawable.ic_history_chevron_down else R.drawable.ic_history_chevron_right)
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }, LinearLayout.LayoutParams(dp(20), dp(20)).apply { marginEnd = dp(8); topMargin = dp(8) })
+        setOnClickListener { onClick() }
     }
 
     private fun switcherFoldHeader(label: String, open: Boolean, onClick: () -> Unit) =
@@ -3498,12 +3525,34 @@ class PaneActivity : AppCompatActivity() {
     }
 
     private fun bindTerminalTap(view: TextView) {
+        var downX = 0f
+        var downY = 0f
+        var downAt = 0L
+        val slop = ViewConfiguration.get(this).scaledTouchSlop
         view.setOnTouchListener { _, event ->
-            if (event.actionMasked == MotionEvent.ACTION_UP) {
-                val text = view.text
-                val offset = view.getOffsetForPosition(event.x, event.y).coerceIn(0, text.length)
-                val onLink = (text as? Spanned)?.getSpans(offset, offset, URLSpan::class.java)?.isNotEmpty() == true
-                terminalTapBlocked = onLink || view.selectionStart != view.selectionEnd
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    downX = event.x
+                    downY = event.y
+                    downAt = event.eventTime
+                }
+                MotionEvent.ACTION_UP -> {
+                    val text = view.text
+                    val offset = view.getOffsetForPosition(event.x, event.y).coerceIn(0, text.length)
+                    val onLink = (text as? Spanned)?.getSpans(offset, offset, URLSpan::class.java)?.isNotEmpty() == true
+                    terminalTapBlocked = onLink || view.selectionStart != view.selectionEnd
+                    val tap = kotlin.math.abs(event.x - downX) < slop && kotlin.math.abs(event.y - downY) < slop &&
+                        event.eventTime - downAt < ViewConfiguration.getLongPressTimeout()
+                    // The mirror is selectable, so in touch mode an unfocused mirror spends the first
+                    // tap on taking focus and never delivers the click: tap-to-type took two taps
+                    // (S25 Ultra, 2026-09-11). Let the view finish its own tap (focus, press state,
+                    // long-press timer), then open the composer; a focused mirror still clicks.
+                    if (tap && !terminalTapBlocked && !view.isFocused) {
+                        view.onTouchEvent(event)
+                        tapToType(view)
+                        return@setOnTouchListener true
+                    }
+                }
             }
             false
         }
@@ -3512,12 +3561,16 @@ class PaneActivity : AppCompatActivity() {
                 terminalTapBlocked = false
                 return@setOnClickListener
             }
-            if (terminalWriteBlock() == null &&
-                semanticSurface?.ownsKeyboard != true && noEchoPrompt == null) {
-                binding.replyInput.requestFocus()
-                WindowCompat.getInsetsController(window, binding.replyInput)
-                    .show(WindowInsetsCompat.Type.ime())
-            }
+            tapToType(view)
+        }
+    }
+
+    private fun tapToType(view: TextView) {
+        if (view.selectionStart != view.selectionEnd) return
+        if (terminalWriteBlock() == null && semanticSurface?.ownsKeyboard != true && noEchoPrompt == null) {
+            binding.replyInput.requestFocus()
+            WindowCompat.getInsetsController(window, binding.replyInput)
+                .show(WindowInsetsCompat.Type.ime())
         }
     }
 

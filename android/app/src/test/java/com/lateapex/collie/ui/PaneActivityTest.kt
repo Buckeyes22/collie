@@ -227,6 +227,34 @@ class PaneActivityTest {
     }
 
     @Test
+    fun switcherRecentCanBeExpandedWhenTheDashboardLeftItCollapsed() {
+        // The integrator made Recent a plain heading, but its rows still follow the dashboard's
+        // collapsed state, so the switcher showed "Recent" with nothing under it and no way to
+        // open it (S25 Ultra, 2026-09-11).
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        NativePreferences(context).dashboardRecentOpen = false
+        val activity = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("w1:p1")).create().get()
+        val state = PaneUiState(
+            loading = false,
+            canWrite = true,
+            panes = listOf(paneSummary("w1:p1"), paneSummary("w1:p2").copy(status = AgentStatus.IDLE)),
+        )
+        PaneActivity::class.java.getDeclaredMethod("render", PaneUiState::class.java).apply {
+            isAccessible = true
+            invoke(activity, state)
+        }
+        activity.findViewById<View>(R.id.switcher_handle).performClick()
+        val sheet = ShadowDialog.getLatestDialog() as CollieBottomSheetDialog
+        fun views(): List<View> = generateSequence(listOf<View>(sheet.window!!.decorView)) { level ->
+            level.filterIsInstance<ViewGroup>().flatMap { g -> (0 until g.childCount).map(g::getChildAt) }.takeIf { it.isNotEmpty() }
+        }.flatten().toList()
+        val toggle = views().single { it.contentDescription == activity.getString(R.string.expand_recent) }
+        toggle.performClick()
+        assertTrue(views().any { it.contentDescription == activity.getString(R.string.collapse_recent) })
+        assertTrue(NativePreferences(context).dashboardRecentOpen)
+    }
+
+    @Test
     fun paneSwitcherAndAgentPaletteUseCanonicalPullUpSheets() {
         val activity = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("w1:p1")).create().get()
         val state = PaneUiState(
@@ -1187,6 +1215,29 @@ class PaneActivityTest {
         focused = false,
         paneCount = 1,
     )
+
+    @Test
+    fun oneTapOnAnUnfocusedMirrorOpensTheComposer() {
+        // The mirror is selectable text, so in touch mode Android spends the first tap on
+        // focusing it and never delivers the click: tap-to-type took two taps (S25 Ultra,
+        // 2026-09-11; NativeInteractionTest tapToTypeOpensTheSoftKeyboard on a Pixel).
+        val activity = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("tap:pane")).create().start().resume().get()
+        val writable = PaneUiState(
+            pane = PaneReadResponse("tap:pane", "~\n❯ ", false, 0),
+            loading = false,
+            canWrite = true,
+            panes = listOf(paneSummary("tap:pane")),
+        )
+        setViewModelState(activity, writable)
+        render(activity, writable)
+        androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().setInTouchMode(true)
+        val mirror = activity.findViewById<TextView>(R.id.terminal_text)
+        assertTrue(mirror.isInTouchMode)
+        assertFalse(mirror.isFocused)
+        mirror.dispatchTouchEvent(MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, 20f, 10f, 0))
+        mirror.dispatchTouchEvent(MotionEvent.obtain(0, 60, MotionEvent.ACTION_UP, 20f, 10f, 0))
+        assertTrue(activity.findViewById<View>(R.id.reply_input).hasFocus())
+    }
 
     @Test
     fun directTypingSwapsSendForStopAndShowsOneLabel() {
