@@ -1436,16 +1436,17 @@ class PaneActivityTest {
     }
 
     @Test
-    fun aPanelWithoutTheComposerSwitchesToTheMirrorAfterTwoPolls() {
-        // /cost disabled Send while its panel was visible only in the terminal view; the
-        // transcript body hid the reason (S25 Ultra walk, 2026-09-11).
-        val activity = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("body:overlay", agent = "claude")).create().start().resume().get()
-        val panel = "Total cost:            $0.12\nTotal duration (API):  3s\n\n  Esc to dismiss\n"
+    fun aWorkingClaudePaneKeepsItsTranscriptWhenItsBoxIsNotRecognised() {
+        // A rule that showed the terminal whenever Claude's input box went unrecognised also fired
+        // on a working Claude waiting for background agents, hiding its transcript (S25 Ultra,
+        // 2026-09-11). Only a recognised dialog, Raw, or no journal shows the mirror.
+        val activity = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("body:working", agent = "claude")).create().start().resume().get()
+        val screen = "⏺ Lane 06 is committed.\n\n✻ Waiting for 5 background agents to finish\n\n717587 tokens\n"
         val transcript = listOf(TranscriptEntry("a", "2026-09-11T00:00:00Z", "assistant", listOf(TranscriptPart("text", text = "hi"))))
         fun poll(at: Long) = render(
             activity,
             PaneUiState(
-                pane = PaneReadResponse("body:overlay", panel, truncated = false, revision = 0),
+                pane = PaneReadResponse("body:working", screen, truncated = false, revision = 0),
                 loading = false,
                 composerReady = false,
                 lastSuccessAt = at,
@@ -1453,11 +1454,9 @@ class PaneActivityTest {
                 transcriptAvailable = true,
             ),
         )
-        poll(1)
+        poll(1); poll(2); poll(3)
         assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.transcript_body).visibility)
-        poll(2)
-        assertEquals(View.GONE, activity.findViewById<View>(R.id.transcript_body).visibility)
-        assertEquals(activity.getString(R.string.pane_body_showing_mirror_overlay), activity.findViewById<TextView>(R.id.body_mode_label).text.toString())
+        assertEquals(activity.getString(R.string.pane_body_showing_transcript), activity.findViewById<TextView>(R.id.body_mode_label).text.toString())
     }
 
     @Test
