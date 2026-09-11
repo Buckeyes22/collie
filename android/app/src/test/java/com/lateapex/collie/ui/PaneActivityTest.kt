@@ -1213,8 +1213,21 @@ class PaneActivityTest {
         assertEquals("", activity.findViewById<EditText>(R.id.reply_input).text.toString())
         val chip = activity.findViewById<com.google.android.material.chip.Chip>(R.id.composer_attachment_chip)
         assertEquals(View.VISIBLE, chip.visibility)
-        assertEquals("wM_p1.png", chip.text.toString())
+        assertEquals(activity.getString(R.string.pane_attachment_image), chip.text.toString())
         assertEquals("/home/x/.local/state/collie/uploads/wM_p1.png\nhello", activity.outgoingReplyForTest("hello"))
+    }
+
+    @Test
+    fun attachmentChipShowsAThumbnailAndSaysImageNotAFileName() {
+        // S25 Ultra, 2026-09-10: the chip read the bridge copy's name, then the picker's media id
+        // ("1000005957.png"). Neither means anything to the operator.
+        val activity = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("attach:thumb")).create().start().resume().get()
+        val thumb = android.graphics.Bitmap.createBitmap(8, 8, android.graphics.Bitmap.Config.ARGB_8888)
+        activity.acceptUploadForTest("/home/x/.local/state/collie/uploads/w5_p4-mtwctvhh-54a3c283.png", thumbnail = thumb)
+        val chip = activity.findViewById<com.google.android.material.chip.Chip>(R.id.composer_attachment_chip)
+        assertEquals(activity.getString(R.string.pane_attachment_image), chip.text.toString())
+        assertTrue(chip.chipIcon is android.graphics.drawable.BitmapDrawable)
+        assertEquals("/home/x/.local/state/collie/uploads/w5_p4-mtwctvhh-54a3c283.png\nhi", activity.outgoingReplyForTest("hi"))
     }
 
     @Test

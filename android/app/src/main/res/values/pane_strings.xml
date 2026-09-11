@@ -240,4 +240,5 @@
     <string name="pane_status_ready">Ready</string>
     <string name="pane_status_idle">Idle</string>
     <string name="pane_close_confirm_message">This closes the pane for everyone on this Herdr.</string>
+    <string name="pane_attachment_image">Image</string>
 </resources>

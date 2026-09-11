@@ -126,6 +126,9 @@ class PaneActivity : AppCompatActivity() {
     private var showingTranscriptBody = false
     private var lastRenderedState: PaneUiState? = null
     private var pendingAttachment: String? = null
+    /** A thumbnail of the picked image; the chip shows it and the word "Image", never a file name. */
+    private var pendingAttachmentThumb: android.graphics.Bitmap? = null
+    private var pickedImageThumb: android.graphics.Bitmap? = null
     private val blockMonoTypeface: Typeface by lazy {
         androidx.core.content.res.ResourcesCompat.getFont(this, R.font.collie_mono) ?: Typeface.MONOSPACE
     }
@@ -543,6 +546,9 @@ class PaneActivity : AppCompatActivity() {
         lifecycleScope.launch {
             setComposerMediaBusy(true)
             val selection = ComposerMedia.imageUpload(contentResolver, uri, composerMediaText)
+            pickedImageThumb = (selection as? ImageSelectionResult.Ready)?.upload?.bytes?.let {
+                withContext(Dispatchers.Default) { ComposerMedia.thumbnail(it, dp(32)) }
+            }
             val result = when (selection) {
                 is ImageSelectionResult.Ready -> composerMediaActions.uploadImage(selection.upload)
                 is ImageSelectionResult.Rejected -> ComposerMediaResult.Failure(selection.reason)
@@ -628,6 +634,8 @@ class PaneActivity : AppCompatActivity() {
                     // The upload path is what the bridge needs on send; it is shown as a chip and
                     // never written into the draft (B.2).
                     pendingAttachment = guarded.insertion
+                    pendingAttachmentThumb = pickedImageThumb
+                    pickedImageThumb = null
                     renderAttachmentChip()
                     return
                 }
@@ -2062,6 +2070,7 @@ class PaneActivity : AppCompatActivity() {
         viewModel.sendReply(outgoing, takenOverTerminalDraft)
         if (pendingAttachment != null) {
             pendingAttachment = null
+            pendingAttachmentThumb = null
             renderAttachmentChip()
         }
     }
@@ -2074,17 +2083,25 @@ class PaneActivity : AppCompatActivity() {
         val path = pendingAttachment
         composerAttachmentChip.isVisible = path != null
         if (path != null) {
-            composerAttachmentChip.text = File(path).name
+            // The photo picker names a pick by its media id and the bridge renames the copy, so no
+            // file name here means anything to the operator (S25 Ultra, 2026-09-10).
+            composerAttachmentChip.text = getString(R.string.pane_attachment_image)
+            composerAttachmentChip.chipIcon = pendingAttachmentThumb
+                ?.let { android.graphics.drawable.BitmapDrawable(resources, it) }
+                ?: ContextCompat.getDrawable(this@PaneActivity, R.drawable.ic_pane_attach)
+            composerAttachmentChip.isChipIconVisible = true
             composerAttachmentChip.setOnCloseIconClickListener {
                 pendingAttachment = null
+                pendingAttachmentThumb = null
                 renderAttachmentChip()
             }
         }
     }
 
     @VisibleForTesting
-    internal fun acceptUploadForTest(path: String) {
+    internal fun acceptUploadForTest(path: String, thumbnail: android.graphics.Bitmap? = null) {
         pendingAttachment = path
+        pendingAttachmentThumb = thumbnail
         renderAttachmentChip()
     }
 

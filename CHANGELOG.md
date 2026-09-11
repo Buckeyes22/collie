@@ -31,6 +31,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - Android: the Space list drops the build stamp footer and a card's meta line no longer repeats its title; dashboard meta truncates in the middle.
 - Android: the pairing card is the first card in Settings and its label field is prefilled from the connection.
 - Android: the Space tab strip's add controls read "+ Tab" and "+ Space" instead of two identical "+" circles.
+- Android: an attached image shows as a thumbnail chip labelled "Image" instead of the picker's media id or the bridge copy's file name.
 
 ## [Unreleased]
 

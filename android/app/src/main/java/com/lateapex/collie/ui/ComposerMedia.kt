@@ -161,6 +161,19 @@ internal class ComposerMediaActions(
 
 /** Phone-owned media preparation. Nothing crosses the network from this helper. */
 internal object ComposerMedia {
+    /** A square thumbnail of an image's bytes, or null when they do not decode. */
+    fun thumbnail(bytes: ByteArray, sizePx: Int): android.graphics.Bitmap? {
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        var sample = 1
+        while (bounds.outWidth / (sample * 2) >= sizePx && bounds.outHeight / (sample * 2) >= sizePx) sample *= 2
+        val decoded = android.graphics.BitmapFactory.decodeByteArray(
+            bytes, 0, bytes.size, android.graphics.BitmapFactory.Options().apply { inSampleSize = sample },
+        ) ?: return null
+        return android.media.ThumbnailUtils.extractThumbnail(decoded, sizePx, sizePx)
+    }
+
     suspend fun imageUpload(
         resolver: ContentResolver,
         uri: Uri,
