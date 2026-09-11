@@ -257,6 +257,27 @@ class SettingsActivityTest {
     }
 
     @Test
+    fun pairingCardMatchesTheSetupScreenAndKeepsTheCardGap() {
+        // S25 Ultra, 2026-09-10: the card sat flush on Appearance and its primary action was an
+        // outlined pill where the setup screen uses the filled button for the same action.
+        val activity = launchSettings(paired = false)
+        val submit = activity.findViewById<com.google.android.material.button.MaterialButton>(R.id.settings_pair_button)
+        assertEquals(
+            androidx.core.content.ContextCompat.getColor(activity, R.color.collie_primary),
+            submit.backgroundTintList!!.defaultColor,
+        )
+        assertEquals(
+            (12 * activity.resources.displayMetrics.density).toInt(),
+            (submit.layoutParams as ViewGroup.MarginLayoutParams).topMargin,
+        )
+        val card = activity.findViewById<View>(R.id.settings_parity_pairing_card)
+        assertEquals(
+            activity.resources.getDimensionPixelSize(R.dimen.collie_card_gap),
+            (card.layoutParams as ViewGroup.MarginLayoutParams).bottomMargin,
+        )
+    }
+
+    @Test
     fun pairedSettingsHasNoPairingCardAndNoZenCard() {
         val activity = launchSettings(paired = true)
         assertNull(activity.findViewById<View?>(R.id.settings_parity_pairing_card))

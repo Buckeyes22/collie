@@ -146,7 +146,13 @@ internal class SettingsServerControls(
                 it.addView(divider())
                 it.addView(form.root)
             }
-            pairingHost.addView(pairingCard)
+            // The host sits above Appearance, which carries no top margin of its own.
+            pairingHost.addView(
+                pairingCard,
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    bottomMargin = activity.resources.getDimensionPixelSize(R.dimen.collie_card_gap)
+                },
+            )
             if (devicesRevealPending) {
                 onRevealDevices(pairingCard!!, if (pairNameFocusPending) form.label else pairingCard!!)
                 devicesRevealPending = false
@@ -455,7 +461,7 @@ internal class SettingsServerControls(
             pairOutcome = message?.let { it to error }
             showStatus(message, error, target = outcome)
         }
-        val submit = actionButton(R.id.settings_pair_button, text(R.string.pair_and_connect)) {
+        val submit = actionButton(R.id.settings_pair_button, text(R.string.pair_and_connect), primary = true) {
             val origin = repository.connection.value?.origin
             if (origin == null || code.text.isNullOrBlank() || label.text.isNullOrBlank()) {
                 report(text(R.string.settings_pair_fields_required), error = true)
@@ -480,7 +486,13 @@ internal class SettingsServerControls(
         }
         form.addView(codeLayout)
         form.addView(labelLayout)
-        form.addView(submit)
+        // 12dp above, as the setup screen spaces the same button from the same fields.
+        form.addView(
+            submit,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = dp(12)
+            },
+        )
         form.addView(outcome)
         return PairFormView(form, code, label)
     }
@@ -730,8 +742,21 @@ internal class SettingsServerControls(
         setPadding(dp(16), dp(10), dp(16), dp(10))
     }
 
-    private fun actionButton(@IdRes id: Int, label: String, enabled: Boolean = true, action: () -> Unit) =
-        mutationGate.register(MaterialButton(activity, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+    /**
+     * [primary] draws the theme's filled button: the one the setup screen uses for "Pair and
+     * connect", so the same action looks the same in both places (B.4; S25 Ultra 2026-09-10).
+     */
+    private fun actionButton(
+        @IdRes id: Int,
+        label: String,
+        enabled: Boolean = true,
+        primary: Boolean = false,
+        action: () -> Unit,
+    ) =
+        mutationGate.register((
+            if (primary) MaterialButton(activity)
+            else MaterialButton(activity, null, com.google.android.material.R.attr.materialButtonOutlinedStyle)
+        ).apply {
             this.id = id
             text = label
             isAllCaps = false
