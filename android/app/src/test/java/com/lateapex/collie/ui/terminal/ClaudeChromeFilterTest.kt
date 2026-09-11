@@ -175,12 +175,13 @@ class ClaudeChromeFilterTest {
     fun filterReflowsBodySoftWrapsButNotStatusRows() {
         val body1 = "⏺ " + "a".repeat(28)
         val body2 = "  tail"
-        val box = listOf("╭" + "─".repeat(28) + "╮", "│ > " + " ".repeat(25) + "│", "╰" + "─".repeat(28) + "╯")
+        val rule = "─".repeat(30)
         val status = "  ~/repo main " + "·".repeat(16)
-        val input = (listOf(body1, body2) + box + listOf(status)).joinToString("\n")
-        val out = ClaudeChromeFilter().filter(input).toString().lines()
-        assertEquals("$body1 tail", out[0])
-        assertEquals(status, out.last())
+        val input = listOf(body1, body2, rule, "❯ ", rule, status).joinToString("\n")
+        val split = ClaudeChromeFilter().split(input)
+        assertEquals("$body1 tail", split.body.toString().lines()[0])
+        assertEquals(listOf(status.trim()), split.statusRows.map { it.toString() })
+        assertFalse(split.body.toString().contains("~/repo"))
     }
 
     @Test
