@@ -56,7 +56,8 @@
     <string name="worktree_branch_name">Branch name</string>
     <string name="worktree_create">Create worktree</string>
     <string name="worktree_repository_caption">In %1$s</string>
-    <string name="worktree_base_caption">New branch from %1$s</string>
+    <string name="worktree_base_caption">In %1$s</string>
+    <string name="worktree_base_unknown">Branches from the repository\'s current HEAD.</string>
     <string name="worktree_open_title">Open worktree?</string>
     <string name="action_open">Open</string>
     <string name="created_pane_missing">The bridge did not identify the created pane.</string>

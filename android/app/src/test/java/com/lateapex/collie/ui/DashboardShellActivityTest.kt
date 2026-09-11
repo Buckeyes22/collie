@@ -182,7 +182,7 @@ class DashboardShellActivityTest {
         val sheet = ShadowDialog.getLatestDialog() as CollieBottomSheetDialog
         assertNotNull(sheet.findViewById<EditText>(R.id.worktree_branch_input))
         assertEquals(
-            "New branch from /repos/collie-app",
+            "In /repos/collie-app\nBranches from the repository's current HEAD.",
             sheet.findViewById<TextView>(R.id.worktree_base_caption)!!.text.toString(),
         )
         assertEquals(1, ShadowDialog.getShownDialogs().size)

@@ -944,7 +944,7 @@ class MainActivity : AppCompatActivity() {
         fun baseCaption() = getString(
             R.string.worktree_base_caption,
             selected.repoRoot?.takeIf(String::isNotBlank) ?: selected.workspaceId,
-        )
+        ) + "\n" + getString(R.string.worktree_base_unknown)
         val baseCaption = TextView(this).apply {
             id = R.id.worktree_base_caption
             text = baseCaption()
