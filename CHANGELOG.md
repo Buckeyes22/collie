@@ -39,6 +39,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - Android: the worktree sheet lists a repository's unopened worktrees again, each opened only after an "Open worktree?" confirm.
 - Android: Ctrl C and Space sit at the head of the Keys drawer's second row again instead of behind More.
 - Android: Settings offers the pairing card again when the bridge no longer recognises the phone's stored token, as after `collie devices revoke`.
+- Android: the Space tab strip scrolls only to bring an off-screen selected tab into view, so tapping a visible tab no longer pushes All off the edge.
 
 ## [Unreleased]
 

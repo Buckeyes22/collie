@@ -211,7 +211,12 @@ class SpaceActivity : AppCompatActivity() {
             }
             addView(chip, stripParams(4))
             if (active) {
-                post { binding.tabsStrip.smoothScrollTo(chip.left - dp(24), 0) }
+                post {
+                    val strip = binding.tabsStrip
+                    if (TabStripScroll.needsScroll(chip.left, chip.right, strip.scrollX, strip.width)) {
+                        strip.smoothScrollTo(chip.left - dp(24), 0)
+                    }
+                }
             }
         }
         if (SpaceActionModel.canUse(state.writeAuthorized, state.mux, "createTab")) {
@@ -565,4 +570,14 @@ class SpaceActivity : AppCompatActivity() {
                 putExtra(EXTRA_TITLE, workspace.label)
             }
     }
+}
+
+/**
+ * B.1 brings the selected tab into view, but only when it is outside the viewport: a chip the
+ * operator just tapped is already visible, and scrolling then pushed "All", the way back, off
+ * the left edge (S25 Ultra, 2026-09-11).
+ */
+internal object TabStripScroll {
+    fun needsScroll(chipLeft: Int, chipRight: Int, scrollX: Int, viewportWidth: Int): Boolean =
+        chipLeft < scrollX || chipRight > scrollX + viewportWidth
 }

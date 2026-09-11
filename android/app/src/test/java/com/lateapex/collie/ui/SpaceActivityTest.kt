@@ -169,6 +169,16 @@ class SpaceActivityTest {
     }
 
     @Test
+    fun onlyAnOffScreenSelectedChipScrollsTheStrip() {
+        // Tapping a chip already on screen scrolled "All", the way back, off the left edge
+        // (S25 Ultra, 2026-09-11). Only a selection outside the viewport scrolls into view.
+        assertFalse(TabStripScroll.needsScroll(chipLeft = 392, chipRight = 756, scrollX = 0, viewportWidth = 1440))
+        assertTrue(TabStripScroll.needsScroll(chipLeft = 1500, chipRight = 1800, scrollX = 0, viewportWidth = 1440))
+        assertTrue(TabStripScroll.needsScroll(chipLeft = 100, chipRight = 300, scrollX = 200, viewportWidth = 1440))
+        assertTrue(TabStripScroll.needsScroll(chipLeft = 1300, chipRight = 1600, scrollX = 0, viewportWidth = 1440))
+    }
+
+    @Test
     fun overviewCardIsGoneAndSubtitleCarriesCounts() {
         val activity = launchSpace(workspaces = 2, tabs = 3, currentTab = 0)
         assertEquals("3 tabs · 3 panes", activity.findViewById<TextView>(R.id.space_subtitle).text.toString())
