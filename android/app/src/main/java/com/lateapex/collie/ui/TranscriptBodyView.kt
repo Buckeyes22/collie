@@ -61,16 +61,24 @@ class TranscriptBodyView @JvmOverloads constructor(
         }
         boundEntries = entries
         val atBottom = scroll.scrollY + scroll.height >= (scroll.getChildAt(0)?.height ?: 0) - dp(8)
-        entries.forEach { entry ->
-            if (turns[entry.uuid] != null) return@forEach
+        val heightBefore = turnsContainer.height
+        entries.forEachIndexed { index, entry ->
+            if (turns[entry.uuid] != null) return@forEachIndexed
             val turn = HistoryPresentation.turn(entry, agent, resources)
             val view = renderer!!.turnView(turn, showHeader = true)
             styleUserTurn(view, entry)
             turns[entry.uuid] = view
-            turnsContainer.addView(view)
+            // The "Load older" button is child 0; each turn sits at its entry's list position.
+            turnsContainer.addView(view, index + 1)
         }
-        if (atBottom) post {
-            scroll.scrollTo(0, (turnsContainer.height - scroll.height).coerceAtLeast(0))
+        post {
+            if (atBottom) {
+                scroll.scrollTo(0, (turnsContainer.height - scroll.height).coerceAtLeast(0))
+            } else {
+                // A prepend must not shove the rows the reader was looking at out from under them.
+                val grown = turnsContainer.height - heightBefore
+                if (grown > 0) scroll.scrollTo(0, scroll.scrollY + grown)
+            }
         }
     }
 
