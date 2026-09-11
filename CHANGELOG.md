@@ -26,10 +26,6 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 
 ## [Unreleased]
 
-- Android: "Load older" prepends older transcript turns above the ones on screen instead of below them.
-- Android: switching the pane body back to the terminal reserves the status row's height again, so the last mirror row is never covered.
-- Android: the worktree sheet says which repository it works in and that new branches come from the repository's current HEAD.
-- Android: the Space overview card row type is deleted rather than filtered out at the call site.
 - Android: the pane mirror joins Herdr's soft wraps so a paragraph wraps once on the phone.
 - Android: the Claude chrome filter reflows the transcript body and leaves status rows and tables untouched.
 - Android: the rows under Claude's input box render as one pinned status row instead of raw mono lines.
@@ -52,6 +48,10 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - Android: Settings leads with the pairing card when unpaired, drops the empty notifications card, and the Zen switch is gone (the row is always in the pane menu).
 - Android: Disconnect is a red filled button, this phone's row says Unpair, and the pairing field uses the setup screen's outlined style.
 - Android: Updates counts releases behind, shows the blocked reason in one line, makes Remind a button, and stops printing host shell remedies as code.
+- Android: "Load older" prepends older transcript turns above the ones on screen instead of below them.
+- Android: switching the pane body back to the terminal reserves the status row's height again, so the last mirror row is never covered.
+- Android: the worktree sheet says which repository it works in and that new branches come from the repository's current HEAD.
+- Android: the Space overview card row type is deleted rather than filtered out at the call site.
 - A native Kotlin Android client mirrors Collie's existing HTTP API without a WebView or browser shell.
 - Android CI builds and validates the native app with pinned Gradle tooling independent of npm's advisory and funding endpoints.
 - The web and native Android interfaces are English-only; language selectors, alternate catalogs,
@@ -64,8 +64,6 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - Android "Wrap lines" measures the mirror at the viewport width, so long lines wrap instead of clipping past the screen edge.
 - Android Type mode sends keystrokes unbound, so a keystroke echoed between sends is no longer refused as "screen changed" and dropped.
 - Android confirmation notices ("Reply sent.", "Typed into terminal.") clear themselves after four seconds instead of sitting over the mirror.
-- Web: the Claude mirror joins the grid's soft wraps so a paragraph wraps once on a phone.
-- Web: a phone-width Claude capture pins the soft-wrap reflow.
 - Android "Find in output" focuses its field and raises the keyboard once the pane-actions sheet has released the window.
 - Android Keys drawer sizes "Send keys" and "Clear" by their labels, so neither wraps nor clips at high densities.
 - Android reads "Read-only until Collie answers" while the server is unreachable, instead of "device not authorised".
@@ -83,9 +81,6 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - Android and web recognise an AskUserQuestion whose prompt is not phrased as a question ("Pick a colour:"), so its options render as buttons.
 - Android re-analyses a pane's dialog whenever its text changes, not only on Herdr's always-zero revision, so an answered dialog's buttons leave the screen without reopening the pane.
 - Android no longer offers to take over Claude's faint ghost suggestion as a terminal draft; only typed text in the box counts, as on the web.
-- Android: Settings leads with the pairing card when unpaired, drops the empty notifications card, and the Zen switch is gone (the row is always in the pane menu).
-- Android: Disconnect is a red filled button, this phone's row says Unpair, and the pairing field uses the setup screen's outlined style.
-- Android: Updates counts releases behind, shows the blocked reason in one line, makes Remind a button, and stops printing host shell remedies as code.
 
 ## [1.5.1] - 2026-09-04
 
@@ -166,11 +161,6 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - Android push notifications show a proper small badge glyph and a full-size Collie mark; the maskable home-screen tile was doing both jobs and rendered as a grey block on the notification ([177a8a9](https://github.com/AltanS/collie/commit/177a8a9))
 - Renaming a tab or pane from its sheet works on the phone again; the rename field's own keyboard used to fold the strip band and unmount the sheet mid-edit ([93373ce](https://github.com/AltanS/collie/commit/93373ce))
 - Dashboard rows lead with the pane title beside a small agent tile, with the space and tab as the address beneath; the big tile, the bold space name and its truncation are gone ([c442429](https://github.com/AltanS/collie/commit/c442429))
-- Android: the Space screen drops the sibling strip and overview card, and scrolls the current tab into view.
-- Android: dashboard and switcher rows lead with space › tab, demote the agent's auto-title, and truncate in the middle.
-- Android: the switcher marks the current pane, section toggles are chevrons, and every status dot and ring shares one palette.
-- Android: each Spaces row shows how many panes are working or need input.
-- Android: worktree creation is one sheet showing the repository and base branch.
 
 ## [1.1.0] - 2026-09-01
 
