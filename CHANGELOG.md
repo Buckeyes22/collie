@@ -27,6 +27,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 ## [Unreleased]
 
 - Android: "Load older" prepends older transcript turns above the ones on screen instead of below them.
+- Android: switching the pane body back to the terminal reserves the status row's height again, so the last mirror row is never covered.
 - Android: the pane mirror joins Herdr's soft wraps so a paragraph wraps once on the phone.
 - Android: the Claude chrome filter reflows the transcript body and leaves status rows and tables untouched.
 - Android: the rows under Claude's input box render as one pinned status row instead of raw mono lines.

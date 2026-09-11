@@ -3337,6 +3337,15 @@ class PaneActivity : AppCompatActivity() {
         if (showingTranscriptBody) {
             transcriptBody.bind(agentName, state.transcript, state.transcriptHasMore)
             terminalScroll.updatePadding(bottom = 0)
+        } else {
+            // The pinned statusline overlaps the mirror's last row unless the scroller reserves
+            // its height; the body-mode switch re-renders without a terminal commit, so the
+            // padding belongs here, next to the decision that shows or hides the row.
+            when {
+                !terminalStatusline.isVisible -> terminalScroll.updatePadding(bottom = 0)
+                terminalStatusline.height > 0 -> terminalScroll.updatePadding(bottom = terminalStatusline.height)
+                else -> terminalStatusline.doOnLayout { terminalScroll.updatePadding(bottom = it.height) }
+            }
         }
     }
 
@@ -3367,11 +3376,6 @@ class PaneActivity : AppCompatActivity() {
         terminalStatusline.text = renderedStatusRows.joinToString(" · ")
         terminalStatusline.isVisible = !showingTranscriptBody && renderedStatusRows.isNotEmpty() &&
             !displayPreferences.getBoolean(PREF_RAW, false)
-        if (terminalStatusline.isVisible) {
-            terminalStatusline.doOnLayout { terminalScroll.updatePadding(bottom = it.height) }
-        } else {
-            terminalScroll.updatePadding(bottom = 0)
-        }
         if (focusedBefore != null && !focusedBefore.hasFocus()) focusedBefore.requestFocus()
     }
 

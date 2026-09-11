@@ -1321,6 +1321,35 @@ class PaneActivityTest {
     }
 
     @Test
+    fun showTerminalRestoresTheStatuslinePaddingUnderTheMirror() {
+        val activity = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("pad:pane", agent = "claude")).create().start().resume().get()
+        val text = listOf("⏺ hi", "─".repeat(30), "❯ ", "─".repeat(30), "  Opus 5 · 12%").joinToString("\n")
+        render(
+            activity,
+            PaneUiState(
+                pane = PaneReadResponse("pad:pane", text, truncated = false, revision = 0),
+                loading = false,
+                transcript = listOf(TranscriptEntry("a", "2026-09-10T00:00:00Z", "assistant", listOf(TranscriptPart("text", text = "done")))),
+                transcriptAvailable = true,
+            ),
+        )
+        assertEquals(View.GONE, activity.findViewById<View>(R.id.terminal_scroll).visibility)
+        activity.findViewById<View>(R.id.body_mode_switch).performClick()
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+
+        val statusline = activity.findViewById<View>(R.id.terminal_statusline)
+        statusline.measure(
+            View.MeasureSpec.makeMeasureSpec(1000, View.MeasureSpec.AT_MOST),
+            View.MeasureSpec.makeMeasureSpec(100, View.MeasureSpec.AT_MOST),
+        )
+        statusline.layout(0, 0, statusline.measuredWidth, statusline.measuredHeight)
+        org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+
+        assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.terminal_scroll).visibility)
+        assertTrue(activity.findViewById<View>(R.id.terminal_scroll).paddingBottom > 0)
+    }
+
+    @Test
     fun dialogSwitchesTheWholeBodyToTheMirror() {
         val activity = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("body:dialog", agent = "claude")).create().start().resume().get()
         val fixture = File("../../web/src/fixtures/panes/claude--select-ask-no-question-mark.txt").readText()
