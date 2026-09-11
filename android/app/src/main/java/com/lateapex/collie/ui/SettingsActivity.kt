@@ -73,7 +73,7 @@ class SettingsActivity : AppCompatActivity() {
             initialPairCode = entry.pairCode,
             focusDevices = entry.focusDevices,
             onRevealDevices = ::revealDevices,
-        ).also { it.bind(binding.settingsServerControls) }
+        ).also { it.bind(binding.settingsServerControls, binding.settingsPairingHost) }
         binding.root.applyAppTypeface()
         @Suppress("DEPRECATION")
         val vibrator = getSystemService(VIBRATOR_SERVICE) as? Vibrator

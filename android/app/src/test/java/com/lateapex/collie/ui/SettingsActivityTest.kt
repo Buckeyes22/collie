@@ -118,6 +118,7 @@ class SettingsActivityTest {
 
         assertEquals(
             listOf(
+                R.id.settings_pairing_host,
                 R.id.settings_theme_card,
                 R.id.settings_local_preferences,
                 R.id.settings_haptics_card,
@@ -246,8 +247,12 @@ class SettingsActivityTest {
     @Test
     fun unpairedSettingsLeadsWithThePairingCard() {
         val activity = launchSettings(paired = false)
-        val controls = activity.findViewById<LinearLayout>(R.id.settings_server_controls)
-        assertEquals(R.id.settings_parity_pairing_card, controls.getChildAt(0).id)
+        // A.9: the pairing card is the first card on the screen, above Appearance.
+        val host = activity.findViewById<LinearLayout>(R.id.settings_pairing_host)
+        assertEquals(R.id.settings_parity_pairing_card, host.getChildAt(0).id)
+        val page = host.parent as LinearLayout
+        assertEquals(0, page.indexOfChild(host))
+        assertEquals("S25U-native", activity.findViewById<android.widget.EditText>(R.id.settings_pair_label).text.toString())
         assertNull(activity.findViewById<View?>(R.id.settings_parity_push_card))
     }
 

@@ -16,8 +16,16 @@ import { lineText } from "./chrome";
 const structural = /^\s*(?:[│┃|┌└├┬┴┼─━═]|```|[•\-*☐☒⎿]\s|\d+\.\s)/;
 
 /** The grid width of a read: its longest visible row, trailing padding ignored. */
+/**
+ * The width prose wraps at. Claude draws rules and box borders across the whole terminal but
+ * wraps prose a few columns short of that, so a width taken from every row never matched a
+ * prose row and nothing joined (S25 Ultra, 2026-09-10). Structural rows are excluded.
+ */
 export function maxWidth(lines: StyledLine[]): number {
-  return lines.reduce((w, l) => Math.max(w, lineText(l).trimEnd().length), 0);
+  return lines.reduce((w, l) => {
+    const text = lineText(l);
+    return structural.test(text) ? w : Math.max(w, text.trimEnd().length);
+  }, 0);
 }
 
 function canJoin(current: string, next: string, width: number): boolean {

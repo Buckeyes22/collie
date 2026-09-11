@@ -27,15 +27,6 @@ import org.robolectric.Shadows.shadowOf
 @RunWith(RobolectricTestRunner::class)
 class SpaceActivityTest {
     @Test
-    fun spaceFooterNamesTheNativeBuild() {
-        val context = ApplicationProvider.getApplicationContext<Context>()
-        val holder = SpaceFooterAdapter().onCreateViewHolder(FrameLayout(context), 0)
-
-        val stamp = holder.itemView.findViewById<TextView>(R.id.space_build_stamp)
-        assertTrue(stamp.text.toString().startsWith("Android app build "))
-    }
-
-    @Test
     fun intentCarriesTheCompleteScopedWorkspaceIdentity() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val workspace = WorkspaceSummary(

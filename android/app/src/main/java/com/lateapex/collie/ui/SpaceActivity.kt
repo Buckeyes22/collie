@@ -27,7 +27,6 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.recyclerview.widget.LinearLayoutManager
-import androidx.recyclerview.widget.ConcatAdapter
 import com.google.android.material.button.MaterialButton
 import com.lateapex.collie.R
 import com.lateapex.collie.databinding.ActivitySpaceBinding
@@ -71,7 +70,6 @@ class SpaceActivity : AppCompatActivity() {
     private lateinit var scope: Scope
     private lateinit var workspaceId: String
     private val adapter = SpaceAdapter(::openPane)
-    private val footerAdapter = SpaceFooterAdapter()
     private var selectedTabId: String? = null
     private var creatingTab = false
     private var creatingSpace = false
@@ -98,7 +96,7 @@ class SpaceActivity : AppCompatActivity() {
         binding.backButton.setOnClickListener { returnToDashboard() }
         binding.settingsButton.setOnClickListener { startActivity(Intent(this, SettingsActivity::class.java)) }
         binding.spaceList.layoutManager = LinearLayoutManager(this)
-        binding.spaceList.adapter = ConcatAdapter(adapter, footerAdapter)
+        binding.spaceList.adapter = adapter
         binding.swipeRefresh.setOnRefreshListener { viewModel.refresh() }
 
         viewModel = ViewModelProvider(

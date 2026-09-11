@@ -30,6 +30,14 @@ class SoftWrapReflowTest {
     }
 
     @Test
+    fun gridWidthIgnoresFullWidthRulesAndJoinsProseWrappedShortOfThem() {
+        val rule = "─".repeat(60)
+        val a = "● " + "p".repeat(54); val b = "  tail"
+        assertEquals(56, SoftWrapReflow.gridWidth(listOf(rule, a, b)))
+        assertEquals(listOf(rule, "$a tail"), SoftWrapReflow.reflow(listOf(rule, a, b), SoftWrapReflow.gridWidth(listOf(rule, a, b))))
+    }
+
+    @Test
     fun gridWidthIsTheLongestVisibleLine() {
         assertEquals(12, SoftWrapReflow.gridWidth(listOf("ab", "twelve chars", "")))
     }

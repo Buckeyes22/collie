@@ -124,9 +124,15 @@ internal class SettingsServerControls(
         }
     }
 
-    fun bind(parent: LinearLayout) {
+    /**
+     * [pairingHost] sits above every other card: an unpaired phone's next step is the code
+     * field, not a scroll past Appearance, Text size and Haptics (A.9; S25 Ultra 2026-09-10).
+     */
+    fun bind(parent: LinearLayout, pairingHost: LinearLayout = parent) {
         this.parent = parent
         parent.removeAllViews()
+        if (pairingHost !== parent) pairingHost.removeAllViews()
+        if (pairLabelDraft.isBlank()) pairLabelDraft = repository.connection.value?.label.orEmpty()
         var pairFormForEntry: PairFormView? = null
         if (unpaired()) {
             val form = pairForm().also { pairFormView = it; pairFormForEntry = it }
@@ -140,7 +146,7 @@ internal class SettingsServerControls(
                 it.addView(divider())
                 it.addView(form.root)
             }
-            parent.addView(pairingCard)
+            pairingHost.addView(pairingCard)
             if (devicesRevealPending) {
                 onRevealDevices(pairingCard!!, if (pairNameFocusPending) form.label else pairingCard!!)
                 devicesRevealPending = false

@@ -9,7 +9,14 @@ package com.lateapex.collie.ui.terminal
 object SoftWrapReflow {
     private val structural = Regex("^\\s*(?:[│┃|┌└├┬┴┼─━═╭╮╰╯]|```|[•\\-*☐☒⎿]\\s|\\d+\\.\\s)")
 
-    fun gridWidth(lines: List<String>): Int = lines.maxOfOrNull { it.trimEnd().length } ?: 0
+    /**
+     * The width prose wraps at. Claude draws its rules and box borders across the whole
+     * terminal but wraps prose a few columns short of that, so a width taken from every row
+     * never matched a prose row and nothing joined (S25 Ultra, 2026-09-10). Structural rows
+     * are excluded; the longest prose row is the wrap width.
+     */
+    fun gridWidth(lines: List<String>): Int =
+        lines.filter { !structural.containsMatchIn(it) }.maxOfOrNull { it.trimEnd().length } ?: 0
 
     fun reflow(lines: List<String>, gridWidth: Int): List<String> =
         groups(lines, gridWidth).map { range -> join(lines, range) }

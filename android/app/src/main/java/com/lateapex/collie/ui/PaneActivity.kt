@@ -858,6 +858,8 @@ class PaneActivity : AppCompatActivity() {
             val button = outlinedButton(label).apply {
                 minWidth = 0
                 isCheckable = true
+                maxLines = 1
+                isSingleLine = true
                 strokeWidth = dp(2)
                 strokeColor = ColorStateList.valueOf(getColor(R.color.collie_accent))
                 contentDescription = getString(R.string.pane_key_modifier_description, label)
@@ -1206,7 +1208,7 @@ class PaneActivity : AppCompatActivity() {
                 PaneModifierMode.ONCE -> getString(R.string.pane_key_modifier_once, getString(modifier.labelRes))
                 PaneModifierMode.LOCKED -> getString(R.string.pane_key_modifier_lock, getString(modifier.labelRes))
             }
-            setControlState(child, mode != PaneModifierMode.OFF)
+            setModifierState(child, mode != PaneModifierMode.OFF)
             child.isEnabled = terminalWritable && currentState.pane != null && !currentState.sending
         }
         if (hadBaseFocus) keyBaseInput?.requestFocus()
@@ -2253,6 +2255,21 @@ class PaneActivity : AppCompatActivity() {
             renderComposerMediaControls()
             renderPendingSent()
         }
+    }
+
+    /**
+     * A sticky modifier is a button whether or not it is armed: the idle state keeps the
+     * outline (A.4: "⇧ Shift Ctrl Alt" read as plain text until armed). [setControlState]
+     * swaps the background drawable, which wiped the MaterialButton stroke.
+     */
+    private fun setModifierState(button: MaterialButton, armed: Boolean) {
+        button.isChecked = armed
+        button.strokeWidth = dp(if (armed) 2 else 1)
+        button.strokeColor = ColorStateList.valueOf(getColor(if (armed) R.color.collie_accent else R.color.collie_muted))
+        button.backgroundTintList = ColorStateList.valueOf(
+            if (armed) androidx.core.graphics.ColorUtils.setAlphaComponent(getColor(R.color.collie_accent), 0x14) else 0,
+        )
+        button.setTextColor(getColor(if (armed) R.color.collie_accent else R.color.collie_foreground))
     }
 
     private fun setControlState(button: View, selected: Boolean) {
@@ -3565,10 +3582,10 @@ class PaneActivity : AppCompatActivity() {
     ) {
         if (!canMutatePane("renamePane")) return
         val pane = currentPaneSummary()
-        val shownName = pane?.let {
-            it.paneLabel?.takeIf(String::isNotBlank)
-                ?: PaneHeaderPresenter.present(it, 1).name
-        }.orEmpty()
+        // The pane's own name: the operator's label, else the agent's title. Never the
+        // "space › tab" composite the header shows for an unlabelled pane, which Save would
+        // otherwise persist as the label (S25 Ultra, 2026-09-10).
+        val shownName = pane?.let { dashboardPaneText(it).let { text -> if (it.paneLabel.isNullOrBlank()) text.secondary else text.primary } }.orEmpty()
         dialog.dismiss()
         val sheet = CollieBottomSheetDialog(this, getString(R.string.pane_rename_title))
         val field = EditText(this).apply {

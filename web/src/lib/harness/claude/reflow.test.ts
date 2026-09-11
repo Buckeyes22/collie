@@ -25,6 +25,12 @@ describe("reflowSoftWraps", () => {
     const out = reflowSoftWraps([a, line("  tail")], 40);
     expect(out[0]!.segments[0]!.bold).toBe(true);
   });
+  it("maxWidth ignores full-width rules so prose wrapped short of them still joins", () => {
+    const rule = line("─".repeat(60));
+    const a = line("● " + "p".repeat(54));
+    expect(maxWidth([rule, a, line("  tail")])).toBe(56);
+    expect(reflowSoftWraps([rule, a, line("  tail")]).map(text)).toEqual(["─".repeat(60), "● " + "p".repeat(54) + " tail"]);
+  });
   it("maxWidth is the longest visible row", () => {
     expect(maxWidth([line("ab"), line("twelve chars")])).toBe(12);
   });

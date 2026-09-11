@@ -26,6 +26,10 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - Android: the mirror no longer crashes on grid rows with trailing padding; reflow groups rows by index, not text.
 - Android: the pane body mode row draws above both bodies so its switch takes the tap, and its label names the body on screen.
 - Android: a pane whose agent changes while open (a shell that starts claude) binds dialogs and replies with the new agent instead of refusing every tap.
+- Android and web: the mirror reflow takes its wrap width from prose rows, not full-width rules, so live Claude output actually joins.
+- Android: Keys modifiers keep a visible outline when idle and Shift fits on one line; Rename prefills the pane's own title, never the space › tab composite.
+- Android: the Space list drops the build stamp footer and a card's meta line no longer repeats its title; dashboard meta truncates in the middle.
+- Android: the pairing card is the first card in Settings and its label field is prefilled from the connection.
 
 ## [Unreleased]
 
