@@ -729,6 +729,41 @@ class DashboardModelTest {
         checkedAt = 1,
     )
 
+    @Test
+    fun paneNamingKeepsTheLabelFirstAndDemotesSessionThenLiveTitleToTheMetaLine() {
+        // Restored from the pre-plan suite and moved to the A.1 rule: an operator label stays the
+        // title; otherwise the row leads with space › tab and the agent's own name follows below.
+        val base = pane("p", AgentStatus.IDLE).copy(
+            workspaceLabel = "Collie",
+            tabLabel = "android",
+            cwd = "/home/chris/git/collie",
+            terminalTitle = "live title",
+            sessionName = "session name",
+            paneLabel = "pane label",
+        )
+
+        assertEquals("pane label", DashboardModel.paneTitle(base))
+        assertEquals("Collie › android", DashboardModel.paneTitle(base.copy(paneLabel = null)))
+        assertEquals("session name", DashboardModel.paneMetadata(base.copy(paneLabel = null)))
+        assertEquals("live title", DashboardModel.paneMetadata(base.copy(paneLabel = null, sessionName = null)))
+        assertEquals("", DashboardModel.paneMetadata(base.copy(paneLabel = null, sessionName = null, terminalTitle = null)))
+    }
+
+    @Test
+    fun paneNamingNeverShowsAStaleTerminalTitle() {
+        val pane = pane("p", AgentStatus.IDLE).copy(
+            workspaceLabel = "collie",
+            tabLabel = "android",
+            terminalTitle = "old command",
+            terminalTitleStale = true,
+            host = "attic",
+            session = "review",
+        )
+
+        assertEquals("collie › android", DashboardModel.paneTitle(pane))
+        assertEquals("", DashboardModel.paneMetadata(pane))
+    }
+
     private fun pane(
         id: String,
         status: AgentStatus,

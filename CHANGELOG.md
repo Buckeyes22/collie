@@ -35,6 +35,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - Android and web: the mirror reflow joins a row when the next word would not have fit on it, judged per row, so word-wrapped Claude prose joins and a joined paragraph no longer swallows the rows after it.
 - Android: the transcript body holds the reader's place by anchoring on the first visible turn, so new turns arriving below no longer push the view down and Load older keeps what was on screen.
 - Android: the Settings pairing card uses the setup screen's filled "Pair and connect" button and spacing, and keeps the card gap above Appearance.
+- Android: a Space card's meta line no longer shows a terminal title left behind by a program that has exited.
 
 ## [Unreleased]
 

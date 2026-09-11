@@ -69,10 +69,13 @@ internal fun dashboardPaneText(pane: PaneSummary): DashboardPaneText {
 
 internal fun spacePaneText(pane: PaneSummary): SpacePaneText {
     val primary = paneDisplayName(pane)
-    // The card's metadata line carries where the pane sits (tab) and what it last showed
-    // (the final non-blank mirror line the wire reports as terminalTitle), unless that is
-    // already the title above it (S25 Ultra, 2026-09-10: "3 · User preference question").
-    val shown = pane.terminalTitle?.takeIf { it.isNotBlank() && it != primary && displayAgentTitle(pane.agent, it) != primary }
+    // The card's metadata line carries where the pane sits (tab) and the program's own window
+    // title, unless that title is stale (the program that set it has gone, so it names nothing
+    // running) or is already the title above it (S25 Ultra, 2026-09-10: "3 · User preference
+    // question").
+    val shown = pane.terminalTitle?.takeIf {
+        it.isNotBlank() && pane.terminalTitleStale != true && it != primary && displayAgentTitle(pane.agent, it) != primary
+    }
     return SpacePaneText(
         primary = primary,
         secondary = listOfNotNull(pane.tabLabel?.takeIf(String::isNotBlank), shown).joinToString(" · ").ifEmpty { null },

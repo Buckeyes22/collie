@@ -136,19 +136,6 @@ class SpaceModelTest {
     }
 
     @Test
-    fun paneTextInSpaceFallsBackToAgentOrShellAndStillShowsTheMirrorLine() {
-        val agent = pane("p1", "t1", "desk", "work").copy(
-            terminalTitle = "old title",
-            terminalTitleStale = true,
-            cwd = "",
-        )
-        val shell = agent.copy(agent = "shell", kind = "shell")
-
-        assertEquals(SpacePaneText("codex", "old title"), spacePaneText(agent))
-        assertEquals(SpacePaneText("shell", "old title"), spacePaneText(shell))
-    }
-
-    @Test
     fun shortCwdCollapsesLinuxMacAndFedoraHomePrefixesByWholeSegment() {
         assertEquals("~/git/collie", shortCwd("/home/chris/git/collie"))
         assertEquals("~/git/collie", shortCwd("/Users/chris/git/collie"))
@@ -160,6 +147,38 @@ class SpaceModelTest {
 
     private fun tab(id: String, number: Int, host: String) =
         TabSummary(id, "w1", number, "Tab $number", number == 1, 1, host)
+
+    @Test
+    fun paneTextInSpaceUsesCanonicalNameAndSaysWhereThePaneSits() {
+        // Restored from the pre-plan suite: the title precedence is unchanged; the meta line now
+        // carries the tab and the live title instead of the shortened cwd (A.2).
+        val named = pane("p1", "t1", "desk", "work").copy(
+            tabLabel = "android",
+            paneLabel = "hand named",
+            sessionName = "session name",
+            terminalTitle = "live title",
+        )
+
+        assertEquals("hand named", spacePaneText(named).primary)
+        assertEquals("android · live title", spacePaneText(named).secondary)
+        assertEquals("session name", spacePaneText(named.copy(paneLabel = null)).primary)
+        assertEquals("live title", spacePaneText(named.copy(paneLabel = null, sessionName = null)).primary)
+        assertEquals("android", spacePaneText(named.copy(paneLabel = null, sessionName = null)).secondary)
+    }
+
+    @Test
+    fun paneTextInSpaceFallsBackToAgentOrShellAndIgnoresStaleTitles() {
+        val agent = pane("p1", "t1", "desk", "work").copy(
+            tabLabel = "android",
+            terminalTitle = "old title",
+            terminalTitleStale = true,
+            cwd = "",
+        )
+        val shell = agent.copy(agent = "shell", kind = "shell")
+
+        assertEquals(SpacePaneText("codex", "android"), spacePaneText(agent))
+        assertEquals(SpacePaneText("shell", "android"), spacePaneText(shell))
+    }
 
     private fun pane(id: String, tabId: String, host: String, session: String) = PaneSummary(
         paneId = id,
