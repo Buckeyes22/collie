@@ -29,6 +29,7 @@ class TranscriptBodyView @JvmOverloads constructor(
     private val turnsContainer = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
     private val loadOlder = MaterialButton(context).apply {
         id = R.id.transcript_load_older
+        revealOnFocusHint = false
         text = context.getString(R.string.pane_transcript_load_older)
         transformationMethod = null
         isVisible = false
@@ -71,7 +72,7 @@ class TranscriptBodyView @JvmOverloads constructor(
         entries.forEachIndexed { index, entry ->
             if (turns[entry.uuid] != null) return@forEachIndexed
             val turn = HistoryPresentation.turn(entry, agent, resources)
-            val view = renderer!!.turnView(turn, showHeader = true)
+            val view = renderer!!.turnView(turn, showHeader = true).noRevealOnFocus()
             styleUserTurn(view, entry)
             turns[entry.uuid] = view
             // The "Load older" button is child 0; each turn sits at its entry's list position.
@@ -98,6 +99,18 @@ class TranscriptBodyView @JvmOverloads constructor(
         return null
     }
 
+    /**
+     * Turn text is selectable, so any turn can take focus. When the body switches from the mirror,
+     * Android hands focus to the first focusable turn, the oldest, and a ScrollView reveals the
+     * focused view: opening a busy agent's pane landed at the top of the session instead of the
+     * newest turn (S25 Ultra, 2026-09-11). Focus never moves the reader here; bind() does.
+     */
+    private fun View.noRevealOnFocus(): View {
+        revealOnFocusHint = false
+        if (this is ViewGroup) for (index in 0 until childCount) getChildAt(index).noRevealOnFocus()
+        return this
+    }
+
     /** B.2: the operator's own message reads as a card in the pane body. */
     private fun styleUserTurn(view: View, entry: TranscriptEntry) {
         if (entry.role != "user") return
@@ -112,6 +125,7 @@ class TranscriptBodyView @JvmOverloads constructor(
         val entry = boundEntries.firstOrNull { it.uuid == uuid } ?: return
         val index = turns.keys.indexOf(uuid) + 1
         val rebuilt = renderer!!.turnView(HistoryPresentation.turn(entry, boundAgent.orEmpty(), resources), showHeader = true)
+            .noRevealOnFocus()
         turns[uuid] = rebuilt
         turnsContainer.removeViewAt(index)
         turnsContainer.addView(rebuilt, index)

@@ -516,6 +516,8 @@ class PaneActivity : AppCompatActivity() {
         switcherHandle.setOnClickListener { showPaneSwitcher() }
         bindSwitcherPull()
         bindTerminalTap(terminalText)
+        // Focus must never scroll the mirror; its own follow logic places the reader.
+        terminalText.revealOnFocusHint = false
         mapOf(
             escapeButton to "Escape",
             tabButton to "Tab",
@@ -3536,6 +3538,8 @@ class PaneActivity : AppCompatActivity() {
         textSize = nativePreferences.terminalFontSize.toFloat()
         setTextColor(if (isLightTheme()) LIGHT_MIRROR_FOREGROUND else DARK_MIRROR_FOREGROUND)
         setTextIsSelectable(true)
+        // Focus must never scroll the mirror; its own follow logic places the reader.
+        revealOnFocusHint = false
         movementMethod = LinkMovementMethod.getInstance()
         highlightColor = Color.TRANSPARENT
         this.text = text

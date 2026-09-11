@@ -9,6 +9,7 @@ import com.lateapex.collie.network.TranscriptEntry
 import com.lateapex.collie.network.TranscriptPart
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -87,6 +88,26 @@ class TranscriptBodyViewTest {
         layout(view)
 
         assertEquals(offset, anchor.top - scroll.scrollY)
+    }
+
+    @Test
+    fun focusLandingOnTheOldestTurnDoesNotScrollToTheTop() {
+        // Opening a busy agent's pane: the mirror shows first and holds focus, then the
+        // transcript replaces it and Android hands focus to the first selectable turn, the
+        // oldest. The scroll view revealed it and the reader landed at the top of the session
+        // (S25 Ultra, 2026-09-11).
+        val view = laidOutBody()
+        view.bind("claude", (0 until 60).map(::entry), hasMore = true)
+        layout(view)
+        val scroll = view.getChildAt(0) as android.widget.ScrollView
+        val bottom = scroll.scrollY
+        assertTrue("starts at the bottom", bottom > 0)
+        val oldest = generateSequence(listOf<View>(view.turnViewForTest("e0")!!)) { level ->
+            level.filterIsInstance<ViewGroup>().flatMap { g -> (0 until g.childCount).map(g::getChildAt) }.takeIf { it.isNotEmpty() }
+        }.flatten().filterIsInstance<android.widget.TextView>().first { it.isTextSelectable }
+        oldest.requestFocus()
+        layout(view)
+        assertEquals(bottom, scroll.scrollY)
     }
 
     /** Hosted in a real window so posted work runs after layout, in the order a phone runs it. */
