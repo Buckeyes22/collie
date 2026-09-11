@@ -201,4 +201,21 @@ class ClaudeChromeFilterTest {
         assertEquals(body, split.body.toString())
         assertEquals(listOf(status1.trim(), status2.trim()), split.statusRows.map { it.toString() })
     }
+
+    @Test
+    fun reflowSurvivesTrailingGridPaddingOnUnjoinedRows() {
+        // Herdr pads every grid row to the terminal width. Before 2026-09-10 the filter
+        // re-derived the join groups by text and walked off the end of the row list.
+        val width = 30
+        val rows = listOf(
+            "⏺ short row" + " ".repeat(19),
+            "⏺ " + "a".repeat(28),
+            "  tail" + " ".repeat(24),
+            "plain" + " ".repeat(25),
+        )
+        val out = ClaudeChromeFilter().filter(rows.joinToString("\n")).toString().lines()
+        assertEquals(3, out.size)
+        assertEquals("⏺ " + "a".repeat(28) + " tail", out[1])
+        assertEquals("plain" + " ".repeat(25), out[2])
+    }
 }

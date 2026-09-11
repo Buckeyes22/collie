@@ -11,9 +11,18 @@ object SoftWrapReflow {
 
     fun gridWidth(lines: List<String>): Int = lines.maxOfOrNull { it.trimEnd().length } ?: 0
 
-    fun reflow(lines: List<String>, gridWidth: Int): List<String> {
-        if (gridWidth <= 0 || lines.size < 2) return lines
-        val out = ArrayList<String>(lines.size)
+    fun reflow(lines: List<String>, gridWidth: Int): List<String> =
+        groups(lines, gridWidth).map { range -> join(lines, range) }
+
+    /**
+     * The source rows each reflowed row was built from, as inclusive index ranges in order.
+     * A caller that carries spans per row groups by these instead of re-deriving the join
+     * from the text: an unjoined row keeps its trailing grid padding while a joined one is
+     * trimmed, so text comparison cannot tell them apart (S25 Ultra crash, 2026-09-10).
+     */
+    fun groups(lines: List<String>, gridWidth: Int): List<IntRange> {
+        if (gridWidth <= 0 || lines.size < 2) return lines.indices.map { it..it }
+        val out = ArrayList<IntRange>(lines.size)
         var index = 0
         while (index < lines.size) {
             var current = lines[index]
@@ -22,10 +31,15 @@ object SoftWrapReflow {
                 current = current.trimEnd() + " " + lines[next].trim()
                 next++
             }
-            out.add(current)
+            out.add(index until next)
             index = next
         }
         return out
+    }
+
+    private fun join(lines: List<String>, range: IntRange): String {
+        if (range.first == range.last) return lines[range.first]
+        return range.joinToString(" ") { if (it == range.first) lines[it].trimEnd() else lines[it].trim() }
     }
 
     private fun canJoin(current: String, next: String, gridWidth: Int): Boolean {

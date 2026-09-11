@@ -23,6 +23,7 @@ reach: `bin/collie update --major`. Fresh install:
 `curl -fsSL https://colliepwa.dev/install.sh | sh`. Neither upgrade path assumes a `collie` on your
 PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgrading from 0.x to
 1.0*.
+- Android: the mirror no longer crashes on grid rows with trailing padding; reflow groups rows by index, not text.
 
 ## [Unreleased]
 

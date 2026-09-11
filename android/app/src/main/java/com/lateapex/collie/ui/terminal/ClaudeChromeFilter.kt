@@ -48,28 +48,15 @@ class ClaudeChromeFilter {
      */
     private fun reflowLines(body: List<Line>, width: Int, enabled: Boolean): List<Line> {
         if (!enabled) return body
-        val texts = SoftWrapReflow.reflow(body.map { it.text }, width)
-        if (texts.size == body.size) return body
-        val out = ArrayList<Line>(texts.size)
-        var source = 0
-        for (text in texts) {
-            val first = body[source]
-            var consumed = 1
-            var acc = first.text.trimEnd()
-            while (acc != text && source + consumed < body.size) {
-                acc = acc + " " + body[source + consumed].text.trim(); consumed++
-            }
-            out.add(
-                Line(
-                    first.start,
-                    body[source + consumed - 1].end,
-                    text,
-                    body.subList(source, source + consumed).toList(),
-                ),
-            )
-            source += consumed
+        val texts = body.map { it.text }
+        val groups = SoftWrapReflow.groups(texts, width)
+        if (groups.size == body.size) return body
+        val joined = SoftWrapReflow.reflow(texts, width)
+        return groups.mapIndexed { index, range ->
+            val sources = body.subList(range.first, range.last + 1)
+            if (sources.size == 1) sources[0]
+            else Line(sources.first().start, sources.last().end, joined[index], sources.toList())
         }
-        return out
     }
 
     /**
