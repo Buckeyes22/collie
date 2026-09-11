@@ -307,6 +307,19 @@ class SettingsActivityTest {
         assertNotNull(activity.findViewById<com.google.android.material.textfield.TextInputLayout>(R.id.settings_pair_input_layout))
     }
 
+    @Test
+    fun aTokenTheBridgeNoLongerRecognisesStillOffersThePairingCard() {
+        // After `collie devices revoke` the phone still holds its old token. The bridge's device
+        // list has no current device, and the pre-plan Settings offered the form then; the
+        // pairing-first rework keyed only on the local token (NativeInteractionTest caught it).
+        val activity = launchSettings(paired = true, devices = listOf(device("s24u", current = false)))
+        val card = activity.findViewById<View>(R.id.settings_parity_pairing_card)
+        assertNotNull(card)
+        assertEquals(View.VISIBLE, card.visibility)
+        val host = activity.findViewById<LinearLayout>(R.id.settings_pairing_host)
+        assertEquals(R.id.settings_parity_pairing_card, host.getChildAt(0).id)
+    }
+
     private fun launchSettings(paired: Boolean, devices: List<com.lateapex.collie.network.DeviceRecord> = emptyList()): SettingsActivity {
         seedConnection(paired)
         val activity = Robolectric.buildActivity(SettingsActivity::class.java).create().get()

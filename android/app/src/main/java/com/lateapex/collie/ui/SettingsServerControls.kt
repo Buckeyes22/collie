@@ -100,6 +100,8 @@ internal class SettingsServerControls(
     private lateinit var devicesCard: LinearLayout
     private lateinit var devicesDescription: TextView
     private var pairingCard: LinearLayout? = null
+    private var pairingHost: LinearLayout? = null
+    private var bridgeSaysUnpaired = false
     private lateinit var notifyCard: LinearLayout
     private lateinit var snoozeCard: LinearLayout
     private lateinit var updateSummary: TextView
@@ -133,28 +135,13 @@ internal class SettingsServerControls(
         parent.removeAllViews()
         if (pairingHost !== parent) pairingHost.removeAllViews()
         if (pairLabelDraft.isBlank()) pairLabelDraft = repository.connection.value?.label.orEmpty()
+        this.pairingHost = pairingHost
+        pairingCard = null
         var pairFormForEntry: PairFormView? = null
-        if (unpaired()) {
-            val form = pairForm().also { pairFormView = it; pairFormForEntry = it }
-            pairingCard = card().also {
-                it.id = R.id.settings_parity_pairing_card
-                it.addView(header(
-                    text(R.string.settings_pair_phone),
-                    text(R.string.settings_phone_not_paired),
-                    R.drawable.ic_history_user,
-                ))
-                it.addView(divider())
-                it.addView(form.root)
-            }
-            // The host sits above Appearance, which carries no top margin of its own.
-            pairingHost.addView(
-                pairingCard,
-                LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                    bottomMargin = activity.resources.getDimensionPixelSize(R.dimen.collie_card_gap)
-                },
-            )
+        if (needsPairing()) {
+            pairFormForEntry = ensurePairingCard()
             if (devicesRevealPending) {
-                onRevealDevices(pairingCard!!, if (pairNameFocusPending) form.label else pairingCard!!)
+                onRevealDevices(pairingCard!!, if (pairNameFocusPending) pairFormForEntry.label else pairingCard!!)
                 devicesRevealPending = false
                 pairNameFocusPending = false
             }
@@ -375,8 +362,42 @@ internal class SettingsServerControls(
         card.addView(actions)
     }
 
+    /**
+     * The phone needs pairing when it holds no token, or when the bridge's device list names no
+     * current device for it: a token revoked from the CLI is still stored on the phone, and the
+     * pre-plan Settings offered the form in that case too (NativeInteractionTest, 2026-09-10).
+     */
+    private fun needsPairing(): Boolean = unpaired() || bridgeSaysUnpaired
+
+    /** Builds the pairing card at the top of the page the first time it is needed. */
+    private fun ensurePairingCard(): PairFormView {
+        pairingCard?.let { return pairFormView ?: pairForm().also { pairFormView = it } }
+        val form = pairForm().also { pairFormView = it }
+        pairingCard = card().also {
+            it.id = R.id.settings_parity_pairing_card
+            it.addView(header(
+                text(R.string.settings_pair_phone),
+                text(R.string.settings_phone_not_paired),
+                R.drawable.ic_history_user,
+            ))
+            it.addView(divider())
+            it.addView(form.root)
+        }
+        // The host sits above Appearance, which carries no top margin of its own.
+        (pairingHost ?: parent).addView(
+            pairingCard,
+            0,
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                bottomMargin = activity.resources.getDimensionPixelSize(R.dimen.collie_card_gap)
+            },
+        )
+        return form
+    }
+
     internal fun renderDevices(result: ApiResult<DevicesResponse>, writesAllowed: Boolean) {
-        pairingCard?.isVisible = unpaired()
+        if (result is ApiResult.Success) bridgeSaysUnpaired = result.value.enforced && result.value.current == null
+        if (needsPairing()) ensurePairingCard()
+        pairingCard?.isVisible = needsPairing()
         while (devicesCard.childCount > 1) devicesCard.removeViewAt(devicesCard.childCount - 1)
         devicesCard.addView(divider())
         val list = LinearLayout(activity).apply {

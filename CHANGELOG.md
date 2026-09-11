@@ -38,6 +38,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - Android: a Space card's meta line no longer shows a terminal title left behind by a program that has exited.
 - Android: the worktree sheet lists a repository's unopened worktrees again, each opened only after an "Open worktree?" confirm.
 - Android: Ctrl C and Space sit at the head of the Keys drawer's second row again instead of behind More.
+- Android: Settings offers the pairing card again when the bridge no longer recognises the phone's stored token, as after `collie devices revoke`.
 
 ## [Unreleased]
 
