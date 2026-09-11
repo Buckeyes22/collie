@@ -14,4 +14,12 @@ class PaneBodyModeTest {
     @Test fun unavailableHistoryIsMirror() = assertEquals(PaneBodyMode(PaneBody.MIRROR, PaneBodyReason.NO_JOURNAL), PaneBodyDecision.decide(null, false, false, "codex"))
     @Test fun pendingIsMirror() = assertEquals(PaneBodyMode(PaneBody.MIRROR, PaneBodyReason.PENDING), PaneBodyDecision.decide(null, null, false, "pi"))
     @Test fun otherwiseTranscript() = assertEquals(PaneBodyMode(PaneBody.TRANSCRIPT, PaneBodyReason.NONE), PaneBodyDecision.decide(null, true, false, "claude"))
+
+    @Test fun anUnrecognisedPanelShowsTheMirror() =
+        assertEquals(PaneBodyMode(PaneBody.MIRROR, PaneBodyReason.OVERLAY), PaneBodyDecision.decide(null, true, false, "claude", composerMissing = true))
+
+    @Test fun aDialogStillWinsOverAMissingComposer() {
+        val dialog = SemanticSurface(SemanticKind.PROMPT_SELECT, "q", regionSignature = "s", revision = 0, startLine = 0, endLine = 1)
+        assertEquals(PaneBodyMode(PaneBody.MIRROR, PaneBodyReason.DIALOG), PaneBodyDecision.decide(dialog, true, false, "claude", composerMissing = true))
+    }
 }

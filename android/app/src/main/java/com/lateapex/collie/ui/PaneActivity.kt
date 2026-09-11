@@ -122,6 +122,8 @@ class PaneActivity : AppCompatActivity() {
     private var renderedTerminalText: CharSequence = ""
     private var renderedStatusRows: List<String> = emptyList()
     private var bodyOverride: PaneBody? = null
+    private var composerMissingPolls = 0
+    private var composerMissingSeenAt: Long? = null
     private var lastBodyReason: PaneBodyReason? = null
     private var showingTranscriptBody = false
     private var lastRenderedState: PaneUiState? = null
@@ -3372,11 +3374,23 @@ class PaneActivity : AppCompatActivity() {
 
     /** §4 item 2: one rule picks transcript or mirror; a one-tap override survives until the reason changes. */
     private fun renderPaneBody(state: PaneUiState): Unit = with(binding) {
+        // Count polls, not renders: a panel is only "up" once the box is missing from two reads in
+        // a row, so one torn read cannot flip the body.
+        if (state.lastSuccessAt != composerMissingSeenAt) {
+            composerMissingSeenAt = state.lastSuccessAt
+            val grammar = agentName.trim().lowercase().let { it == "claude" || it == "codex" }
+            composerMissingPolls = if (grammar && state.pane != null && !state.composerReady && analyzedSemanticSurface == null) {
+                composerMissingPolls + 1
+            } else {
+                0
+            }
+        }
         val decided = PaneBodyDecision.decide(
             analyzedSemanticSurface,
             state.transcriptAvailable,
             displayPreferences.getBoolean(PREF_RAW, false),
             agentName,
+            composerMissing = composerMissingPolls >= 2,
         )
         if (decided.reason != lastBodyReason) {
             bodyOverride = null
@@ -3421,6 +3435,7 @@ class PaneActivity : AppCompatActivity() {
         bodyModeLabel.text = when {
             body == PaneBody.TRANSCRIPT -> getString(R.string.pane_body_showing_transcript)
             decided.reason == PaneBodyReason.DIALOG -> getString(R.string.pane_body_showing_mirror_dialog)
+            decided.reason == PaneBodyReason.OVERLAY -> getString(R.string.pane_body_showing_mirror_overlay)
             decided.reason == PaneBodyReason.RAW -> getString(R.string.pane_body_showing_mirror_raw)
             else -> getString(R.string.pane_body_showing_mirror_no_journal)
         }

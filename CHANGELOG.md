@@ -45,6 +45,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - Android: a pane whose agent has no session log yet asks again after a pause, so a freshly started Claude's transcript appears without reopening the pane; the body switch hides while there is no transcript.
 - Android and web: the History find counter reads 0/N until a match is selected, so the first Next visibly moves to match 1.
 - Android: Updates remedy lines drop the bridge's markdown backticks, and Spaces rows announce "1 pane" rather than "1 panes".
+- Android: when a Claude or Codex panel such as /cost hides the input box for two polls, the pane shows the terminal ("a panel is open") instead of a transcript that hid why Send was off.
 
 ## [Unreleased]
 

@@ -1436,6 +1436,31 @@ class PaneActivityTest {
     }
 
     @Test
+    fun aPanelWithoutTheComposerSwitchesToTheMirrorAfterTwoPolls() {
+        // /cost disabled Send while its panel was visible only in the terminal view; the
+        // transcript body hid the reason (S25 Ultra walk, 2026-09-11).
+        val activity = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("body:overlay", agent = "claude")).create().start().resume().get()
+        val panel = "Total cost:            $0.12\nTotal duration (API):  3s\n\n  Esc to dismiss\n"
+        val transcript = listOf(TranscriptEntry("a", "2026-09-11T00:00:00Z", "assistant", listOf(TranscriptPart("text", text = "hi"))))
+        fun poll(at: Long) = render(
+            activity,
+            PaneUiState(
+                pane = PaneReadResponse("body:overlay", panel, truncated = false, revision = 0),
+                loading = false,
+                composerReady = false,
+                lastSuccessAt = at,
+                transcript = transcript,
+                transcriptAvailable = true,
+            ),
+        )
+        poll(1)
+        assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.transcript_body).visibility)
+        poll(2)
+        assertEquals(View.GONE, activity.findViewById<View>(R.id.transcript_body).visibility)
+        assertEquals(activity.getString(R.string.pane_body_showing_mirror_overlay), activity.findViewById<TextView>(R.id.body_mode_label).text.toString())
+    }
+
+    @Test
     fun aDialogBeforeAnyJournalOffersNoTranscriptSwitch() {
         // A new Claude's first dialog (a trust prompt, an early question) comes before its session
         // log exists; "Show transcript" then opened an empty body (S25 Ultra, 2026-09-11).
