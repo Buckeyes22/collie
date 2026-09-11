@@ -15,6 +15,7 @@ import androidx.test.espresso.action.GeneralSwipeAction
 import androidx.test.espresso.action.Swipe
 import androidx.test.espresso.action.Press
 import androidx.test.espresso.action.GeneralLocation
+import androidx.test.espresso.assertion.ViewAssertions.doesNotExist
 import androidx.test.espresso.assertion.ViewAssertions.matches
 import androidx.test.espresso.matcher.ViewMatchers.*
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -119,7 +120,9 @@ class NativeInteractionTest {
         launchPane().use {
             onView(withId(R.id.refresh_button)).perform(click())
             onView(withId(R.id.pane_action_wrap)).check(matches(isDisplayed()))
-            onView(withContentDescription(R.string.pane_dock_close)).perform(click())
+            // The actions sheet is its own window; its × closes it, not the composer drawer's.
+            onView(withId(R.id.collie_sheet_close)).perform(click())
+            onView(withId(R.id.pane_action_wrap)).check(doesNotExist())
         }
     }
 
@@ -726,18 +729,17 @@ class NativeInteractionTest {
     }
 
     @Test fun digitAndFunctionKeysCanBeReachedAndSent() {
-        launchPane().use { scenario ->
+        launchPane().use {
             onView(withId(R.id.keys_mode_button)).perform(click())
             onView(withId(R.id.pane_keys_segment_digits)).perform(click())
             (1..9).forEach { onView(withText(it.toString())).perform(click()) }
             onView(withId(R.id.pane_keys_segment_keys)).perform(click())
             onView(withText(R.string.pane_keys_more)).perform(click())
             (1..12).forEach { onView(withText("F$it")).perform(click()) }
-            var expandedHeight = 0
-            scenario.onActivity { expandedHeight = it.findViewById<View>(R.id.key_row).height }
-            onView(withContentDescription(R.string.pane_dock_close)).perform(click())
+            // F-keys live in the More sheet (A.4), which closes with its own ×; the drawer
+            // underneath keeps its height, so there is no expanded pad left to collapse.
+            onView(withId(R.id.collie_sheet_close)).perform(click())
             onView(withId(R.id.pane_keys_segment_digits)).perform(scrollTo(), click())
-            scenario.onActivity { assertTrue("Collapsed pad retained empty expanded height", it.findViewById<View>(R.id.key_row).height < expandedHeight) }
             assertEquals((1..9).map(Int::toString) + (1..12).map { "F$it" }, api.keys.flatten())
         }
     }
