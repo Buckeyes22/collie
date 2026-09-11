@@ -278,6 +278,36 @@ class SettingsActivityTest {
     }
 
     @Test
+    fun pairingFormsAreHiddenFromAutofill() {
+        // Bitwarden offered "Save password?" for the one-time pairing code; its system dialog held
+        // focus and blocked 36 device tests on the S25 Ultra (2026-09-11). A single-use code is not
+        // a credential to store, so neither pairing form takes part in autofill.
+        val settings = launchSettings(paired = false)
+        assertEquals(
+            View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS,
+            settings.findViewById<View>(R.id.settings_parity_pairing_card).importantForAutofill,
+        )
+        val setup = Robolectric.buildActivity(MainActivity::class.java).create().get()
+        assertEquals(
+            View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS,
+            setup.findViewById<View>(R.id.setup_panel).importantForAutofill,
+        )
+        // Bitwarden ignores the flag and keys on a password-type field, so the one-time code is
+        // plain capitals on both forms, never a password variant.
+        val passwordVariations = setOf(
+            android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD,
+            android.text.InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD,
+            android.text.InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD,
+        )
+        listOf(
+            setup.findViewById<android.widget.EditText>(R.id.pairing_code_input),
+            settings.findViewById<android.widget.EditText>(R.id.settings_pair_code),
+        ).forEach { field ->
+            assertFalse(field.inputType and android.text.InputType.TYPE_MASK_VARIATION in passwordVariations)
+        }
+    }
+
+    @Test
     fun pairedSettingsHasNoPairingCardAndNoZenCard() {
         val activity = launchSettings(paired = true)
         assertNull(activity.findViewById<View?>(R.id.settings_parity_pairing_card))

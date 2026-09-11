@@ -46,6 +46,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - Android and web: the History find counter reads 0/N until a match is selected, so the first Next visibly moves to match 1.
 - Android: Updates remedy lines drop the bridge's markdown backticks, and Spaces rows announce "1 pane" rather than "1 panes".
 - Android: when a Claude or Codex panel such as /cost hides the input box for two polls, the pane shows the terminal ("a panel is open") instead of a transcript that hid why Send was off.
+- Android: both pairing forms stay out of autofill and take the one-time code as plain capitals, so a password manager no longer offers to save it.
 
 ## [Unreleased]
 

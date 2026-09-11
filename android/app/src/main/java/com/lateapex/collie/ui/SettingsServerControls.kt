@@ -375,6 +375,9 @@ internal class SettingsServerControls(
         val form = pairForm().also { pairFormView = it }
         pairingCard = card().also {
             it.id = R.id.settings_parity_pairing_card
+            // A one-time pairing code is not a credential to store: Bitwarden's "Save password?"
+            // dialog took focus after pairing (S25 Ultra, 2026-09-11). The setup form does the same.
+            it.importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO_EXCLUDE_DESCENDANTS
             it.addView(header(
                 text(R.string.settings_pair_phone),
                 text(R.string.settings_phone_not_paired),

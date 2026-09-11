@@ -7,6 +7,7 @@
 
     <com.lateapex.collie.ui.CollieMaxWidthScrollView
         android:id="@+id/setup_panel"
+        android:importantForAutofill="noExcludeDescendants"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:layout_gravity="top|center_horizontal"
@@ -112,7 +113,7 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:importantForAutofill="no"
-                        android:inputType="textPassword"
+                        android:inputType="textCapCharacters|textNoSuggestions"
                         android:maxLength="64"
                         android:maxLines="1"
                         android:saveEnabled="false" />
