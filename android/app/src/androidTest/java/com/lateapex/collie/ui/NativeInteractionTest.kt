@@ -594,10 +594,10 @@ class NativeInteractionTest {
         }
     }
 
+    /** One repository: the worktree sheet opens straight to the branch field (B.3). */
     private fun openWorktreeChoices() {
         onView(withId(R.id.new_space)).perform(click())
         onView(withText(R.string.space_mode_worktree)).perform(click())
-        onView(withText("Fixture")).perform(click())
     }
 
     @Test fun createWorktreeSendsTheEnteredBranch() {
@@ -608,6 +608,17 @@ class NativeInteractionTest {
             onView(withText(R.string.action_create)).perform(click())
             assertEquals(listOf("fixture-branch"), api.worktreeBranches)
             onView(withId(R.id.composer_chrome)).check(matches(isDisplayed()))
+        }
+    }
+
+    @Test fun openWorktreeWaitsForConfirmation() {
+        api.workspace = api.workspace.copy(repoRoot = "/fixture", isWorktree = false)
+        ActivityScenario.launch(MainActivity::class.java).use {
+            openWorktreeChoices()
+            onView(withText("existing-fixture")).perform(scrollTo(), click())
+            assertTrue(api.openedWorktrees.isEmpty())
+            onView(withText(R.string.action_open)).perform(click())
+            assertEquals(listOf("/fixture/existing"), api.openedWorktrees)
         }
     }
 
@@ -707,11 +718,10 @@ class NativeInteractionTest {
             onView(withId(R.id.keys_mode_button)).perform(click())
             val keys = listOf(R.id.escape_button to "Escape", R.id.tab_button to "Tab",
                 R.id.up_button to "Up", R.id.down_button to "Down", R.id.left_button to "Left",
-                R.id.right_button to "Right", R.id.enter_button to "Enter")
+                R.id.right_button to "Right", R.id.enter_button to "Enter", R.id.ctrl_c_button to "ctrl+c",
+                R.id.space_button to "Space")
             keys.forEach { (id, _) -> onView(withId(id)).perform(click()) }
-            onView(withText(R.string.pane_keys_more)).perform(click())
-            onView(withText(R.string.pane_key_space)).perform(click())
-            assertEquals(keys.map { it.second } + "Space", api.keys.flatten())
+            assertEquals(keys.map { it.second }, api.keys.flatten())
         }
     }
 
