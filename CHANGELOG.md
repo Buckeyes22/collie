@@ -30,6 +30,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - Android: Keys modifiers keep a visible outline when idle and Shift fits on one line; Rename prefills the pane's own title, never the space › tab composite.
 - Android: the Space list drops the build stamp footer and a card's meta line no longer repeats its title; dashboard meta truncates in the middle.
 - Android: the pairing card is the first card in Settings and its label field is prefilled from the connection.
+- Android: the Space tab strip's add controls read "+ Tab" and "+ Space" instead of two identical "+" circles.
 
 ## [Unreleased]
 

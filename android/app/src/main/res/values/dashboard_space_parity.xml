@@ -8,4 +8,6 @@
     <string name="read_only_unreachable">Read-only until Collie answers</string>
     <string name="space_closed">Space closed</string>
     <string name="space_not_found">Space not found</string>
+    <string name="space_add_tab">Tab</string>
+    <string name="space_add_space">Space</string>
 </resources>

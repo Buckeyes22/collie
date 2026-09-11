@@ -215,10 +215,10 @@ class SpaceActivity : AppCompatActivity() {
             }
         }
         if (SpaceActionModel.canUse(state.writeAuthorized, state.mux, "createTab")) {
-            addView(addButton(R.string.new_tab, creatingTab, ::showNewTab), stripParams(4))
+            addView(addButton(R.string.new_tab, R.string.space_add_tab, creatingTab, ::showNewTab), stripParams(4))
         }
         if (SpaceActionModel.canUse(state.writeAuthorized, state.mux, "createSpace")) {
-            addView(addButton(R.string.new_space, creatingSpace, ::showNewWorkspace), stripParams(8))
+            addView(addButton(R.string.new_space, R.string.space_add_space, creatingSpace, ::showNewWorkspace), stripParams(8))
         }
         }
     }
@@ -289,8 +289,13 @@ class SpaceActivity : AppCompatActivity() {
         )
     }
 
+    /**
+     * A dashed chip that says what it adds. Two bare "+" circles ended the tab strip once the
+     * new-space control moved beside new-tab, and nothing told them apart (S25 Ultra, 2026-09-10).
+     */
     private fun addButton(
         @androidx.annotation.StringRes description: Int,
+        @androidx.annotation.StringRes label: Int,
         busy: Boolean,
         action: () -> Unit,
     ): FrameLayout =
@@ -306,15 +311,24 @@ class SpaceActivity : AppCompatActivity() {
                     importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
                 }, FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER))
             } else {
-                addView(ImageView(this@SpaceActivity).apply {
-                    setImageResource(R.drawable.ic_collie_add)
-                    setPadding(dp(8), dp(8), dp(8), dp(8))
+                addView(TextView(this@SpaceActivity).apply {
+                    text = getString(label)
+                    textSize = 13f
+                    setTextColor(color(R.color.collie_muted))
+                    gravity = Gravity.CENTER_VERTICAL
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                    val plus = androidx.core.content.ContextCompat.getDrawable(this@SpaceActivity, R.drawable.ic_collie_add)?.apply {
+                        setBounds(0, 0, dp(16), dp(16))
+                    }
+                    setCompoundDrawablesRelative(plus, null, null, null)
+                    compoundDrawablePadding = dp(4)
+                    setPadding(dp(10), 0, dp(12), 0)
                     background = GradientDrawable().apply {
-                        shape = GradientDrawable.OVAL
+                        cornerRadius = dp(16f)
                         setColor(android.graphics.Color.TRANSPARENT)
                         setStroke(dp(1), color(R.color.collie_border), dp(3f), dp(2f))
                     }
-                }, FrameLayout.LayoutParams(dp(32), dp(32), Gravity.CENTER))
+                }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(32), Gravity.CENTER))
                 setOnClickListener { action() }
             }
         }

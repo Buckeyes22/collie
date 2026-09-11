@@ -174,7 +174,20 @@ class SpaceActivityTest {
         assertEquals("3 tabs · 3 panes", activity.findViewById<TextView>(R.id.space_subtitle).text.toString())
     }
 
-    private fun launchSpace(workspaces: Int, tabs: Int, currentTab: Int): SpaceActivity {
+    @Test
+    fun addTabAndAddSpaceAreLabelledSoTheyCannotBeConfused() {
+        // S25 Ultra, 2026-09-10: two identical "+" circles ended the tab strip.
+        val activity = launchSpace(workspaces = 2, tabs = 2, currentTab = 0, writable = true)
+        val chips = activity.findViewById<ViewGroup>(R.id.tab_chips)
+        fun visibleLabel(description: String): String {
+            val button = (0 until chips.childCount).map(chips::getChildAt).single { it.contentDescription == description } as ViewGroup
+            return (0 until button.childCount).map(button::getChildAt).filterIsInstance<TextView>().single().text.toString()
+        }
+        assertEquals(activity.getString(R.string.space_add_tab), visibleLabel(activity.getString(R.string.new_tab)))
+        assertEquals(activity.getString(R.string.space_add_space), visibleLabel(activity.getString(R.string.new_space)))
+    }
+
+    private fun launchSpace(workspaces: Int, tabs: Int, currentTab: Int, writable: Boolean = false): SpaceActivity {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val workspace = WorkspaceSummary("w1", 1, "StormLens", true, "t$currentTab", tabs, tabs)
         val activity = Robolectric.buildActivity(
@@ -197,7 +210,7 @@ class SpaceActivityTest {
         }.set(activity, "t$currentTab")
         SpaceActivity::class.java.getDeclaredMethod("render", SpaceUiState::class.java).apply {
             isAccessible = true
-        }.invoke(activity, SpaceUiState(loading = false, content = content))
+        }.invoke(activity, SpaceUiState(loading = false, content = content, writeAuthorized = writable))
         return activity
     }
 
