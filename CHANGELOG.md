@@ -36,6 +36,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - Android: the transcript body holds the reader's place by anchoring on the first visible turn, so new turns arriving below no longer push the view down and Load older keeps what was on screen.
 - Android: the Settings pairing card uses the setup screen's filled "Pair and connect" button and spacing, and keeps the card gap above Appearance.
 - Android: a Space card's meta line no longer shows a terminal title left behind by a program that has exited.
+- Android: the worktree sheet lists a repository's unopened worktrees again, each opened only after an "Open worktree?" confirm.
 
 ## [Unreleased]
 

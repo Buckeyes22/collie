@@ -58,6 +58,9 @@
     <string name="worktree_base_caption">In %1$s</string>
     <string name="worktree_base_unknown">Branches from the repository\'s current HEAD.</string>
     <string name="worktree_open_title">Open worktree?</string>
+    <string name="worktree_detached">Detached · %1$s</string>
+    <string name="worktree_open_existing">Or open an existing worktree</string>
+    <string name="worktree_opening">Opening worktree…</string>
     <string name="action_open">Open</string>
     <string name="created_pane_missing">The bridge did not identify the created pane.</string>
     <string name="space_create_failed">The space was not created.</string>

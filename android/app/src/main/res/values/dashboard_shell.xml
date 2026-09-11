@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <item name="worktree_branch_input" type="id" />
+    <item name="worktree_existing" type="id" />
     <item name="worktree_base_caption" type="id" />
     <item name="worktree_repo_group" type="id" />
     <string name="dashboard_scope_current">Current</string>

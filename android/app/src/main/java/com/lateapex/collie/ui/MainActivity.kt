@@ -927,6 +927,15 @@ class MainActivity : AppCompatActivity() {
         showCreateWorktree(repos, scope)
     }
 
+    /** Lists a repository's worktrees; a test replaces it because the dashboard test has no bridge. */
+    @androidx.annotation.VisibleForTesting
+    internal var worktreeLister: suspend (String, Scope) -> ApiResult<com.lateapex.collie.network.WorktreeListResponse> =
+        { workspaceId, scope -> viewModel.listWorktrees(workspaceId, scope) }
+
+    @androidx.annotation.VisibleForTesting
+    internal var worktreeOpener: suspend (String, String, Scope) -> ApiResult<com.lateapex.collie.network.WorktreeOpenResponse> =
+        { workspaceId, path, scope -> viewModel.openWorktree(workspaceId, path, scope) }
+
     @androidx.annotation.VisibleForTesting
     internal fun startWorktreeFlowForTest() {
         chooseWorktreeRepo(
@@ -950,6 +959,41 @@ class MainActivity : AppCompatActivity() {
             text = baseCaption()
             textSize = 12f
             setTextColor(ContextCompat.getColor(this@MainActivity, R.color.collie_muted))
+        }
+        // A linked worktree with no open space can be opened instead of branching again. The old
+        // options sheet offered this; the one-sheet rework must not drop it (B.3, 2026-09-10).
+        val existing = LinearLayout(this).apply {
+            id = R.id.worktree_existing
+            orientation = LinearLayout.VERTICAL
+            isVisible = false
+        }
+        fun loadExisting(repo: WorkspaceSummary) {
+            // Undispatched: the lookup starts in this frame and only yields at the network call.
+            lifecycleScope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+                val result = worktreeLister(repo.workspaceId, scope)
+                if (selected !== repo) return@launch
+                existing.removeAllViews()
+                val unopened = (result as? ApiResult.Success)?.value?.worktrees
+                    ?.filter { it.linked && it.openWorkspaceId == null }
+                    .orEmpty()
+                if (unopened.isNotEmpty()) {
+                    existing.addView(TextView(this@MainActivity).apply {
+                        text = getString(R.string.worktree_open_existing)
+                        textSize = 13f
+                        setTextColor(ContextCompat.getColor(this@MainActivity, R.color.collie_muted))
+                    }, sheetRowParams(top = 16))
+                    unopened.forEach { worktree ->
+                        existing.addView(
+                            sheetActionButton(worktree.branch ?: getString(R.string.worktree_detached, worktree.path)) {
+                                dialog.dismiss()
+                                confirmOpenWorktree(repo, worktree, scope)
+                            },
+                            sheetRowParams(top = 4),
+                        )
+                    }
+                }
+                existing.isVisible = unopened.isNotEmpty()
+            }
         }
         if (repos.size > 1) {
             val group = com.google.android.material.button.MaterialButtonToggleGroup(this).apply {
@@ -978,6 +1022,7 @@ class MainActivity : AppCompatActivity() {
                     (group.findViewById<MaterialButton>(checkedId).tag as? WorkspaceSummary)?.let { repo ->
                         selected = repo
                         baseCaption.text = baseCaption()
+                        loadExisting(repo)
                     }
                 }
             }
@@ -1004,9 +1049,33 @@ class MainActivity : AppCompatActivity() {
                 }, target)
             }
         }, sheetRowParams(top = 12))
+        body.addView(existing, sheetRowParams())
+        loadExisting(selected)
         dialog.setSheetContent(body)
         dialog.show()
         branch.post { branch.requestFocus() }
+    }
+
+    private fun confirmOpenWorktree(workspace: WorkspaceSummary, worktree: com.lateapex.collie.network.Worktree, scope: Scope) {
+        val dialog = CollieBottomSheetDialog(this, getString(R.string.worktree_open_title))
+        val body = sheetBody()
+        body.addView(TextView(this).apply {
+            text = worktree.path
+            textSize = 14f
+            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.collie_muted))
+            setPadding(0, dp(8), 0, dp(8))
+        }, sheetRowParams())
+        body.addView(sheetActionButton(getString(R.string.action_open)) {
+            val target = revalidatedStructuralScope(scope) ?: return@sheetActionButton
+            dialog.dismiss()
+            lifecycleScope.launch {
+                handleWorktree(structuralRequest(R.string.worktree_opening) {
+                    worktreeOpener(workspace.workspaceId, worktree.path, target)
+                }, target)
+            }
+        }, sheetRowParams(top = 8))
+        dialog.setSheetContent(body)
+        dialog.show()
     }
 
     private fun showChoiceSheet(title: String, choices: List<Pair<String, () -> Unit>>) {
