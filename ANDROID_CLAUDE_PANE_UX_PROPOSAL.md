@@ -100,18 +100,27 @@ Zen, tap-to-type and the buffer affordances follow whichever body is on screen.
 
 ## 6. Acceptance
 
-> **Not run.** 2026-09-10: every task landed with its tests and gates green (Android unit +
-> lint + assemble, web harness, both typechecks, oxlint, bridge prompt-binding), and the debug
-> APK installed `Success`; but the §6 walk itself did not run — the S25 Ultra's wireless ADB
-> refused connection and the operator deferred the device walk. No capture below is claimed.
+> **Note.** Walked on the S25 Ultra on 2026-09-10 and 2026-09-11 after the plan and its
+> follow-up fixes landed: 193 steps pass and none fail. The ledger, the defects the walk found
+> and fixed, and the mapping of steps the plan moved or retired are in
+> `android/acceptance/2026-09-11-ux-walk.md`; the captures are `android/acceptance/2026-09-11-ux-*.png`.
 
-- The pane in `2026-09-10-claude-pane-mirror.png`, re-captured after the work, shows the
-  conversation as cards and prose with no line wrapped twice.
-- Raising an AskUserQuestion from the phone switches the body to the mirror with the prompt panel,
-  answering it switches back, both without leaving the pane (the re-walk ledger's dialog steps).
-- A shell pane, and a pane whose agent has no journal, look exactly as they do today.
-- Raw terminal on shows the mirror with reflowed prose and a status row; Raw off returns.
-- The re-walk ledger's 186 steps still pass on the S25 Ultra.
+- **Passes.** The Claude pane, re-captured, shows the conversation as cards and prose
+  (`2026-09-11-ux-transcript.png`); the terminal view joins soft wraps so no paragraph wraps
+  twice (`2026-09-11-ux-mirror-reflow.png`).
+- **Passes.** An AskUserQuestion raised from the phone switches the body to the mirror with the
+  prompt panel, and answering it switches back, without leaving the pane
+  (`2026-09-11-ux-dialog-mirror.png`, `2026-09-11-ux-after-answer.png`). A panel the grammar does
+  not recognise, such as `/cost`, also shows the mirror (`2026-09-11-ux-panel-mirror.png`).
+- **Passes.** A shell pane, and an agent pane with no journal yet, show the plain mirror with no
+  body row. opencode turned out to have a journal adapter, so its pane shows a transcript: the body
+  keys on the history answer, not on agent names.
+- **Passes, as corrected.** This item first read "Raw terminal on shows the mirror with reflowed
+  prose and a status row". Raw has always meant the verbatim grid, so Raw on now shows Claude's
+  input box and no status row, and Raw off returns the transcript; the reflowed mirror with its
+  status row is what "Show terminal" gives.
+- **Passes.** The re-walk replaces the 186-step ledger of 2026-09-10 with 193 steps on the
+  changed screens; every 2026-09-10 step is either walked again or mapped to where it lives now.
 
 ## 7. Open questions for the operator
 
