@@ -252,31 +252,6 @@
         android:layout_weight="1"
         android:background="@color/collie_terminal">
 
-        <LinearLayout
-            android:id="@+id/body_mode_row"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_gravity="top"
-            android:background="@drawable/bg_pane_status_band"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:paddingHorizontal="12dp"
-            android:visibility="gone">
-            <TextView
-                android:id="@+id/body_mode_label"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:textColor="@color/collie_muted"
-                android:textSize="12sp" />
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/body_mode_switch"
-                style="@style/Widget.MaterialComponents.Button.TextButton"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:minHeight="36dp"
-                android:textSize="12sp" />
-        </LinearLayout>
         <com.lateapex.collie.ui.TranscriptBodyView
             android:id="@+id/transcript_body"
             android:layout_width="match_parent"
@@ -379,6 +354,32 @@
             android:textColor="@color/collie_muted"
             android:textSize="11sp"
             android:visibility="gone" />
+
+        <LinearLayout
+            android:id="@+id/body_mode_row"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="top"
+            android:background="@drawable/bg_pane_status_band"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="12dp"
+            android:visibility="gone">
+            <TextView
+                android:id="@+id/body_mode_label"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:textColor="@color/collie_muted"
+                android:textSize="12sp" />
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/body_mode_switch"
+                style="@style/Widget.MaterialComponents.Button.TextButton"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:minHeight="36dp"
+                android:textSize="12sp" />
+        </LinearLayout>
 
         <ProgressBar
             android:id="@+id/pane_progress"

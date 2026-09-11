@@ -1424,4 +1424,30 @@ class PaneActivityTest {
             for (index in 0 until root.childCount) yieldAll(descendants(root.getChildAt(index)))
         }
     }
+
+    @Test
+    fun bodyModeRowIsStackedAboveBothBodies() {
+        val activity = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("zorder:pane")).create().get()
+        val surface = activity.findViewById<ViewGroup>(R.id.terminal_surface)
+        val row = surface.indexOfChild(activity.findViewById(R.id.body_mode_row))
+        assertTrue(row > surface.indexOfChild(activity.findViewById(R.id.transcript_body)))
+        assertTrue(row > surface.indexOfChild(activity.findViewById(R.id.terminal_scroll)))
+    }
+
+    @Test
+    fun bodyModeLabelNamesTheBodyOnScreenAfterAnOverride() {
+        val activity = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("label:pane", agent = "claude")).create().start().resume().get()
+        render(
+            activity,
+            PaneUiState(
+                pane = PaneReadResponse("label:pane", "⏺ done\n", truncated = false, revision = 0),
+                loading = false,
+                transcript = listOf(TranscriptEntry("a", "2026-09-10T00:00:00Z", "assistant", listOf(TranscriptPart("text", text = "done")))),
+                transcriptAvailable = true,
+            ),
+        )
+        activity.findViewById<View>(R.id.body_mode_switch).performClick()
+        assertEquals(activity.getString(R.string.pane_body_showing_mirror_no_journal), activity.findViewById<TextView>(R.id.body_mode_label).text.toString())
+        assertEquals(activity.getString(R.string.pane_body_switch_to_transcript), activity.findViewById<TextView>(R.id.body_mode_switch).text.toString())
+    }
 }

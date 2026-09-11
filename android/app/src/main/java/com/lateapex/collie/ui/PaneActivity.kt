@@ -3351,11 +3351,23 @@ class PaneActivity : AppCompatActivity() {
 
     private fun renderBodyModeRow(decided: PaneBodyMode, body: PaneBody): Unit = with(binding) {
         bodyModeRow.isVisible = decided.reason != PaneBodyReason.NO_JOURNAL && decided.reason != PaneBodyReason.PENDING
-        bodyModeLabel.text = when (decided.reason) {
-            PaneBodyReason.DIALOG -> getString(R.string.pane_body_showing_mirror_dialog)
-            PaneBodyReason.RAW -> getString(R.string.pane_body_showing_mirror_raw)
-            PaneBodyReason.NO_JOURNAL -> getString(R.string.pane_body_showing_mirror_no_journal)
-            else -> getString(R.string.pane_body_showing_transcript)
+        // The row is the last child of terminal_surface so it draws over both bodies and takes
+        // the tap; the bodies pad under it so their first row is never covered (S25 Ultra,
+        // 2026-09-10: declared first, it was painted over and "Show terminal" never fired).
+        bodyModeRow.doOnLayout { row ->
+            val inset = if (row.isVisible) row.height else 0
+            transcriptBody.updatePadding(top = inset)
+            terminalScroll.updatePadding(top = inset)
+        }
+        if (!bodyModeRow.isVisible) {
+            transcriptBody.updatePadding(top = 0)
+            terminalScroll.updatePadding(top = 0)
+        }
+        bodyModeLabel.text = when {
+            body == PaneBody.TRANSCRIPT -> getString(R.string.pane_body_showing_transcript)
+            decided.reason == PaneBodyReason.DIALOG -> getString(R.string.pane_body_showing_mirror_dialog)
+            decided.reason == PaneBodyReason.RAW -> getString(R.string.pane_body_showing_mirror_raw)
+            else -> getString(R.string.pane_body_showing_mirror_no_journal)
         }
         bodyModeSwitch.text = getString(
             if (body == PaneBody.TRANSCRIPT) R.string.pane_body_switch_to_mirror else R.string.pane_body_switch_to_transcript,
