@@ -32,6 +32,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - Android: the pairing card is the first card in Settings and its label field is prefilled from the connection.
 - Android: the Space tab strip's add controls read "+ Tab" and "+ Space" instead of two identical "+" circles.
 - Android: an attached image shows as a thumbnail chip labelled "Image" instead of the picker's media id or the bridge copy's file name.
+- Android and web: the mirror reflow joins a row when the next word would not have fit on it, judged per row, so word-wrapped Claude prose joins and a joined paragraph no longer swallows the rows after it.
 
 ## [Unreleased]
 

@@ -25,6 +25,22 @@ describe("reflowSoftWraps", () => {
     const out = reflowSoftWraps([a, line("  tail")], 40);
     expect(out[0]!.segments[0]!.bold).toBe(true);
   });
+  it("joins word-wrapped prose that ends short of the width", () => {
+    // Claude wraps at word boundaries, so a wrapped row ends up to one word short of the width;
+    // requiring a full row left live panes almost unjoined (S25 Ultra, 2026-09-10).
+    const a = "⏺ The quick brown fox jumps over the";
+    const out = reflowSoftWraps([line(a), line("  lazy dog and keeps running")], 40);
+    expect(out.map(text)).toEqual([`${a} lazy dog and keeps running`]);
+  });
+  it("keeps a hard break where the next word would have fit", () => {
+    const rows = [line("⏺ Short line."), line("  Next thought")];
+    expect(reflowSoftWraps(rows, 40).map(text)).toEqual(["⏺ Short line.", "  Next thought"]);
+  });
+  it("judges each seam by its own row, not the joined paragraph", () => {
+    const a = "x".repeat(40);
+    const out = reflowSoftWraps([line(a), line("  cont"), line("  separate short line")], 40);
+    expect(out.map(text)).toEqual([`${a} cont`, "  separate short line"]);
+  });
   it("maxWidth ignores full-width rules so prose wrapped short of them still joins", () => {
     const rule = line("─".repeat(60));
     const a = line("● " + "p".repeat(54));

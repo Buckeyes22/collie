@@ -47,4 +47,26 @@ class SoftWrapReflowTest {
         val a = "y".repeat(40); val b = "  " + "z".repeat(38)
         assertEquals(listOf("$a ${b.trim()} tail"), SoftWrapReflow.reflow(listOf(a, b, "  tail"), width))
     }
+
+    @Test
+    fun joinsWordWrappedProseThatEndsShortOfTheWidth() {
+        // Claude wraps at word boundaries, so a wrapped row ends up to one word short of the
+        // width; requiring a full row left live panes almost unjoined (S25 Ultra, 2026-09-10).
+        val a = "⏺ The quick brown fox jumps over the"
+        val b = "  lazy dog and keeps running"
+        assertEquals(listOf("$a lazy dog and keeps running"), SoftWrapReflow.reflow(listOf(a, b), 40))
+    }
+
+    @Test
+    fun keepsAHardBreakWhereTheNextWordWouldHaveFit() {
+        val lines = listOf("⏺ Short line.", "  Next thought")
+        assertEquals(lines, SoftWrapReflow.reflow(lines, 40))
+    }
+
+    @Test
+    fun judgesEachSeamByItsOwnRowNotTheJoinedParagraph() {
+        val a = "x".repeat(40)
+        val lines = listOf(a, "  cont", "  separate short line")
+        assertEquals(listOf("$a cont", "  separate short line"), SoftWrapReflow.reflow(lines, 40))
+    }
 }

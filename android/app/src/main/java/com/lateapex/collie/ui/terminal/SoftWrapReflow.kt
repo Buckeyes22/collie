@@ -2,9 +2,9 @@ package com.lateapex.collie.ui.terminal
 
 /**
  * Joins the soft wraps Herdr's grid imposed on a paragraph so the phone can wrap it once.
- * The grid width comes from the read itself: the longest visible row. A row is a wrap
- * candidate only when it fills that width exactly; anything Claude prints as structure
- * (tables, rules, fences, bullets, tree markers) is never joined in either direction.
+ * The wrap width comes from the read itself: the longest prose row. A seam is a wrap when the
+ * next row's first word would not have fit on the row above; anything Claude prints as
+ * structure (tables, rules, fences, bullets, tree markers) is never joined in either direction.
  */
 object SoftWrapReflow {
     private val structural = Regex("^\\s*(?:[│┃|┌└├┬┴┼─━═╭╮╰╯]|```|[•\\-*☐☒⎿]\\s|\\d+\\.\\s)")
@@ -32,12 +32,11 @@ object SoftWrapReflow {
         val out = ArrayList<IntRange>(lines.size)
         var index = 0
         while (index < lines.size) {
-            var current = lines[index]
             var next = index + 1
-            while (next < lines.size && canJoin(current, lines[next], gridWidth)) {
-                current = current.trimEnd() + " " + lines[next].trim()
-                next++
-            }
+            // Each seam is judged by the row above it, never by the paragraph joined so far: a
+            // joined paragraph is always wider than the grid and would swallow every indented
+            // row after it.
+            while (next < lines.size && canJoin(lines[next - 1], lines[next], gridWidth)) next++
             out.add(index until next)
             index = next
         }
@@ -49,12 +48,17 @@ object SoftWrapReflow {
         return range.joinToString(" ") { if (it == range.first) lines[it].trimEnd() else lines[it].trim() }
     }
 
-    private fun canJoin(current: String, next: String, gridWidth: Int): Boolean {
-        val trimmed = current.trimEnd()
-        if (trimmed.length < gridWidth) return false
-        if (next.isBlank()) return false
+    /**
+     * Claude wraps at word boundaries, so a soft-wrapped row ends up to one word short of the
+     * width. The break was a wrap exactly when the next row's first word would not have fit on
+     * this row; where it would have fit, the author broke the line (S25 Ultra, 2026-09-10).
+     */
+    private fun canJoin(row: String, next: String, gridWidth: Int): Boolean {
+        val trimmed = row.trimEnd()
+        if (trimmed.isEmpty() || next.isBlank()) return false
         if (structural.containsMatchIn(trimmed) || structural.containsMatchIn(next)) return false
-        val indent = next.length - next.trimStart().length
-        return indent >= 2
+        val body = next.trimStart()
+        if (next.length - body.length < 2) return false
+        return trimmed.length + 1 + body.substringBefore(' ').length > gridWidth
     }
 }
