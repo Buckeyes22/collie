@@ -75,10 +75,18 @@ data class PaneUiState(
 class PaneViewModel(
     application: Application,
     private val address: PaneAddress,
-    private val agent: String?,
+    initialAgent: String?,
     private val repository: CollieRepository =
         (application as CollieApplication).container.repository,
 ) : AndroidViewModel(application) {
+    /**
+     * The agent whose grammar binds replies and dialogs. Seeded from the launch intent and then
+     * followed from the snapshot: a shell pane that starts `claude` while open becomes a Claude
+     * pane, and the activity already re-labels it from the same snapshot. Before 2026-09-10 this
+     * was fixed at launch, so the activity drew Claude's buttons while the pre-flight verified as a
+     * shell and refused every tap with "the dialog changed" (S25 Ultra).
+     */
+    private var agent: String? = initialAgent
     private var observedConnection = repository.connection.value
     private var connectionPaired = observedConnection?.isPaired == true
     private var deviceAuthorizationKnown = false
@@ -721,6 +729,9 @@ class PaneViewModel(
         ) {
             deviceAuthorizationKnown = true
             deviceWriteAllowed = snapshot.value.device?.let { !it.enforced || it.authorized } ?: true
+            (snapshot.value.agents + snapshot.value.shellPanes).firstOrNull {
+                it.paneId == address.paneId && it.host == address.scope.host && it.session == address.scope.session
+            }?.agent?.takeIf { it.isNotBlank() }?.let { agent = it }
             mutableState.value = mutableState.value.copy(
                 panes = snapshot.value.agents + snapshot.value.shellPanes,
                 tabs = snapshot.value.tabs,

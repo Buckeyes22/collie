@@ -356,6 +356,23 @@ class PaneViewModelTest {
     }
 
     @Test
+    fun semanticActionFollowsTheAgentTheSnapshotReportsNotTheLaunchIntent() = runTest(dispatcher) {
+        // A shell pane that starts claude while open: the activity re-labels it from the snapshot,
+        // so the pre-flight must verify with the same grammar (S25 Ultra, 2026-09-10).
+        val fixture = fixture(ApiResult.Success(ActionResponse(ok = true), 200), agent = "shell")
+        fixture.api.snapshotPanes = listOf(paneSummary(PaneAddress(paneId = "w1:p1")).copy(agent = "claude"))
+        fixture.api.pane = semanticPane()
+        fixture.viewModel.refresh()
+        advanceUntilIdle()
+        val surface = AgentSemanticParser.detect("claude", fixture.api.pane.text, fixture.api.pane.revision)!!
+
+        fixture.viewModel.sendSemanticAction(surface, surface.actions.first())
+        advanceUntilIdle()
+
+        assertEquals(listOf(listOf("1", "Enter")), fixture.api.keysCalls)
+    }
+
+    @Test
     fun semanticActionSendsNothingWhenFreshDialogTextOrRevisionChanges() = runTest(dispatcher) {
         for (fresh in listOf(
             semanticPane().copy(text = semanticPane().text.replace("Blue", "Green")),
@@ -502,6 +519,9 @@ class PaneViewModelTest {
         val connection = Connection(CollieOrigin("https://collie.example/"), "phone", "token")
         val store = FakeStore(connection)
         val api = FakeApi(reply, keyResults, deviceAuthorization)
+        // The snapshot names the pane's agent and the view model follows it, so the fake
+        // snapshot must agree with the agent the fixture launches with.
+        api.snapshotPanes = api.snapshotPanes.map { if (it.paneId == address.paneId) it.copy(agent = agent) else it }
         val repository = CollieRepository(api, store, OriginValidator())
         val viewModel = PaneViewModel(
             ApplicationProvider.getApplicationContext<Application>(),

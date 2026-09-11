@@ -25,6 +25,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 1.0*.
 - Android: the mirror no longer crashes on grid rows with trailing padding; reflow groups rows by index, not text.
 - Android: the pane body mode row draws above both bodies so its switch takes the tap, and its label names the body on screen.
+- Android: a pane whose agent changes while open (a shell that starts claude) binds dialogs and replies with the new agent instead of refusing every tap.
 
 ## [Unreleased]
 
