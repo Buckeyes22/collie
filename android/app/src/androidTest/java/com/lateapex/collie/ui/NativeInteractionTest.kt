@@ -201,7 +201,7 @@ class NativeInteractionTest {
         try {
             ActivityScenario.launch(MainActivity::class.java).use {
                 onView(withContentDescription(R.string.expand_spaces)).perform(click())
-                onView(withContentDescription(app.getString(R.string.space_accessibility, "Fixture", 1))).perform(click())
+                onView(withContentDescription(app.resources.getQuantityString(R.plurals.space_accessibility_count, 1, "Fixture", 1))).perform(click())
                 onView(withId(R.id.space_list)).check(matches(isDisplayed()))
                 onView(withContentDescription(app.getString(R.string.pane_agent_accessibility, "Fixture shell", "shell"))).perform(click())
                 onView(withId(R.id.reply_input)).check(matches(isDisplayed()))

@@ -97,7 +97,10 @@
     <string name="launcher_accessibility">Launch %1$s</string>
     <string name="collapse_spaces">Collapse Spaces</string>
     <string name="expand_spaces">Expand Spaces</string>
-    <string name="space_accessibility">%1$s, %2$d panes</string>
+    <plurals name="space_accessibility_count">
+        <item quantity="one">%1$s, %2$d pane</item>
+        <item quantity="other">%1$s, %2$d panes</item>
+    </plurals>
     <string name="status_needs_you">needs you</string>
     <string name="status_working">working</string>
     <string name="status_done">done</string>

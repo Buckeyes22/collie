@@ -1,6 +1,7 @@
 package com.lateapex.collie.ui
 
 import android.view.View
+import android.view.ViewGroup
 import android.widget.TextView
 import androidx.test.core.app.ApplicationProvider
 import com.lateapex.collie.CollieApplication
@@ -100,6 +101,7 @@ class UpdatesActivityParityTest {
         latest: String? = null,
         newer: List<String> = emptyList(),
         preflightRed: Int = 0,
+        remedy: (Int) -> String = { index -> "collie doctor --fix --step $index" },
     ): UpdatesActivity {
         val activity = Robolectric.buildActivity(UpdatesActivity::class.java).create().get()
         val checks = (0 until preflightRed).map { index ->
@@ -107,7 +109,7 @@ class UpdatesActivityParityTest {
                 id = "check-$index",
                 verdict = "red",
                 reason = "check $index failed",
-                remedy = "collie doctor --fix --step $index",
+                remedy = remedy(index),
             )
         }
         activity.renderForTest(
@@ -129,6 +131,18 @@ class UpdatesActivityParityTest {
             ),
         )
         return activity
+    }
+
+    @Test
+    fun remedyLinesDropMarkdownBackticks() {
+        // The bridge writes remedies as markdown; shown as plain text the ticks read literally
+        // ("Fix on the host: `git stash` or commit them…", S25 Ultra walk 2026-09-11).
+        val activity = launchUpdates(latest = "1.8.0", newer = listOf("1.8.0"), preflightRed = 1, remedy = { "`git stash` or commit them, then re-run this check" })
+        val texts = generateSequence(listOf<View>(activity.window.decorView)) { level ->
+            level.filterIsInstance<ViewGroup>().flatMap { g -> (0 until g.childCount).map(g::getChildAt) }.takeIf { it.isNotEmpty() }
+        }.flatten().filterIsInstance<TextView>().map { it.text.toString() }.toList()
+        val line = texts.single { it.startsWith("Fix on the host:") }
+        assertEquals("Fix on the host: git stash or commit them, then re-run this check", line)
     }
 
     @Test

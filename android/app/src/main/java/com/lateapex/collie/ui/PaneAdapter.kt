@@ -708,8 +708,9 @@ internal class DashboardAdapter(
                 rowBinding.statusDot.background = row.status?.let { statusDot(root, it) }
                     ?: dot(root, R.color.collie_muted, hollow = true)
                 rowBinding.root.setOnClickListener { onSpace(row.workspace) }
-                rowBinding.root.contentDescription = root.resources.getString(
-                    R.string.space_accessibility,
+                rowBinding.root.contentDescription = root.resources.getQuantityString(
+                    R.plurals.space_accessibility_count,
+                    row.workspace.paneCount,
                     row.workspace.label,
                     row.workspace.paneCount,
                 )

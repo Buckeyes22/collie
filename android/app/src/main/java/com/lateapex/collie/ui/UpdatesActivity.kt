@@ -443,7 +443,8 @@ class UpdatesActivity : AppCompatActivity() {
                 setTextColor(color(R.color.collie_foreground))
             })
             check.remedy?.let { remedy ->
-                addView(metadata(getString(R.string.updates_native_fix_on_host, remedy.lineSequence().first())))
+                // Plain text, so the bridge's markdown code ticks would read literally.
+                addView(metadata(getString(R.string.updates_native_fix_on_host, remedy.lineSequence().first().replace("`", ""))))
             }
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
     }

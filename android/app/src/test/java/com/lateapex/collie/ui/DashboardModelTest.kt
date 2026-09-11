@@ -750,6 +750,14 @@ class DashboardModelTest {
     }
 
     @Test
+    fun spacesRowDescriptionPluralisesThePaneCount() {
+        // TalkBack read "ui-walk, 1 panes" (S25 Ultra walk, 2026-09-11).
+        val resources = ApplicationProvider.getApplicationContext<android.content.Context>().resources
+        assertEquals("ui-walk, 1 pane", resources.getQuantityString(R.plurals.space_accessibility_count, 1, "ui-walk", 1))
+        assertEquals("pitwall, 4 panes", resources.getQuantityString(R.plurals.space_accessibility_count, 4, "pitwall", 4))
+    }
+
+    @Test
     fun paneNamingNeverShowsAStaleTerminalTitle() {
         val pane = pane("p", AgentStatus.IDLE).copy(
             workspaceLabel = "collie",
