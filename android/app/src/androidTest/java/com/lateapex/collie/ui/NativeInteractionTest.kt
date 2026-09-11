@@ -445,10 +445,17 @@ class NativeInteractionTest {
                     }
                     instrumentation.waitForIdleSync()
                 }
-                tap(letters.left + letters.width() * 0.05f, letters.top + letters.height() / 6f)
-                tap(letters.left + letters.width() * 0.15f, letters.top + letters.height() / 6f)
+                // Gboard may show a number row above the letters (the S25 Ultra's does, and the first
+                // taps typed "1", "2"): the block then holds four rows, not three. The bottom row,
+                // present in every layout, gives the row height.
+                val rowCount = kotlin.math.round(letters.height().toFloat() / bottom.height()).toInt().coerceIn(3, 4)
+                val rowHeight = letters.height() / rowCount.toFloat()
+                val firstLetterRow = rowCount - 3
+                fun rowCenter(row: Int) = letters.top + rowHeight * (firstLetterRow + row + 0.5f)
+                tap(letters.left + letters.width() * 0.05f, rowCenter(0))
+                tap(letters.left + letters.width() * 0.15f, rowCenter(0))
                 tap(bottom.exactCenterX(), bottom.exactCenterY())
-                tap(letters.left + letters.width() * 0.95f, letters.top + letters.height() * 5f / 6f)
+                tap(letters.left + letters.width() * 0.95f, rowCenter(2))
                 tap(bottom.left + bottom.width() * 0.95f, bottom.exactCenterY())
                 val deliveryDeadline = android.os.SystemClock.uptimeMillis() + 3000
                 while (api.keys.flatten().size < 5 && android.os.SystemClock.uptimeMillis() < deliveryDeadline) Thread.sleep(50)
