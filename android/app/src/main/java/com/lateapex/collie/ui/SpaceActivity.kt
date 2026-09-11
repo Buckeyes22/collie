@@ -172,11 +172,7 @@ class SpaceActivity : AppCompatActivity() {
             spaceSubtitle.isVisible = false
             tabsStrip.isVisible = false
         }
-        // The overview card left with the sibling strip: the header now carries the space's name
-        // and counts, so the list renders only tabs and panes.
-        adapter.submitList(
-            SpacePresentationModel.rows(content, selectedTabId).filterNot { it is SpaceListItem.Overview },
-        )
+        adapter.submitList(SpacePresentationModel.rows(content, selectedTabId))
     }
 
     private fun renderTabStrip(content: SpaceContent, state: SpaceUiState) {
@@ -185,7 +181,7 @@ class SpaceActivity : AppCompatActivity() {
         addView(
             tabChip(getString(R.string.space_tab_all), active = selectedTabId == null) {
                 selectedTabId = null
-                adapter.submitList(SpacePresentationModel.rows(content, null).filterNot { it is SpaceListItem.Overview })
+                adapter.submitList(SpacePresentationModel.rows(content, null))
                 renderTabStrip(content, state)
             },
             stripParams(4),
@@ -207,7 +203,7 @@ class SpaceActivity : AppCompatActivity() {
                     showTabActions(tab)
                 } else {
                     selectedTabId = tab.tabId
-                    adapter.submitList(SpacePresentationModel.rows(content, tab.tabId).filterNot { it is SpaceListItem.Overview })
+                    adapter.submitList(SpacePresentationModel.rows(content, tab.tabId))
                     renderTabStrip(content, state)
                 }
             }

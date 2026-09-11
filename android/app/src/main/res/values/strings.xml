@@ -52,7 +52,6 @@
     <string name="space_label_optional">Label (optional)</string>
     <string name="action_create">Create</string>
     <!-- Kept: the androidTest suite still walks the legacy worktree choice flow. -->
-    <string name="worktree_create_new_branch">Create new branch</string>
     <string name="worktree_branch_name">Branch name</string>
     <string name="worktree_create">Create worktree</string>
     <string name="worktree_repository_caption">In %1$s</string>

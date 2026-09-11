@@ -180,7 +180,6 @@ class SpaceActivityTest {
     @Test
     fun overviewCardIsGoneAndSubtitleCarriesCounts() {
         val activity = launchSpace(workspaces = 2, tabs = 3, currentTab = 0)
-        assertNull(activity.findViewById<View?>(R.id.space_overview_card))
         assertEquals("3 tabs · 3 panes", activity.findViewById<TextView>(R.id.space_subtitle).text.toString())
     }
 

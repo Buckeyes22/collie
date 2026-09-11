@@ -63,12 +63,12 @@ class SpaceModelTest {
 
         val all = SpacePresentationModel.rows(content, null)
         assertEquals(
-            listOf("Overview", "Tab", "Pane", "Tab", "Empty"),
+            listOf("Tab", "Pane", "Tab", "Empty"),
             all.map { it.javaClass.simpleName },
         )
 
         val selected = SpacePresentationModel.rows(content, "t1")
-        assertEquals(listOf("Overview", "Pane"), selected.map { it.javaClass.simpleName })
+        assertEquals(listOf("Pane"), selected.map { it.javaClass.simpleName })
         assertEquals("p1", (selected.last() as SpaceListItem.Pane).pane.paneId)
     }
 
