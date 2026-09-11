@@ -458,7 +458,10 @@ class HistoryActivity : AppCompatActivity() {
         binding.historyFindCount.text = when {
             query.isBlank() -> ""
             findStops.isEmpty() -> "0/0"
-            else -> "${max(findCursor, 0) + 1}/${findStops.size}"
+            // Nothing is current until the reader steps; claiming 1/N made the first Next look
+            // inert (S25 Ultra walk, 2026-09-11). The web History reads the same.
+            findCursor < 0 -> "0/${findStops.size}"
+            else -> "${findCursor + 1}/${findStops.size}"
         }
         binding.historyFindPrevious.isEnabled = findStops.isNotEmpty()
         binding.historyFindNext.isEnabled = findStops.isNotEmpty()

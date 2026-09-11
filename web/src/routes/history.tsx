@@ -212,7 +212,9 @@ export function HistoryRoute() {
               query={query}
               onQueryChange={setQuery}
               count={matches.length}
-              current={matchCursor >= 0 ? matchCursor : 0}
+              // -1 until the reader steps: the bar then reads 0/N, not a match that is not
+              // current (the first Next looked inert; S25 Ultra walk, 2026-09-11).
+              current={matchCursor}
               onPrev={() => jumpTo(step(matches, cursor, -1))}
               onNext={() => jumpTo(step(matches, cursor, 1))}
               onClose={closeFind}

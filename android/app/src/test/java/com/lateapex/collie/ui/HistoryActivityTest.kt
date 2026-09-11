@@ -250,6 +250,9 @@ class HistoryActivityTest {
             0,
             backgrounds.count { it.backgroundColor == activity.getColor(R.color.collie_find_current) },
         )
+        // Nothing is current until the reader steps, so the counter must not claim match 1.
+        assertEquals("0/1", activity.findViewById<TextView>(R.id.history_find_count).text.toString())
+        activity.findViewById<View>(R.id.history_find_next).performClick()
         assertEquals("1/1", activity.findViewById<TextView>(R.id.history_find_count).text.toString())
     }
 

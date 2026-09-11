@@ -10,7 +10,7 @@ interface FindBarProps {
   onQueryChange: (q: string) => void;
   /** Total matches for the current query. */
   count: number;
-  /** Zero-based index of the focused match (only meaningful when count > 0). */
+  /** Zero-based index of the focused match, or -1 while none is focused (the bar reads 0/N). */
   current: number;
   onPrev: () => void;
   onNext: () => void;
