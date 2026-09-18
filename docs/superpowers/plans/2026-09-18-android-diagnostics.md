@@ -96,6 +96,15 @@ network line.
 Tasks 10 and 11 both touch `SettingsActivityTest.kt` and `CHANGELOG.md` — run them sequentially
 (10 before 11), not as parallel lanes, to avoid a merge conflict on those two files.
 
+**Correction to the table above: `AppContainer.kt` is not exclusive to Task 5.** Task 6's own body
+(`defaultHttpClient(diagnostics)` wiring) commits `AppContainer.kt` together with its own files,
+Task 8's body adds the `@VisibleForTesting internal set` seam to `AppContainer.diagnostics`, and
+Task 11's body drops `private` from `AppContainer.diagnosticsWriter`. **Tasks 5, 6, 8, and 11 must
+run strictly sequentially, in that order, regardless of the parallel opportunities described above
+for their other files** — treat `AppContainer.kt` as a fifth, standing exclusive resource shared by
+exactly those four tasks. Task 7 does not touch `AppContainer.kt` and may still run in parallel with
+6 once 5 has landed, but must not run concurrently with 8 or 11.
+
 ---
 
 ### Task 1: DiagnosticsWriter — rotating, encrypted-on-seal NDJSON store
