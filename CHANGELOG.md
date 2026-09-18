@@ -23,31 +23,6 @@ reach: `bin/collie update --major`. Fresh install:
 `curl -fsSL https://colliepwa.dev/install.sh | sh`. Neither upgrade path assumes a `collie` on your
 PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgrading from 0.x to
 1.0*.
-- Android: the mirror no longer crashes on grid rows with trailing padding; reflow groups rows by index, not text.
-- Android: the pane body mode row draws above both bodies so its switch takes the tap, and its label names the body on screen.
-- Android: a pane whose agent changes while open (a shell that starts claude) binds dialogs and replies with the new agent instead of refusing every tap.
-- Android and web: the mirror reflow takes its wrap width from prose rows, not full-width rules, so live Claude output actually joins.
-- Android: Keys modifiers keep a visible outline when idle and Shift fits on one line; Rename prefills the pane's own title, never the space › tab composite.
-- Android: the Space list drops the build stamp footer and a card's meta line no longer repeats its title; dashboard meta truncates in the middle.
-- Android: the pairing card is the first card in Settings and its label field is prefilled from the connection.
-- Android: the Space tab strip's add controls read "+ Tab" and "+ Space" instead of two identical "+" circles.
-- Android: an attached image shows as a thumbnail chip labelled "Image" instead of the picker's media id or the bridge copy's file name.
-- Android and web: the mirror reflow joins a row when the next word would not have fit on it, judged per row, so word-wrapped Claude prose joins and a joined paragraph no longer swallows the rows after it.
-- Android: the transcript body holds the reader's place by anchoring on the first visible turn, so new turns arriving below no longer push the view down and Load older keeps what was on screen.
-- Android: the Settings pairing card uses the setup screen's filled "Pair and connect" button and spacing, and keeps the card gap above Appearance.
-- Android: a Space card's meta line no longer shows a terminal title left behind by a program that has exited.
-- Android: the worktree sheet lists a repository's unopened worktrees again, each opened only after an "Open worktree?" confirm.
-- Android: Ctrl C and Space sit at the head of the Keys drawer's second row again instead of behind More.
-- Android: Settings offers the pairing card again when the bridge no longer recognises the phone's stored token, as after `collie devices revoke`.
-- Android: the Space tab strip scrolls only to bring an off-screen selected tab into view, so tapping a visible tab no longer pushes All off the edge.
-- Android: one tap on the pane mirror opens the composer; before, an unfocused mirror took the first tap for itself and tap-to-type needed two.
-- Android: the pane switcher's Recent heading folds again, so a Recent section collapsed on the dashboard can be opened from the switcher.
-- Android: a pane whose agent has no session log yet asks again after a pause, so a freshly started Claude's transcript appears without reopening the pane; the body switch hides while there is no transcript.
-- Android and web: the History find counter reads 0/N until a match is selected, so the first Next visibly moves to match 1.
-- Android: Updates remedy lines drop the bridge's markdown backticks, and Spaces rows announce "1 pane" rather than "1 panes".
-- Android: both pairing forms stay out of autofill and take the one-time code as plain capitals, so a password manager no longer offers to save it.
-- Android: opening an agent pane lands on the newest turn; a turn taking focus no longer scrolls the transcript to the top of the session.
-
 ## [Unreleased]
 
 - Android: the pane mirror joins Herdr's soft wraps so a paragraph wraps once on the phone.
@@ -81,7 +56,6 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - The web and native Android interfaces are English-only; language selectors, alternate catalogs,
   localized resource overlays, and translation tooling were removed.
 - The CLI integration harness now permits only the public-URL probes required by pairing QR codes.
-
 - Android Type mode preserves modified hardware and IME keys, Keys input survives polling, tapping terminal output opens the soft keyboard, and expanded Keys remain scrollable on small screens.
 - The Android app no longer sets `FLAG_SECURE`; screens and recents thumbnails are capturable again.
 - Android mirror follows the pane text instead of Herdr's always-zero revision, so it no longer freezes after its first paint.
@@ -105,6 +79,30 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - Android and web recognise an AskUserQuestion whose prompt is not phrased as a question ("Pick a colour:"), so its options render as buttons.
 - Android re-analyses a pane's dialog whenever its text changes, not only on Herdr's always-zero revision, so an answered dialog's buttons leave the screen without reopening the pane.
 - Android no longer offers to take over Claude's faint ghost suggestion as a terminal draft; only typed text in the box counts, as on the web.
+- Android: the mirror no longer crashes on grid rows with trailing padding; reflow groups rows by index, not text.
+- Android: the pane body mode row draws above both bodies so its switch takes the tap, and its label names the body on screen.
+- Android: a pane whose agent changes while open (a shell that starts claude) binds dialogs and replies with the new agent instead of refusing every tap.
+- Android and web: the mirror reflow takes its wrap width from prose rows, not full-width rules, so live Claude output actually joins.
+- Android: Keys modifiers keep a visible outline when idle and Shift fits on one line; Rename prefills the pane's own title, never the space › tab composite.
+- Android: the Space list drops the build stamp footer and a card's meta line no longer repeats its title; dashboard meta truncates in the middle.
+- Android: the pairing card is the first card in Settings and its label field is prefilled from the connection.
+- Android: the Space tab strip's add controls read "+ Tab" and "+ Space" instead of two identical "+" circles.
+- Android: an attached image shows as a thumbnail chip labelled "Image" instead of the picker's media id or the bridge copy's file name.
+- Android and web: the mirror reflow joins a row when the next word would not have fit on it, judged per row, so word-wrapped Claude prose joins and a joined paragraph no longer swallows the rows after it.
+- Android: the transcript body holds the reader's place by anchoring on the first visible turn, so new turns arriving below no longer push the view down and Load older keeps what was on screen.
+- Android: the Settings pairing card uses the setup screen's filled "Pair and connect" button and spacing, and keeps the card gap above Appearance.
+- Android: a Space card's meta line no longer shows a terminal title left behind by a program that has exited.
+- Android: the worktree sheet lists a repository's unopened worktrees again, each opened only after an "Open worktree?" confirm.
+- Android: Ctrl C and Space sit at the head of the Keys drawer's second row again instead of behind More.
+- Android: Settings offers the pairing card again when the bridge no longer recognises the phone's stored token, as after `collie devices revoke`.
+- Android: the Space tab strip scrolls only to bring an off-screen selected tab into view, so tapping a visible tab no longer pushes All off the edge.
+- Android: one tap on the pane mirror opens the composer; before, an unfocused mirror took the first tap for itself and tap-to-type needed two.
+- Android: the pane switcher's Recent heading folds again, so a Recent section collapsed on the dashboard can be opened from the switcher.
+- Android: a pane whose agent has no session log yet asks again after a pause, so a freshly started Claude's transcript appears without reopening the pane; the body switch hides while there is no transcript.
+- Android and web: the History find counter reads 0/N until a match is selected, so the first Next visibly moves to match 1.
+- Android: Updates remedy lines drop the bridge's markdown backticks, and Spaces rows announce "1 pane" rather than "1 panes".
+- Android: both pairing forms stay out of autofill and take the one-time code as plain capitals, so a password manager no longer offers to save it.
+- Android: opening an agent pane lands on the newest turn; a turn taking focus no longer scrolls the transcript to the top of the session.
 
 ## [1.5.1] - 2026-09-04
 
