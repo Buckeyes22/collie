@@ -40,6 +40,15 @@ class NativePreferencesTest {
     }
 
     @Test
+    fun diagnosticsCaptureDefaultsToOnAndPersists() {
+        val preferences = NativePreferences(context)
+        assertTrue(preferences.diagnosticsEnabled)
+
+        preferences.diagnosticsEnabled = false
+        assertFalse(NativePreferences(context).diagnosticsEnabled)
+    }
+
+    @Test
     fun themeAndHapticsSurviveANewPreferencesInstance() {
         NativePreferences(context).apply {
             themeMode = NativePreferences.ThemeMode.LIGHT

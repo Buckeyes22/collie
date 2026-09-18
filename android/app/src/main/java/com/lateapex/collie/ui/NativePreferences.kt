@@ -35,6 +35,14 @@ class NativePreferences(
             preferences.edit().putBoolean(HAPTICS_ENABLED, value).apply()
         }
 
+    /** Gates [com.lateapex.collie.diagnostics.DiagnosticsRecorder]; default on so a bug is
+     * captured without arming anything ahead of time. Turning it off needs no rebuild. */
+    var diagnosticsEnabled: Boolean
+        get() = preferences.getBoolean(DIAGNOSTICS_ENABLED, true)
+        set(value) {
+            preferences.edit().putBoolean(DIAGNOSTICS_ENABLED, value).apply()
+        }
+
     var terminalFontSize: Int
         get() = preferences.getInt(TERMINAL_FONT_SIZE, 10).coerceIn(9, 16)
         set(value) {
@@ -173,6 +181,7 @@ class NativePreferences(
         internal const val PREFERENCES = "collie_native_preferences"
         internal const val THEME_MODE = "theme_mode"
         internal const val HAPTICS_ENABLED = "haptics_enabled"
+        internal const val DIAGNOSTICS_ENABLED = "diagnostics_enabled"
         internal const val TERMINAL_FONT_SIZE = "terminal_font_size"
         internal const val DRAFT_FONT_SIZE = "draft_font_size"
         internal const val HANDS_FREE_ENABLED = "hands_free_enabled"
