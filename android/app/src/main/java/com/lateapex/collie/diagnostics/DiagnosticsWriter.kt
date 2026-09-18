@@ -24,13 +24,13 @@ class DiagnosticsWriter(
     private val json: Json,
     private val maxActiveBytes: Long = 5_000_000L,
     private val maxSealedFiles: Int = 4,
-) {
+) : DiagnosticsAppendable {
     init {
         directory.mkdirs()
     }
 
     @Synchronized
-    fun appendLine(line: String) {
+    override fun appendLine(line: String) {
         activeFile().appendText(line + "\n")
         if (activeFile().length() >= maxActiveBytes) seal()
     }
