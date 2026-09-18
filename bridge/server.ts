@@ -454,6 +454,26 @@ export interface UpdateActionDeps {
   beginPackRun?: (a: { runId: string; to: string }) => void;
 }
 
+/**
+ * Pure + exported so the access-log shape is unit-tested without standing up `Bun.serve`
+ * (CLAUDE.md — the handler itself cannot be). One line per request, written to stdout so the
+ * existing `systemd --user` unit's `journalctl` capture already carries it; no new storage.
+ */
+export function accessLogRecord(
+  req: Pick<Request, "method" | "url" | "headers">,
+  status: number,
+  ms: number,
+): Record<string, unknown> {
+  return {
+    at: "access",
+    method: req.method,
+    path: new URL(req.url).pathname,
+    status,
+    ms,
+    traceId: req.headers.get("x-collie-trace-id"),
+  };
+}
+
 export function startServer(opts: {
   cfg: Config;
   registry: SessionRegistry;
@@ -957,6 +977,8 @@ export function startServer(opts: {
     tls: listenerTls,
 
     async fetch(req) {
+      const accessLogStart = Date.now();
+      const response = await (async (): Promise<Response> => {
       const url = new URL(req.url);
       const { pathname } = url;
 
@@ -1591,6 +1613,9 @@ export function startServer(opts: {
 
       // ── Static PWA (with SPA fallback) ───────────────────────────────────
       return serveStatic(pathname);
+      })();
+      console.log(JSON.stringify(accessLogRecord(req, response.status, Date.now() - accessLogStart)));
+      return response;
     },
   });
 

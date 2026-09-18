@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { updateStartVerdict, type PackUpdateRow } from "./update-action.ts";
 
 import {
+  accessLogRecord,
   bridgeConfigBody,
   muxConfigBody,
   muxLogoResponse,
@@ -2488,5 +2489,33 @@ describe("update status peers — the legs of a pack-wide run", () => {
     // A peers-only run starts no updater on this machine.
     const peersBranch = handler.slice(handler.indexOf('if (verdict.kind === "peers")'));
     expect(peersBranch.slice(0, peersBranch.indexOf("return json"))).not.toContain("action.start");
+  });
+});
+
+describe("accessLogRecord", () => {
+  test("reads method, path, status, duration, and the trace-id header", () => {
+    const req = new Request("http://localhost/api/health?x=1", {
+      headers: { "x-collie-trace-id": "abc-123" },
+    });
+    expect(accessLogRecord(req, 200, 15)).toEqual({
+      at: "access",
+      method: "GET",
+      path: "/api/health",
+      status: 200,
+      ms: 15,
+      traceId: "abc-123",
+    });
+  });
+
+  test("reports a null trace id for a client that never sent one", () => {
+    const req = new Request("http://localhost/api/snapshot");
+    expect(accessLogRecord(req, 200, 3).traceId).toBeNull();
+  });
+
+  test("the header name is matched case-insensitively, per the Fetch Headers contract", () => {
+    const req = new Request("http://localhost/api/health", {
+      headers: { "X-Collie-Trace-Id": "abc-123" },
+    });
+    expect(accessLogRecord(req, 200, 1).traceId).toBe("abc-123");
   });
 });

@@ -103,6 +103,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - Android: Updates remedy lines drop the bridge's markdown backticks, and Spaces rows announce "1 pane" rather than "1 panes".
 - Android: both pairing forms stay out of autofill and take the one-time code as plain capitals, so a password manager no longer offers to save it.
 - Android: opening an agent pane lands on the newest turn; a turn taking focus no longer scrolls the transcript to the top of the session.
+- Bridge: every request is logged to stdout with its method, path, status, duration, and the client's trace id, so a phone-side event can be matched to `journalctl` output by id.
 
 ## [1.5.1] - 2026-09-04
 
