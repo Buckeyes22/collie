@@ -111,7 +111,9 @@ Zen, tap-to-type and the buffer affordances follow whichever body is on screen.
 - **Passes.** An AskUserQuestion raised from the phone switches the body to the mirror with the
   prompt panel, and answering it switches back, without leaving the pane
   (`2026-09-11-ux-dialog-mirror.png`, `2026-09-11-ux-after-answer.png`). A panel the grammar does
-  not recognise, such as `/cost`, also shows the mirror (`2026-09-11-ux-panel-mirror.png`).
+  not recognise, such as `/cost`, is **not** auto-detected: the body stays on the transcript, and
+  the mirror only shows that panel after the operator manually taps "Show terminal" in the pane
+  actions sheet (`2026-09-11-ux-panel-mirror.png`).
 - **Passes.** A shell pane, and an agent pane with no journal yet, show the plain mirror with no
   body row. opencode turned out to have a journal adapter, so its pane shows a transcript: the body
   keys on the history answer, not on agent names.
@@ -122,13 +124,23 @@ Zen, tap-to-type and the buffer affordances follow whichever body is on screen.
 - **Passes.** The re-walk replaces the 186-step ledger of 2026-09-10 with 193 steps on the
   changed screens; every 2026-09-10 step is either walked again or mapped to where it lives now.
 
-## 7. Open questions for the operator
+## 7. Decisions made
 
-1. Option 1 with option 3 as the floor, or option 3 alone?
-2. When a dialog is up, should the transcript stay visible above the prompt panel (mirror only
-   for the dialog region), or should the whole body switch to the mirror? The first reads better;
-   the second is simpler and is what the web does today.
-3. Should the transcript body be the default for Codex too, or Claude first?
+1. **Option 1 with option 3 as the floor.** This is what §6's Acceptance section describes: a
+   rendered transcript body for panes whose agent has a journal adapter, with the reflowed mirror
+   + status row as the floor for the Raw, dialog, no-journal, pending and manual "Show terminal"
+   cases. Decided in `android/app/src/main/java/com/lateapex/collie/ui/PaneBodyMode.kt` (the
+   `decide()` function returns TRANSCRIPT unless one of those cases holds).
+2. **The whole body switches to the mirror.** The `surface != null` branch in
+   `PaneBodyDecision.decide()` (`PaneBodyMode.kt:19`) returns `MIRROR` with reason `DIALOG` for the
+   entire body — there is no
+   "transcript above, mirror only under the dialog" split. This matches the web client and is what
+   the AskUserQuestion bullet in §6 already describes.
+3. **By journal adapter, not by agent name or rollout order.** Eligibility is decided by whether the
+   pane's agent has a journal adapter (`bridge/journal/registry.ts`), not by agent name. All four
+   registered adapters — `claude`, `codex`, `pi`, and `opencode` (`bridge/journal/opencode.ts`) —
+   get a transcript body once they have one. There is no "Claude first" or "Claude-only" carve-out
+   (the agent string in `decide()` only short-circuits to `NO_JOURNAL` for shells and unknowns).
 
 ## Appendix A — the rest of the app through the same lens
 

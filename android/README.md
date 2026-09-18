@@ -123,6 +123,18 @@ server revocation action.
   direct typing, and prompt-bound replies. Codex, Claude, Grok, OMP, Agy, and Antigravity use exact
   composer recognition; OpenCode, shell, and otherwise unadapted agents retain the bounded
   visible-tail disposition used by the web client.
+- The pane body switches between a rendered transcript (one card per turn, grown upward by
+  "Load older") and the inert mirror of the underlying terminal grid. Transcript eligibility is
+  decided by whether the pane's agent has a journal adapter (`bridge/journal/registry.ts`
+  registers claude, codex, pi, and opencode), not by agent name. The mirror takes over when Raw
+  is on, an AskUserQuestion-style dialog is up, no journal exists for this pane yet, or the
+  operator manually taps "Show terminal" in the body row; an unrecognized surface such as
+  Claude's `/cost` is not auto-detected.
+- The Keys drawer is one compact primary row plus a modifiers row and a More sheet that holds
+  presets and function keys; with the drawer open at most three rows sit above the composer.
+- The worktree sheet lists a repository's linked worktrees that have no open space; selecting one
+  opens it only after a separate "Open worktree?" confirmation dialog, rather than branching
+  again from the same base.
 - The system image picker uploads bounded images without storage permission. Operator-initiated
   audio recording requests microphone permission at runtime and sends a bounded clip to `/api/stt`;
   the resulting transcript returns to the draft for review.
@@ -155,6 +167,26 @@ switcher, draft/process-death persistence, multiline input, image-picker cancell
 search, Settings/Updates, rotation, status/navigation/IME containment, and the packaged permission
 boundary passed. The serialized Gradle gate also passed the complete JVM/Robolectric suite, lint, debug
 assembly, and minified unsigned release assembly.
+
+A full `connectedDebugAndroidTest` run was executed on 2026-09-11 against the same paired Samsung
+Galaxy S25 Ultra (`SM-S938U1`, Android/API 36) and passed 58/58. That instrumented suite covers, on
+the device, the Gboard row-count test that detects 3- or 4-row Gboard layouts dynamically from the
+letter-to-bottom-row height ratio (`NativeInteractionTest.kt`). The transcript-vs-mirror body
+switching for journalled agents (claude, codex, pi, opencode), the one-row-plus-More-sheet Keys
+drawer, the unopened-worktree listing with its separate confirm dialog, and "Load older" pagination
+are the same pane-UX overhaul, covered separately by the JVM/Robolectric unit suite
+(`testDebugUnitTest`) rather than by this instrumented run. The newest-turn landing fix
+(`revealOnFocusHint = false` on turn views, the Load older button, and the mirror's
+`terminal_text`, pinned by `TranscriptBodyViewTest.kt`) and the pairing-code autofill fix
+(Bitwarden popup suppressed by switching `pairing_code_input` to
+`textCapCharacters|textNoSuggestions`, pinned by `SettingsActivityTest.kt`) are also unit-tested,
+not part of the instrumented suite; the newest-turn fix was additionally confirmed live on the S25
+Ultra by cold-opening a busy agent pane and observing it land on the newest turn. The ledger is at
+[acceptance/2026-09-11-ux-walk.md](acceptance/2026-09-11-ux-walk.md); run the instrumented suite
+from this directory with `./gradlew --no-daemon connectedDebugAndroidTest`. Running it uninstalls
+and reinstalls the debug APK, which wipes the phone's encrypted pairing/connection state — re-pair
+(`bin/collie devices revoke <old-label>` then `bin/collie pair`, then enter the code in the app)
+before drawing acceptance conclusions from the run.
 
 The final parity regression ran only on the API 36 `stormlens_api36` emulator. It verified live
 read-only dashboard data and cold-relaunch connection persistence; safe status/navigation bounds;
