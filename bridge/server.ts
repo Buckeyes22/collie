@@ -459,11 +459,20 @@ export interface UpdateActionDeps {
  * (CLAUDE.md — the handler itself cannot be). One line per request, written to stdout so the
  * existing `systemd --user` unit's `journalctl` capture already carries it; no new storage.
  */
+export interface AccessLogRecord {
+  at: "access";
+  method: string;
+  path: string;
+  status: number;
+  ms: number;
+  traceId: string | null;
+}
+
 export function accessLogRecord(
   req: Pick<Request, "method" | "url" | "headers">,
   status: number,
   ms: number,
-): Record<string, unknown> {
+): AccessLogRecord {
   return {
     at: "access",
     method: req.method,
@@ -978,7 +987,7 @@ export function startServer(opts: {
 
     async fetch(req) {
       const accessLogStart = Date.now();
-      const response = await (async (): Promise<Response> => {
+      const answered = await (async (): Promise<Response> => {
       const url = new URL(req.url);
       const { pathname } = url;
 
@@ -1614,8 +1623,8 @@ export function startServer(opts: {
       // ── Static PWA (with SPA fallback) ───────────────────────────────────
       return serveStatic(pathname);
       })();
-      console.log(JSON.stringify(accessLogRecord(req, response.status, Date.now() - accessLogStart)));
-      return response;
+      console.log(JSON.stringify(accessLogRecord(req, answered.status, Date.now() - accessLogStart)));
+      return answered;
     },
   });
 

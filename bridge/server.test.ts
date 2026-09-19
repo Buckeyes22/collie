@@ -2494,10 +2494,10 @@ describe("update status peers — the legs of a pack-wide run", () => {
 
 describe("accessLogRecord", () => {
   test("reads method, path, status, duration, and the trace-id header", () => {
-    const req = new Request("http://localhost/api/health?x=1", {
+    const request = new Request("http://localhost/api/health?x=1", {
       headers: { "x-collie-trace-id": "abc-123" },
     });
-    expect(accessLogRecord(req, 200, 15)).toEqual({
+    expect(accessLogRecord(request, 200, 15)).toEqual({
       at: "access",
       method: "GET",
       path: "/api/health",
@@ -2508,14 +2508,14 @@ describe("accessLogRecord", () => {
   });
 
   test("reports a null trace id for a client that never sent one", () => {
-    const req = new Request("http://localhost/api/snapshot");
-    expect(accessLogRecord(req, 200, 3).traceId).toBeNull();
+    const request = new Request("http://localhost/api/snapshot");
+    expect(accessLogRecord(request, 200, 3).traceId).toBeNull();
   });
 
   test("the header name is matched case-insensitively, per the Fetch Headers contract", () => {
-    const req = new Request("http://localhost/api/health", {
+    const request = new Request("http://localhost/api/health", {
       headers: { "X-Collie-Trace-Id": "abc-123" },
     });
-    expect(accessLogRecord(req, 200, 1).traceId).toBe("abc-123");
+    expect(accessLogRecord(request, 200, 1).traceId).toBe("abc-123");
   });
 });
