@@ -17,6 +17,9 @@ import com.lateapex.collie.R
 import com.lateapex.collie.databinding.ActivitySettingsBinding
 import com.lateapex.collie.domain.Connection
 import java.util.Locale
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.FileProvider
+import com.lateapex.collie.diagnostics.DiagnosticsExport
 import kotlinx.coroutines.launch
 
 internal data class SettingsEntryRequest(
@@ -86,6 +89,9 @@ class SettingsActivity : AppCompatActivity() {
         binding.settingsConnectionBridgeValue.setText(R.string.settings_parity_bridge_connecting)
         binding.settingsBuildStamp.text = getString(R.string.settings_parity_build_stamp, BuildConfig.VERSION_NAME)
         binding.disconnectButton.setOnClickListener { confirmDisconnect() }
+        binding.root.findViewById<View>(R.id.settings_diagnostics_send_button)?.setOnClickListener {
+            confirmSendDiagnostics()
+        }
 
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -183,6 +189,55 @@ class SettingsActivity : AppCompatActivity() {
         sheet.setOnDismissListener { if (disconnectSheet === sheet) disconnectSheet = null }
         disconnectSheet = sheet
         sheet.show()
+    }
+
+    private val diagnosticsChooser = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+        pendingDiagnosticsExportDir?.deleteRecursively()
+        pendingDiagnosticsExportDir = null
+    }
+    private var pendingDiagnosticsExportDir: java.io.File? = null
+
+    private fun confirmSendDiagnostics() {
+        val sheet = CollieBottomSheetDialog(this, getString(R.string.settings_diagnostics_send_confirm_title))
+        val content = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            addView(android.widget.TextView(this@SettingsActivity).apply {
+                setText(R.string.settings_diagnostics_send_confirm_message)
+                textSize = 14f
+                setTextColor(ContextCompat.getColor(this@SettingsActivity, R.color.collie_muted))
+            })
+            addView(com.google.android.material.button.MaterialButton(this@SettingsActivity).apply {
+                setText(R.string.settings_diagnostics_send_title)
+                isAllCaps = false
+                setOnClickListener {
+                    sheet.dismiss()
+                    sendDiagnostics()
+                }
+            }, android.widget.LinearLayout.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                resources.getDimensionPixelSize(R.dimen.collie_touch_target),
+            ).apply { topMargin = resources.getDimensionPixelSize(R.dimen.collie_card_gap) })
+        }
+        sheet.setSheetContent(content)
+        sheet.show()
+    }
+
+    private fun sendDiagnostics() {
+        val exportDir = java.io.File(cacheDir, "diagnostics-export")
+        val writer = (application as CollieApplication).container.diagnosticsWriter
+        val zip = DiagnosticsExport(writer, exportDir).buildZip()
+        pendingDiagnosticsExportDir = exportDir
+        val uri = FileProvider.getUriForFile(
+            this,
+            "$packageName.diagnostics.fileprovider",
+            zip,
+        )
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "application/zip"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        diagnosticsChooser.launch(Intent.createChooser(intent, getString(R.string.settings_diagnostics_send_title)))
     }
 
     private fun renderServerConnection(value: SettingsConnectionPresentation) = with(binding) {

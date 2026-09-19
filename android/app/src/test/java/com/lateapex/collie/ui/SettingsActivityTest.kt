@@ -31,6 +31,7 @@ import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
+import org.robolectric.shadows.ShadowDialog
 
 @RunWith(RobolectricTestRunner::class)
 class SettingsActivityTest {
@@ -108,6 +109,18 @@ class SettingsActivityTest {
         assertTrue(diagnosticsSwitch.isChecked)
         diagnosticsSwitch.performClick()
         assertFalse(NativePreferences(context).diagnosticsEnabled)
+    }
+
+    @Test
+    fun sendDiagnosticsButtonOpensAConfirmSheetNamingSensitiveContent() {
+        val activity = Robolectric.buildActivity(SettingsActivity::class.java).create().start().resume().get()
+        shadowOf(activity.mainLooper).idle()
+
+        val button = activity.findViewById<View>(R.id.settings_diagnostics_send_button)
+        assertNotNull(button)
+        button.performClick()
+
+        assertTrue(ShadowDialog.getLatestDialog() is CollieBottomSheetDialog)
     }
 
     @Test

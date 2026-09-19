@@ -41,14 +41,29 @@ internal class SettingsLocalPreferences(
         }
         handsFreeCard?.let(parent::addView)
         parent.addView(
-            switchCard(
+            (switchCard(
                 title = text(R.string.settings_diagnostics_title),
                 description = text(R.string.settings_diagnostics_description),
                 id = R.id.settings_diagnostics_switch,
                 checked = preferences.diagnosticsEnabled,
                 iconRes = R.drawable.ic_history_wrench,
-            ) { preferences.diagnosticsEnabled = it }.apply {
+            ) { preferences.diagnosticsEnabled = it } as LinearLayout).apply {
                 id = R.id.settings_diagnostics_card
+                addView(divider())
+                addView(
+                    MaterialButton(activity, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+                        id = R.id.settings_diagnostics_send_button
+                        text = text(R.string.settings_diagnostics_send_title)
+                        isAllCaps = false
+                        minHeight = dp(44)
+                    },
+                    LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                        val margin = dp(16)
+                        leftMargin = margin
+                        rightMargin = margin
+                        bottomMargin = dp(14)
+                    },
+                )
             },
         )
     }

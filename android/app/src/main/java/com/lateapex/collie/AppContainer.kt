@@ -22,7 +22,7 @@ class AppContainer(context: Context) {
         encodeDefaults = false
     }
     val nativePreferences = NativePreferences(context.applicationContext)
-    private val diagnosticsWriter = DiagnosticsWriter(
+    val diagnosticsWriter = DiagnosticsWriter(
         directory = File(context.applicationContext.filesDir, "diagnostics"),
         cipher = AndroidKeystoreCipher(alias = "com.lateapex.collie.diagnostics.v1"),
         json = json,
