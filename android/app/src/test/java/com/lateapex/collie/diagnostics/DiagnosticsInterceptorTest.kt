@@ -23,7 +23,7 @@ class DiagnosticsInterceptorTest {
     fun setUp() {
         server = MockWebServer().apply { start() }
         recorded = mutableListOf()
-        val recorder = RecordingRecorder(recorded)
+        val recorder = RecordingDiagnosticsRecorder(recorded)
         client = OkHttpClient.Builder()
             .addInterceptor(DiagnosticsInterceptor(recorder))
             .build()
@@ -96,17 +96,5 @@ class DiagnosticsInterceptorTest {
         assertFalse(fields.containsKey("requestBody"))
         assertEquals(1024L, (fields["responseBodyBytes"] as Number).toLong())
         assertFalse(fields.containsKey("responseBody"))
-    }
-
-    private class RecordingRecorder(
-        private val sink: MutableList<Pair<String, Map<String, Any?>>>,
-    ) : DiagnosticsRecorder(FakeAppendable(), { true }) {
-        override fun record(category: String, fields: Map<String, Any?>) {
-            synchronized(sink) { sink.add(category to fields) }
-        }
-    }
-
-    private class FakeAppendable : DiagnosticsAppendable {
-        override fun appendLine(line: String) = Unit
     }
 }

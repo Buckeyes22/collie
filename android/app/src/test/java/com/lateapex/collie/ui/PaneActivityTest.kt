@@ -18,7 +18,10 @@ import com.google.android.material.button.MaterialButton
 import java.io.File
 import java.time.Duration
 import androidx.test.core.app.ApplicationProvider
+import com.lateapex.collie.CollieApplication
 import com.lateapex.collie.R
+import com.lateapex.collie.diagnostics.DiagnosticsRecorder
+import com.lateapex.collie.diagnostics.RecordingDiagnosticsRecorder
 import com.lateapex.collie.network.PaneReadResponse
 import com.lateapex.collie.network.AgentStatus
 import com.lateapex.collie.network.MuxConfigResponse
@@ -1407,6 +1410,29 @@ class PaneActivityTest {
     }
 
     @Test
+    fun paneBodyDecisionChangesAreRecordedToDiagnostics() {
+        val activity = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("body:diag", agent = "claude"))
+            .create().start().resume().get()
+        val lines = mutableListOf<Pair<String, Map<String, Any?>>>()
+        val app = activity.applicationContext as CollieApplication
+        val recorder = RecordingDiagnosticsRecorder(lines)
+        setDiagnosticsForTest(app, recorder)
+
+        val transcript = listOf(TranscriptEntry("a", "2026-09-18T00:00:00Z", "assistant", listOf(TranscriptPart("text", text = "hi"))))
+        render(
+            activity,
+            PaneUiState(
+                pane = PaneReadResponse("body:diag", "screen", truncated = false, revision = 0),
+                loading = false,
+                transcript = transcript,
+                transcriptAvailable = true,
+            ),
+        )
+
+        assertTrue(lines.any { it.first == "paneBodyDecision" })
+    }
+
+    @Test
     fun showTerminalRestoresTheStatuslinePaddingUnderTheMirror() {
         val activity = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("pad:pane", agent = "claude")).create().start().resume().get()
         val text = listOf("⏺ hi", "─".repeat(30), "❯ ", "─".repeat(30), "  Opus 5 · 12%").joinToString("\n")
@@ -1579,4 +1605,8 @@ class PaneActivityTest {
         assertEquals(activity.getString(R.string.pane_body_showing_mirror_no_journal), activity.findViewById<TextView>(R.id.body_mode_label).text.toString())
         assertEquals(activity.getString(R.string.pane_body_switch_to_transcript), activity.findViewById<TextView>(R.id.body_mode_switch).text.toString())
     }
+}
+
+private fun setDiagnosticsForTest(app: CollieApplication, recorder: DiagnosticsRecorder) {
+    app.container.diagnostics = recorder
 }

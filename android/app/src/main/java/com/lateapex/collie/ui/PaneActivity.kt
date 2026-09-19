@@ -3381,6 +3381,14 @@ class PaneActivity : AppCompatActivity() {
             agentName,
         )
         if (decided.reason != lastBodyReason) {
+            (application as CollieApplication).container.diagnostics.record(
+                "paneBodyDecision",
+                mapOf(
+                    "body" to decided.body.name,
+                    "reason" to decided.reason.name,
+                    "previousReason" to lastBodyReason?.name,
+                ),
+            )
             bodyOverride = null
             lastBodyReason = decided.reason
         }

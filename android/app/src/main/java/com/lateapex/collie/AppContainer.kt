@@ -27,10 +27,11 @@ class AppContainer(context: Context) {
         cipher = AndroidKeystoreCipher(alias = "com.lateapex.collie.diagnostics.v1"),
         json = json,
     )
-    val diagnostics = DiagnosticsRecorder(
+    var diagnostics: DiagnosticsRecorder = DiagnosticsRecorder(
         writer = diagnosticsWriter,
         enabled = { nativePreferences.diagnosticsEnabled },
     )
+        @androidx.annotation.VisibleForTesting internal set
     val httpClient: OkHttpClient = CollieApiClient.defaultHttpClient(diagnostics)
     val originValidator = OriginValidator()
     val connectionStore: ConnectionStore = EncryptedConnectionStore(
