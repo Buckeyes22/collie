@@ -99,6 +99,47 @@ class DiagnosticsInterceptorTest {
     }
 
     @Test
+    fun aPollWhoseAnswerHasNotChangedIsNotRecordedAgain() {
+        // S25 Ultra, 2026-09-18: 70% of a 20-minute trace was the same transcript page, re-read
+        // every 2 seconds and stored whole each time.
+        repeat(3) { server.enqueue(MockResponse().setResponseCode(200).setBody("{\"entries\":[1]}")) }
+        server.enqueue(MockResponse().setResponseCode(200).setBody("{\"entries\":[1,2]}"))
+        server.enqueue(MockResponse().setResponseCode(503).setBody("{\"entries\":[1,2]}"))
+        repeat(5) {
+            client.newCall(Request.Builder().url(server.url("/api/pane/w1/history")).build()).execute().use { it.body?.string() }
+        }
+
+        assertEquals(
+            listOf("{\"entries\":[1]}", "{\"entries\":[1,2]}", "{\"entries\":[1,2]}"),
+            recorded.map { it.second["responseBody"] },
+        )
+        assertEquals(listOf(200L, 200L, 503L), recorded.map { (it.second["status"] as Number).toLong() })
+    }
+
+    @Test
+    fun aRepeatedSendIsAlwaysRecorded() {
+        repeat(2) { server.enqueue(MockResponse().setResponseCode(200).setBody("{\"ok\":true}")) }
+        repeat(2) {
+            val request = Request.Builder()
+                .url(server.url("/api/pane/w1/keys"))
+                .post("{\"keys\":[\"Enter\"]}".toRequestBody("application/json".toMediaType()))
+                .build()
+            client.newCall(request).execute().use { it.body?.string() }
+        }
+
+        assertEquals(2, recorded.size)
+    }
+
+    @Test
+    fun anUnchangedAnswerForADifferentPaneIsStillRecorded() {
+        repeat(2) { server.enqueue(MockResponse().setResponseCode(200).setBody("{\"text\":\"same\"}")) }
+        client.newCall(Request.Builder().url(server.url("/api/pane/w1")).build()).execute().use { it.body?.string() }
+        client.newCall(Request.Builder().url(server.url("/api/pane/w2")).build()).execute().use { it.body?.string() }
+
+        assertEquals(2, recorded.size)
+    }
+
+    @Test
     fun switchedOffStillTagsTheRequestButRecordsNothing() {
         val off = object : RecordingDiagnosticsRecorder(recorded) {
             override val isEnabled = false
