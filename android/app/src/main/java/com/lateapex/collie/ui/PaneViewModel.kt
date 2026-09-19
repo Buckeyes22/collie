@@ -78,6 +78,8 @@ class PaneViewModel(
     initialAgent: String?,
     private val repository: CollieRepository =
         (application as CollieApplication).container.repository,
+    private val diagnostics: com.lateapex.collie.diagnostics.DiagnosticsRecorder =
+        (application as CollieApplication).container.diagnostics,
 ) : AndroidViewModel(application) {
     /**
      * The agent whose grammar binds replies and dialogs. Seeded from the launch intent and then
@@ -183,6 +185,7 @@ class PaneViewModel(
     }
 
     fun sendReply(text: String, terminalDraftToClear: TerminalDraft? = null) {
+        diagnostics.record("action", mapOf("name" to "pane.send_reply"))
         val clean = text.trimEnd()
         if (clean.isBlank() || mutableState.value.sending || refuseTerminalWrite()) return
         val displayed = currentPaneOrRefuse() ?: return
@@ -268,11 +271,13 @@ class PaneViewModel(
     }
 
     fun sendKey(key: String) {
+        diagnostics.record("action", mapOf("name" to "pane.send_key", "key" to key))
         sendKeys(listOf(key), direct = false)
     }
 
     /** Sends one reviewed Keys-tray batch through the same fresh-pane guard as a single key. */
     fun sendKeySequence(keys: List<String>) {
+        diagnostics.record("action", mapOf("name" to "pane.send_key_sequence", "count" to keys.size))
         if (keys.size > MAX_REVIEWED_KEY_BATCH) return
         sendKeys(keys, direct = false)
     }
@@ -464,6 +469,7 @@ class PaneViewModel(
 
     /** Explicit Type mode queues committed keyboard input without adding a trailing Enter. */
     fun sendDirectKeys(keys: List<String>) {
+        diagnostics.record("action", mapOf("name" to "pane.send_direct_keys", "count" to keys.size))
         if (!directTypingActive || keys.isEmpty() || keys.any { !MuxKeyGrammar.isValid(it) }) return
         if (terminalWriteBlock() != null || mutableState.value.pane == null ||
             directKeyQueue.size + keys.size > MAX_DIRECT_KEYS_PENDING

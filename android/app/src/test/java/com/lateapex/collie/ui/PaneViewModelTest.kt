@@ -513,6 +513,26 @@ class PaneViewModelTest {
         assertEquals(listOf("a"), f.viewModel.state.value.transcript.map { it.uuid })
     }
 
+    @Test
+    fun sendingAReplyRecordsTheActionBeforeTheNetworkCallCompletes() {
+        val lines = mutableListOf<Pair<String, Map<String, Any?>>>()
+        val diagnostics = com.lateapex.collie.diagnostics.RecordingDiagnosticsRecorder(lines)
+        val f = fixture(ApiResult.Success(ActionResponse(ok = true), 200), diagnostics = diagnostics)
+        f.viewModel.sendReply("hello")
+
+        assertTrue(lines.any { it.first == "action" && it.second["name"] == "pane.send_reply" })
+    }
+
+    @Test
+    fun sendingAKeySequenceRecordsTheAction() {
+        val lines = mutableListOf<Pair<String, Map<String, Any?>>>()
+        val diagnostics = com.lateapex.collie.diagnostics.RecordingDiagnosticsRecorder(lines)
+        val f = fixture(ApiResult.Success(ActionResponse(ok = true), 200), diagnostics = diagnostics)
+        f.viewModel.sendKeySequence(listOf("ctrl+c"))
+
+        assertTrue(lines.any { it.first == "action" && it.second["name"] == "pane.send_key_sequence" })
+    }
+
     private fun entry(uuid: String) =
         TranscriptEntry(uuid, "2026-09-10T00:00:00Z", "assistant", listOf(TranscriptPart("text", text = uuid)))
 
@@ -522,6 +542,8 @@ class PaneViewModelTest {
         deviceAuthorization: DeviceAuthorization? = null,
         agent: String = "codex",
         address: PaneAddress = PaneAddress(paneId = "w1:p1"),
+        diagnostics: com.lateapex.collie.diagnostics.DiagnosticsRecorder =
+            com.lateapex.collie.diagnostics.RecordingDiagnosticsRecorder(mutableListOf()),
     ): Fixture {
         val connection = Connection(CollieOrigin("https://collie.example/"), "phone", "token")
         val store = FakeStore(connection)
@@ -535,6 +557,7 @@ class PaneViewModelTest {
             address,
             agent,
             repository,
+            diagnostics,
         )
         return Fixture(viewModel, api, store)
     }
