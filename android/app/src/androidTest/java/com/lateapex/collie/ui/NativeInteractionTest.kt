@@ -942,7 +942,7 @@ class NativeInteractionTest {
                 patch.updates ?: notifications.updates)
             return ok(notifications)
         }
-        override suspend fun history(connection: Connection, address: PaneAddress, limit: Int, before: String?) =
+        override suspend fun history(connection: Connection, address: PaneAddress, limit: Int, before: String?, etag: String?) =
             ok(PaneHistoryResponse(address.paneId, true, entries = (1..4).map {
                 TranscriptEntry("entry-$it", "2026-09-10T10:00:00Z", if (it % 2 == 0) "assistant" else "user",
                     listOf(TranscriptPart("text", text = "needle fixture message $it")))

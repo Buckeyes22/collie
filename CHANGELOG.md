@@ -108,6 +108,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - Android: a "Send diagnostics" action in Settings shares a recent capture of app activity through the system share sheet, after a confirm naming its sensitive content.
 - Android: opening an agent pane lands on the newest turn on a cold first open too; the transcript is placed after the scroll view's own first layout, which could reset it to the top.
 - Android: an agent pane opens with 200 transcript entries (about 40 minutes of a busy agent) instead of 60, so "Load older" is far up the scroll; polls still fetch only the newest 60.
+- Bridge and Android: the transcript page carries an ETag, so an open pane's 2-second poll gets a bodiless 304 while nothing has changed instead of the whole page again.
 
 ## [1.5.1] - 2026-09-04
 

@@ -163,8 +163,9 @@ class CollieRepository(
         address: PaneAddress,
         limit: Int = 200,
         before: String? = null,
+        etag: String? = null,
     ): ApiResult<PaneHistoryResponse> = withConnection {
-        api.history(it, address, limit, before)
+        api.history(it, address, limit, before, etag)
     }
 
     suspend fun closePane(address: PaneAddress): ApiResult<ActionResponse> = withWritableConnection {

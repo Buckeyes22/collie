@@ -516,6 +516,23 @@ class PaneViewModelTest {
     }
 
     @Test
+    fun anUnchangedTranscriptPollIsANotModifiedNotAWholePage() = runTest(dispatcher) {
+        // S25 Ultra, 2026-09-18: an open pane re-downloaded the same ~36 KB page every 2 seconds.
+        val f = fixture(ApiResult.Success(ActionResponse(ok = true), 200))
+        f.api.historyPages += PaneHistoryResponse("w1:p1", available = true, entries = listOf(entry("a")), hasMore = true)
+        f.api.historyPages += PaneHistoryResponse("w1:p1", available = true, entries = listOf(entry("a"), entry("b")), hasMore = true)
+        f.viewModel.refresh(); advanceUntilIdle() // first load: the long page, no validator
+        f.viewModel.refresh(); advanceUntilIdle() // first poll: the short page, whose ETag it keeps
+        f.api.historyUnchanged = true
+        f.viewModel.refresh(); advanceUntilIdle()
+        f.viewModel.refresh(); advanceUntilIdle()
+
+        assertEquals(listOf(null, null, "\"page-2\"", "\"page-2\""), f.api.historyEtags)
+        assertEquals(listOf("a", "b"), f.viewModel.state.value.transcript.map { it.uuid })
+        assertEquals(true, f.viewModel.state.value.transcriptHasMore)
+    }
+
+    @Test
     fun unavailableHistoryIsRetriedAfterAPauseAndPicksUpANewJournal() = runTest(dispatcher) {
         // A Claude started in an open pane has no session log until its first turn. Giving up
         // after one "no-session" left the pane on the mirror for good (S25 Ultra, 2026-09-11).
@@ -625,16 +642,22 @@ class PaneViewModelTest {
         var historyCalls = 0
         val historyLimits = mutableListOf<Int>()
 
+        val historyEtags = mutableListOf<String?>()
+        var historyUnchanged = false
+
         override suspend fun history(
             connection: Connection,
             address: PaneAddress,
             limit: Int,
             before: String?,
+            etag: String?,
         ): ApiResult<PaneHistoryResponse> {
             historyCalls++
             historyLimits += limit
+            historyEtags += etag
+            if (historyUnchanged && etag != null) return ApiResult.NotModified(etag)
             val page = historyPages.removeFirstOrNull() ?: PaneHistoryResponse(address.paneId, available = true)
-            return ApiResult.Success(page, 200)
+            return ApiResult.Success(page, 200, etag = "\"page-$historyCalls\"")
         }
 
         override suspend fun pane(

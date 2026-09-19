@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { computeEtag, gzipJsonResponse, notModified } from "./http-cache.ts";
+import { computeEtag, conditionalJsonResponse, gzipJsonResponse, notModified } from "./http-cache.ts";
 
 // All three helpers are pure (no I/O), so we drive them directly.
 
@@ -162,5 +162,31 @@ describe("gzipJsonResponse", () => {
     const res = gzipJsonResponse(data, "gzip", { etag });
     expect(res.headers.get("content-encoding")).toBe("gzip");
     expect(res.headers.get("etag")).toBe(etag);
+  });
+});
+
+describe("conditionalJsonResponse", () => {
+  const page = { paneId: "w1", available: true, entries: [{ uuid: "a" }], hasMore: false };
+
+  test("a first read gets the body and the ETag a later poll sends back", async () => {
+    const res = conditionalJsonResponse(page, null, null);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("etag")).toBe(computeEtag(JSON.stringify(page)));
+    expect(await res.json()).toEqual(page);
+  });
+
+  test("a poll that already holds this page gets a 304 with no body", async () => {
+    const etag = computeEtag(JSON.stringify(page));
+    const res = conditionalJsonResponse(page, "gzip", etag);
+    expect(res.status).toBe(304);
+    expect(res.headers.get("etag")).toBe(etag);
+    expect(await res.text()).toBe("");
+  });
+
+  test("a changed page answers in full again", () => {
+    const stale = computeEtag(JSON.stringify(page));
+    const res = conditionalJsonResponse({ ...page, entries: [{ uuid: "a" }, { uuid: "b" }] }, null, stale);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("etag")).not.toBe(stale);
   });
 });

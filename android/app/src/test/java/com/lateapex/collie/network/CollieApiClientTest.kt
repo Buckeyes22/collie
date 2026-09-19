@@ -247,6 +247,34 @@ class CollieApiClientTest {
     }
 
     @Test
+    fun anUnchangedTranscriptPageComesBackAsNotModified() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(304).setHeader("ETag", "\"page-1\""))
+
+        val result = api.history(
+            Connection(origin, "phone", "token"),
+            PaneAddress(paneId = "w1:p1"),
+            limit = 60,
+            etag = "\"page-1\"",
+        )
+
+        assertEquals("\"page-1\"", (result as ApiResult.NotModified).etag)
+        assertEquals("\"page-1\"", server.takeRequest().getHeader("If-None-Match"))
+    }
+
+    @Test
+    fun aTranscriptReadWithoutAnETagSendsNoValidator() = runBlocking {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setHeader("Content-Type", "application/json").setHeader("ETag", "\"page-2\"")
+                .setBody("""{"paneId":"w1:p1","available":true,"entries":[]}"""),
+        )
+
+        val result = api.history(Connection(origin, "phone", "token"), PaneAddress(paneId = "w1:p1"), limit = 60)
+
+        assertEquals("\"page-2\"", (result as ApiResult.Success).etag)
+        assertNull(server.takeRequest().getHeader("If-None-Match"))
+    }
+
+    @Test
     fun settingsAndUpdatePostsEncodeExplicitConsentWithoutOptionalFalse() = runBlocking {
         server.enqueue(jsonResponse("""{"blocked":false,"done":false,"updates":true}"""))
         server.enqueue(jsonResponse("""{"snoozedUntil":null}"""))

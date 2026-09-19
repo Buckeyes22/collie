@@ -73,11 +73,13 @@ interface CollieApi {
     suspend fun devices(connection: Connection): ApiResult<DevicesResponse>
     suspend fun revokeDevice(connection: Connection, label: String): ApiResult<DevicesResponse> = unavailable("Device revoke")
     suspend fun pack(connection: Connection): ApiResult<PackStatusResponse> = unavailable("Pack status")
+    /** [etag] from the last answer to the same read: an unchanged page comes back as NotModified. */
     suspend fun history(
         connection: Connection,
         address: PaneAddress,
         limit: Int = 200,
         before: String? = null,
+        etag: String? = null,
     ): ApiResult<PaneHistoryResponse> = unavailable("Pane history")
     suspend fun closePane(connection: Connection, address: PaneAddress): ApiResult<ActionResponse> = unavailable("Pane close")
     suspend fun focusPane(connection: Connection, address: PaneAddress): ApiResult<ActionResponse> = unavailable("Pane focus")
@@ -279,6 +281,7 @@ class CollieApiClient(
         address: PaneAddress,
         limit: Int,
         before: String?,
+        etag: String?,
     ): ApiResult<PaneHistoryResponse> {
         require(limit in 1..MAX_HISTORY_LIMIT)
         require(before?.isNotBlank() != false)
@@ -292,9 +295,10 @@ class CollieApiClient(
             address.scope,
             leadingQuery,
         )
-        val request = requestBuilder(connection, url).header("X-Collie-Seen", "1").get().build()
+        val builder = requestBuilder(connection, url).header("X-Collie-Seen", "1")
+        if (etag != null) builder.header("If-None-Match", etag)
         return requireContract(
-            executeJson(request, PaneHistoryResponse.serializer(), READ_TIMEOUT_SECONDS),
+            executeJson(builder.get().build(), PaneHistoryResponse.serializer(), READ_TIMEOUT_SECONDS, allowNotModified = true),
             "Malformed pane history response",
         ) { response ->
             if (response.available) response.reason == null else !response.reason.isNullOrBlank()

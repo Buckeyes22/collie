@@ -8,7 +8,7 @@ import { isLoopbackBindHost, type Config } from "./config.ts";
 import { apiError, type ApiErrorBody, type ApiErrorDetail, type ErrorCode } from "./error-codes.ts";
 import { MUX_CAPABILITIES, type MuxCapability, type MuxCapabilityDeclaration } from "./mux/capabilities.ts";
 import type { MuxAdapter, MuxAck, MuxGrid } from "./mux/types.ts";
-import { computeEtag, gzipJsonResponse, notModified } from "./http-cache.ts";
+import { computeEtag, conditionalJsonResponse, gzipJsonResponse, notModified } from "./http-cache.ts";
 import { pluginRoot } from "./root.ts";
 import type { NotifyPrefs, NotifyPrefsStore } from "./notify-prefs.ts";
 import { createOperatorCommands } from "./operator-commands.ts";
@@ -1811,7 +1811,15 @@ async function paneHistory(
   try {
     const page = await transcripts.page(adapter, pane.agentSession, historyParams(url));
     if (page === null) return unavailable("no-log");
-    return json({ paneId, available: true, ...page } satisfies PaneHistoryResponse, accept);
+    // An open pane re-reads this every 2 seconds and it is usually unchanged: a client that sends
+    // back the ETag gets a bodiless 304 instead of the page again.
+    return secure(
+      conditionalJsonResponse(
+        { paneId, available: true, ...page } satisfies PaneHistoryResponse,
+        accept,
+        req.headers.get("if-none-match"),
+      ),
+    );
   } catch (err) {
     return text(`transcript read failed: ${errorText(err)}`, 502);
   }

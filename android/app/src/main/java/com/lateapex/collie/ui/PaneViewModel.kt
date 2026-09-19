@@ -678,6 +678,9 @@ class PaneViewModel(
      */
     private var transcriptSkipPolls = 0
 
+    /** The last poll page's ETag: an unchanged page then costs a bodiless 304, not ~36 KB. */
+    private var transcriptEtag: String? = null
+
     private suspend fun loadTranscript() {
         if (transcriptSkipPolls > 0) {
             transcriptSkipPolls--
@@ -685,9 +688,12 @@ class PaneViewModel(
         }
         val firstLoad = mutableState.value.transcript.isEmpty()
         val limit = if (firstLoad) TRANSCRIPT_PAGE else TRANSCRIPT_POLL
-        when (val result = repository.history(address, limit = limit)) {
+        // The long first page and the short poll page are different reads with different ETags.
+        val etag = if (firstLoad) null else transcriptEtag
+        when (val result = repository.history(address, limit = limit, etag = etag)) {
             is ApiResult.Success -> {
                 val page = result.value
+                transcriptEtag = if (firstLoad || !page.available) null else result.etag
                 if (!page.available) {
                     transcriptSkipPolls = TRANSCRIPT_RETRY_POLLS
                     mutableState.value = mutableState.value.copy(

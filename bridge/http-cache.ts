@@ -80,3 +80,21 @@ export function gzipJsonResponse<TBody>(
 
   return new Response(body, { headers });
 }
+
+/**
+ * A JSON answer a poller can skip: tagged with a strong ETag over the body, and a bodiless 304
+ * when the client's If-None-Match already names it (RFC 7232 §4.1: the 304 echoes the ETag). The
+ * transcript page is re-read every 2 seconds by an open pane and is usually unchanged; measured on
+ * an S25 Ultra (2026-09-18) that was ~36 KB a poll for nothing.
+ */
+export function conditionalJsonResponse<TBody>(
+  data: TBody,
+  acceptEncoding: string | null,
+  ifNoneMatch: string | null,
+): Response {
+  const etag = computeEtag(JSON.stringify(data));
+  if (notModified(ifNoneMatch, etag)) {
+    return new Response(null, { status: 304, headers: { etag, "cache-control": "no-store" } });
+  }
+  return gzipJsonResponse(data, acceptEncoding, { etag });
+}
