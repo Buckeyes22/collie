@@ -683,7 +683,9 @@ class PaneViewModel(
             transcriptSkipPolls--
             return
         }
-        when (val result = repository.history(address, limit = TRANSCRIPT_PAGE)) {
+        val firstLoad = mutableState.value.transcript.isEmpty()
+        val limit = if (firstLoad) TRANSCRIPT_PAGE else TRANSCRIPT_POLL
+        when (val result = repository.history(address, limit = limit)) {
             is ApiResult.Success -> {
                 val page = result.value
                 if (!page.available) {
@@ -699,7 +701,8 @@ class PaneViewModel(
                     transcript = HistoryPresentation.mergeNewer(mutableState.value.transcript, page.entries),
                     transcriptAvailable = true,
                     transcriptReason = null,
-                    transcriptHasMore = page.hasMore,
+                    // A poll's short page cannot say what lies before the oldest entry loaded.
+                    transcriptHasMore = if (firstLoad) page.hasMore else mutableState.value.transcriptHasMore,
                 )
             }
             is ApiResult.Failure, is ApiResult.NotModified -> Unit
@@ -964,7 +967,11 @@ class PaneViewModel(
 
     companion object {
         const val STATUS_NOTICE_MS = 4_000L
-        const val TRANSCRIPT_PAGE = 60
+        /** First load and each "Load older": the bridge's own default page, about 40 minutes of a busy agent. */
+        const val TRANSCRIPT_PAGE = 200
+
+        /** Each poll only tops up the newest turns; they merge into what is already loaded. */
+        const val TRANSCRIPT_POLL = 60
         const val TRANSCRIPT_RETRY_POLLS = 8
         const val MAX_DIRECT_KEY_BATCH = 64
         const val MAX_DIRECT_KEYS_PENDING = 8_192

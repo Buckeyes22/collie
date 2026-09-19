@@ -496,6 +496,26 @@ class PaneViewModelTest {
     }
 
     @Test
+    fun theFirstTranscriptLoadReachesFurtherBackThanEachPoll() = runTest(dispatcher) {
+        // 60 entries covered about 15 minutes of a busy agent, so "Load older" came almost at once
+        // (S25 Ultra, 2026-09-18). The first load reaches back further; polls only top it up.
+        val f = fixture(ApiResult.Success(ActionResponse(ok = true), 200))
+        f.api.historyPages += PaneHistoryResponse("w1:p1", available = true, entries = listOf(entry("a"), entry("b")), hasMore = true)
+        f.api.historyPages += PaneHistoryResponse("w1:p1", available = true, entries = listOf(entry("b"), entry("c")), hasMore = true)
+        f.api.historyPages += PaneHistoryResponse("w1:p1", available = true, entries = listOf(entry("c")), hasMore = false)
+        f.viewModel.refresh(); advanceUntilIdle()
+        f.viewModel.refresh(); advanceUntilIdle()
+        f.viewModel.refresh(); advanceUntilIdle()
+
+        assertEquals(PaneViewModel.TRANSCRIPT_PAGE, f.api.historyLimits.first())
+        assertTrue(f.api.historyLimits.drop(1).all { it == PaneViewModel.TRANSCRIPT_POLL })
+        assertTrue(PaneViewModel.TRANSCRIPT_PAGE > PaneViewModel.TRANSCRIPT_POLL)
+        assertEquals(listOf("a", "b", "c"), f.viewModel.state.value.transcript.map { it.uuid })
+        // A poll's short page says nothing about what lies before the first load's oldest entry.
+        assertEquals(true, f.viewModel.state.value.transcriptHasMore)
+    }
+
+    @Test
     fun unavailableHistoryIsRetriedAfterAPauseAndPicksUpANewJournal() = runTest(dispatcher) {
         // A Claude started in an open pane has no session log until its first turn. Giving up
         // after one "no-session" left the pane on the mirror for good (S25 Ultra, 2026-09-11).
@@ -603,6 +623,7 @@ class PaneViewModelTest {
         )
         val historyPages = ArrayDeque<PaneHistoryResponse>()
         var historyCalls = 0
+        val historyLimits = mutableListOf<Int>()
 
         override suspend fun history(
             connection: Connection,
@@ -611,6 +632,7 @@ class PaneViewModelTest {
             before: String?,
         ): ApiResult<PaneHistoryResponse> {
             historyCalls++
+            historyLimits += limit
             val page = historyPages.removeFirstOrNull() ?: PaneHistoryResponse(address.paneId, available = true)
             return ApiResult.Success(page, 200)
         }
