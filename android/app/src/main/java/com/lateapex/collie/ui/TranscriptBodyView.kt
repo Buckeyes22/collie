@@ -9,7 +9,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import androidx.annotation.VisibleForTesting
 import androidx.core.content.ContextCompat
-import androidx.core.view.doOnNextLayout
+import androidx.core.view.doOnPreDraw
 import androidx.core.view.isVisible
 import com.google.android.material.button.MaterialButton
 import com.lateapex.collie.R
@@ -25,7 +25,63 @@ class TranscriptBodyView @JvmOverloads constructor(
 ) : FrameLayout(context, attrs) {
     var onLoadOlder: (() -> Unit)? = null
 
-    private val scroll = ScrollView(context)
+    /** Where a bind that added or replaced turns left the reader; wired to the diagnostics trace. */
+    var onPlaced: ((Map<String, Any?>) -> Unit)? = null
+
+    /** A jump of more than a screen the reader did not make, with the stack that caused it. */
+    var onUnrequestedJump: ((Map<String, Any?>) -> Unit)? = null
+
+    private var placing = false
+    private var touching = false
+
+    private val scroll = object : ScrollView(context) {
+        override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
+            touching = ev.actionMasked != android.view.MotionEvent.ACTION_UP &&
+                ev.actionMasked != android.view.MotionEvent.ACTION_CANCEL
+            return super.dispatchTouchEvent(ev)
+        }
+
+        override fun requestChildRectangleOnScreen(child: View, rectangle: android.graphics.Rect, immediate: Boolean): Boolean {
+            if (!touching) {
+                onUnrequestedJump?.invoke(
+                    mapOf(
+                        "via" to "requestChildRectangleOnScreen",
+                        "immediate" to immediate,
+                        "scrollY" to scrollY,
+                        "child" to "${child.javaClass.simpleName}@${turnsContainer.indexOfChild(turnOf(child))}",
+                        "stack" to stack(),
+                    ),
+                )
+            }
+            return super.requestChildRectangleOnScreen(child, rectangle, immediate)
+        }
+
+        override fun onScrollChanged(l: Int, t: Int, oldl: Int, oldt: Int) {
+            super.onScrollChanged(l, t, oldl, oldt)
+            if (placing || touching || kotlin.math.abs(t - oldt) <= height) return
+            onUnrequestedJump?.invoke(
+                mapOf(
+                    "from" to oldt,
+                    "to" to t,
+                    "viewportHeight" to height,
+                    "contentHeight" to (getChildAt(0)?.height ?: 0),
+                    "focused" to findFocus()?.let { "${it.javaClass.simpleName}@${turnsContainer.indexOfChild(turnOf(it))}" },
+                    "stack" to stack(),
+                ),
+            )
+        }
+
+        private fun stack(): String = Throwable().stackTrace.drop(2).take(STACK_FRAMES).joinToString(" < ") {
+            "${it.className.substringAfterLast('.')}.${it.methodName}:${it.lineNumber}"
+        }
+    }
+
+    /** The turn (a direct child of the container) that [view] sits in, or null. */
+    private fun turnOf(view: View): View? {
+        var current: View? = view
+        while (current != null && current.parent !== turnsContainer) current = current.parent as? View
+        return current
+    }
     private val turnsContainer = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
     private val loadOlder = MaterialButton(context).apply {
         id = R.id.transcript_load_older
@@ -69,6 +125,7 @@ class TranscriptBodyView @JvmOverloads constructor(
             renderer = HistoryTurnRenderer(context, agent, expandedTools, ::toggleTool)
         }
         boundEntries = entries
+        val before = turns.size
         entries.forEachIndexed { index, entry ->
             if (turns[entry.uuid] != null) return@forEachIndexed
             val turn = HistoryPresentation.turn(entry, agent, resources)
@@ -78,15 +135,39 @@ class TranscriptBodyView @JvmOverloads constructor(
             // The "Load older" button is child 0; each turn sits at its entry's list position.
             turnsContainer.addView(view, index + 1)
         }
+        val added = turns.size - before
         val restore = {
+            val scrollBefore = scroll.scrollY
+            placing = true
             if (reset || anchor == null) {
                 if (reset || atBottom) scroll.scrollTo(0, (turnsContainer.height - scroll.height).coerceAtLeast(0))
             } else if (anchor.first.parent === turnsContainer) {
                 scroll.scrollTo(0, anchor.first.top - anchor.second)
             }
+            placing = false
+            if (added > 0 || reset) {
+                onPlaced?.invoke(
+                    mapOf(
+                        "turns" to turns.size,
+                        "added" to added,
+                        "reset" to reset,
+                        "atBottom" to atBottom,
+                        "anchored" to (anchor != null),
+                        "viewportHeight" to scroll.height,
+                        "contentHeight" to turnsContainer.height,
+                        "scrollBefore" to scrollBefore,
+                        "scrollAfter" to scroll.scrollY,
+                        "viewLaidOut" to scroll.isLaidOut,
+                    ),
+                )
+            }
         }
-        // Posted work runs after the pending layout on a phone; if a layout is still due, wait for it.
-        post { if (turnsContainer.isLayoutRequested) turnsContainer.doOnNextLayout { restore() } else restore() }
+        // Place the reader at pre-draw: every layout in the frame has finished, including the
+        // scroll view's own. Placing from inside that layout (the old doOnNextLayout on the
+        // container) raced the ScrollView's first-layout pass, which wrote its offset back to the
+        // top without a scroll callback: on a cold first open the pane landed on "Load older"
+        // though the trace showed the bottom (S25 Ultra, 2026-09-18).
+        turnsContainer.doOnPreDraw { restore() }
     }
 
     /** The first turn whose bottom is below the scroll top, with its offset from that top. */
@@ -138,4 +219,8 @@ class TranscriptBodyView @JvmOverloads constructor(
     internal fun turnCountForTest(): Int = turns.size
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
+
+    private companion object {
+        const val STACK_FRAMES = 14
+    }
 }

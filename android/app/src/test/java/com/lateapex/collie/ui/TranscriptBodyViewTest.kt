@@ -110,6 +110,32 @@ class TranscriptBodyViewTest {
         assertEquals(bottom, scroll.scrollY)
     }
 
+    @Test
+    fun theFirstTranscriptShownAfterTheMirrorLandsOnTheNewestTurn() {
+        // S25 Ultra, 2026-09-18: opening a busy pane, the body is hidden while the transcript is
+        // pending, then shown and bound in the same render. It landed on "Load older" at the top.
+        val view = laidOutBody()
+        val placements = mutableListOf<Map<String, Any?>>()
+        view.onPlaced = { placements += it }
+        view.visibility = View.GONE
+        layout(view)
+
+        view.visibility = View.VISIBLE
+        view.bind("claude", (0 until 60).map(::entry), hasMore = true)
+        layout(view)
+        view.bind("claude", (0 until 60).map(::entry), hasMore = true)
+        layout(view)
+
+        val scroll = view.getChildAt(0) as android.widget.ScrollView
+        val content = scroll.getChildAt(0).height
+        assertTrue("content $content taller than the viewport", content > scroll.height)
+        assertEquals(content - scroll.height, scroll.scrollY)
+        // Placing from inside the scroll view's own first layout lost the race on a phone: its
+        // first-layout pass wrote the offset back to 0 with no scroll callback. Place only once
+        // it has been laid out.
+        assertEquals(true, placements.first()["viewLaidOut"])
+    }
+
     /** Hosted in a real window so posted work runs after layout, in the order a phone runs it. */
     private fun laidOutBody(): TranscriptBodyView {
         val activity = org.robolectric.Robolectric.buildActivity(android.app.Activity::class.java).setup().get()

@@ -246,6 +246,12 @@ class PaneActivity : AppCompatActivity() {
             PaneViewModel.Factory(application, address, intent.getStringExtra(EXTRA_AGENT)),
         )[PaneViewModel::class.java]
         binding.transcriptBody.onLoadOlder = viewModel::loadOlderTranscript
+        binding.transcriptBody.onPlaced = { fields ->
+            (application as CollieApplication).container.diagnostics.record("transcriptPlacement", fields)
+        }
+        binding.transcriptBody.onUnrequestedJump = { fields ->
+            (application as CollieApplication).container.diagnostics.record("transcriptJump", fields)
+        }
         composerMediaText = AndroidComposerMediaText(this)
         composerMediaActions = ComposerMediaActions(
             config = repository::config,
