@@ -100,7 +100,11 @@ dependencies {
 tasks.withType<Test>().configureEach {
     // Robolectric retains Android resource state across classes; bound each worker so the complete
     // native parity suite is reproducible instead of exhausting Gradle's 512 MiB test default.
-    maxHeapSize = "1g"
+    // Raised from 1g to 2g 2026-09-18: the diagnostics-capture test suite added enough Robolectric
+    // classes (DiagnosticsWriterTest, DiagnosticsInterceptorTest, CollieApplicationTest, and the
+    // now-larger PaneActivityTest) that a full testDebugUnitTest run OOMs at 1g even though any
+    // single test class still passes there.
+    maxHeapSize = "2g"
     forkEvery = 100
 }
 
