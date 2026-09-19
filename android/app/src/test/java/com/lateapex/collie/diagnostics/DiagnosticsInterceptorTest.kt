@@ -117,6 +117,53 @@ class DiagnosticsInterceptorTest {
     }
 
     @Test
+    fun aTranscriptPollRecordsOnlyTheEntriesItHasNotRecordedBefore() {
+        fun page(vararg entries: String) =
+            """{"paneId":"w1","available":true,"entries":[${entries.joinToString(",")}],"hasMore":true}"""
+        val a = """{"uuid":"a","text":"one"}"""
+        val b = """{"uuid":"b","text":"two"}"""
+        val c = """{"uuid":"c","text":"three"}"""
+        val cLater = """{"uuid":"c","text":"three, and its tool result"}"""
+        val d = """{"uuid":"d","text":"four"}"""
+        listOf(page(a, b), page(a, b), page(a, b, c), page(b, c, d), page(b, cLater, d)).forEach {
+            server.enqueue(MockResponse().setResponseCode(200).setBody(it))
+        }
+        repeat(5) {
+            val request = Request.Builder().url(server.url("/api/pane/w1/history?limit=60")).build()
+            client.newCall(request).execute().use { response ->
+                // What the app reads is untouched: the whole page, whatever the trace keeps.
+                assertTrue(response.body!!.string().contains("\"entries\""))
+            }
+        }
+
+        val bodies = recorded.map { kotlinx.serialization.json.Json.parseToJsonElement(it.second["responseBody"] as String) }
+        fun uuids(i: Int) = (bodies[i] as kotlinx.serialization.json.JsonObject)["entries"].toString()
+        assertEquals("the unchanged second poll is skipped", 4, recorded.size)
+        assertTrue(uuids(0).contains("\"a\"") && uuids(0).contains("\"b\""))
+        assertEquals(listOf("c"), Regex("\"uuid\":\"(\\w)\"").findAll(uuids(1)).map { it.groupValues[1] }.toList())
+        assertEquals(2, (recorded[1].second["entriesUnchanged"] as Number).toInt())
+        assertEquals(listOf("d"), Regex("\"uuid\":\"(\\w)\"").findAll(uuids(2)).map { it.groupValues[1] }.toList())
+        assertTrue("a later tool result on an entry is news", uuids(3).contains("its tool result"))
+    }
+
+    @Test
+    fun aSnapshotThatOnlyMovedItsClocksIsNotRecordedAgain() {
+        fun snapshot(ts: Int, seen: Int, status: String) =
+            """{"ts":$ts,"agents":[{"paneId":"w1","status":"$status","lastSeenAt":$seen}]}"""
+        server.enqueue(MockResponse().setResponseCode(200).setBody(snapshot(1, 1, "working")))
+        server.enqueue(MockResponse().setResponseCode(200).setBody(snapshot(2, 2, "working")))
+        server.enqueue(MockResponse().setResponseCode(200).setBody(snapshot(3, 3, "blocked")))
+        repeat(3) {
+            client.newCall(Request.Builder().url(server.url("/api/snapshot")).build()).execute().use { it.body?.string() }
+        }
+
+        assertEquals(2, recorded.size)
+        // The change is recorded as a patch of just that field, not the whole snapshot again.
+        assertEquals(null, recorded[1].second["responseBody"])
+        assertTrue(recorded[1].second["responsePatch"].toString().contains("blocked"))
+    }
+
+    @Test
     fun aRepeatedSendIsAlwaysRecorded() {
         repeat(2) { server.enqueue(MockResponse().setResponseCode(200).setBody("{\"ok\":true}")) }
         repeat(2) {
