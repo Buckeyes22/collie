@@ -24,7 +24,13 @@ class AnrWatchdog(
         thread = Thread {
             while (running.get()) {
                 mainHandler.post { lastAckAt.set(System.currentTimeMillis()) }
-                Thread.sleep(pingIntervalMs)
+                // stop() interrupts the sleep; an escaping InterruptedException would reach the
+                // default handler, which kills the process.
+                try {
+                    Thread.sleep(pingIntervalMs)
+                } catch (_: InterruptedException) {
+                    return@Thread
+                }
                 val now = System.currentTimeMillis()
                 val ack = lastAckAt.get()
                 if (isBlocked(ack, now, timeoutMs)) onBlocked(now - ack)

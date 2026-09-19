@@ -9,6 +9,7 @@ import android.os.Handler
 import android.os.Looper
 import androidx.annotation.VisibleForTesting
 import com.lateapex.collie.diagnostics.AnrWatchdog
+import com.lateapex.collie.diagnostics.DiagnosticsExport
 import com.lateapex.collie.ui.NativePreferences
 
 class CollieApplication : Application() {
@@ -25,6 +26,8 @@ class CollieApplication : Application() {
         super.onCreate()
         NativePreferences(this).applyTheme()
         container = AppContainer(this)
+        // Backstop for a process that died with the share sheet open: never leave a plaintext export behind.
+        DiagnosticsExport.exportDir(cacheDir).deleteRecursively()
         installUncaughtExceptionHandler()
         registerActivityLifecycleCallbacks(diagnosticsLifecycleCallbacks())
         lifecycleCallbacksRegisteredForTest = true
@@ -35,7 +38,8 @@ class CollieApplication : Application() {
     private fun installUncaughtExceptionHandler() {
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
-            container.diagnostics.record(
+            // recordNow, not record: the previous handler kills the process before a queued write runs.
+            container.diagnostics.recordNow(
                 "crash",
                 mapOf(
                     "thread" to thread.name,
@@ -86,7 +90,12 @@ class CollieApplication : Application() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
         try {
             val activityManager = getSystemService(ActivityManager::class.java) ?: return
+            val seen = getSharedPreferences(DIAGNOSTICS_STATE, MODE_PRIVATE)
+            val lastSeen = seen.getLong(LAST_EXIT_SEEN_AT, 0L)
+            // The OS keeps the same few exits for every launch; record each one once, not per launch.
             val reasons = activityManager.getHistoricalProcessExitReasons(null, 0, 5)
+                .filter { it.timestamp > lastSeen }
+            reasons.maxOfOrNull { it.timestamp }?.let { seen.edit().putLong(LAST_EXIT_SEEN_AT, it).apply() }
             reasons.forEach { info ->
                 container.diagnostics.record(
                     "previousProcessExit",
@@ -100,5 +109,10 @@ class CollieApplication : Application() {
         } catch (_: Exception) {
             // Best-effort; never let a diagnostics read crash startup.
         }
+    }
+
+    private companion object {
+        const val DIAGNOSTICS_STATE = "collie_diagnostics_state"
+        const val LAST_EXIT_SEEN_AT = "last_exit_seen_at"
     }
 }

@@ -63,6 +63,38 @@ class DiagnosticsRecorderTest {
         assertTrue(lines[0].contains("\"missing\":null"))
     }
 
+    @Test
+    fun aFailingWriterNeverEscapesTheRecorderThread() {
+        // An exception escaping an executor task reaches the default handler, which on Android
+        // kills the whole app — a full disk must not do that.
+        val escaped = java.util.Collections.synchronizedList(mutableListOf<Throwable>())
+        val executor = Executors.newSingleThreadExecutor { task ->
+            Thread(task).apply { uncaughtExceptionHandler = Thread.UncaughtExceptionHandler { _, e -> escaped.add(e) } }
+        }
+        val failing = object : DiagnosticsAppendable {
+            override fun appendLine(line: String) = throw java.io.IOException("No space left on device")
+        }
+        val recorder = DiagnosticsRecorder(failing, { true }, executor = executor)
+        recorder.record("network")
+        recorder.recordNow("crash")
+        executor.shutdown()
+        executor.awaitTermination(2, java.util.concurrent.TimeUnit.SECONDS)
+
+        assertTrue(escaped.isEmpty())
+    }
+
+    @Test
+    fun recordNowIsOnDiskBeforeItReturnsAndAfterEarlierRecords() {
+        val lines = mutableListOf<String>()
+        val recorder = DiagnosticsRecorder(FakeWriter(lines), { true })
+        recorder.record("lifecycle")
+        recorder.recordNow("crash", mapOf("exception" to "IllegalStateException"))
+
+        assertEquals(2, synchronized(lines) { lines.size })
+        assertTrue(lines[0].contains("\"category\":\"lifecycle\""))
+        assertTrue(lines[1].contains("\"category\":\"crash\""))
+    }
+
     private class FakeWriter(private val sink: MutableList<String>) : DiagnosticsAppendable {
         override fun appendLine(line: String) {
             synchronized(sink) { sink.add(line) }

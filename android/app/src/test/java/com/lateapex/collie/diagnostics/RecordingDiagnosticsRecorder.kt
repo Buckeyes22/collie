@@ -9,6 +9,8 @@ open class RecordingDiagnosticsRecorder(
         synchronized(sink) { sink.add(category to fields) }
     }
 
+    override fun recordNow(category: String, fields: Map<String, Any?>) = record(category, fields)
+
     private object NoopAppendable : DiagnosticsAppendable {
         override fun appendLine(line: String) = Unit
     }

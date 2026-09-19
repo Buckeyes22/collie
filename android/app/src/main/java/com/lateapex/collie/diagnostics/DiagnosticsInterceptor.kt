@@ -20,6 +20,8 @@ class DiagnosticsInterceptor(private val diagnostics: DiagnosticsRecorder) : Int
         val traceId = UUID.randomUUID().toString()
         val original = chain.request()
         val tagged = original.newBuilder().header(TRACE_HEADER, traceId).build()
+        // Switched off: still tag the request so the bridge log stays correlatable, but copy no bodies.
+        if (!diagnostics.isEnabled) return chain.proceed(tagged)
         val start = System.currentTimeMillis()
         val response = chain.proceed(tagged)
         val fields = mutableMapOf<String, Any?>(

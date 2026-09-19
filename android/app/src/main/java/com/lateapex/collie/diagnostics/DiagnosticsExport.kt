@@ -13,13 +13,18 @@ class DiagnosticsExport(
     private val writer: DiagnosticsWriter,
     private val exportDir: File,
 ) {
-    fun buildZip(): File {
+    // Holds the writer's lock (its methods are @Synchronized on the instance) so a seal or prune on
+    // the recorder thread cannot delete a file between listing it and reading it.
+    fun buildZip(): File = synchronized(writer) {
         exportDir.mkdirs()
         val zipFile = File(exportDir, "collie-diagnostics-${System.currentTimeMillis()}.zip")
         ZipOutputStream(zipFile.outputStream()).use { zip ->
             writer.sealedFiles().forEachIndexed { index, sealed ->
+                // A Keystore key can be invalidated (lock-screen change); say so rather than fail the export.
+                val text = runCatching { writer.decrypt(sealed) }
+                    .getOrElse { "{\"category\":\"export\",\"unreadable\":\"${sealed.name}\",\"error\":\"${it.javaClass.simpleName}\"}\n" }
                 zip.putNextEntry(ZipEntry("trace-$index.jsonl"))
-                zip.write(writer.decrypt(sealed).toByteArray())
+                zip.write(text.toByteArray())
                 zip.closeEntry()
             }
             val active = writer.activeFile()
@@ -29,6 +34,11 @@ class DiagnosticsExport(
                 zip.closeEntry()
             }
         }
-        return zipFile
+        zipFile
+    }
+
+    companion object {
+        /** Must match `diagnostics_file_paths.xml`'s `cache-path`. */
+        fun exportDir(cacheDir: File): File = File(cacheDir, "diagnostics-export")
     }
 }

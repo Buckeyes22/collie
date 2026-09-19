@@ -64,21 +64,31 @@ class DiagnosticsWriterTest {
     }
 
     @Test
-    fun keepsOnlyTheNewestFourSealedFilesOldestDroppedFirst() {
-        // maxActiveBytes = 1 means any single non-empty line already crosses the cap, so each
-        // appendLine call seals immediately — one call, one sealed file, no batching across calls.
-        val writer = DiagnosticsWriter(directory, cipher, json, maxActiveBytes = 1L, maxSealedFiles = 4)
-        repeat(6) { index ->
-            writer.appendLine("v$index")
-            Thread.sleep(2) // sealed file names are millisecond timestamps; force distinct names
-        }
+    fun keepsSealedFilesWithinTheByteBudgetOldestDroppedFirst() {
+        // maxActiveBytes = 1 means every appendLine seals at once: one call, one sealed file.
+        val budget = 600L
+        val writer = DiagnosticsWriter(directory, cipher, json, maxActiveBytes = 1L, maxSealedBytes = budget)
+        repeat(20) { index -> writer.appendLine("v$index") }
+
         val sealed = writer.sealedFiles()
-        assertEquals(4, sealed.size)
-        // decrypt every remaining sealed file and confirm the two oldest payloads are gone
-        val remainingContents = sealed.map { writer.decrypt(it) }
-        assertTrue(remainingContents.none { it.contains("v0") })
-        assertTrue(remainingContents.none { it.contains("v1") })
-        assertTrue(remainingContents.any { it.contains("v5") })
+        assertTrue(sealed.size in 1 until 20)
+        assertTrue(sealed.sumOf { it.length() } <= budget)
+        val remaining = sealed.map { writer.decrypt(it) }
+        assertTrue(remaining.none { it == "v0\n" })
+        assertEquals("v19\n", remaining.last())
+    }
+
+    @Test
+    fun sealedFilesAreCompressedSoRepetitiveTraceTextTakesFarLessDisk() {
+        val writer = DiagnosticsWriter(directory, cipher, json, maxActiveBytes = 10_000_000L)
+        val poll = """{"category":"network","responseBody":"${"⏺ agent output line ".repeat(200)}"}"""
+        repeat(40) { writer.appendLine(poll) }
+        writer.seal()
+
+        val sealed = writer.sealedFiles().single()
+        val raw = (poll.length + 1) * 40
+        assertTrue("sealed ${sealed.length()} bytes vs $raw raw", sealed.length() * 5 < raw)
+        assertEquals(raw, writer.decrypt(sealed).length)
     }
 
     private class XorCipher : SecretCipher {

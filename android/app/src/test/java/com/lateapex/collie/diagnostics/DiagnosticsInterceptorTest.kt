@@ -97,4 +97,19 @@ class DiagnosticsInterceptorTest {
         assertEquals(1024L, (fields["responseBodyBytes"] as Number).toLong())
         assertFalse(fields.containsKey("responseBody"))
     }
+
+    @Test
+    fun switchedOffStillTagsTheRequestButRecordsNothing() {
+        val off = object : RecordingDiagnosticsRecorder(recorded) {
+            override val isEnabled = false
+        }
+        val offClient = OkHttpClient.Builder().addInterceptor(DiagnosticsInterceptor(off)).build()
+        server.enqueue(MockResponse().setResponseCode(200).setBody("{\"ok\":true}"))
+        offClient.newCall(Request.Builder().url(server.url("/api/health")).build()).execute().use {
+            assertEquals("{\"ok\":true}", it.body?.string())
+        }
+
+        assertNotNull(server.takeRequest().getHeader("X-Collie-Trace-Id"))
+        assertTrue(recorded.isEmpty())
+    }
 }

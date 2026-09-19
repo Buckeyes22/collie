@@ -54,6 +54,27 @@ class DiagnosticsExportTest {
         }
     }
 
+    @Test
+    fun aSealedFileWhoseKeyIsGoneIsNamedInTheExportInsteadOfFailingIt() {
+        val lostKey = object : SecretCipher {
+            override fun encrypt(plaintext: ByteArray) = cipher.encrypt(plaintext)
+            override fun decrypt(envelope: CipherEnvelope): ByteArray =
+                throw javax.crypto.AEADBadTagException("key permanently invalidated")
+        }
+        val writer = DiagnosticsWriter(traceDir, lostKey, json, maxActiveBytes = 1_000_000L)
+        writer.appendLine("""{"a":"sealed-one"}""")
+        writer.seal()
+        writer.appendLine("""{"a":"active-one"}""")
+
+        ZipFile(DiagnosticsExport(writer, exportDir).buildZip()).use { file ->
+            val allText = file.entries().asSequence().joinToString("\n") { entry ->
+                file.getInputStream(entry).bufferedReader().readText()
+            }
+            assertTrue(allText.contains("\"unreadable\""))
+            assertTrue(allText.contains("active-one"))
+        }
+    }
+
     private class XorCipher : SecretCipher {
         override fun encrypt(plaintext: ByteArray): CipherEnvelope =
             CipherEnvelope(byteArrayOf(7), plaintext.map { (it.toInt() xor 0x5a).toByte() }.toByteArray())

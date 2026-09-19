@@ -191,11 +191,12 @@ class SettingsActivity : AppCompatActivity() {
         sheet.show()
     }
 
+    // Deletes by path, not through a field: a rotation while the chooser is open recreates this
+    // activity, and the result arrives on the new instance. CollieApplication clears the same
+    // directory at startup for a process that died with the chooser open.
     private val diagnosticsChooser = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
-        pendingDiagnosticsExportDir?.deleteRecursively()
-        pendingDiagnosticsExportDir = null
+        DiagnosticsExport.exportDir(cacheDir).deleteRecursively()
     }
-    private var pendingDiagnosticsExportDir: java.io.File? = null
 
     private fun confirmSendDiagnostics() {
         val sheet = CollieBottomSheetDialog(this, getString(R.string.settings_diagnostics_send_confirm_title))
@@ -223,21 +224,25 @@ class SettingsActivity : AppCompatActivity() {
     }
 
     private fun sendDiagnostics() {
-        val exportDir = java.io.File(cacheDir, "diagnostics-export")
         val writer = (application as CollieApplication).container.diagnosticsWriter
-        val zip = DiagnosticsExport(writer, exportDir).buildZip()
-        pendingDiagnosticsExportDir = exportDir
-        val uri = FileProvider.getUriForFile(
-            this,
-            "$packageName.diagnostics.fileprovider",
-            zip,
-        )
-        val intent = Intent(Intent.ACTION_SEND).apply {
-            type = "application/zip"
-            putExtra(Intent.EXTRA_STREAM, uri)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        lifecycleScope.launch {
+            // Decrypting and zipping up to ~20 MB must not run on the main thread: the watchdog
+            // would log the export itself as a freeze.
+            val zip = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                DiagnosticsExport(writer, DiagnosticsExport.exportDir(cacheDir)).buildZip()
+            }
+            val uri = FileProvider.getUriForFile(
+                this@SettingsActivity,
+                "$packageName.diagnostics.fileprovider",
+                zip,
+            )
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "application/zip"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            diagnosticsChooser.launch(Intent.createChooser(intent, getString(R.string.settings_diagnostics_send_title)))
         }
-        diagnosticsChooser.launch(Intent.createChooser(intent, getString(R.string.settings_diagnostics_send_title)))
     }
 
     private fun renderServerConnection(value: SettingsConnectionPresentation) = with(binding) {
