@@ -99,6 +99,18 @@ class SettingsActivityTest {
     }
 
     @Test
+    fun diagnosticsSwitchDefaultsToOnAndTogglesThePreference() {
+        val activity = Robolectric.buildActivity(SettingsActivity::class.java).create().get()
+
+        val diagnosticsSwitch = activity.findViewById<com.google.android.material.materialswitch.MaterialSwitch>(
+            R.id.settings_diagnostics_switch,
+        )
+        assertTrue(diagnosticsSwitch.isChecked)
+        diagnosticsSwitch.performClick()
+        assertFalse(NativePreferences(context).diagnosticsEnabled)
+    }
+
+    @Test
     fun completeLocalAndServerSettingsSurfacesAreReachable() {
         val activity = Robolectric.buildActivity(SettingsActivity::class.java).create().start().resume().get()
         shadowOf(activity.mainLooper).idle()
@@ -135,7 +147,10 @@ class SettingsActivityTest {
             (0 until local.childCount).map { local.getChildAt(it).id },
         )
         val behavior = activity.findViewById<LinearLayout>(R.id.settings_behavior_preferences)
-        assertEquals(listOf(R.id.settings_parity_hands_free_card), (0 until behavior.childCount).map { behavior.getChildAt(it).id })
+        assertEquals(
+            listOf(R.id.settings_parity_hands_free_card, R.id.settings_diagnostics_card),
+            (0 until behavior.childCount).map { behavior.getChildAt(it).id },
+        )
         assertEquals(View.GONE, activity.findViewById<View>(R.id.settings_parity_hands_free_card).visibility)
         assertEquals(View.GONE, activity.findViewById<View>(R.id.settings_parity_pack_card).visibility)
         assertEquals(null, activity.findViewById<View>(R.id.settings_server_diagnostics))

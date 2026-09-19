@@ -7,6 +7,9 @@
     <item name="settings_draft_size_decrease" type="id" />
     <item name="settings_draft_size_increase" type="id" />
     <item name="settings_hands_free_switch" type="id" />
+    <item name="settings_diagnostics_switch" type="id" />
+    <item name="settings_diagnostics_card" type="id" />
+    <item name="settings_diagnostics_send_button" type="id" />
     <item name="settings_zen_switch" type="id" />
     <item name="settings_push_state" type="id" />
     <item name="settings_notify_blocked_switch" type="id" />

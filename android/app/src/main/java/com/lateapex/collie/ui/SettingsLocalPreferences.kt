@@ -40,6 +40,17 @@ internal class SettingsLocalPreferences(
             visibility = View.GONE
         }
         handsFreeCard?.let(parent::addView)
+        parent.addView(
+            switchCard(
+                title = text(R.string.settings_diagnostics_title),
+                description = text(R.string.settings_diagnostics_description),
+                id = R.id.settings_diagnostics_switch,
+                checked = preferences.diagnosticsEnabled,
+                iconRes = R.drawable.ic_history_wrench,
+            ) { preferences.diagnosticsEnabled = it }.apply {
+                id = R.id.settings_diagnostics_card
+            },
+        )
     }
 
     fun setHandsFreeCapability(available: Boolean) {
