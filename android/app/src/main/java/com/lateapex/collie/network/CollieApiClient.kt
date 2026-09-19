@@ -737,15 +737,21 @@ class CollieApiClient(
             STT_PROVIDER_AND_OVERHEAD_SECONDS +
                 ((bytes.coerceAtLeast(0).toLong() * 8) + STT_UPLINK_BITS_PER_SECOND - 1) /
                 STT_UPLINK_BITS_PER_SECOND
-        fun defaultHttpClient(): OkHttpClient = OkHttpClient.Builder()
-            .retryOnConnectionFailure(false)
-            .followRedirects(false)
-            .followSslRedirects(false)
-            .connectTimeout(10, TimeUnit.SECONDS)
-            .readTimeout(10, TimeUnit.SECONDS)
-            .writeTimeout(20, TimeUnit.SECONDS)
-            .callTimeout(20, TimeUnit.SECONDS)
-            .build()
+        fun defaultHttpClient(diagnostics: com.lateapex.collie.diagnostics.DiagnosticsRecorder? = null): OkHttpClient =
+            OkHttpClient.Builder()
+                .retryOnConnectionFailure(false)
+                .followRedirects(false)
+                .followSslRedirects(false)
+                .connectTimeout(10, TimeUnit.SECONDS)
+                .readTimeout(10, TimeUnit.SECONDS)
+                .writeTimeout(20, TimeUnit.SECONDS)
+                .callTimeout(20, TimeUnit.SECONDS)
+                .apply {
+                    if (diagnostics != null) {
+                        addInterceptor(com.lateapex.collie.diagnostics.DiagnosticsInterceptor(diagnostics))
+                    }
+                }
+                .build()
     }
 }
 

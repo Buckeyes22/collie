@@ -14,13 +14,13 @@ import kotlinx.serialization.json.buildJsonObject
  * I/O, and checks [enabled] before doing any work so the Settings switch needs no rebuild to take
  * effect.
  */
-class DiagnosticsRecorder(
+open class DiagnosticsRecorder(
     private val writer: DiagnosticsAppendable,
     private val enabled: () -> Boolean,
     private val clock: () -> Long = System::currentTimeMillis,
     private val executor: ExecutorService = Executors.newSingleThreadExecutor(),
 ) {
-    fun record(category: String, fields: Map<String, Any?> = emptyMap()) {
+    open fun record(category: String, fields: Map<String, Any?> = emptyMap()) {
         if (!enabled()) return
         val at = clock()
         executor.execute {
