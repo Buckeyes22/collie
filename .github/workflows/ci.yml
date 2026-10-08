@@ -65,7 +65,12 @@ jobs:
         run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
 
       - name: Validate native Android configuration
-        run: bun run check:android
+        run: |
+          bun run check:android
+          cmp LICENSE android/app/src/main/res/raw/license_collie.txt
+
+      - name: Documentation links
+        run: bun scripts/check-doc-links.ts
 
       - name: Native unit tests, lint, and debug build
         run: cd android && ./gradlew --no-daemon testDebugUnitTest lintDebug assembleDebug

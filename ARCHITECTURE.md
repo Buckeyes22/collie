@@ -3,7 +3,7 @@
 > **Why Collie is shaped the way it is.** The deployment model, the interaction loop, and especially
 > the security posture — the reasoning the code can't state itself. This describes what is built; a
 > few deliberate *non*-decisions are called out as such, and §8 parks ideas that are not built on
-> purpose. For how to run it see [`README.md`](./README.md); for repo conventions
+> purpose. For how to run the server see [`UPSTREAM_README.md`](./UPSTREAM_README.md); for repo conventions
 > [`CLAUDE.md`](./CLAUDE.md); for the verified socket contract [`HERDR_API.md`](./HERDR_API.md); for
 > the multiplexer seam [`MUX_CONTRACT.md`](./MUX_CONTRACT.md); for the lead↔peer wire
 > [`PACK_PROTOCOL.md`](./PACK_PROTOCOL.md).

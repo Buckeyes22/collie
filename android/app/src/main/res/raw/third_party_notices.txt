@@ -64,8 +64,8 @@ Licensed under Apache License 2.0.
 Modified here by extracting the silhouette and converting it to Android
 VectorDrawable, then translating, cropping, scaling, and recoloring it.
 
-The Block Goose repository does not contain a NOTICE file at the pinned source
-revision. The complete Apache License 2.0 follows.
+Inspection of the complete repository tree at this pinned source revision found
+no NOTICE file. The complete Apache License 2.0 follows.
 
                                  Apache License
                            Version 2.0, January 2004

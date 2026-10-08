@@ -516,4 +516,4 @@ login. Check status with `launchctl print gui/$(id -u)/herdr.collie`.
 
 ---
 
-[← back to the README](../README.md)
+[← back to the server README](../UPSTREAM_README.md)

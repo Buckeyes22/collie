@@ -35,10 +35,10 @@ class NativePreferences(
             preferences.edit().putBoolean(HAPTICS_ENABLED, value).apply()
         }
 
-    /** Gates [com.lateapex.collie.diagnostics.DiagnosticsRecorder]; default on so a bug is
-     * captured without arming anything ahead of time. Turning it off needs no rebuild. */
+    /** Gates [com.lateapex.collie.diagnostics.DiagnosticsRecorder]; capture is opt-in because
+     * network bodies include terminal content. Existing explicit preferences are preserved. */
     var diagnosticsEnabled: Boolean
-        get() = preferences.getBoolean(DIAGNOSTICS_ENABLED, true)
+        get() = preferences.getBoolean(DIAGNOSTICS_ENABLED, false)
         set(value) {
             preferences.edit().putBoolean(DIAGNOSTICS_ENABLED, value).apply()
         }

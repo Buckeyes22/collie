@@ -291,4 +291,4 @@ on the beacon to supply the session key used by the journal.
 
 ---
 
-[← back to the README](../README.md)
+[← back to the server README](../UPSTREAM_README.md)

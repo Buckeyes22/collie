@@ -3,7 +3,7 @@
 //
 //   bun scripts/check-doc-links.ts
 //
-// Walks every `*.md` file tracked by git, extracts inline markdown links, and checks that
+// Walks tracked and untracked, non-ignored `*.md` files, extracts inline markdown links, and checks that
 // local (non-http) targets resolve: the file exists, and — if the link has a `#anchor` — the
 // anchor matches a heading slug or an explicit HTML anchor in the target file.
 //
@@ -15,7 +15,7 @@ import { dirname, resolve, relative } from "node:path";
 const EXCLUDED = ["node_modules/", "web/dist/", ".tracker/"];
 
 function listMarkdownFiles(): string[] {
-  const out = Bun.spawnSync(["git", "ls-files", "*.md"]);
+  const out = Bun.spawnSync(["git", "ls-files", "--cached", "--others", "--exclude-standard", "--", "*.md"]);
   const files = out.stdout.toString().trim().split("\n").filter(Boolean);
   return files.filter((f) => !EXCLUDED.some((ex) => f.startsWith(ex) || f.includes(`/${ex}`)));
 }

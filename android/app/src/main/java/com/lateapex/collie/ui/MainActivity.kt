@@ -149,7 +149,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun openDeepLink(uri: Uri?) {
-        val allowedHost = runCatching { Uri.parse(BuildConfig.DEFAULT_ORIGIN).host }.getOrNull() ?: return
+        val origin = (application as com.lateapex.collie.CollieApplication)
+            .container.repository.connection.value?.origin?.value ?: return
+        val allowedHost = runCatching { Uri.parse(origin).host }.getOrNull() ?: return
         when (val target = CollieDeepLink.parse(uri, allowedHost)) {
             null -> Unit
             is CollieDeepLink.Home -> viewModel.selectScope(target.scope, remember = false)

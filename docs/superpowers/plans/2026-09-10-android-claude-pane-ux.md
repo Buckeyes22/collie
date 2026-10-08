@@ -1,5 +1,17 @@
 # Android pane UX (transcript body, mirror floor, app-wide polish) Implementation Plan
 
+**Present-day disposition — 2026-10-07:** This implementation plan is historical; its unchecked
+task steps are not outstanding work. The native pane UX is implemented in `android/app/`, with
+coverage in the Android unit tests. The later S25 Ultra re-walk at
+[`android/acceptance/2026-09-11-ux-walk.md`](../../../android/acceptance/2026-09-11-ux-walk.md)
+records 193 PASS and 0 FAIL for the changed screens, including transcript-first panes, switching
+to the mirror for dialogs and Raw mode, returning to the transcript, and journalled `opencode`
+panes. That walk supersedes the planned Task 23 checklist and the earlier 2026-09-10 ledger.
+Implementation tasks 1–22 and the acceptance task are retained below as the dated execution
+recipe and history; their unchecked boxes do not indicate current work. Use the current Android
+source, tests, and acceptance record for present behavior. This disposition does not assert that
+the historical gate commands have been rerun today.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make the native Android pane show an agent's transcript as its body, fall back to a reflowed mirror only when the grid is the information, and close every design finding in Appendices A and B of the proposal.

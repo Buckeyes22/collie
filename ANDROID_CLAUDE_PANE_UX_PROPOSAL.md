@@ -1,9 +1,12 @@
 # Android — the Claude pane is a terminal dump; make the transcript the body
 
-Status: **Proposal** (2026-09-10). Written from the S25 Ultra walk against a throwaway Claude
-session (`collie-app › app-testing`). Decision pending; nothing here is built yet except item 3.
+Status as of 2026-10-07: **Accepted and implemented.** This proposal records the 2026-09-10
+observation and recommendation. The transcript pane, mirror switching, reflow, and status row were
+implemented and walked on the S25 Ultra on 2026-09-11; the dated acceptance record remains the
+evidence for that device pass. Sections 1–5 preserve the original reasoning, and §6–7 record the
+walk and the resulting decisions.
 
-## 1. What the phone shows today
+## 1. What the phone showed on 2026-09-10
 
 `android/acceptance/2026-09-10-claude-pane-mirror.png` is a Claude pane on the S25 Ultra after a
 short conversation. It is readable, and it is not an acceptable Claude Code display. Read as a
@@ -55,7 +58,12 @@ Option 3 is needed under option 1 as well, because the mirror still appears for 
 shells, so it is not an alternative but a floor. Option 2 is listed for completeness and not
 recommended.
 
-## 4. Recommendation: option 1, with option 3 as the floor
+## 4. Original recommendation: option 1, with option 3 as the floor
+
+This recommendation was accepted. The current implementation selects the transcript when a
+journal-backed session is available, and shows the mirror for Raw, recognized semantic surfaces,
+pending history, or panes without a journal session. The registry includes `claude`, `codex`, `pi`,
+and `opencode`; the choice follows session availability rather than an agent-name rollout list.
 
 **Item 1 — transcript body.** For a pane whose agent has a journal adapter (`claude`, `codex`,
 `pi`; `bridge/journal/registry.ts`), the pane body is the transcript, rendered by the same code
@@ -143,6 +151,11 @@ Zen, tap-to-type and the buffer affordances follow whichever body is on screen.
    (the agent string in `decide()` only short-circuits to `NO_JOURNAL` for shells and unknowns).
 
 ## Appendix A — the rest of the app through the same lens
+
+These are historical design observations from the 2026-09-10 captures, not a current defect list.
+The 2026-09-11 re-walk fixed and rechecked a number of these screens; see
+`android/acceptance/2026-09-11-ux-walk.md` for the dated ledger and captures. Items not covered by
+that ledger remain observations from the original walk rather than verified current defects.
 
 Reviewed from the captures taken during the two S25 Ultra walks on 2026-09-10 (all under
 `android/acceptance/2026-09-10-*.png`; the walk's full set sits in `/tmp/s25/` on ed8). The

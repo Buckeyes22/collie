@@ -1,7 +1,7 @@
 # Deployment variants B–E
 
 The bridge binds `127.0.0.1`. Deployments differ by ingress and identity verification.
-[Variant A](../README.md#variant-a--tailscale-serve--person-identity-default) (plain `tailscale serve`)
+[Variant A](../UPSTREAM_README.md#variant-a--tailscale-serve--person-identity-default) (plain `tailscale serve`)
 lives in the README. Security requirements in [docs/security.md](security.md) apply to all shapes.
 
 - [Variant B — identity-aware proxy + per-device authorisation](#variant-b--identity-aware-proxy--per-device-authorisation)
@@ -478,4 +478,4 @@ Post-recovery:
 
 ---
 
-[← back to the README](../README.md)
+[← back to the server README](../UPSTREAM_README.md)

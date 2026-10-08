@@ -10,6 +10,7 @@ import com.lateapex.collie.R
 import com.lateapex.collie.data.CollieRepository
 import com.lateapex.collie.domain.PaneAddress
 import com.lateapex.collie.domain.MuxKeyGrammar
+import com.lateapex.collie.domain.PollingBackoff
 import com.lateapex.collie.network.ApiResult
 import com.lateapex.collie.network.ApiFailure
 import com.lateapex.collie.network.PaneReadResponse
@@ -109,6 +110,7 @@ class PaneViewModel(
     }
     private var pollingJob: Job? = null
     private val readInFlight = AtomicBoolean(false)
+    private val pollingBackoff = PollingBackoff()
     private val writeInFlight = AtomicBoolean(false)
     private val directKeyQueue = ArrayDeque<String>()
     private var directTypingActive = false
@@ -152,7 +154,7 @@ class PaneViewModel(
             while (true) {
                 load()
                 if (supportPoll++ % 3 == 0) loadSupportingData()
-                delay(2_000L)
+                delay(pollingBackoff.delayAfter(POLL_MS))
             }
         }
     }
@@ -634,6 +636,7 @@ class PaneViewModel(
                 val lines = paneRequestedLines
                 when (val result = repository.readPane(address, lines, markSeen = true)) {
                     is ApiResult.Success -> {
+                        pollingBackoff.succeeded()
                         mutableState.value = mutableState.value.copy(
                             pane = result.value.pane,
                             loading = false,
@@ -647,6 +650,7 @@ class PaneViewModel(
                         loadTranscript()
                     }
                     is ApiResult.Failure -> {
+                        pollingBackoff.failed()
                         // Keep the last successful window actionable so a failed grow can be retried.
                         if (mutableState.value.loadingOlder && mutableState.value.loadedLines > 0) {
                             paneRequestedLines = mutableState.value.loadedLines
@@ -660,6 +664,7 @@ class PaneViewModel(
                         return
                     }
                     is ApiResult.NotModified -> {
+                        pollingBackoff.succeeded()
                         mutableState.value = mutableState.value.copy(loadingOlder = false)
                         return
                     }
@@ -972,6 +977,7 @@ class PaneViewModel(
         getApplication<Application>().getString(resource, *args)
 
     companion object {
+        const val POLL_MS = 2_000L
         const val STATUS_NOTICE_MS = 4_000L
         /** First load and each "Load older": the bridge's own default page, about 40 minutes of a busy agent. */
         const val TRANSCRIPT_PAGE = 200

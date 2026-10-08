@@ -20,7 +20,7 @@
     <color name="collie_ring">#737373</color>
     <color name="collie_sheet_grip">#66A1A1A1</color>
     <color name="collie_destructive">#FF6467</color>
-    <color name="collie_on_destructive">#FAFAFA</color>
+    <color name="collie_on_destructive">#171717</color>
     <color name="collie_error">#FF6467</color>
     <color name="collie_blocked">#FF5E5E</color>
     <color name="collie_working">#F4B93C</color>

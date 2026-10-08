@@ -5,7 +5,6 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import androidx.test.core.app.ApplicationProvider
 import com.google.android.material.materialswitch.MaterialSwitch
-import com.lateapex.collie.BuildConfig
 import com.lateapex.collie.CollieApplication
 import com.lateapex.collie.R
 import org.junit.Assert.assertEquals
@@ -97,7 +96,7 @@ class SettingsServerControlsTest {
             .apply { isAccessible = true }
             .get(store) as kotlinx.coroutines.flow.MutableStateFlow<com.lateapex.collie.domain.Connection?>
         flow.value = com.lateapex.collie.domain.Connection(
-            com.lateapex.collie.domain.CollieOrigin(BuildConfig.DEFAULT_ORIGIN),
+            com.lateapex.collie.domain.CollieOrigin("https://collie.example.com/"),
             "S25U-native",
             token = null,
         )

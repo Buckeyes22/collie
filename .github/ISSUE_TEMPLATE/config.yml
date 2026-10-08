@@ -1,1 +1,8 @@
 blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/Buckeyes22/collie/security/advisories/new
+    about: Use private reporting for vulnerabilities; never put credentials in public issues.
+  - name: Collie server or web app
+    url: https://github.com/AltanS/collie/issues
+    about: Report upstream server and PWA issues in the upstream project.

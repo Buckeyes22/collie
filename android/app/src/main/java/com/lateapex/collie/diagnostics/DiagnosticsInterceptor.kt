@@ -13,7 +13,8 @@ import okio.Buffer
  * client-side event can be matched to the bridge's `journalctl` output by id instead of by
  * timestamp guessing. Text bodies are captured in full; binary bodies (image uploads, STT audio)
  * are captured as content-type and size only. The `Authorization` header's VALUE is never
- * recorded, under any circumstance — only whether one was present.
+ * recorded, under any circumstance — only whether one was present. Pairing bodies are never
+ * captured: the request contains a short-lived code and the response contains the device token.
  *
  * A GET records only what is new since the last answer from the same URL ([ResponseDelta]); a
  * poll with nothing new is not recorded. A send (anything but GET) is always recorded in full,
@@ -41,6 +42,10 @@ class DiagnosticsInterceptor internal constructor(
             "traceId" to traceId,
             "hadCredential" to (tagged.header("Authorization") != null),
         )
+        if (tagged.url.encodedPath == "/api/pair") {
+            diagnostics.record("network", fields)
+            return response
+        }
         val requestBody = tagged.body
         if (requestBody != null) {
             if (isTextual(requestBody.contentType())) {

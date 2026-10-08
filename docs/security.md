@@ -113,4 +113,4 @@ specific instance URL on the phone
 
 ---
 
-[← back to the README](../README.md)
+[← back to the server README](../UPSTREAM_README.md)

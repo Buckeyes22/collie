@@ -26,6 +26,8 @@ jobs:
   # platform gets `collie update`'s honest "no artifact for your platform, build from source"
   # rather than a wrong binary. Uncomment a row to publish it.
   payload:
+    # Server/PWA releases belong to upstream; this fork ships Android through android-release.yml.
+    if: github.repository == 'AltanS/collie'
     strategy:
       fail-fast: true
       matrix:
@@ -143,6 +145,7 @@ jobs:
 
   # ── The release ────────────────────────────────────────────────────────────
   release:
+    if: github.repository == 'AltanS/collie'
     needs: payload
     runs-on: ubuntu-latest
     steps:
@@ -320,7 +323,7 @@ jobs:
     runs-on: ubuntu-latest
     # A prerelease does not move the site, because the site only ever quotes a released line. Same
     # hyphen rule the release job above uses to set `--prerelease`, so the two cannot drift.
-    if: ${{ !contains(github.ref_name, '-') }}
+    if: ${{ github.repository == 'AltanS/collie' && !contains(github.ref_name, '-') }}
     steps:
       - name: Ask colliepwa.dev to re-quote the docs
         env:

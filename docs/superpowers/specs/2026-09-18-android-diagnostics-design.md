@@ -1,6 +1,15 @@
 # Android always-on diagnostics capture — design
 
-**Status:** Approved by Chris, 2026-09-18. Ready for `writing-plans`.
+**Status:** Approved by Chris, 2026-09-18. Historical design; implementation is recorded in
+[`../plans/2026-09-18-android-diagnostics.md`](../plans/2026-09-18-android-diagnostics.md).
+
+**Present-day disposition — 2026-10-07:** The implementation has narrower capture defaults than
+this original design: diagnostics are off by default for new installs, pairing request and response
+bodies are excluded, the active trace remains plaintext in app-private storage, and sealed
+rotations are encrypted (with a 1 MB active-file cap and 20 MB sealed-file budget). The manual
+share ZIP is plaintext and must be treated as sensitive. The dated choices and rationale below are
+preserved as design history; they are not current defaults where they conflict with this
+disposition.
 
 ## Problem
 

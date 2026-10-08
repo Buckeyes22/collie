@@ -1,9 +1,10 @@
 # Native Android interaction audit — 2026-09-10
 
-Target: Chris's Samsung Galaxy S25 Ultra using Gboard. Physical-device acceptance is still
-outstanding: `adb devices -l` exposed a Pixel and an emulator, not the S25 Ultra, and
-`adb mdns services` found no wireless debugging endpoint. Neither the Pixel nor any live
-terminal was modified during this audit.
+Target: Chris's Samsung Galaxy S25 Ultra using Gboard. At the time of this 2026-09-10 audit,
+`adb devices -l` exposed a Pixel and an emulator, not the S25 Ultra, and `adb mdns services` found
+no wireless debugging endpoint. Neither the Pixel nor any live terminal was modified during this
+audit. The next day's physical-device evidence is recorded below and in the
+[2026-09-11 UX walk](2026-09-11-ux-walk.md).
 
 ## Reproduced defects
 
@@ -74,12 +75,14 @@ The script refuses physical-device serials and reports failure when instrumentat
 even if `adb` exits zero. It builds and installs the debug app and test APK on the emulator.
 It does not publish, release, or update a live bridge.
 
-## Acceptance still required
+## Acceptance still required at the time of this audit
 
 These items remain in scope and must not be inferred from fixture success:
 
-- **Blocked — S25 Ultra unavailable through ADB:** the exact installed build, settings, touch gestures, keyboard transitions,
-  font/display scale, rotation and accessibility behavior on Chris's phone.
+- **Not exercised in this audit — S25 Ultra unavailable through ADB on 2026-09-10:** the exact
+  installed build, settings, touch gestures, keyboard transitions, font/display scale, rotation and
+  accessibility behavior on Chris's phone. The 2026-09-11 UX walk later exercised many changed
+  screens on that phone; see the dated follow-up below.
 - Live terminal delivery, agent-specific prompts, authentication expiry and recovery against the
   actual bridge/multiplexer. The fixture checks API intent, not a live terminal's receipt.
 - Actual attachment upload and real STT-provider results, including provider failures and denied
@@ -96,15 +99,16 @@ has passed on the S25 Ultra.
 [Machine-readable execution record](2026-09-10-interaction-results.json), extracted from successful instrumentation output and native JUnit XML.
 
 Two uninterrupted full runs passed: 50/50 scenarios at 720 × 1280 / 320 dpi and
-50/50 at 1080 × 2400 / 420 dpi. The two subsequently added navigation checks passed 2/2 at each configuration on the same
-production APK. Total coverage: **52 distinct scenarios per configuration**, executed as
+50/50 at 1080 × 2400 / 420 dpi. The two subsequently added navigation checks passed 2/2 at each
+configuration on the same debug APK. Total coverage: **52 distinct scenarios per configuration**, executed as
 50-test full runs followed by 2-test navigation runs. No failed or interrupted run is counted
 as a pass.
 
 After the four production fixes, `testDebugUnitTest lintDebug assembleRelease` passed:
 390 tests, zero failures/errors/skips, successful Android lint and minified release assembly.
 Root and web typechecks, root lint, native configuration checks, version consistency and shell
-syntax checks passed. These builds remain local; nothing was installed on the S25 Ultra or released.
+syntax checks passed. For this audit, these builds remained local; nothing was installed on the S25
+Ultra or released.
 
 ## Tested build identity
 
@@ -113,3 +117,21 @@ syntax checks passed. These builds remain local; nothing was installed on the S2
 - APK: `android/app/build/outputs/apk/debug/app-debug.apk`.
 - SHA-256: `be1957dc5c38efb206e0ea1d5b08d45724b4aab3a0c331ac4c8cd952f21dd11f`.
 - This is local validation evidence, not a new release or physical-device distribution claim.
+
+## Later evidence and current release status
+
+The 2026-09-10 S25 availability note above is a dated snapshot, not the current device state. On
+2026-09-11, the [UX walk](2026-09-11-ux-walk.md) recorded 193 observed passes and zero failures on
+the S25 Ultra across the changed screens, followed by additional device checks described at the end
+of that record. A separate `connectedDebugAndroidTest` run passed 58/58 on the phone. This is
+physical-device evidence for the builds and flows recorded there; it supersedes the unavailable-device
+note for those later checks.
+
+These results establish that the documented UI and interaction features were implemented and
+observed on the tested builds. They do not establish complete live-service acceptance or acceptance
+of the current signed release candidate. The 2026-10-07 local release preparation reports 521
+native tests passed, native debug/release lint and builds passed, and signing tooling passed with a
+disposable test key. Production signing setup and device acceptance against the exact signed
+candidate remain outstanding; see [`RELEASE_READINESS.md`](../../RELEASE_READINESS.md). The
+remaining acceptance items above should be completed and recorded against that candidate before a
+distribution claim.

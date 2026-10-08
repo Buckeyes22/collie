@@ -109,6 +109,13 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - Android: opening an agent pane lands on the newest turn on a cold first open too; the transcript is placed after the scroll view's own first layout, which could reset it to the top.
 - Android: an agent pane opens with 200 transcript entries (about 40 minutes of a busy agent) instead of 60, so "Load older" is far up the scroll; polls still fetch only the newest 60.
 - Bridge and Android: the transcript page carries an ETag, so an open pane's 2-second poll gets a bodiless 304 while nothing has changed instead of the whole page again.
+- Android release preparation: unconfigured public builds, opt-in diagnostics with pairing-body exclusion, and an independent signed APK draft workflow.
+- Android: bundle the upstream MIT license in the APK and label the connection field as a server URL.
+- Check links in untracked documentation and enforce documentation links in native CI.
+- Keep server release automation upstream-only and make paid LLM triage opt-in.
+- Prepare the native notification v1 provider contract and generate APK-linked Android dependency inventories with release audit gating.
+- Add isolated Android emulator build and device hardening runners and a redacted reachable-history audit helper.
+- Correct the blanket CC0 artwork comment and document unresolved asset provenance.
 
 ## [1.5.1] - 2026-09-04
 

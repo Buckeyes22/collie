@@ -1,5 +1,16 @@
 # Android Always-On Diagnostics Capture Implementation Plan
 
+**Present-day disposition — 2026-10-07:** This is the historical implementation recipe; its
+unchecked task steps are not outstanding work. The Android diagnostics feature and bridge trace-id
+access logging are implemented in the source tree, with corresponding Android and bridge tests.
+Current behavior differs from the initial plan: diagnostics default off for new installs (stored
+user choices persist); `/api/pair` request and response bodies are excluded; the active trace is
+plaintext in app-private storage while sealed rotations are encrypted; storage is bounded by a
+1 MB active-file cap and a 20 MB sealed-file budget; and the manually shared ZIP contains
+plaintext. Treat any exported ZIP as sensitive. The original task boxes and gate commands are
+retained as historical records, not present-day completion claims. This note makes no claim that
+on-device checks, provider behavior, or an SBOM have been verified.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add an always-on, size-bounded, encrypted-at-rest diagnostic trace to Collie's native
@@ -2528,4 +2539,3 @@ growing `trace-active.jsonl` and, once you've generated enough traffic, at least
 zip attached, and confirm the export directory is gone from `cacheDir` after picking a target
 app; (3) flip the Diagnostics switch off, use the app for another minute, and confirm
 `trace-active.jsonl`'s size does not grow past where it was when you flipped the switch.
-

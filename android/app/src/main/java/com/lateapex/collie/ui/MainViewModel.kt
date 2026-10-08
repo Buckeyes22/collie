@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.lateapex.collie.CollieApplication
 import com.lateapex.collie.R
 import com.lateapex.collie.data.CollieRepository
+import com.lateapex.collie.domain.PollingBackoff
 import com.lateapex.collie.domain.Scope
 import com.lateapex.collie.network.ApiFailure
 import com.lateapex.collie.network.ApiResult
@@ -61,7 +62,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var pollingJob: Job? = null
     private var configRequested = false
     private val requestInFlight = AtomicBoolean(false)
-    private var consecutivePollFailures = 0
+    private val pollingBackoff = PollingBackoff()
     private val scopeBackStack = ScopeBackStack()
     private val nativePreferences = NativePreferences(application)
     private var scopeValidationPending = true
@@ -95,7 +96,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     configRequested = true
                     loadConfig()
                 }
-                delay(pollDelay(mutableState.value.snapshot, consecutivePollFailures))
+                delay(pollDelay(mutableState.value.snapshot))
             }
         }
     }
@@ -314,7 +315,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             when (result) {
                 is ApiResult.Success -> {
-                    consecutivePollFailures = 0
+                    pollingBackoff.succeeded()
                     val now = System.currentTimeMillis()
                     mutableState.value = mutableState.value.copy(
                         loading = false,
@@ -329,7 +330,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
                 is ApiResult.Failure -> {
-                    consecutivePollFailures = (consecutivePollFailures + 1).coerceAtMost(4)
+                    pollingBackoff.failed()
                     val pairingRequired = result.error is ApiFailure.Http &&
                         result.error.message == "device not paired"
                     if (pairingRequired) repository.demoteToReadOnly()
@@ -347,7 +348,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
                 is ApiResult.NotModified -> {
-                    consecutivePollFailures = 0
+                    pollingBackoff.succeeded()
                     mutableState.value = mutableState.value.copy(
                         loading = false,
                         refreshing = false,
@@ -386,9 +387,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
-    private fun pollDelay(snapshot: SnapshotResponse?, failures: Int): Long {
+    private fun pollDelay(snapshot: SnapshotResponse?): Long {
         val base = snapshot?.let(DashboardHostHealthModel::pollMs) ?: 5_000L
-        return (base * (1L shl failures.coerceIn(0, 4))).coerceAtMost(60_000L)
+        return pollingBackoff.delayAfter(base)
     }
 
     private fun validateLabel(label: String): String? = when {

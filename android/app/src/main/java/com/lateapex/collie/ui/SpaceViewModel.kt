@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import com.lateapex.collie.CollieApplication
 import com.lateapex.collie.R
 import com.lateapex.collie.data.CollieRepository
+import com.lateapex.collie.domain.PollingBackoff
 import com.lateapex.collie.domain.Scope
 import com.lateapex.collie.network.ApiFailure
 import com.lateapex.collie.network.ApiResult
@@ -82,12 +83,13 @@ internal class SpaceViewModel(
     application: Application,
     private val workspaceId: String,
     private val scope: Scope,
-) : AndroidViewModel(application) {
     private val repository: CollieRepository =
-        (application as CollieApplication).container.repository
+        (application as CollieApplication).container.repository,
+) : AndroidViewModel(application) {
     private val mutableState = MutableStateFlow(SpaceUiState())
     val state: StateFlow<SpaceUiState> = mutableState.asStateFlow()
     private val requestInFlight = AtomicBoolean(false)
+    private val pollingBackoff = PollingBackoff()
     private var pollingJob: Job? = null
 
     init {
@@ -111,7 +113,7 @@ internal class SpaceViewModel(
             loadConfig()
             while (true) {
                 load(manual = false)
-                delay(POLL_MS)
+                delay(pollingBackoff.delayAfter(POLL_MS))
             }
         }
     }
@@ -157,6 +159,7 @@ internal class SpaceViewModel(
         try {
             when (val result = repository.snapshot(scope)) {
                 is ApiResult.Success -> {
+                    pollingBackoff.succeeded()
                     val content = SpaceModel.from(result.value, workspaceId, scope)
                     mutableState.value = if (content == null) {
                         mutableState.value.copy(
@@ -176,6 +179,7 @@ internal class SpaceViewModel(
                     }
                 }
                 is ApiResult.Failure -> {
+                    pollingBackoff.failed()
                     if (result.error is ApiFailure.Http && result.error.message == "device not paired") {
                         repository.demoteToReadOnly()
                     }
@@ -186,10 +190,13 @@ internal class SpaceViewModel(
                         writeAuthorized = repository.writesAllowed(),
                     )
                 }
-                is ApiResult.NotModified -> mutableState.value = mutableState.value.copy(
-                    loading = false,
-                    refreshing = false,
-                )
+                is ApiResult.NotModified -> {
+                    pollingBackoff.succeeded()
+                    mutableState.value = mutableState.value.copy(
+                        loading = false,
+                        refreshing = false,
+                    )
+                }
             }
         } finally {
             requestInFlight.set(false)
@@ -206,7 +213,7 @@ internal class SpaceViewModel(
             SpaceViewModel(application, workspaceId, scope) as T
     }
 
-    private companion object {
+    companion object {
         const val POLL_MS = 5_000L
     }
 }

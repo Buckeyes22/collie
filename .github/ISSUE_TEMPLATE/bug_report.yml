@@ -1,5 +1,5 @@
 name: Bug report
-description: Something in Collie is broken
+description: Something in the native Android app is broken
 labels:
   - bug
 body:
@@ -12,31 +12,27 @@ body:
       required: true
 
   - type: textarea
-    id: doctor-output
+    id: versions
     attributes:
-      label: Output of `collie doctor --json`
-      description: Paste the whole block. It contains no secrets.
-      render: json
+      label: Android app and server versions
+      description: Report the Android app build and connected server version separately.
     validations:
       required: true
 
   - type: textarea
-    id: wont-start
+    id: device
     attributes:
-      label: If collie will not start at all
-      description: >
-        Run the previous version's binary directly and paste its output, for example
-        `~/.local/share/collie/versions/<previous>/bin/collie version`. See
-        docs/upgrading.md → "When collie will not run" for the full recovery steps.
-      render: shell
+      label: Device and connection
+      description: Device model, Android version, install source, multiplexer, and ingress type.
     validations:
-      required: false
+      required: true
 
   - type: textarea
-    id: install-output
+    id: evidence
     attributes:
-      label: If this is an install problem
-      description: Paste the full output of the install script.
-      render: shell
+      label: Optional screenshots or sanitized diagnostics
+      description: >
+        Review evidence before sharing. Diagnostics can include terminal text and sent messages.
+        Never include pairing codes, tokens, private host details, or sensitive terminal content.
     validations:
       required: false

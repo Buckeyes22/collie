@@ -10,7 +10,7 @@ import org.robolectric.RobolectricTestRunner
 
 @RunWith(RobolectricTestRunner::class)
 class CollieDeepLinkTest {
-    private val host = "ed8.taile7b6b1.ts.net"
+    private val host = "collie.example.com"
 
     @Test
     fun parsesCanonicalPaneHistoryAndScope() {

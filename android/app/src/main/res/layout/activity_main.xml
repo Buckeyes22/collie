@@ -141,15 +141,21 @@
                     android:id="@+id/pair_button"
                     style="@style/Widget.Collie.Button"
                     android:layout_width="match_parent"
-                    android:layout_height="48dp"
+                    android:layout_height="wrap_content"
                     android:layout_marginTop="12dp"
+                    android:minHeight="48dp"
+                    android:paddingTop="8dp"
+                    android:paddingBottom="8dp"
                     android:text="@string/pair_and_connect" />
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/connect_button"
                     style="@style/Widget.Collie.Button.Outlined"
                     android:layout_width="match_parent"
-                    android:layout_height="48dp"
+                    android:layout_height="wrap_content"
                     android:layout_marginTop="6dp"
+                    android:minHeight="48dp"
+                    android:paddingTop="8dp"
+                    android:paddingBottom="8dp"
                     android:text="@string/connect_read_only" />
             </LinearLayout>
 

@@ -2,10 +2,13 @@ package com.lateapex.collie.ui
 
 import android.content.Intent
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.View
+import android.widget.TextView
 import androidx.test.espresso.UiController
 import androidx.test.espresso.ViewAction
 import org.hamcrest.Matcher
+import org.hamcrest.Matchers.allOf
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.espresso.Espresso.onView
@@ -645,15 +648,24 @@ class NativeInteractionTest {
     }
 
     @Test fun networkFailureKeepsTheMirrorAndRecoversWithoutWrites() {
-        launchPane().use {
+        launchPane().use { scenario ->
             onView(withText("Fixture terminal\n$ ")).check(matches(isDisplayed()))
+            val readsBeforeOutage = api.reads
             api.offline = true
-            Thread.sleep(2300)
-            onView(withText("Fixture terminal\n$ ")).check(matches(isDisplayed()))
-            onView(withId(R.id.error_text)).check(matches(isDisplayed()))
+            awaitNetworkUiState(
+                scenario = scenario,
+                expectedErrorVisible = true,
+                minimumReadCount = readsBeforeOutage + 1,
+                phase = "offline",
+            )
+            val readsDuringOutage = api.reads
             api.offline = false
-            Thread.sleep(2300)
-            onView(withId(R.id.error_text)).check(matches(withEffectiveVisibility(Visibility.GONE)))
+            awaitNetworkUiState(
+                scenario = scenario,
+                expectedErrorVisible = false,
+                minimumReadCount = readsDuringOutage + 1,
+                phase = "recovery",
+            )
             assertTrue(api.replies.isEmpty())
             assertTrue(api.keys.isEmpty())
         }
@@ -730,8 +742,43 @@ class NativeInteractionTest {
                 R.id.up_button to "Up", R.id.down_button to "Down", R.id.left_button to "Left",
                 R.id.right_button to "Right", R.id.enter_button to "Enter", R.id.ctrl_c_button to "ctrl+c",
                 R.id.space_button to "Space")
-            keys.forEach { (id, _) -> onView(withId(id)).perform(click()) }
-            assertEquals(keys.map { it.second }, api.keys.flatten())
+            val gestureLog = mutableListOf<String>()
+            keys.forEach { (id, label) ->
+                onView(withId(id)).perform(shortNamedKeyTap(label, gestureLog))
+            }
+            assertEquals("Short real touch gesture log: ${gestureLog.joinToString()}",
+                keys.map { it.second }, api.keys.flatten())
+        }
+    }
+
+    private fun shortNamedKeyTap(label: String, gestureLog: MutableList<String>) = object : ViewAction {
+        override fun getConstraints(): Matcher<View> = allOf(isDisplayed(), isEnabled())
+
+        override fun getDescription(): String = "dispatch a 40 ms touch for $label"
+
+        override fun perform(ui: UiController, view: View) {
+            val root = view.rootView
+            val viewPosition = IntArray(2)
+            val rootPosition = IntArray(2)
+            view.getLocationOnScreen(viewPosition)
+            root.getLocationOnScreen(rootPosition)
+            val x = viewPosition[0] - rootPosition[0] + view.width / 2f
+            val y = viewPosition[1] - rootPosition[1] + view.height / 2f
+            val downTime = android.os.SystemClock.uptimeMillis()
+            val upTime = downTime + 40L
+            val down = MotionEvent.obtain(downTime, downTime, MotionEvent.ACTION_DOWN, x, y, 0)
+            val up = MotionEvent.obtain(downTime, upTime, MotionEvent.ACTION_UP, x, y, 0)
+            try {
+                assertTrue("$label touch DOWN was not handled", root.dispatchTouchEvent(down))
+                assertTrue("$label touch UP was not handled", root.dispatchTouchEvent(up))
+                gestureLog += "$label durationMs=${up.eventTime - down.eventTime}"
+            } finally {
+                down.recycle()
+                up.recycle()
+            }
+            // Allow the click listener and repository flow to complete after both events have
+            // traversed the real view hierarchy; do not yield between DOWN and UP.
+            ui.loopMainThreadForAtLeast(100L)
         }
     }
 
@@ -805,6 +852,37 @@ class NativeInteractionTest {
         })
     }
 
+    private fun awaitNetworkUiState(
+        scenario: ActivityScenario<PaneActivity>,
+        expectedErrorVisible: Boolean,
+        minimumReadCount: Int,
+        phase: String,
+    ) {
+        val deadline = android.os.SystemClock.uptimeMillis() + 70_000L
+        var errorVisible = false
+        var terminalVisible = false
+        var terminalText = ""
+        var observedReadCount = api.reads
+        do {
+            scenario.onActivity { activity ->
+                val error = activity.findViewById<View>(R.id.error_text)
+                val terminal = activity.findViewById<TextView>(R.id.terminal_text)
+                errorVisible = error.isShown
+                terminalVisible = terminal.isShown
+                terminalText = terminal.text?.toString().orEmpty()
+            }
+            observedReadCount = api.reads
+            assertTrue("Terminal mirror disappeared during $phase", terminalVisible)
+            assertEquals("Stale terminal mirror changed during $phase", "Fixture terminal\n$ ", terminalText)
+            assertTrue("A user write occurred during $phase", api.replies.isEmpty() && api.keys.isEmpty())
+            if (errorVisible == expectedErrorVisible && observedReadCount >= minimumReadCount) return
+            android.os.SystemClock.sleep(100L)
+        } while (android.os.SystemClock.uptimeMillis() < deadline)
+
+        assertEquals("Pane error visibility did not reach the expected $phase state", expectedErrorVisible, errorVisible)
+        assertTrue("No pane read completed during $phase", observedReadCount >= minimumReadCount)
+    }
+
     private fun awaitKeyboard(scenario: ActivityScenario<PaneActivity>, inputId: Int = R.id.reply_input) {
         val deadline = android.os.SystemClock.uptimeMillis() + 5000
         var visible = false
@@ -863,9 +941,11 @@ class NativeInteractionTest {
             tabs = listOf(TabSummary("t1", "w1", 1, "Shell", false, 1)),
             notifications = NotificationState(snoozedUntil), servers = servers, sessions = sessions, ts = 1,
         ))
-        override suspend fun pane(connection: Connection, address: PaneAddress, lines: Int, etag: String?, markSeen: Boolean) =
-            if (offline) ApiResult.Failure(ApiFailure.Network("Fixture offline")) else
-                ok(PaneReadResponse(address.paneId, paneText, false, 1)).also { reads++ }
+        override suspend fun pane(connection: Connection, address: PaneAddress, lines: Int, etag: String?, markSeen: Boolean): ApiResult<PaneReadResponse> {
+            reads++
+            return if (offline) ApiResult.Failure(ApiFailure.Network("Fixture offline")) else
+                ok(PaneReadResponse(address.paneId, paneText, false, 1))
+        }
         override suspend fun refresh(connection: Connection, scope: Scope) = ok(ActionResponse(true))
         override suspend fun pair(origin: CollieOrigin, code: String, label: String): ApiResult<PairResult> =
             ok(PairResult.Paired("fixture-only", label))

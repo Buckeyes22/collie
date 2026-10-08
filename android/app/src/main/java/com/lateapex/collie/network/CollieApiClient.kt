@@ -700,7 +700,7 @@ class CollieApiClient(
     private fun post(connection: Connection, url: HttpUrl, body: RequestBody): Request =
         requestBuilder(connection, url)
             .header("Origin", connection.origin.headerValue)
-            .post(body)
+            .post(OneShotRequestBody(body))
             .build()
 
     private fun url(origin: CollieOrigin, relativePath: List<String>): HttpUrl =

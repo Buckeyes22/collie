@@ -16,7 +16,8 @@ android {
         versionName = "1.5.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        buildConfigField("String", "DEFAULT_ORIGIN", "\"https://ed8.taile7b6b1.ts.net/\"")
+        // Public builds start unconfigured; the operator supplies their own HTTPS server.
+        buildConfigField("String", "DEFAULT_ORIGIN", "\"\"")
     }
 
     buildTypes {

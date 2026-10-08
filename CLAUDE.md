@@ -1,5 +1,24 @@
 # CLAUDE.md — working agreement for this repo
 
+## Android fork scope
+
+This repository is **Buckeyes22/collie**, maintained as **Collie for Android**. Its product is
+an independent native Kotlin client of the Collie HTTP API. The upstream foundation is
+`AltanS/collie`; its bridge, CLI and PWA remain in this checkout for compatibility and testing.
+The root README documents Android; `UPSTREAM_README.md` preserves the upstream introduction.
+
+Android releases use `android-vX.Y.Z` tags, `ANDROID_CHANGELOG.md`, and
+`android/RELEASING.md`. They never bump the server/plugin version files or publish server/PWA
+assets. Android `versionName` and monotonic `versionCode` live in `android/app/build.gradle.kts`;
+update the matching native checker pins and fixtures when cutting an Android release.
+Normal Android changes add a line under `ANDROID_CHANGELOG.md` → Unreleased, without bumping
+versions. The server versioning rules below apply to server/CLI/PWA releases.
+
+Public Android builds have an empty `DEFAULT_ORIGIN`; never ship a maintainer's private server.
+Diagnostic capture is opt-in for new installs and must never record pairing request/response
+bodies. Keep native screens, TLS verification, encrypted credentials and the existing write gates.
+
+
 **Collie** (repo `AltanS/collie`) — a phone web UI for the AI agents running in your terminal,
 served over Tailscale. A mobile-first PWA (Vite + React + TS + Tailwind v4 + shadcn) plus a Bun/TS
 bridge that mirrors ONE multiplexer per install — Herdr, tmux or zellij — letting you monitor and

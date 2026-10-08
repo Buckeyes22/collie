@@ -6,7 +6,7 @@ Collie exposes remote shell access to your machine by design.
 ## Requirements
 
 Supported hosts: Linux and macOS. Windows is experimental; see
-[Windows](../README.md#windows-experimental).
+[Windows](../UPSTREAM_README.md#windows-experimental).
 
 | Tool | Needed for | Purpose |
 | --- | --- | --- |
@@ -255,4 +255,4 @@ Updates apply to the current major version; crossing one is `collie update --maj
 
 ---
 
-[← back to the README](../README.md)
+[← back to the server README](../UPSTREAM_README.md)

@@ -229,4 +229,4 @@ bin/collie push forget <substring>   # or: push forget --all
 
 ---
 
-[← back to the README](../README.md)
+[← back to the server README](../UPSTREAM_README.md)

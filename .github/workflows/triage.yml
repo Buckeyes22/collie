@@ -61,9 +61,10 @@ jobs:
     # Issues on open, PRs on open only, plus manual re-runs. `synchronize` deliberately does not
     # reach the model.
     if: >-
+      vars.COLLIE_LLM_TRIAGE == 'true' && (
       github.event_name == 'issues' ||
       github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'pull_request_target' && github.event.action == 'opened')
+      (github.event_name == 'pull_request_target' && github.event.action == 'opened'))
     runs-on: ubuntu-latest
     permissions:
       contents: read

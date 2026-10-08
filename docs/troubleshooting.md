@@ -116,4 +116,4 @@ stick to it.** (Over plain HTTP the SW can't register — always fresh, but no P
 
 ---
 
-[← back to the README](../README.md)
+[← back to the server README](../UPSTREAM_README.md)

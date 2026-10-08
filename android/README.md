@@ -23,6 +23,8 @@ history.
   bearer credential through `Authorization`; no Android-specific CORS exception is needed.
 - The pairing bearer is encrypted with an AES/GCM key held by Android Keystore. It must never enter
   logs, saved-state bundles, screenshots, clipboard data, backups, or build artifacts.
+- Public builds start with an empty server field. Diagnostic capture is opt-in for new installs,
+  and pairing request and response bodies are excluded from capture.
 - Backups and cleartext traffic are disabled. The source manifest requests network access plus the
   narrowly scoped runtime microphone permission used by speech transcription, and exports only its
   launcher Activity.
@@ -71,11 +73,6 @@ Then run the native gates from this directory:
 ./gradlew --no-daemon testDebugUnitTest lintDebug assembleDebug assembleDebugAndroidTest assembleRelease
 ```
 
-Current worktree status (2026-09-04): English resource checks, strict repository lint, root and web
-TypeScript typechecks, version consistency, and the Android native static checker pass. The final
-serialized Gradle gate also passes the complete JVM/Robolectric suite with zero failures/errors/skips,
-Android lint, debug APK assembly, and minified unsigned release APK assembly.
-
 The debug APK is written to `app/build/outputs/apk/debug/app-debug.apk`. Build outputs,
 `local.properties`, IDE state, keystores, and local credentials are ignored and must stay
 untracked.
@@ -90,7 +87,7 @@ allowing CI to resolve an unreviewed graph:
 ## Connect and pair
 
 On first launch, enter the root of a reachable Collie deployment, such as
-`https://ed8.taile7b6b1.ts.net/`. The app rejects HTTP, credentials embedded in a URL, query strings,
+`https://collie.example.com/`. The app rejects HTTP, credentials embedded in a URL, query strings,
 fragments, and non-root paths; it never disables platform certificate or hostname validation.
 
 Generate a short-lived pairing code on the Collie host using the normal `collie pair` flow. Enter
@@ -150,8 +147,10 @@ server revocation action.
 ## Emulator and physical-device acceptance
 
 The [2026-09-10 functional audit](acceptance/2026-09-10-functional-audit.md) records the newer
-Gboard/device-event regression, reproduced defects, and explicit remaining S25 Ultra acceptance.
-Run it from the repository root with `scripts/android-interaction-test.sh emulator-PORT`.
+Gboard/device-event regression and emulator coverage. Its initial note that the S25 Ultra was
+unavailable describes that day's ADB state; the [2026-09-11 UX walk](acceptance/2026-09-11-ux-walk.md)
+later records a 193-step physical-device walk and additional checks. Run the emulator interaction
+audit from the repository root with `scripts/android-interaction-test.sh emulator-PORT`.
 
 Compilation is not acceptance. Install the debug APK on an API 26+ emulator or the target device:
 
@@ -168,8 +167,10 @@ search, Settings/Updates, rotation, status/navigation/IME containment, and the p
 boundary passed. The serialized Gradle gate also passed the complete JVM/Robolectric suite, lint, debug
 assembly, and minified unsigned release assembly.
 
-A full `connectedDebugAndroidTest` run was executed on 2026-09-11 against the same paired Samsung
-Galaxy S25 Ultra (`SM-S938U1`, Android/API 36) and passed 58/58. That instrumented suite covers, on
+A full `connectedDebugAndroidTest` run was executed on 2026-09-11 against the paired Samsung Galaxy
+S25 Ultra (`SM-S938U1`, Android/API 36) and passed 58/58. The separate UX walk on that device
+recorded 193 observed steps with zero failures. These are dated results against the builds listed in
+the UX-walk record, not acceptance of a later release candidate. The instrumented suite covers, on
 the device, the Gboard row-count test that detects 3- or 4-row Gboard layouts dynamically from the
 letter-to-bottom-row height ratio (`NativeInteractionTest.kt`). The transcript-vs-mirror body
 switching for journalled agents (claude, codex, pi, opencode), the one-row-plus-More-sheet Keys
@@ -201,8 +202,12 @@ Earlier passes ran with `FLAG_SECURE` set, so their emulator screenshots were bl
 accessibility/view bounds, direct interaction, and logcat instead. The flag was removed on
 2026-09-10; `adb exec-out screencap -p` now captures every screen.
 
-Before a distribution claim, finish the unchecked portions of this baseline and record the result
-separately:
+Before publishing an APK, smoke-test the signed artifact and record its identity. Track the extended
+device matrix as follow-up coverage. The local release preparation recorded on 2026-10-07 passed 521
+native tests, native debug/release lint and builds, and signing-helper checks with a disposable test
+key; it did not complete production signing setup or device acceptance. See
+[`RELEASE_READINESS.md`](../RELEASE_READINESS.md) for the current preparation evidence and remaining
+release requirements. The following device checks remain useful acceptance coverage:
 
 1. A clean reinstall and new short-lived pairing succeed without browser UI. The recorded pass used
    an upgrade install to preserve the operator's encrypted connection.
@@ -226,10 +231,13 @@ content, passwords, or private signing material in that record.
 
 ## Release status
 
-Release signing and distribution remain pending. The repository contains no release keystore and
-CI publishes no release artifact. The minified, non-debuggable release variant exists for local
-verification; keep any future release key and passwords outside the worktree and repeat the
-physical-device acceptance matrix before distributing an APK or AAB.
+The Android release workflow builds, tests, signs and verifies an APK, then creates a draft
+GitHub Release on an `android-vX.Y.Z` tag. Signing secrets and a pinned certificate fingerprint
+must be configured before that workflow can complete. The signing helper also supports local
+preparation. See [Releasing](RELEASING.md) for versioning, signing, acceptance and publication.
+
+Unsigned and debug APKs are development artifacts. A public APK needs release signing, passing build checks and a basic artifact smoke check.
+The extended device matrix is follow-up work; disclose its untested scope accurately.
 
 The current package is `versionName=1.5.1`, `versionCode=2`. Android `versionCode` is monotonic and
 independent of the Collie server release mechanism; every APK distributed as an update must use a
@@ -253,10 +261,11 @@ independently.
 
 The native dashboard and pane header reuse the agent marks documented in
 `web/src/components/agent-icon-data.ts`: Claude and Codex/OpenAI through Simple Icons, OpenCode from
-the project's current `favicon-v3.svg`, pi from pi.dev, OMP from omp.sh, and Antigravity from
-Google's product mark. Their Android vectors retain the same path geometry and brand colors where
-Android's vector format supports them; OMP's small native tile uses the official gradient's
-midpoint color.
+the project's `favicon-v3.svg`, pi from pi.dev, and OMP from omp.sh. Their Android vectors adapt
+the recorded glyph geometry and colors; OMP's small native tile uses the official gradient's
+midpoint color. The Antigravity tile is an angular letter A and does not match the current
+official Google product icon. Its original source/authorship remains a provenance finding; do not
+describe it as a verified conversion of Google's mark.
 
 Additional native agent tiles cover the rest of Herdr's detected integrations and locally installed
 agent CLIs. GitHub Copilot uses the 24×24 path distributed by
@@ -268,7 +277,11 @@ Grok uses the monochrome vector maintained by [Lobe Icons](https://github.com/lo
 (CC BY 4.0, Copyright Fonticons, Inc.) to render the symbol used by Hermes Agent's official favicon.
 Goose uses the silhouette from the project's
 [Apache-2.0 desktop icon](https://github.com/block/goose/blob/main/ui/desktop/src/images/icon.svg).
-The applicable copyright notices, license terms, source links, and modification notices are
-packaged in `app/src/main/res/raw/third_party_notices.txt` so they travel inside every APK.
+`app/src/main/res/raw/third_party_notices.txt` packages the verified source, license, and
+modification notices for the artwork it lists. The other built-in vendor marks named above
+(Claude, Codex/OpenAI, pi, OMP, and Antigravity) do not yet have pinned source and redistribution
+terms established for this Android bundle. Record a maintainer disposition for these specific
+findings, retain required notices, and avoid claiming that unverified permissions are established.
+The Simple Icons repository-wide license alone does not establish an individual mark's terms.
 All product names and marks remain trademarks of their respective owners; inclusion identifies the
 agent reported by Herdr and does not imply endorsement.

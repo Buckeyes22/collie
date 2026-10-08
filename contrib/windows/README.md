@@ -2,7 +2,7 @@
 
 The Collie **bridge** has run on Windows since 0.15.0: Herdr exposes its control socket there as a
 *named pipe*, and Collie dials it through `node:net` — see [`bridge/dial.ts`](../../bridge/dial.ts)
-and [Windows](../../README.md#windows-experimental) in the main README. What was missing is the
+and [Windows](../../UPSTREAM_README.md#windows-experimental) in the main README. What was missing is the
 **lifecycle** around it: a supervisor, and the start/stop/update commands. That's what lives here —
 a PowerShell control script that mirrors [`scripts/collie-ctl.sh`](../../scripts/collie-ctl.sh)
 against **Task Scheduler** instead of `systemd --user`.

@@ -87,7 +87,7 @@
     <string name="settings_pack_description">How every machine in the pack is doing.</string>
     <string name="settings_pack_open">Open pack</string>
     <string name="settings_diagnostics_title">Diagnostics</string>
-    <string name="settings_diagnostics_description">Always capture recent app activity — network calls, pane state, and any crash or freeze — so a bug can be diagnosed after it happens. On by default; turn off once you no longer need it.</string>
+    <string name="settings_diagnostics_description">Capture recent app activity to help diagnose a bug. Off by default. When enabled, diagnostics include terminal content and messages; review exports before sharing. Pairing codes and device tokens are excluded.</string>
     <string name="settings_diagnostics_send_title">Send diagnostics</string>
     <string name="settings_diagnostics_send_confirm_title">Send diagnostics?</string>
     <string name="settings_diagnostics_send_confirm_message">This includes recent terminal content, which may contain sensitive information. Choose where it goes next.</string>

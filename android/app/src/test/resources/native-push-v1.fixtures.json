@@ -1,0 +1,932 @@
+[
+  {
+    "name": "exact pack pane",
+    "accept": true,
+    "payload": {
+      "schemaVersion": 1,
+      "registrationId": "registration_demo",
+      "slot": "herd_peer_work",
+      "sequence": 4,
+      "expiresAt": 2000,
+      "kind": "blocked",
+      "title": "Collie needs you",
+      "body": "Open Collie to review the agent.",
+      "renotify": true,
+      "target": {
+        "screen": "pane",
+        "host": "peer",
+        "session": "work",
+        "paneId": "w1:p2"
+      }
+    }
+  },
+  {
+    "name": "primary pane",
+    "accept": true,
+    "payload": {
+      "schemaVersion": 1,
+      "registrationId": "registration_demo",
+      "slot": "herd_peer_work",
+      "sequence": 4,
+      "expiresAt": 2000,
+      "kind": "done",
+      "title": "Collie needs you",
+      "body": "Open Collie to review the agent.",
+      "renotify": true,
+      "target": {
+        "screen": "pane",
+        "paneId": "w1:p2"
+      }
+    }
+  },
+  {
+    "name": "scoped digest",
+    "accept": true,
+    "payload": {
+      "schemaVersion": 1,
+      "registrationId": "registration_demo",
+      "slot": "herd_peer_work",
+      "sequence": 4,
+      "expiresAt": 2000,
+      "kind": "blocked",
+      "title": "Collie needs you",
+      "body": "Open Collie to review the agent.",
+      "renotify": true,
+      "target": {
+        "screen": "home",
+        "host": "peer",
+        "session": "work"
+      }
+    }
+  },
+  {
+    "name": "update settings",
+    "accept": true,
+    "payload": {
+      "schemaVersion": 1,
+      "registrationId": "registration_demo",
+      "slot": "herd_peer_work",
+      "sequence": 4,
+      "expiresAt": 2000,
+      "kind": "update",
+      "title": "Collie needs you",
+      "body": "Open Collie to review the agent.",
+      "renotify": true,
+      "target": {
+        "screen": "updates"
+      }
+    }
+  },
+  {
+    "name": "unicode pane",
+    "accept": true,
+    "payload": {
+      "schemaVersion": 1,
+      "registrationId": "registration_demo",
+      "slot": "herd_peer_work",
+      "sequence": 4,
+      "expiresAt": 2000,
+      "kind": "blocked",
+      "title": "Collie needs you",
+      "body": "Open Collie to review the agent.",
+      "renotify": true,
+      "target": {
+        "screen": "pane",
+        "paneId": "tab / alpha Ω"
+      }
+    }
+  },
+  {
+    "name": "retry newer slot",
+    "accept": true,
+    "payload": {
+      "schemaVersion": 1,
+      "registrationId": "registration_demo",
+      "slot": "herd_peer_work",
+      "sequence": 4,
+      "expiresAt": 2000,
+      "kind": "blocked",
+      "title": "Collie needs you",
+      "body": "Open Collie to review the agent.",
+      "renotify": true,
+      "target": {
+        "screen": "pane",
+        "host": "peer",
+        "session": "work",
+        "paneId": "w1:p2"
+      }
+    },
+    "lastSequence": 3
+  },
+  {
+    "name": "clear tombstone",
+    "accept": true,
+    "payload": {
+      "schemaVersion": 1,
+      "registrationId": "registration_demo",
+      "slot": "herd_peer_work",
+      "sequence": 4,
+      "expiresAt": 2000,
+      "kind": "clear"
+    }
+  },
+  {
+    "name": "silent default",
+    "accept": true,
+    "payload": {
+      "schemaVersion": 1,
+      "registrationId": "registration_demo",
+      "slot": "herd_peer_work",
+      "sequence": 4,
+      "expiresAt": 2000,
+      "kind": "blocked",
+      "title": "Collie needs you",
+      "body": "Open Collie to review the agent.",
+      "target": {
+        "screen": "pane",
+        "host": "peer",
+        "session": "work",
+        "paneId": "w1:p2"
+      }
+    }
+  },
+  {
+    "name": "future schema",
+    "accept": false,
+    "payload": {
+      "schemaVersion": 2,
+      "registrationId": "registration_demo",
+      "slot": "herd_peer_work",
+      "sequence": 4,
+      "expiresAt": 2000,
+      "kind": "blocked",
+      "title": "Collie needs you",
+      "body": "Open Collie to review the agent.",
+      "renotify": true,
+      "target": {
+        "screen": "pane",
+        "host": "peer",
+        "session": "work",
+        "paneId": "w1:p2"
+      }
+    }
+  },
+  {
+    "name": "missing authority context",
+    "accept": false,
+    "payload": {
+      "schemaVersion": 1,
+      "registrationId": "other",
+      "slot": "herd_peer_work",
+      "sequence": 4,
+      "expiresAt": 2000,
+      "kind": "blocked",
+      "title": "Collie needs you",
+      "body": "Open Collie to review the agent.",
+      "renotify": true,
+      "target": {
+        "screen": "pane",
+        "host": "peer",
+        "session": "work",
+        "paneId": "w1:p2"
+      }
+    }
+  },
+  {
+    "name": "zero sequence",
+    "accept": false,
+    "payload": {
+      "schemaVersion": 1,
+      "registrationId": "registration_demo",
+      "slot": "herd_peer_work",
+      "sequence": 0,
+      "expiresAt": 2000,
+      "kind": "blocked",
+      "title": "Collie needs you",
+      "body": "Open Collie to review the agent.",
+      "renotify": true,
+      "target": {
+        "screen": "pane",
+        "host": "peer",
+        "session": "work",
+        "paneId": "w1:p2"
+      }
+    }
+  },
+  {
+    "name": "fractional sequence",
+    "accept": false,
+    "payload": {
+      "schemaVersion": 1,
+      "registrationId": "registration_demo",
+      "slot": "herd_peer_work",
+      "sequence": 4.5,
+      "expiresAt": 2000,
+      "kind": "blocked",
+      "title": "Collie needs you",
+      "body": "Open Collie to review the agent.",
+      "renotify": true,
+      "target": {
+        "screen": "pane",
+        "host": "peer",
+        "session": "work",
+        "paneId": "w1:p2"
+      }
+    }
+  },
+  {
+    "name": "quoted sequence",
+    "accept": false,
+    "payload": {
+      "schemaVersion": 1,
+      "registrationId": "registration_demo",
+      "slot": "herd_peer_work",
+      "sequence": "4",
+      "expiresAt": 2000,
+      "kind": "blocked",
+      "title": "Collie needs you",
+      "body": "Open Collie to review the agent.",
+      "renotify": true,
+      "target": {
+        "screen": "pane",
+        "host": "peer",
+        "session": "work",
+        "paneId": "w1:p2"
+      }
+    }
+  },
+  {
+    "name": "unsafe sequence",
+    "accept": false,
+    "payload": {
+      "schemaVersion": 1,
+      "registrationId": "registration_demo",
+      "slot": "herd_peer_work",
+      "sequence": 9007199254740992,
+      "expiresAt": 2000,
+      "kind": "blocked",
+      "title": "Collie needs you",
+      "body": "Open Collie to review the agent.",
+      "renotify": true,
+      "target": {
+        "screen": "pane",
+        "host": "peer",
+        "session": "work",
+        "paneId": "w1:p2"
+      }
+    }
+  },
+  {
+    "name": "negative expiry",
+    "accept": false,
+    "payload": {
+      "schemaVersion": 1,
+      "registrationId": "registration_demo",
+      "slot": "herd_peer_work",
+      "sequence": 4,
+      "expiresAt": -1,
+      "kind": "blocked",
+      "title": "Collie needs you",
+      "body": "Open Collie to review the agent.",
+      "renotify": true,
+      "target": {
+        "screen": "pane",
+        "host": "peer",
+        "session": "work",
+        "paneId": "w1:p2"
+      }
+    }
+  },
+  {
+    "name": "expired",
+    "accept": false,
+    "payload": {
+      "schemaVersion": 1,
+      "registrationId": "registration_demo",
+      "slot": "herd_peer_work",
+      "sequence": 4,
+      "expiresAt": 1000,
+      "kind": "blocked",
+      "title": "Collie needs you",
+      "body": "Open Collie to review the agent.",
+      "renotify": true,
+      "target": {
+        "screen": "pane",
+        "host": "peer",
+        "session": "work",
+        "paneId": "w1:p2"
+      }
+    }
+  },
+  {
+    "name": "unsupported kind",
+    "accept": false,
+    "payload": {
+      "schemaVersion": 1,
+      "registrationId": "registration_demo",
+      "slot": "herd_peer_work",
+      "sequence": 4,
+      "expiresAt": 2000,
+      "kind": "run-command",
+      "title": "Collie needs you",
+      "body": "Open Collie to review the agent.",
+      "renotify": true,
+      "target": {
+        "screen": "pane",
+        "host": "peer",
+        "session": "work",
+        "paneId": "w1:p2"
+      }
+    }
+  },
+  {
+    "name": "array kind",
+    "accept": false,
+    "payload": {
+      "schemaVersion": 1,
+      "registrationId": "registration_demo",
+      "slot": "herd_peer_work",
+      "sequence": 4,
+      "expiresAt": 2000,
+      "kind": [
+        "blocked"
+      ],
+      "title": "Collie needs you",
+      "body": "Open Collie to review the agent.",
+      "renotify": true,
+      "target": {
+        "screen": "pane",
+        "host": "peer",
+        "session": "work",
+        "paneId": "w1:p2"
+      }
+    }
+  },
+  {
+    "name": "empty slot",
+    "accept": false,
+    "payload": {
+      "schemaVersion": 1,
+      "registrationId": "registration_demo",
+      "slot": "",
+      "sequence": 4,
+      "expiresAt": 2000,
+      "kind": "blocked",
+      "title": "Collie needs you",
+      "body": "Open Collie to review the agent.",
+      "renotify": true,
+      "target": {
+        "screen": "pane",
+        "host": "peer",
+        "session": "work",
+        "paneId": "w1:p2"
+      }
+    }
+  },
+  {
+    "name": "credential field",
+    "accept": false,
+    "payload": {
+      "schemaVersion": 1,
+      "registrationId": "registration_demo",
+      "slot": "herd_peer_work",
+      "sequence": 4,
+      "expiresAt": 2000,
+      "kind": "blocked",
+      "title": "Collie needs you",
+      "body": "Open Collie to review the agent.",
+      "renotify": true,
+      "target": {
+        "screen": "pane",
+        "host": "peer",
+        "session": "work",
+        "paneId": "w1:p2"
+      },
+      "token": "not-a-real-token"
+    }
+  },
+  {
+    "name": "external origin",
+    "accept": false,
+    "payload": {
+      "schemaVersion": 1,
+      "registrationId": "registration_demo",
+      "slot": "herd_peer_work",
+      "sequence": 4,
+      "expiresAt": 2000,
+      "kind": "blocked",
+      "title": "Collie needs you",
+      "body": "Open Collie to review the agent.",
+      "renotify": true,
+      "target": {
+        "screen": "pane",
+        "host": "peer",
+        "session": "work",
+        "paneId": "w1:p2"
+      },
+      "origin": "https://other.example"
+    }
+  },
+  {
+    "name": "command field",
+    "accept": false,
+    "payload": {
+      "schemaVersion": 1,
+      "registrationId": "registration_demo",
+      "slot": "herd_peer_work",
+      "sequence": 4,
+      "expiresAt": 2000,
+      "kind": "blocked",
+      "title": "Collie needs you",
+      "body": "Open Collie to review the agent.",
+      "renotify": true,
+      "target": {
+        "screen": "pane",
+        "host": "peer",
+        "session": "work",
+        "paneId": "w1:p2"
+      },
+      "command": "whoami"
+    }
+  },
+  {
+    "name": "unknown target field",
+    "accept": false,
+    "payload": {
+      "schemaVersion": 1,
+      "registrationId": "registration_demo",
+      "slot": "herd_peer_work",
+      "sequence": 4,
+      "expiresAt": 2000,
+      "kind": "blocked",
+      "title": "Collie needs you",
+      "body": "Open Collie to review the agent.",
+      "renotify": true,
+      "target": {
+        "screen": "pane",
+        "paneId": "a",
+        "url": "https://other.example"
+      }
+    }
+  },
+  {
+    "name": "missing pane",
+    "accept": false,
+    "payload": {
+      "schemaVersion": 1,
+      "registrationId": "registration_demo",
+      "slot": "herd_peer_work",
+      "sequence": 4,
+      "expiresAt": 2000,
+      "kind": "blocked",
+      "title": "Collie needs you",
+      "body": "Open Collie to review the agent.",
+      "renotify": true,
+      "target": {
+        "screen": "pane"
+      }
+    }
+  },
+  {
+    "name": "empty host",
+    "accept": false,
+    "payload": {
+      "schemaVersion": 1,
+      "registrationId": "registration_demo",
+      "slot": "herd_peer_work",
+      "sequence": 4,
+      "expiresAt": 2000,
+      "kind": "blocked",
+      "title": "Collie needs you",
+      "body": "Open Collie to review the agent.",
+      "renotify": true,
+      "target": {
+        "screen": "pane",
+        "paneId": "a",
+        "host": ""
+      }
+    }
+  },
+  {
+    "name": "null session",
+    "accept": false,
+    "payload": {
+      "schemaVersion": 1,
+      "registrationId": "registration_demo",
+      "slot": "herd_peer_work",
+      "sequence": 4,
+      "expiresAt": 2000,
+      "kind": "blocked",
+      "title": "Collie needs you",
+      "body": "Open Collie to review the agent.",
+      "renotify": true,
+      "target": {
+        "screen": "pane",
+        "paneId": "a",
+        "session": null
+      }
+    }
+  },
+  {
+    "name": "wide dashboard flag",
+    "accept": false,
+    "payload": {
+      "schemaVersion": 1,
+      "registrationId": "registration_demo",
+      "slot": "herd_peer_work",
+      "sequence": 4,
+      "expiresAt": 2000,
+      "kind": "blocked",
+      "title": "Collie needs you",
+      "body": "Open Collie to review the agent.",
+      "renotify": true,
+      "target": {
+        "screen": "home",
+        "all": true
+      }
+    }
+  },
+  {
+    "name": "home with pane",
+    "accept": false,
+    "payload": {
+      "schemaVersion": 1,
+      "registrationId": "registration_demo",
+      "slot": "herd_peer_work",
+      "sequence": 4,
+      "expiresAt": 2000,
+      "kind": "blocked",
+      "title": "Collie needs you",
+      "body": "Open Collie to review the agent.",
+      "renotify": true,
+      "target": {
+        "screen": "home",
+        "paneId": "a"
+      }
+    }
+  },
+  {
+    "name": "update into pane",
+    "accept": false,
+    "payload": {
+      "schemaVersion": 1,
+      "registrationId": "registration_demo",
+      "slot": "herd_peer_work",
+      "sequence": 4,
+      "expiresAt": 2000,
+      "kind": "update",
+      "title": "Collie needs you",
+      "body": "Open Collie to review the agent.",
+      "renotify": true,
+      "target": {
+        "screen": "pane",
+        "host": "peer",
+        "session": "work",
+        "paneId": "w1:p2"
+      }
+    }
+  },
+  {
+    "name": "update scoped settings",
+    "accept": false,
+    "payload": {
+      "schemaVersion": 1,
+      "registrationId": "registration_demo",
+      "slot": "herd_peer_work",
+      "sequence": 4,
+      "expiresAt": 2000,
+      "kind": "update",
+      "title": "Collie needs you",
+      "body": "Open Collie to review the agent.",
+      "renotify": true,
+      "target": {
+        "screen": "updates",
+        "host": "peer"
+      }
+    }
+  },
+  {
+    "name": "blocked into settings",
+    "accept": false,
+    "payload": {
+      "schemaVersion": 1,
+      "registrationId": "registration_demo",
+      "slot": "herd_peer_work",
+      "sequence": 4,
+      "expiresAt": 2000,
+      "kind": "blocked",
+      "title": "Collie needs you",
+      "body": "Open Collie to review the agent.",
+      "renotify": true,
+      "target": {
+        "screen": "updates"
+      }
+    }
+  },
+  {
+    "name": "clear with content",
+    "accept": false,
+    "payload": {
+      "schemaVersion": 1,
+      "registrationId": "registration_demo",
+      "slot": "herd_peer_work",
+      "sequence": 4,
+      "expiresAt": 2000,
+      "kind": "clear",
+      "title": "Collie needs you",
+      "body": "Open Collie to review the agent.",
+      "renotify": true,
+      "target": {
+        "screen": "pane",
+        "host": "peer",
+        "session": "work",
+        "paneId": "w1:p2"
+      }
+    }
+  },
+  {
+    "name": "null title",
+    "accept": false,
+    "payload": {
+      "schemaVersion": 1,
+      "registrationId": "registration_demo",
+      "slot": "herd_peer_work",
+      "sequence": 4,
+      "expiresAt": 2000,
+      "kind": "blocked",
+      "title": null,
+      "body": "Open Collie to review the agent.",
+      "renotify": true,
+      "target": {
+        "screen": "pane",
+        "host": "peer",
+        "session": "work",
+        "paneId": "w1:p2"
+      }
+    }
+  },
+  {
+    "name": "blank title",
+    "accept": false,
+    "payload": {
+      "schemaVersion": 1,
+      "registrationId": "registration_demo",
+      "slot": "herd_peer_work",
+      "sequence": 4,
+      "expiresAt": 2000,
+      "kind": "blocked",
+      "title": "  ",
+      "body": "Open Collie to review the agent.",
+      "renotify": true,
+      "target": {
+        "screen": "pane",
+        "host": "peer",
+        "session": "work",
+        "paneId": "w1:p2"
+      }
+    }
+  },
+  {
+    "name": "long title",
+    "accept": false,
+    "payload": {
+      "schemaVersion": 1,
+      "registrationId": "registration_demo",
+      "slot": "herd_peer_work",
+      "sequence": 4,
+      "expiresAt": 2000,
+      "kind": "blocked",
+      "title": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "body": "Open Collie to review the agent.",
+      "renotify": true,
+      "target": {
+        "screen": "pane",
+        "host": "peer",
+        "session": "work",
+        "paneId": "w1:p2"
+      }
+    }
+  },
+  {
+    "name": "long body",
+    "accept": false,
+    "payload": {
+      "schemaVersion": 1,
+      "registrationId": "registration_demo",
+      "slot": "herd_peer_work",
+      "sequence": 4,
+      "expiresAt": 2000,
+      "kind": "blocked",
+      "title": "Collie needs you",
+      "body": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "renotify": true,
+      "target": {
+        "screen": "pane",
+        "host": "peer",
+        "session": "work",
+        "paneId": "w1:p2"
+      }
+    }
+  },
+  {
+    "name": "control body",
+    "accept": false,
+    "payload": {
+      "schemaVersion": 1,
+      "registrationId": "registration_demo",
+      "slot": "herd_peer_work",
+      "sequence": 4,
+      "expiresAt": 2000,
+      "kind": "blocked",
+      "title": "Collie needs you",
+      "body": "line\nline",
+      "renotify": true,
+      "target": {
+        "screen": "pane",
+        "host": "peer",
+        "session": "work",
+        "paneId": "w1:p2"
+      }
+    }
+  },
+  {
+    "name": "quoted renotify",
+    "accept": false,
+    "payload": {
+      "schemaVersion": 1,
+      "registrationId": "registration_demo",
+      "slot": "herd_peer_work",
+      "sequence": 4,
+      "expiresAt": 2000,
+      "kind": "blocked",
+      "title": "Collie needs you",
+      "body": "Open Collie to review the agent.",
+      "renotify": "true",
+      "target": {
+        "screen": "pane",
+        "host": "peer",
+        "session": "work",
+        "paneId": "w1:p2"
+      }
+    }
+  },
+  {
+    "name": "null target",
+    "accept": false,
+    "payload": {
+      "schemaVersion": 1,
+      "registrationId": "registration_demo",
+      "slot": "herd_peer_work",
+      "sequence": 4,
+      "expiresAt": 2000,
+      "kind": "blocked",
+      "title": "Collie needs you",
+      "body": "Open Collie to review the agent.",
+      "renotify": true,
+      "target": null
+    }
+  },
+  {
+    "name": "duplicate slot sequence",
+    "accept": false,
+    "payload": {
+      "schemaVersion": 1,
+      "registrationId": "registration_demo",
+      "slot": "herd_peer_work",
+      "sequence": 4,
+      "expiresAt": 2000,
+      "kind": "blocked",
+      "title": "Collie needs you",
+      "body": "Open Collie to review the agent.",
+      "renotify": true,
+      "target": {
+        "screen": "pane",
+        "host": "peer",
+        "session": "work",
+        "paneId": "w1:p2"
+      }
+    },
+    "lastSequence": 4
+  },
+  {
+    "name": "out of order slot sequence",
+    "accept": false,
+    "payload": {
+      "schemaVersion": 1,
+      "registrationId": "registration_demo",
+      "slot": "herd_peer_work",
+      "sequence": 4,
+      "expiresAt": 2000,
+      "kind": "blocked",
+      "title": "Collie needs you",
+      "body": "Open Collie to review the agent.",
+      "renotify": true,
+      "target": {
+        "screen": "pane",
+        "host": "peer",
+        "session": "work",
+        "paneId": "w1:p2"
+      }
+    },
+    "lastSequence": 5
+  },
+  {
+    "name": "null root",
+    "accept": false,
+    "payload": null
+  },
+  {
+    "name": "array root",
+    "accept": false,
+    "payload": []
+  },
+  {
+    "name": "string root",
+    "accept": false,
+    "payload": "payload"
+  },
+  {
+    "name": "maximum one day TTL",
+    "accept": true,
+    "payload": {
+      "schemaVersion": 1,
+      "registrationId": "registration_demo",
+      "slot": "herd_peer_work",
+      "sequence": 4,
+      "expiresAt": 86401000,
+      "kind": "blocked",
+      "title": "Collie needs you",
+      "body": "Open Collie to review the agent.",
+      "renotify": true,
+      "target": {
+        "screen": "pane",
+        "host": "peer",
+        "session": "work",
+        "paneId": "w1:p2"
+      }
+    }
+  },
+  {
+    "name": "beyond one day TTL",
+    "accept": false,
+    "payload": {
+      "schemaVersion": 1,
+      "registrationId": "registration_demo",
+      "slot": "herd_peer_work",
+      "sequence": 4,
+      "expiresAt": 86401001,
+      "kind": "blocked",
+      "title": "Collie needs you",
+      "body": "Open Collie to review the agent.",
+      "renotify": true,
+      "target": {
+        "screen": "pane",
+        "host": "peer",
+        "session": "work",
+        "paneId": "w1:p2"
+      }
+    }
+  },
+  {
+    "name": "BOM blank title",
+    "accept": false,
+    "payload": {
+      "schemaVersion": 1,
+      "registrationId": "registration_demo",
+      "slot": "herd_peer_work",
+      "sequence": 4,
+      "expiresAt": 2000,
+      "kind": "blocked",
+      "title": "﻿",
+      "body": "Open Collie to review the agent.",
+      "renotify": true,
+      "target": {
+        "screen": "pane",
+        "host": "peer",
+        "session": "work",
+        "paneId": "w1:p2"
+      }
+    }
+  },
+  {
+    "name": "Unicode spaces blank title",
+    "accept": false,
+    "payload": {
+      "schemaVersion": 1,
+      "registrationId": "registration_demo",
+      "slot": "herd_peer_work",
+      "sequence": 4,
+      "expiresAt": 2000,
+      "kind": "blocked",
+      "title": "  　",
+      "body": "Open Collie to review the agent.",
+      "renotify": true,
+      "target": {
+        "screen": "pane",
+        "host": "peer",
+        "session": "work",
+        "paneId": "w1:p2"
+      }
+    }
+  }
+]

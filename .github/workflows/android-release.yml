@@ -1,0 +1,142 @@
+name: Android release
+
+on:
+  push:
+    tags: ["android-v*.*.*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Verify and build Android APK
+    if: github.repository == 'Buckeyes22/collie'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: oven-sh/setup-bun@v2
+      - uses: android-actions/setup-android@v3
+      - name: Install pinned SDK
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+      - name: Validate native boundaries
+        run: |
+          bun run check:android
+          cmp LICENSE android/app/src/main/res/raw/license_collie.txt
+      - name: Test, lint, and build release
+        working-directory: android
+        run: ./gradlew --no-daemon testDebugUnitTest lintDebug lintRelease assembleRelease
+      - name: Inventory locked release dependencies
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          bun scripts/android-sbom.ts \
+            android/app/build/outputs/apk/release/app-release-unsigned.apk \
+            "${RELEASE_TAG#android-v}" android/app/build/reports/dependencies/sbom.cdx.json
+      - name: Audit release dependencies
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          sbom: android/app/build/reports/dependencies/sbom.cdx.json
+          grype-version: "0.116.1"
+          config: android/grype.yaml
+          severity-cutoff: high
+          fail-build: true
+          only-fixed: false
+          output-format: json
+          output-file: android/app/build/reports/dependencies/grype.json
+      - name: Preserve dependency evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-dependencies
+          if-no-files-found: warn
+          path: android/app/build/reports/dependencies/
+      - name: Preserve unsigned build and mapping
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-unsigned
+          if-no-files-found: error
+          path: |
+            android/app/build/outputs/apk/release/app-release-unsigned.apk
+            android/app/build/outputs/mapping/release/mapping.txt
+
+  sign:
+    name: Sign and create draft Android release
+    needs: build
+    runs-on: ubuntu-latest
+    # Configure this environment for trusted release tags and store signing secrets here.
+    environment: android-release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: oven-sh/setup-bun@v2
+      - uses: android-actions/setup-android@v3
+      - name: Install signing tools
+        run: sdkmanager "build-tools;36.0.0"
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-unsigned
+          path: android/app/build/outputs
+      - name: Sign and verify APK
+        env:
+          COLLIE_ANDROID_KEYSTORE_BASE64: ${{ secrets.COLLIE_ANDROID_KEYSTORE_BASE64 }}
+          COLLIE_ANDROID_KEY_ALIAS: ${{ secrets.COLLIE_ANDROID_KEY_ALIAS }}
+          COLLIE_ANDROID_STORE_PASSWORD: ${{ secrets.COLLIE_ANDROID_STORE_PASSWORD }}
+          COLLIE_ANDROID_KEY_PASSWORD: ${{ secrets.COLLIE_ANDROID_KEY_PASSWORD }}
+          COLLIE_ANDROID_CERT_SHA256: ${{ secrets.COLLIE_ANDROID_CERT_SHA256 }}
+          COLLIE_ANDROID_EXPECTED_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          test -n "$COLLIE_ANDROID_KEYSTORE_BASE64" || {
+            echo 'Configure Android release signing secrets before pushing a release tag.' >&2
+            exit 1
+          }
+          umask 077
+          export COLLIE_ANDROID_KEYSTORE="$RUNNER_TEMP/collie-release.jks"
+          trap 'rm -f "$COLLIE_ANDROID_KEYSTORE"' EXIT
+          printf '%s' "$COLLIE_ANDROID_KEYSTORE_BASE64" | base64 --decode > "$COLLIE_ANDROID_KEYSTORE"
+          unset COLLIE_ANDROID_KEYSTORE_BASE64
+          bash scripts/android-release.sh
+      - name: Write release notes
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          cat > "$RUNNER_TEMP/android-notes.md" <<EOF
+          Native Android client for a self-hosted Collie server. Requires Android 8.0 or newer.
+
+          This is a draft: complete the device acceptance checklist before publishing.
+
+          [Setup](https://github.com/$GITHUB_REPOSITORY/blob/$RELEASE_TAG/android/GETTING_STARTED.md)
+          · [Android changelog](https://github.com/$GITHUB_REPOSITORY/blob/$RELEASE_TAG/ANDROID_CHANGELOG.md)
+          · [Privacy](https://github.com/$GITHUB_REPOSITORY/blob/$RELEASE_TAG/PRIVACY.md)
+
+          Verify downloads with **sha256sum -c SHA256SUMS**; the certificate fingerprint
+          is in **signing-certificate.txt** and **release-metadata.json**.
+
+          Source commit: $SOURCE_COMMIT
+          Dependency scan evidence is retained in this tag's Android release workflow run.
+          EOF
+      - name: Create draft release with signed assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          flags=()
+          case "${RELEASE_TAG#android-v}" in *-*) flags=(--prerelease) ;; esac
+          gh release create "$RELEASE_TAG" "${flags[@]}" --repo "$GITHUB_REPOSITORY" --verify-tag --draft \
+            --title "Collie for Android ${RELEASE_TAG#android-v}" \
+            --notes-file "$RUNNER_TEMP/android-notes.md" \
+            android/app/build/release-dist/*

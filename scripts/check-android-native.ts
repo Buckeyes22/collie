@@ -11,7 +11,7 @@ const EXPECTED_MIN_SDK = 26;
 const EXPECTED_GRADLE = "8.11.1";
 const EXPECTED_AGP = "8.9.1";
 const EXPECTED_KOTLIN = "2.0.21";
-const EXPECTED_DEFAULT_ORIGIN = "https://ed8.taile7b6b1.ts.net/";
+const EXPECTED_DEFAULT_ORIGIN = "";
 
 const FORBIDDEN_ANDROID_PATTERN =
   /(?:androidbrowserhelper|bubblewrap|trusted\s*web\s*activity|TrustedWebActivity|customtabs|CustomTabsIntent|capacitor|androidx?\.webkit|JavascriptInterface|firebase|crashlytics|google-services|play-services-analytics|logging-interceptor|okhttp3\.logging)/i;
@@ -126,10 +126,10 @@ function validateBuildConfiguration(input: AndroidNativeValidationInput, errors:
   requireExactNumbers(app, "targetSdk", EXPECTED_TARGET_SDK, "Android targetSdk", errors);
   requireExactNumbers(app, "minSdk", EXPECTED_MIN_SDK, "Android minSdk", errors);
   const defaultOrigin = app.match(
-    /buildConfigField\(\s*["']String["']\s*,\s*["']DEFAULT_ORIGIN["']\s*,\s*["']\\["']([^"']+)\\["']["']\s*\)/,
+    /buildConfigField\(\s*["']String["']\s*,\s*["']DEFAULT_ORIGIN["']\s*,\s*["']\\["']([^"']*)\\["']["']\s*\)/,
   )?.[1];
   if (defaultOrigin !== EXPECTED_DEFAULT_ORIGIN) {
-    errors.push(`Android DEFAULT_ORIGIN must be ${EXPECTED_DEFAULT_ORIGIN}; found ${JSON.stringify(defaultOrigin)}`);
+    errors.push(`Android DEFAULT_ORIGIN must be empty for public builds; found ${JSON.stringify(defaultOrigin)}`);
   }
 
   if (!/\bviewBinding\s*=\s*true\b/.test(app)) {

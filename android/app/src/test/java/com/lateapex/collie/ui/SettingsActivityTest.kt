@@ -100,15 +100,15 @@ class SettingsActivityTest {
     }
 
     @Test
-    fun diagnosticsSwitchDefaultsToOnAndTogglesThePreference() {
+    fun diagnosticsSwitchDefaultsToOffAndTogglesThePreference() {
         val activity = Robolectric.buildActivity(SettingsActivity::class.java).create().get()
 
         val diagnosticsSwitch = activity.findViewById<com.google.android.material.materialswitch.MaterialSwitch>(
             R.id.settings_diagnostics_switch,
         )
-        assertTrue(diagnosticsSwitch.isChecked)
+        assertFalse(diagnosticsSwitch.isChecked)
         diagnosticsSwitch.performClick()
-        assertFalse(NativePreferences(context).diagnosticsEnabled)
+        assertTrue(NativePreferences(context).diagnosticsEnabled)
     }
 
     @Test
@@ -255,8 +255,33 @@ class SettingsActivityTest {
     }
 
     @Test
+    fun freshInstallHasNoPrivateOriginAndIgnoresUnconfiguredDeepLinks() {
+        val activity = Robolectric.buildActivity(
+            MainActivity::class.java,
+            Intent(context, MainActivity::class.java)
+                .setData(Uri.parse("https://collie.example.com/settings?pair=AB12-CD34")),
+        ).create().get()
+
+        assertEquals("", activity.findViewById<android.widget.EditText>(R.id.origin_input).text.toString())
+        assertNull(shadowOf(activity).nextStartedActivity)
+    }
+
+    @Test
+    fun settingsDeepLinkRejectsAnotherServerAfterConnectionIsConfigured() {
+        seedConnection(paired = false)
+        val activity = Robolectric.buildActivity(
+            MainActivity::class.java,
+            Intent(context, MainActivity::class.java)
+                .setData(Uri.parse("https://other.example.com/settings?pair=AB12-CD34")),
+        ).create().get()
+
+        assertNull(shadowOf(activity).nextStartedActivity)
+    }
+
+    @Test
     fun settingsDeepLinkPassesExplicitPairingEntryExtras() {
-        val uri = Uri.parse(BuildConfig.DEFAULT_ORIGIN).buildUpon()
+        seedConnection(paired = false)
+        val uri = Uri.parse("https://collie.example.com/").buildUpon()
             .path("/settings")
             .appendQueryParameter("pair", "ab12-cd34")
             .fragment("paired-devices")
@@ -410,7 +435,7 @@ class SettingsActivityTest {
             .apply { isAccessible = true }
             .get(store) as MutableStateFlow<Connection?>
         flow.value = Connection(
-            CollieOrigin(BuildConfig.DEFAULT_ORIGIN),
+            CollieOrigin("https://collie.example.com/"),
             "S25U-native",
             token = if (paired) "pairing-token" else null,
         )

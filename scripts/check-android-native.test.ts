@@ -27,7 +27,7 @@ android {
     targetSdk = 36
     versionCode = 2
     versionName = "1.5.1"
-    buildConfigField("String", "DEFAULT_ORIGIN", "\\"https://ed8.taile7b6b1.ts.net/\\"")
+    buildConfigField("String", "DEFAULT_ORIGIN", "\\"\\"")
   }
   buildFeatures { viewBinding = true }
   buildTypes { release { isMinifyEnabled = true; isDebuggable = false } }
@@ -146,15 +146,15 @@ describe("check-android-native validation", () => {
     }
   });
 
-  test("rejects default-origin drift", () => {
+  test("rejects a private default origin in public builds", () => {
     expect(
       messages({
         appGradleText: validAppGradle.replace(
-          "https://ed8.taile7b6b1.ts.net/",
-          "https://other.example/",
+          'buildConfigField("String", "DEFAULT_ORIGIN", "\\"\\"")',
+          'buildConfigField("String", "DEFAULT_ORIGIN", "\\"https://private.example/\\"")',
         ),
       }),
-    ).toContain("Android DEFAULT_ORIGIN must be https://ed8.taile7b6b1.ts.net/");
+    ).toContain("Android DEFAULT_ORIGIN must be empty for public builds");
   });
 
   test("requires native UI, toolchain, release, and dependency-lock configuration", () => {

@@ -66,10 +66,31 @@ class DiagnosticsInterceptorTest {
     }
 
     @Test
+    fun pairingBodiesNeverEnterDiagnosticsAndRemainReadableByTheCaller() {
+        for (status in listOf(200, 400)) {
+            val body = "{\"token\":\"private-pairing-token\",\"label\":\"phone\"}"
+            server.enqueue(MockResponse().setResponseCode(status).setBody(body))
+            val request = Request.Builder()
+                .url(server.url("/api/pair"))
+                .post("{\"code\":\"PRIVATE-CODE\"}".toRequestBody("application/json".toMediaType()))
+                .build()
+            client.newCall(request).execute().use { assertEquals(body, it.body?.string()) }
+
+            val (_, fields) = recorded.last()
+            assertEquals(status, fields["status"])
+            assertFalse(fields.containsKey("requestBody"))
+            assertFalse(fields.containsKey("responseBody"))
+            assertFalse(fields.containsKey("responsePatch"))
+            assertFalse(fields.values.any { it.toString().contains("PRIVATE-CODE") })
+            assertFalse(fields.values.any { it.toString().contains("private-pairing-token") })
+        }
+    }
+
+    @Test
     fun capturesJsonRequestAndResponseBodiesInFull() {
         server.enqueue(MockResponse().setResponseCode(200).setBody("{\"label\":\"phone\"}"))
         val request = Request.Builder()
-            .url(server.url("/api/pair"))
+            .url(server.url("/api/pane/test/send"))
             .header("Content-Type", "application/json")
             .post("{\"code\":\"ABC123\"}".toRequestBody("application/json".toMediaType()))
             .build()

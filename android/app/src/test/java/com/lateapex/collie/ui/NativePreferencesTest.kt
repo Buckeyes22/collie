@@ -40,12 +40,12 @@ class NativePreferencesTest {
     }
 
     @Test
-    fun diagnosticsCaptureDefaultsToOnAndPersists() {
+    fun diagnosticsCaptureDefaultsToOffAndPersists() {
         val preferences = NativePreferences(context)
-        assertTrue(preferences.diagnosticsEnabled)
+        assertFalse(preferences.diagnosticsEnabled)
 
-        preferences.diagnosticsEnabled = false
-        assertFalse(NativePreferences(context).diagnosticsEnabled)
+        preferences.diagnosticsEnabled = true
+        assertTrue(NativePreferences(context).diagnosticsEnabled)
     }
 
     @Test

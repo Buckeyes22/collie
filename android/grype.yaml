@@ -1,0 +1,7 @@
+# Release scans require a current advisory database; there are no blanket suppressions.
+check-for-app-update: false
+db:
+  auto-update: true
+  validate-age: true
+  max-allowed-built-age: 120h
+ignore: []

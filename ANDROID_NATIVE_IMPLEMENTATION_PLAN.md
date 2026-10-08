@@ -1,11 +1,15 @@
 # Collie Native Android Implementation Plan
 
-**Status:** Full native route, control, and agent-grammar implementation present; the 2026-09-05 source-parity remediation has passed the combined build/test gate plus live S25 Ultra read and isolated write interaction passes; release signing, destructive/offline/accessibility cases, and external-camera visual comparison remain pending  
-**Date:** 2026-09-05  
+**Status as of 2026-10-07:** The native client, transcript pane UX, public-build privacy defaults,
+and Android release tooling are implemented. Recorded device evidence remains tied to its dates
+below; no new device acceptance is claimed here. Open work includes production signing setup,
+broader device hardening, SBOM/dependency audit evidence, and native background push.
+
+**Plan baseline date:** 2026-09-05
 **Application ID:** `com.lateapex.collie`  
 **Initial device:** Samsung Galaxy S25 Ultra (`SM-S938U1`)  
-**Backend:** An operator-configured Collie HTTPS origin; initial default
-`https://ed8.taile7b6b1.ts.net/`
+**Backend:** Each operator configures a Collie HTTPS origin. The original private default was
+removed; public builds now use an empty `DEFAULT_ORIGIN`.
 
 ## 1. Objective
 
@@ -216,7 +220,7 @@ requested line window.
 
 On first launch, show:
 
-- origin field prefilled with the known private deployment;
+- empty origin field on public builds; the operator enters their Collie HTTPS origin;
 - device label field defaulted from the Android model, editable and length-bounded;
 - pairing code field;
 - **Connect read-only** and **Pair and connect** actions; and
@@ -319,6 +323,8 @@ falls through to `/standby/update` during a bridge restart without erasing visib
 - No analytics, advertising, crash-reporting, Firebase, WebView, browser-helper, or JavaScript bridge
   dependency.
 - OkHttp logging interceptors are prohibited in release and must never log request/response bodies.
+- Diagnostic capture is opt-in for new installs. Pairing request and response bodies are excluded
+  from capture so pairing codes and returned credentials are not recorded.
 - All API redirects are rejected before a credential could cross origins.
 - TLS uses the platform trust store and hostname verification without bypasses or user-installed
   trust-all managers.
@@ -403,7 +409,9 @@ Exit: no tracked source or build dependency can launch a browser surface.
 
 Exit status: the native project, hardened boundary, test suites, and CI gates exist. Serialized
 baseline and remediated combined gates were recorded passing on 2026-09-04 and 2026-09-05.
-Release signing and the remaining acceptance items below are still required before distribution.
+At that 2026-09-04 checkpoint, release signing and the acceptance items below remained open. The
+release tooling was added later; production signing setup and release-candidate acceptance remain
+open as recorded in `RELEASE_READINESS.md`.
 
 ### Physical-device acceptance — partial pass recorded 2026-09-04
 
@@ -585,24 +593,44 @@ including history/settings/pack/update surfaces, media/STT, device authorization
 update progress. The combined 2026-09-05 serialized source/build gate and safe physical-device
 instrumentation gate are recorded above.
 
-### Phase 3 — background notifications — pending external design/provider
+### Phase 3 — native background notifications — payload contract prepared; delivery pending
 
-- Select and configure the Android delivery provider.
-- Extend the bridge behind the existing notification-provider seam.
-- Add registration/revocation and native notification/deep-link handling.
-- Verify doze, force-stop, reboot, channel settings, duplicate suppression, and token rotation.
+- [x] Prepare v1 payload decoders in TypeScript and Kotlin with one shared 48-case fixture corpus.
+      The contract checks passed 49 Bun tests and 3 Android JUnit tests; these verify
+      decoding only and do not establish device or live-delivery acceptance. See
+      [`android/NATIVE_PUSH_CONTRACT.md`](android/NATIVE_PUSH_CONTRACT.md).
+- [x] Define generic bridge provider/delivery and registration record interfaces. No concrete
+      provider or persistence behavior is implemented by these types.
+- Defer provider selection as an open choice; this plan makes no provider recommendation.
+- Implement authenticated, paired-device registration and revocation, provider delivery, and
+  durable per-registration/per-slot sequence state while preserving existing Web Push behavior.
+- Implement native notification permission handling, channels, and target-only deep links that
+  cannot authorize writes.
+- Verify doze, force-stop, reboot, duplicate suppression, token/registration replacement, and
+  revocation/unpair/disconnect suppression on supported devices.
+
+No native registration or delivery endpoints, provider, credentials, Android notification
+permission, notification UI, or durable deduplication state exist yet. The prepared decoder's
+`registrationId` equality check is only a binding check; future transport authentication is
+mandatory.
 
 Exit: blocked/done/update alerts arrive with the app backgrounded and open the exact pane without
 granting write authority.
 
 ### Phase 4 — release hardening
 
+The local signing helper and tag-triggered draft-release workflow were implemented by 2026-10-07.
+The helper was exercised with a disposable key; this does not configure or validate the production
+signer. The remaining release gates are:
+
 - Configure an external release keystore and recoverable backup without committing secrets.
-- Retain R8/resource shrinking and inspect the release manifest/dependency graph.
+- Independently verify the expected production certificate fingerprint and configure the restricted
+  `android-release` environment and signing secrets.
+- Retain R8/resource shrinking and inspect the release manifest/dependency graph on the candidate.
 - Produce SBOM/dependency audit evidence and resolve findings by upgrade or explicit disposition.
 - Run Macrobenchmark/baseline-profile work only if measured startup/rendering data justifies it.
 - Complete accessibility, font scaling, TalkBack, contrast, reduced-motion, rotation, foldable,
-  battery, and network-transition testing.
+  battery, network-transition, clean-install, pairing, and authorization-refusal testing.
 - Decide private sideloading versus managed/private Play distribution.
 
 Exit: a release-signed APK/AAB has reproducible provenance and completed physical-device acceptance.
@@ -665,7 +693,10 @@ Implemented source requirements:
 - [x] CI and repository checks cover native configuration, dependency locks, unit/Robolectric
       tests, instrumentation assembly, lint, debug assembly, and minified release assembly.
 
-Verification status through 2026-09-05:
+### Verification evidence by date
+
+The following baseline entries preserve the 2026-09-04 and 2026-09-05 build and device results.
+Later records are added below with their own dates; they do not retroactively change those runs.
 
 - The English-only resource guard, strict repository lint, root and web TypeScript typechecks,
   version check, native static checker, and its own assertion suite were recorded passing in the
@@ -694,7 +725,24 @@ Verification status through 2026-09-05:
   cold-relaunch connection persistence, dark-theme recreation, and system-bar containment. It used
   accessibility hierarchy evidence because protected screenshots are black; it has not been rerun
   against the 2026-09-05 combined worktree.
-- Native background push remains pending the provider and bridge registration design in Phase 3.
+- The v1 native-push payload decoder contract is prepared, but provider selection and all live
+  registration/delivery integration remain pending Phase 3.
+- Public builds now have an empty `DEFAULT_ORIGIN`; diagnostic capture defaults off for new installs,
+  and pairing request/response bodies are excluded. The 2026-10-07 source and configuration review
+  confirms these defaults.
+- The 2026-09-11 S25 Ultra UX re-walk recorded 193 PASS and 0 FAIL for the changed screens. Its
+  transcript, dialog-to-mirror switching, Raw behavior, shell/no-session fallback, pairing flow, and
+  other pane interactions are documented in `android/acceptance/2026-09-11-ux-walk.md`. This is
+  dated UX evidence, not acceptance of a new signed release candidate or every release-hardening
+  case.
+- The 2026-10-07 release preparation record reports 521 JVM/Robolectric tests, lint and APK build
+  gates, root/web checks, release-helper signing and failure-control checks with a disposable key,
+  and documentation/workflow checks. The Android release workflow and local signing helper exist;
+  production signing secrets, production fingerprint verification, and a signed-candidate device
+  walk are still open. See `RELEASE_READINESS.md` for the exact scope and caveats of those results.
+- SBOM/dependency audit evidence remains open. The credential scan recorded in the release
+  preparation is limited to selected signatures in working-tree files below 2 MB; it is not a
+  history, dependency, or screenshot audit.
 - No commit, push, PR, deployment, or backend mutation is implied by these local implementation
   and verification steps.
 
@@ -710,11 +758,18 @@ Verification status through 2026-09-05:
 - `hasSession` folds agent-adapter availability and a reported session reference into one field, and
   the bridge does not publish its journal-agent registry. The client therefore maintains the same
   small English explanation list by hand; it never uses that list for pane identity or writes.
-- Native background notifications still require a selected delivery provider, bridge registration
-  contract, external credentials, and end-to-end doze/reboot/deep-link testing.
-- Current unlocked-device interaction, external-camera visual comparison,
-  destructive/network/accessibility cases, release signing, and a native APK/store update channel
-  remain acceptance work. No result is implied until its evidence is recorded.
+- Native background notifications still require provider selection, authenticated registration and
+  delivery endpoints, external credentials, Android notification handling, durable sequence state,
+  and end-to-end doze/reboot/deep-link testing. The prepared decoder contract does not supply these.
+- Broader release acceptance remains open: a clean install and fresh pairing against the exact
+  signed candidate; device authorization refusal; process death and network recovery; destructive
+  update/revocation behavior; STT and upload outcomes; accessibility, font scaling, alternate
+  navigation, battery and network transitions; and comparison against fixed web references.
+- The local helper can sign and verify with a disposable key, but production key custody,
+  fingerprint verification, restricted workflow secrets, and acceptance of a production-signed
+  candidate remain open. A native APK/store update channel and native background push are also open.
+- The 2026-10-07 preparation did not produce a production-signed APK, reset a real device, publish a
+  release, or complete an SBOM/dependency audit. No result is implied until its evidence is recorded.
 
 ## 13. Risks and controls
 
@@ -742,7 +797,6 @@ The native implementation produces:
 - English-only resources with plural and hardcoded-string guards;
 - unit/instrumented test foundations and Android CI;
 - a native Android operator/build/acceptance guide; and
-- recorded 2026-09-04 automated/API 36 emulator parity evidence and the earlier non-destructive
-  S25 Ultra acceptance pass; and
-- explicit remaining gates for destructive/network/accessibility device cases, external-camera
-  visual comparison, release signing, and native background-notification acceptance.
+- dated 2026-09 S25 Ultra UX acceptance and API 36 emulator evidence; and
+- explicit remaining gates for production signing, broader device acceptance, SBOM/dependency audit
+  evidence, a native APK/store update channel, and native background-notification acceptance.

@@ -1,6 +1,7 @@
 package com.lateapex.collie.data
 
 import com.lateapex.collie.domain.Connection
+import com.lateapex.collie.domain.CollieOrigin
 import com.lateapex.collie.domain.PaneAddress
 import com.lateapex.collie.domain.MuxKeyGrammar
 import com.lateapex.collie.domain.Scope
@@ -90,8 +91,8 @@ class CollieRepository(
     val selectedScope: StateFlow<Scope> = mutableScope.asStateFlow()
 
     private val cacheMutex = Mutex()
-    private val paneCache = object : LinkedHashMap<PaneAddress, CachedPane>(16, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<PaneAddress, CachedPane>?): Boolean =
+    private val paneCache = object : LinkedHashMap<PaneCacheKey, CachedPane>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<PaneCacheKey, CachedPane>?): Boolean =
             size > maxPaneCacheEntries
     }
 
@@ -288,14 +289,16 @@ class CollieRepository(
         markSeen: Boolean = true,
     ): ApiResult<PaneContent> {
         val configured = connection.value ?: return notConnected()
+        val cacheKey = PaneCacheKey(configured.origin, address)
         // A pane body is conditional only for the exact window that produced it. Reusing the
         // 600-line ETag for a later 1,000-line request can otherwise turn a valid grow into a 304
         // with the shorter cached body when a bridge keys ETags to pane revision rather than size.
-        val cached = cacheMutex.withLock { paneCache[address] }?.takeIf { it.lines == lines }
+        // The origin is part of the key so switching servers cannot reuse another server's body.
+        val cached = cacheMutex.withLock { paneCache[cacheKey] }?.takeIf { it.lines == lines }
         return when (val result = api.pane(configured, address, lines, cached?.etag, markSeen)) {
             is ApiResult.Success -> {
                 val entry = CachedPane(result.value, result.etag, lines)
-                cacheMutex.withLock { paneCache[address] = entry }
+                cacheMutex.withLock { paneCache[cacheKey] = entry }
                 ApiResult.Success(
                     PaneContent(entry.pane, notModified = false, entry.etag),
                     result.status,
@@ -375,6 +378,11 @@ class CollieRepository(
         val pane: PaneReadResponse,
         val etag: String?,
         val lines: Int,
+    )
+
+    private data class PaneCacheKey(
+        val origin: CollieOrigin,
+        val address: PaneAddress,
     )
 
     companion object {

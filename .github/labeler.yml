@@ -8,6 +8,15 @@
 #     `duplicate` or `wontfix`) are cross-cutting or judgment calls. They are left to the LLM
 #     classifier or to a maintainer.
 
+"area: android":
+  - changed-files:
+      - any-glob-to-any-file:
+          - android/**
+          - ANDROID_CHANGELOG.md
+          - scripts/android-release.sh
+          - scripts/check-android-native*
+          - .github/workflows/android-release.yml
+
 "area: bridge":
   - changed-files:
       - any-glob-to-any-file:

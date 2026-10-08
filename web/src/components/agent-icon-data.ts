@@ -1,10 +1,12 @@
-// Per-agent brand marks for AgentIcon. Each `d` is a 24×24 single-path glyph in the agent's
-// official logo, paired with the brand's tile color. Sources (all verified against each project's
-// own favicon/site): Claude + Codex(OpenAI) via Simple Icons (CC0); pi via Simple Icons / pi.dev
+// Per-agent tiles for AgentIcon. Each `d` is a 24×24 single-path glyph. Recorded source families:
+// Claude + Codex(OpenAI) via Simple Icons; pi via Simple Icons / pi.dev
 // favicon (#09090b tile); opencode via its current official favicon (#131010 tile); agy
-// (Antigravity) via its Google-blue #1A73E8 tile, keyed under both "agy" and "antigravity"; omp via
+// (Antigravity) uses an angular letter A on a #1A73E8 tile, keyed under both "agy" and "antigravity";
+// that glyph does not match the current official product icon, and its source is unverified. omp via
 // omp.sh/favicon.svg (#0f0a14 tile, and the one mark whose official paint is a gradient — `grad`).
 // To refresh: re-run the fetch in CHANGELOG and replace the `d` strings.
+// These source descriptions do not establish redistribution terms. Simple Icons' repository
+// CC0 license does not automatically cover every vendor mark; verify each asset's pinned terms.
 
 export interface AgentBrand {
   /** Tile background — the agent's official brand color. */

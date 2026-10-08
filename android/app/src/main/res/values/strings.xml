@@ -4,7 +4,7 @@
     <string name="collie_wordmark">COLLIE</string>
     <string name="app_tagline">Your agents, within reach</string>
     <string name="setup_title">Connect this phone</string>
-    <string name="origin_hint">Collie HTTPS origin</string>
+    <string name="origin_hint">Collie server URL (HTTPS)</string>
     <string name="device_label_hint">Device label</string>
     <string name="pairing_code_hint">Pairing code</string>
     <string name="pair_and_connect">Pair and connect</string>

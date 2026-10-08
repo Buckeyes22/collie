@@ -1,0 +1,229 @@
+{
+  "schema_version": 1,
+  "date_utc": "2026-10-07",
+  "scope": "Passed debug emulator and source checks; unperformed extended physical-device validation is follow-up coverage, not an initial-release gate.",
+  "source": {
+    "root": "/home/chris/git/collie",
+    "head": "414df2b38ad8a322937d94c71dfd73dd984e99c2",
+    "dirty": true,
+    "android_inputs_archive": "/tmp/collie-z2-verified-inputs.tar",
+    "verified_android_input_files": 350,
+    "sorted_sha256_manifest_digest": "e11bb0fd252b09ac22910f488d322dae4a168b99a7190b2cb86e998b3c617404",
+    "archive_sha256": "7ce2f0af4faa4e2c899343390bf0ab6a4815795234ef43dd1e6f9852e17122fa"
+  },
+  "candidate": {
+    "version_name": "1.5.1",
+    "version_code": 2,
+    "debug_version_name": "1.5.1-debug",
+    "apk_sha256": {
+      "debug": "6c8918c234a6924dadddd1c28640fd033b1cb6b094a92978b99e94e53186d04c",
+      "instrumentation": "ceb6944b493d32ece7baf1194fc51df285dbe32f5eb7aeb1a18eeb89b68bdc38",
+      "unsigned_release": "e97724ee57c763e669e91a2546387023f7fa3ae7a9de42dcd44dff665199da59"
+    }
+  },
+  "native_build": {
+    "status": "passed",
+    "jvm_results": {
+      "tests": 536,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "junit_xml_files": 82,
+    "tasks": [
+      "testDebugUnitTest",
+      "lintDebug",
+      "lintRelease",
+      "assembleDebug",
+      "assembleDebugAndroidTest",
+      "assembleRelease"
+    ],
+    "log": "/tmp/collie-native-clipping-fix-gradle-retry.log"
+  },
+  "dependency_scan": {
+    "sbom_path": "/tmp/collie-native-verified-sbom.cdx.json",
+    "sbom_sha256": "72dd512b6a29b80dcd28dd304fd988e0d5afa68ab4fd89482e3bfcc16a85ec5b",
+    "locked_runtime_modules": 80,
+    "grype_version": "0.116.1",
+    "grype_report": "/tmp/collie-native-verified-grype.json",
+    "grype_report_sha256": "0abd5fd264950db5444fd19cf3d9c5fffacc1c3bc00bab025b8f1f16085108ce",
+    "matches": 0,
+    "database_schema": "6.1.10",
+    "database_built_utc": "2026-10-07T06:31:48Z",
+    "limit": "Build-input inventory; does not establish complete R8 contents, dependency edges or asset rights."
+  },
+  "signing_helper": {
+    "status": "passed_with_disposable_audit_key",
+    "artifacts": "/tmp/collie-verified-signing-3u5qaqn8/artifacts",
+    "audit_private_key_deleted": true,
+    "production_signing": false,
+    "checks": [
+      "signature",
+      "pinned_fixture_certificate",
+      "checksums",
+      "version_and_dirty_source_metadata",
+      "sbom_apk_hash",
+      "complete_packaged_notice_byte_identity"
+    ]
+  },
+  "emulator_lab": {
+    "host": "z2",
+    "root": "/home/chris/collie-android-lab",
+    "jdk": "21.0.12.1",
+    "emulator": "37.2.12",
+    "platform_tools": "37.0.1",
+    "sdk_platform": 36,
+    "build_tools": "36.0.0",
+    "instrumentation_cases_passed": 86,
+    "runs": [
+      {
+        "directory": "/home/chris/collie-android-lab/hardening-1.5.1-debug-36-phone-pIokH3",
+        "instrumentation_cases": {
+          "hardening-ui-large-text.log": 4,
+          "interaction-default.log": 51,
+          "narrow-large-text.log": 8,
+          "talkback-platform.log": 1,
+          "baseline.log": 5
+        },
+        "observations": {
+          "default-display-size.txt": "Physical size: 1080x2400",
+          "finished-utc.txt": "2026-10-07T23:23:04Z",
+          "animator-duration-scale.txt": "0",
+          "started-utc.txt": "2026-10-07T23:19:49Z",
+          "profile.txt": "36-phone",
+          "window-animation-scale.txt": "0",
+          "actual-api.txt": "36",
+          "transition-animation-scale.txt": "0",
+          "narrow-large-text-width.txt": "1080 px at 540 dpi = 320 dp",
+          "default-display-density.txt": "Physical density: 420"
+        },
+        "apk_sha256_manifest": [
+          "6c8918c234a6924dadddd1c28640fd033b1cb6b094a92978b99e94e53186d04c  app-debug.apk",
+          "ceb6944b493d32ece7baf1194fc51df285dbe32f5eb7aeb1a18eeb89b68bdc38  app-debug-androidTest.apk"
+        ],
+        "captures": {
+          "connection-large-text.png": "23ca12b51391f57da3db8d6892a3c02bf4e8684d86e07ec849f8660e576b5f50"
+        }
+      },
+      {
+        "directory": "/home/chris/collie-android-lab/hardening-1.5.1-debug-26-phone-0K8vsN",
+        "instrumentation_cases": {
+          "hardening-ui-large-text.log": 4,
+          "baseline.log": 5
+        },
+        "observations": {
+          "default-display-size.txt": "Physical size: 1080x1920",
+          "finished-utc.txt": "2026-10-07T23:25:50Z",
+          "animator-duration-scale.txt": "0",
+          "started-utc.txt": "2026-10-07T23:25:21Z",
+          "profile.txt": "26-phone",
+          "window-animation-scale.txt": "0",
+          "actual-api.txt": "26",
+          "transition-animation-scale.txt": "0",
+          "default-display-density.txt": "Physical density: 420"
+        },
+        "apk_sha256_manifest": [
+          "6c8918c234a6924dadddd1c28640fd033b1cb6b094a92978b99e94e53186d04c  app-debug.apk",
+          "ceb6944b493d32ece7baf1194fc51df285dbe32f5eb7aeb1a18eeb89b68bdc38  app-debug-androidTest.apk"
+        ],
+        "captures": {
+          "connection-large-text.png": "f11f9047a71b9f1b15f35b6ea630f14eddf3269fb570056ebbfd307f61201f79"
+        }
+      },
+      {
+        "directory": "/home/chris/collie-android-lab/hardening-1.5.1-debug-36-foldable-WkuvUJ",
+        "instrumentation_cases": {
+          "hardening-ui-large-text.log": 3,
+          "baseline.log": 5
+        },
+        "observations": {
+          "default-display-size.txt": "Physical size: 2208x1840",
+          "active-device-state-before.txt": "2",
+          "active-device-state-folded.txt": "0",
+          "finished-utc.txt": "2026-10-07T23:26:58Z",
+          "animator-duration-scale.txt": "0",
+          "started-utc.txt": "2026-10-07T23:25:53Z",
+          "profile.txt": "36-foldable",
+          "fold-display-before.txt": "Physical size: 2208x1840",
+          "window-animation-scale.txt": "0",
+          "fold-display-after.txt": "Physical size: 1080x2092",
+          "unfold-display-after.txt": "Physical size: 2208x1840",
+          "actual-api.txt": "36",
+          "transition-animation-scale.txt": "0",
+          "default-display-density.txt": "Physical density: 420",
+          "active-device-state-unfolded.txt": "2"
+        },
+        "apk_sha256_manifest": [
+          "6c8918c234a6924dadddd1c28640fd033b1cb6b094a92978b99e94e53186d04c  app-debug.apk",
+          "ceb6944b493d32ece7baf1194fc51df285dbe32f5eb7aeb1a18eeb89b68bdc38  app-debug-androidTest.apk"
+        ],
+        "captures": {
+          "connection-unfolded.png": "8fe0b48c3f0edda551e02b653985d72aa61fde57ecdd3b71aaccdf217b2d50b8",
+          "connection-folded.png": "d86969fb8922f3162de8e62991ce60016c24d6d9e8ee08beaae403089e6a2075"
+        }
+      }
+    ],
+    "fold_visual_review": {
+      "status": "passed_for_foreground_setup_screen_at_200_percent_font",
+      "captures": [
+        "/tmp/collie-verified-folded-200.png",
+        "/tmp/collie-verified-unfolded-200.png"
+      ],
+      "observation": "Full setup labels and controls fit folded and unfolded; PNG dimensions match changed active display geometry."
+    },
+    "talkback_limit": "Connected spoken-feedback service, touch exploration, accessibility focus and click activation passed; audible speech and full traversal were not reviewed."
+  },
+  "regression_proof": {
+    "setup_large_text_buttons": {
+      "before": "Prior APK fails full-label height assertion at 200 percent font and 320 dp",
+      "after": "Current APK passes all three emulator profiles",
+      "negative_log": "/tmp/collie-z2-clipping-negative.log"
+    }
+  },
+  "remaining_acceptance": [
+    {
+      "unit": "physical_battery",
+      "disposition": "follow_up_not_executed",
+      "requires": "Physical-device repeated CPU, network and wakeup measurements.",
+      "release_blocking": false
+    },
+    {
+      "unit": "live_server_network",
+      "disposition": "follow_up_not_executed",
+      "requires": "Disposable paired real server and physical radio/VPN, process-death and write-replay observations.",
+      "release_blocking": false
+    },
+    {
+      "unit": "spoken_talkback",
+      "disposition": "follow_up_not_executed",
+      "requires": "Audible speech, traversal and dialog/sheet focus restoration review.",
+      "release_blocking": false
+    },
+    {
+      "unit": "production_signed_visual_acceptance",
+      "disposition": "follow_up_not_executed",
+      "requires": "Extended signed-artifact all-screen/theme/split-window/IME/font/display review; basic install/launch smoke check is tracked separately for publication.",
+      "release_blocking": false
+    },
+    {
+      "unit": "vendor_asset_rights",
+      "disposition": "review_needed",
+      "requires": "Record a maintainer disposition for specific unestablished icon provenance/terms; preserve required notices and avoid claiming unverified permissions.",
+      "release_blocking": false,
+      "publication_review_scope": "specific_asset_disposition"
+    },
+    {
+      "unit": "historical_capture_privacy",
+      "disposition": "review_needed",
+      "requires": "Privacy review before republishing retained historical terminal captures.",
+      "release_blocking": false,
+      "publication_review_scope": "when_publishing_affected_content"
+    }
+  ],
+  "publication_requirements": [
+    "Release signing and correct package/version identity for a public APK",
+    "Passing configured build and dependency checks",
+    "Basic signed-artifact installation/launch/connection smoke check",
+    "Required license notices, specific asset/privacy dispositions and accurate release notes"
+  ]
+}
