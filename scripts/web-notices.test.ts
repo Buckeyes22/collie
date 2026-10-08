@@ -27,4 +27,26 @@ describe("web notices", () => {
   test.each(SHADCN_CHAT)("%s names its shadcn-chat origin", (path) => {
     expect(read(path)).toContain("licenses/shadcn-chat.txt");
   });
+
+  test("the Nerd Font subsets ship each glyph family's license", () => {
+    const text = read("web/public/fonts/LICENSE-nerd-symbols.txt");
+    for (const family of [
+      "Font Awesome",
+      "Material Design Icons",
+      "Codicons",
+      "Octicons",
+      "Devicons",
+      "Powerline",
+      "Seti",
+      "Weather Icons",
+      "Pomicons",
+      "IEC Power Symbols",
+    ]) {
+      expect(text).toContain(family);
+    }
+    expect(text).toContain("license-audit.md");
+    expect(text).toContain("Apache License");
+    expect(text).toContain("SIL OPEN FONT LICENSE");
+    expect(text).toContain("Attribution 4.0 International");
+  });
 });
