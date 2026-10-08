@@ -15,7 +15,7 @@
     "lint": "bun node_modules/oxlint/bin/oxlint --max-warnings 0",
     "lint:fix": "bun node_modules/oxlint/bin/oxlint --fix --max-warnings 0",
     "check:android": "bun scripts/check-android-native.ts",
-    "test": "bun test ./bridge && bun test ./cli && bun test ./scripts && bash scripts/collie-ctl.test.sh && bash scripts/collie-cli.test.sh && bash scripts/check-tag.test.sh",
+    "test": "bun test ./bridge && bun test ./cli && bun test ./scripts && bash scripts/collie-ctl.test.sh && bash scripts/collie-cli.test.sh && bash scripts/check-tag.test.sh && bash scripts/android-release.test.sh",
     "test:ctl": "bash scripts/collie-ctl.test.sh",
     "test:pack": "bun test ./bridge/pack/harness.test.ts",
     "typecheck": "bunx tsc --noEmit"
