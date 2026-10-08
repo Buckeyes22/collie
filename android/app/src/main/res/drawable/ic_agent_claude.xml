@@ -7,5 +7,5 @@
     <path android:fillColor="#080A0F" android:pathData="M0,0H24V24H0Z" />
     <!-- Locally authored C identification tile; this is not Anthropic's logo artwork. -->
     <path android:fillColor="#FFFFFF" android:pathData="M6,4H18V7H9V17H18V20H6Z" />
-    <path android:fillColor="#E0A060" android:pathData="M17,3H21V7H17Z" />
+    <path android:fillColor="#E0A060" android:pathData="M20,0H24V4H20Z" />
 </vector>

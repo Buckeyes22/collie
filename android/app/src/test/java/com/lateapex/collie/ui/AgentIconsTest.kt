@@ -96,6 +96,34 @@ class AgentIconsTest {
         assertFalse(res.resolve("ic_agent_codex.xml").readText().contains("M22.2819,9.8211"))
     }
 
+    @Test
+    fun tileAccentsSitInTheCornerClearOfEveryGlyph() {
+        val res = java.io.File("src/main/res/drawable")
+        val pathRegex = Regex("""android:pathData="([^"]+)"""")
+        val commandRegex = Regex("""([MLHV])\s*(-?[0-9.]+)(?:[ ,]+(-?[0-9.]+))?""")
+        listOf("claude", "codex", "pi", "omp", "antigravity").forEach { name ->
+            val paths = pathRegex.findAll(res.resolve("ic_agent_$name.xml").readText())
+                .map { it.groupValues[1] }.toList()
+            assertTrue("$name accent must be M20,0H24V4H20Z", paths.contains("M20,0H24V4H20Z"))
+            paths.filter { it != "M0,0H24V24H0Z" && it != "M20,0H24V4H20Z" }.forEach { glyph ->
+                var x = 0f
+                var y = 0f
+                commandRegex.findAll(glyph).forEach { match ->
+                    val (command, first, second) = match.destructured
+                    when (command) {
+                        "M", "L" -> { x = first.toFloat(); y = second.toFloat() }
+                        "H" -> x = first.toFloat()
+                        "V" -> y = first.toFloat()
+                    }
+                    assertFalse(
+                        "$name glyph reaches the accent corner at ($x,$y): $glyph",
+                        x > 20f && y < 4f,
+                    )
+                }
+            }
+        }
+    }
+
     private companion object {
         const val ANDROID_NAMESPACE = "http://schemas.android.com/apk/res/android"
     }

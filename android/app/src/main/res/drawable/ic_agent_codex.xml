@@ -8,5 +8,5 @@
     <!-- Locally authored prompt identification tile; this is not OpenAI's logo artwork. -->
     <path android:fillColor="#FFFFFF" android:pathData="M4,6L10,12L4,18H7.6L13.6,12L7.6,6Z" />
     <path android:fillColor="#FFFFFF" android:pathData="M13,16H20V19H13Z" />
-    <path android:fillColor="#9AA4B2" android:pathData="M17,3H21V7H17Z" />
+    <path android:fillColor="#9AA4B2" android:pathData="M20,0H24V4H20Z" />
 </vector>
