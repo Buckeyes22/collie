@@ -97,3 +97,12 @@ when maintainer time permits; there is no promised response schedule.
 > **Note.** Automatic labelling is off. If the maintainer turns it on, a new issue's or pull
 > request's title, body, existing label names and, for a pull request, changed file paths are
 > sent to OpenRouter for classification. Keep private content out of issues either way.
+
+## Contribution terms
+
+Contributions are accepted under the repository's [MIT license](LICENSE). Sign off each commit
+(`git commit -s`) to certify the [Developer Certificate of Origin](https://developercertificate.org/);
+review checks for the `Signed-off-by` line. There is no CLA.
+
+Participation follows the [code of conduct](CODE_OF_CONDUCT.md). Report conduct problems to
+chris@lateapexllc.com; the maintainer moderates issues, pull requests and discussions.
