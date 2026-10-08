@@ -81,6 +81,8 @@
     <string name="settings_snooze_description">Temporarily silence bridge notifications on every device.</string>
     <string name="settings_updates_description">Update Collie, and the pack with it.</string>
     <string name="settings_updates_open">Open server updates</string>
+    <string name="settings_licenses">Open-source licenses</string>
+    <string name="licenses_title">Open-source licenses</string>
     <string name="settings_devices_title">Paired devices</string>
     <string name="settings_devices_description">Review and revoke terminal-control credentials.</string>
     <string name="settings_pack_title">Pack overview</string>
