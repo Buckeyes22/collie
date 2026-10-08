@@ -26,7 +26,7 @@ class ClaudeChromeFilterTest {
                 rule,
                 "❯\u00a0",
                 rule,
-                "\u001b[32mchris@ed8:/home/chris/git/prometheus\u001b[0m",
+                "\u001b[32moperator@host:/home/operator/git/app\u001b[0m",
                 "\u001b[31mbypass permissions on\u001b[0m · 1 shell, 1 monitor · ← for agents",
                 "",
                 "● main",
@@ -42,7 +42,7 @@ class ClaudeChromeFilterTest {
         )
         assertEquals(
             listOf(
-                "chris@ed8:/home/chris/git/prometheus",
+                "operator@host:/home/operator/git/app",
                 "bypass permissions on · 1 shell, 1 monitor · ← for agents",
             ),
             result.statusRows.map { it.toString() },
@@ -61,7 +61,7 @@ class ClaudeChromeFilterTest {
         val parsed = parser.parse(
             (listOf("❯ Reply with PONG", "", "● PONG", "", "✻ Cooked for 2s") +
                 List(46) { "" } +
-                listOf("66083 tokens", rule, "❯\u00a0", rule, "chris@ed8:/home/chris/git/collie", "bypass permissions on")
+                listOf("66083 tokens", rule, "❯\u00a0", rule, "operator@host:/home/operator/git/collie", "bypass permissions on")
             ).joinToString("\n"),
         )
 
@@ -72,7 +72,7 @@ class ClaudeChromeFilterTest {
             result.body.toString(),
         )
         assertEquals(
-            listOf("chris@ed8:/home/chris/git/collie", "bypass permissions on"),
+            listOf("operator@host:/home/operator/git/collie", "bypass permissions on"),
             result.statusRows.map { it.toString() },
         )
     }

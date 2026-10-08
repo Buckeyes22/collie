@@ -221,7 +221,7 @@ class DashboardModelTest {
         val base = pane("p", AgentStatus.IDLE).copy(
             workspaceLabel = "Collie",
             tabLabel = "android",
-            cwd = "/home/chris/git/collie",
+            cwd = "/home/operator/git/collie",
             terminalTitle = "live title",
             sessionName = "session name",
             paneLabel = "pane label",
@@ -736,7 +736,7 @@ class DashboardModelTest {
         val base = pane("p", AgentStatus.IDLE).copy(
             workspaceLabel = "Collie",
             tabLabel = "android",
-            cwd = "/home/chris/git/collie",
+            cwd = "/home/operator/git/collie",
             terminalTitle = "live title",
             sessionName = "session name",
             paneLabel = "pane label",

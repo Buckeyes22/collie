@@ -13,10 +13,10 @@ class TerminalComposerSemanticsTest {
     @Test
     fun claudeGhostSuggestionIsNotADraftButATypedLineIs() {
         val rule = "─".repeat(40)
-        val ghost = "$rule\n❯ \u001b[0m\u001b[2mfix it\u001b[0m\n$rule\n  chris@ed8:~ \n"
+        val ghost = "$rule\n❯ \u001b[0m\u001b[2mfix it\u001b[0m\n$rule\n  operator@host:~ \n"
         assertNull(TerminalComposerSemantics.terminalDraft("claude", ghost))
 
-        val typed = "$rule\n❯ fix it\n$rule\n  chris@ed8:~ \n"
+        val typed = "$rule\n❯ fix it\n$rule\n  operator@host:~ \n"
         assertEquals("fix it", TerminalComposerSemantics.terminalDraft("claude", typed)?.text)
     }
 

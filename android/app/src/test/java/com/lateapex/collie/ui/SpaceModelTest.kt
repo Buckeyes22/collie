@@ -123,7 +123,7 @@ class SpaceModelTest {
             sessionName = "session name",
             terminalTitle = "live title",
             tabLabel = "build",
-            cwd = "/home/chris/projects/a-very-long-parent-directory/collie/android",
+            cwd = "/home/operator/projects/a-very-long-parent-directory/collie/android",
         )
 
         assertEquals("hand named", spacePaneText(named).primary)
@@ -137,9 +137,9 @@ class SpaceModelTest {
 
     @Test
     fun shortCwdCollapsesLinuxMacAndFedoraHomePrefixesByWholeSegment() {
-        assertEquals("~/git/collie", shortCwd("/home/chris/git/collie"))
+        assertEquals("~/git/collie", shortCwd("/home/operator/git/collie"))
         assertEquals("~/git/collie", shortCwd("/Users/chris/git/collie"))
-        assertEquals("~/git/collie", shortCwd("/var/home/chris/git/collie"))
+        assertEquals("~/git/collie", shortCwd("/var/home/operator/git/collie"))
         assertEquals("…/three/four", shortCwd("/one/two/three/four", max = 13))
     }
 
