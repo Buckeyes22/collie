@@ -44,10 +44,12 @@ and zellij support experimental.
 
 Use [Getting started](android/GETTING_STARTED.md) for APK installation, pairing and troubleshooting.
 
-The fork has **no published Android release yet**. The release tooling is prepared, but signing
-configuration and device acceptance must be completed before the first APK is published.
-When releases are available, they will use `android-v…` tags on this repository's
-[Releases page](https://github.com/Buckeyes22/collie/releases).
+Download the APK from the
+[latest Android release](https://github.com/Buckeyes22/collie/releases/latest). Verify it with
+`sha256sum -c SHA256SUMS`; the signing certificate fingerprint is in `signing-certificate.txt`.
+Before release, each APK passes the release workflow's unit tests, lint and dependency scan.
+It also gets an install-and-launch smoke check on one device. The release notes list what that
+check covered.
 
 To build a development APK now:
 

@@ -12,8 +12,8 @@ android {
         applicationId = "com.lateapex.collie"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
-        versionName = "1.5.1"
+        versionCode = 3
+        versionName = "1.5.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Public builds start unconfigured; the operator supplies their own HTTPS server.
