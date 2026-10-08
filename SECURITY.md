@@ -12,10 +12,6 @@ Include the app version, server version, affected code path, reproduction steps 
 Use a disposable server or test pane when demonstrating terminal writes. Do not attach live
 credentials, unreviewed diagnostic exports or private terminal content.
 
-Private vulnerability reporting must be enabled in repository Settings → Security before the
-first public Android release. If the report button is unavailable, open a public issue requesting
-a private reporting channel. Omit exploit details and sensitive data until the maintainer provides it.
-
 ## Scope and supported releases
 
 This fork's security policy covers the native Android app and its Android release tooling.
