@@ -42,14 +42,46 @@ Current reviewer evidence under [`android/validation/hardening/`](../../../andro
 
 ## Visual asset review
 
-`REVIEW-NEEDED`: several committed Android acceptance screenshots contain real pane transcripts, commands, local checkout paths, endpoint/device labels, or pairing/settings context. Examples include:
+`FIX`: the committed Android acceptance screenshots were checked one by one, and every one that showed a real pane transcript, command, local path, host, device label or pairing detail was replaced. All 32 files in `android/acceptance/*.png` were opened and classified. 29 were `private` and have been recaptured under the same file name; 3 were `clean` and are unchanged.
 
-- [`android/acceptance/2026-09-10-claude-pane-history.png`](../../../android/acceptance/2026-09-10-claude-pane-history.png), introduced at `c722cd88333223435511c400762a5591028c9129`.
-- [`android/acceptance/2026-09-10-claude-pane-mirror.png`](../../../android/acceptance/2026-09-10-claude-pane-mirror.png), introduced at `c722cd88333223435511c400762a5591028c9129`.
-- [`android/acceptance/2026-09-10-disconnect-sheet.png`](../../../android/acceptance/2026-09-10-disconnect-sheet.png) and [`android/acceptance/2026-09-10-upload-path-in-draft.png`](../../../android/acceptance/2026-09-10-upload-path-in-draft.png), introduced at `82fcfe7be32ca98349fc99089447cce9ff2c12a5`.
-- [`android/acceptance/2026-09-11-ux-transcript.png`](../../../android/acceptance/2026-09-11-ux-transcript.png), [`android/acceptance/2026-09-11-ux-mirror-reflow.png`](../../../android/acceptance/2026-09-11-ux-mirror-reflow.png), and [`android/acceptance/2026-09-11-ux-panel-mirror.png`](../../../android/acceptance/2026-09-11-ux-panel-mirror.png), introduced at `bc9cb5a2756cebd82127d807f94023572e8dd23d`.
+The recaptures are of the current debug build, running on an emulator against a synthetic session: a throwaway Collie bridge and Herdr session, one `demo` space whose directory is a fresh temporary git repository, a shell pane that prints a few public fixture files, and Claude panes asked for a file listing and a README outline. The emulator was paired as `demo-phone` and the bridge, session and emulator were removed afterwards. Three screens show the server's tailnet address (`2026-09-10-disconnect-sheet.png`, `2026-09-11-ux-disconnect.png`, `2026-09-11-ux-settings-paired.png`); there the address text is covered by a solid rectangle in the surface colour and the result was read back to confirm that it is unreadable. Some historical states cannot be reproduced on the current build (a spaces strip that omitted the current space, presets that left no terminal rows, an upload path pasted into the draft, the preflight list on the updates screen); those files hold the closest current screen, and `ANDROID_CLAUDE_PANE_UX_PROPOSAL.md` says so where it cites them.
 
-I did not identify a credential in the inspected screenshots. Their transcript and private deployment/device information still make them private acceptance artifacts rather than safe public marketing images. No screenshot was edited or removed. Other raster assets reviewed are Collie marks, icons, banners, update UI, or synthetic demo content; no live terminal or endpoint disclosure was found in that group.
+The earlier captures remain in Git history at the commits that introduced them (for example `c722cd88333223435511c400762a5591028c9129`, `82fcfe7be32ca98349fc99089447cce9ff2c12a5` and `bc9cb5a2756cebd82127d807f94023572e8dd23d`); only the tip carries the synthetic files. I did not identify a credential in the earlier screenshots. Other raster assets reviewed are Collie marks, icons, banners, update UI, or synthetic demo content; no live terminal or endpoint disclosure was found in that group.
+
+Per-file classification:
+
+- [`2026-09-10-claude-pane-history.png`](../../../android/acceptance/2026-09-10-claude-pane-history.png): `private → recaptured`. Real session transcript, commands and a checkout path.
+- [`2026-09-10-claude-pane-mirror.png`](../../../android/acceptance/2026-09-10-claude-pane-mirror.png): `private → recaptured`. Real session transcript, checkout paths, host and user name.
+- [`2026-09-10-dashboard.png`](../../../android/acceptance/2026-09-10-dashboard.png): `private → recaptured`. Real space, tab and session names.
+- [`2026-09-10-disconnect-sheet.png`](../../../android/acceptance/2026-09-10-disconnect-sheet.png): `private → recaptured`. Server hostname, device labels; recapture has the address boxed out.
+- [`2026-09-10-keys-drawer.png`](../../../android/acceptance/2026-09-10-keys-drawer.png): `private → recaptured`. Real pane name and home-directory path.
+- [`2026-09-10-keys-presets-no-terminal.png`](../../../android/acceptance/2026-09-10-keys-presets-no-terminal.png): `private → recaptured`. Real pane name; historical zero-terminal-rows state, replaced by the closest current screen.
+- [`2026-09-10-settings.png`](../../../android/acceptance/2026-09-10-settings.png): `clean`. Collie settings chrome only.
+- [`2026-09-10-space-strip-missing-current.png`](../../../android/acceptance/2026-09-10-space-strip-missing-current.png): `private → recaptured`. Real space names; historical strip bug, replaced by the closest current screen.
+- [`2026-09-10-space.png`](../../../android/acceptance/2026-09-10-space.png): `private → recaptured`. Real space, tab and checkout names.
+- [`2026-09-10-switcher.png`](../../../android/acceptance/2026-09-10-switcher.png): `private → recaptured`. Real pane titles, session identifiers and repository names.
+- [`2026-09-10-upload-path-in-draft.png`](../../../android/acceptance/2026-09-10-upload-path-in-draft.png): `private → recaptured`. Real checkout path and upload path with the user's home directory; the old path-in-draft state is replaced by the current attachment chip.
+- [`2026-09-11-ux-after-answer.png`](../../../android/acceptance/2026-09-11-ux-after-answer.png): `private → recaptured`. Real pane name and home-directory path.
+- [`2026-09-11-ux-attach-chip.png`](../../../android/acceptance/2026-09-11-ux-attach-chip.png): `private → recaptured`. Real branch name and checkout path.
+- [`2026-09-11-ux-close-confirm.png`](../../../android/acceptance/2026-09-11-ux-close-confirm.png): `private → recaptured`. Real transcript, pane name and checkout path.
+- [`2026-09-11-ux-dashboard.png`](../../../android/acceptance/2026-09-11-ux-dashboard.png): `private → recaptured`. Real space, tab and session names.
+- [`2026-09-11-ux-dialog-mirror.png`](../../../android/acceptance/2026-09-11-ux-dialog-mirror.png): `private → recaptured`. Real pane name, home-directory path and prompt.
+- [`2026-09-11-ux-disconnect.png`](../../../android/acceptance/2026-09-11-ux-disconnect.png): `private → recaptured`. Server hostname and device labels; recapture has the address boxed out.
+- [`2026-09-11-ux-fresh-transcript.png`](../../../android/acceptance/2026-09-11-ux-fresh-transcript.png): `private → recaptured`. Real pane name and home-directory path.
+- [`2026-09-11-ux-keys.png`](../../../android/acceptance/2026-09-11-ux-keys.png): `private → recaptured`. Real transcript with checkout paths and shell commands.
+- [`2026-09-11-ux-mirror-reflow.png`](../../../android/acceptance/2026-09-11-ux-mirror-reflow.png): `private → recaptured`. Real transcript, commands, checkout paths, host and user name.
+- [`2026-09-11-ux-needs-input.png`](../../../android/acceptance/2026-09-11-ux-needs-input.png): `private → recaptured`. Real space, tab and session names.
+- [`2026-09-11-ux-panel-mirror.png`](../../../android/acceptance/2026-09-11-ux-panel-mirror.png): `private → recaptured`. Real pane name, path and usage panel.
+- [`2026-09-11-ux-settings-paired.png`](../../../android/acceptance/2026-09-11-ux-settings-paired.png): `private → recaptured`. Server hostname, device labels and server build; recapture has the address boxed out.
+- [`2026-09-11-ux-settings-unpaired.png`](../../../android/acceptance/2026-09-11-ux-settings-unpaired.png): `private → recaptured`. Device label and pairing form.
+- [`2026-09-11-ux-space.png`](../../../android/acceptance/2026-09-11-ux-space.png): `private → recaptured`. Real space, tab and session names.
+- [`2026-09-11-ux-switcher-current.png`](../../../android/acceptance/2026-09-11-ux-switcher-current.png): `private → recaptured`. Real pane titles, repository names and paths.
+- [`2026-09-11-ux-transcript.png`](../../../android/acceptance/2026-09-11-ux-transcript.png): `private → recaptured`. Real transcript, commands and a temporary-directory path.
+- [`2026-09-11-ux-updates.png`](../../../android/acceptance/2026-09-11-ux-updates.png): `private → recaptured`. Real checkout path, uncommitted file names and remote URL; the recapture shows the current updates screen instead of the preflight list.
+- [`2026-09-11-ux-zen.png`](../../../android/acceptance/2026-09-11-ux-zen.png): `clean`. Only a one-word test prompt and its reply.
+- [`web-dashboard-480x1040.png`](../../../android/acceptance/web-dashboard-480x1040.png): `private → recaptured`. Real space, tab and session names.
+- [`web-pane-shell-480x1040.png`](../../../android/acceptance/web-pane-shell-480x1040.png): `private → recaptured`. Real checkout path and branch name.
+- [`web-settings-480x1040.png`](../../../android/acceptance/web-settings-480x1040.png): `clean`. Collie settings chrome only.
 
 ## APK asset provenance and packaged notices
 

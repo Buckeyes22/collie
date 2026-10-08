@@ -8,33 +8,41 @@ walk and the resulting decisions.
 
 ## 1. What the phone showed on 2026-09-10
 
-`android/acceptance/2026-09-10-claude-pane-mirror.png` is a Claude pane on the S25 Ultra after a
-short conversation. It is readable, and it is not an acceptable Claude Code display. Read as a
-whole it is a terminal dump with a chat composer under it:
+> **Note.** The 2026-09-10 and 2026-09-11 captures originally showed a real working session, so
+> they were replaced on 2026-10-08 with captures of the current Android build against a synthetic
+> demo session (a fresh temporary git repo, one Claude pane asked for a file listing and a README
+> outline, one shell pane). The files keep their names. This section and the appendices record
+> what the original 2026-09-10 captures showed; where a replacement cannot reproduce a historical
+> state, the text says so.
+
+The original `android/acceptance/2026-09-10-claude-pane-mirror.png` was a Claude pane on the
+S25 Ultra after a short conversation. The file is now a synthetic recapture of the terminal view
+after the fixes below. The original was readable, and it was not an acceptable Claude Code
+display. Read as a whole it was a terminal dump with a chat composer under it:
 
 - **Double wrapping.** Claude renders into a terminal about 100 columns wide and wraps its own
   prose there, indenting continuation lines by two spaces. The phone shows about 65 columns at
-  10 sp and wraps every one of those lines again. Orphan fragments ("rather than re-arguing it,
-  which is") sit on their own line, insight boxes lose their rules, bullets get a continuation
-  indent mid-sentence.
-- **The statusline is raw.** "121350 tokens" floats alone; the git branch `/rc` is orphaned onto
-  its own line by the same re-wrap; "bypass permissions on (shift+tab to cycle) · ← for agents" is
-  a mono paragraph. The web client re-surfaces these rows as styled chrome under the mirror.
-- **Tool rows lose their shape.** "● Read(…)" with its "⎿ Read 519 lines" child is a tree in the
-  terminal. After wrapping, and in the system mono face, the connectors sit at odd offsets and the
-  path is cut mid-word.
-- **The pane title appears twice**, in the header and again as the collapsed tab-strip label
+  10 sp and wrapped every one of those lines again. Orphan fragments sat on their own line,
+  insight boxes lost their rules, bullets got a continuation indent mid-sentence.
+- **The statusline was raw.** A token count floated alone; the git branch and `/rc` were orphaned
+  onto their own line by the same re-wrap; the permission-mode hint was a mono paragraph. The web
+  client re-surfaces these rows as styled chrome under the mirror.
+- **Tool rows lost their shape.** A "● Read(…)" row with its "⎿ Read N lines" child is a tree in
+  the terminal. After wrapping, and in the system mono face, the connectors sat at odd offsets and
+  the path was cut mid-word.
+- **The pane title appeared twice**, in the header and again as the collapsed tab-strip label
   directly beneath it.
-- **The user turn is a grey slab** with a faint marker, indistinguishable from a selection
-  artefact. Assistant prose, insight boxes and tool output all render in one weight and size.
-- **It is a light-grey mono wall.** Claude's own colour cues survive, but at 10 sp on a 6.9 inch
-  screen the transcript reads as a log file, not a conversation.
+- **The user turn was a grey slab** with a faint marker, indistinguishable from a selection
+  artefact. Assistant prose, insight boxes and tool output all rendered in one weight and size.
+- **It was a light-grey mono wall.** Claude's own colour cues survive, but at 10 sp on a 6.9 inch
+  screen the transcript read as a log file, not a conversation.
 
-`android/acceptance/2026-09-10-claude-pane-history.png` is the same pane's History screen, fed by
-Claude's session log through `GET /api/pane/:id/history`: user turns as cards with a name and
-time, assistant prose in the app face, tool calls as collapsible rows, a match counter and
-user-turn navigation. It looks like a native app. The two screens come from the same session;
-only the source differs.
+`android/acceptance/2026-09-10-claude-pane-history.png` is the History screen of the synthetic
+demo pane; the original was the History screen of the same real pane as the mirror capture. It is fed by Claude's
+session log through `GET /api/pane/:id/history`: the user turn as a card with a name and time,
+assistant prose in the app face, tool calls as collapsible rows, and a find button with a
+counter. It looks like a native app. The two screens come from the same session; only the source
+differs.
 
 ## 2. Why the mirror is the wrong default for an agent pane on a phone
 
@@ -111,7 +119,8 @@ Zen, tap-to-type and the buffer affordances follow whichever body is on screen.
 > **Note.** Walked on the S25 Ultra on 2026-09-10 and 2026-09-11 after the plan and its
 > follow-up fixes landed: 193 steps pass and none fail. The ledger, the defects the walk found
 > and fixed, and the mapping of steps the plan moved or retired are in
-> `android/acceptance/2026-09-11-ux-walk.md`; the captures are `android/acceptance/2026-09-11-ux-*.png`.
+> `android/acceptance/2026-09-11-ux-walk.md`; the captures are `android/acceptance/2026-09-11-ux-*.png`,
+> recaptured on 2026-10-08 against a synthetic demo session because the originals showed a real one.
 
 - **Passes.** The Claude pane, re-captured, shows the conversation as cards and prose
   (`2026-09-11-ux-transcript.png`); the terminal view joins soft wraps so no paragraph wraps
@@ -119,7 +128,7 @@ Zen, tap-to-type and the buffer affordances follow whichever body is on screen.
 - **Passes.** An AskUserQuestion raised from the phone switches the body to the mirror with the
   prompt panel, and answering it switches back, without leaving the pane
   (`2026-09-11-ux-dialog-mirror.png`, `2026-09-11-ux-after-answer.png`). A panel the grammar does
-  not recognise, such as `/cost`, is **not** auto-detected: the body stays on the transcript, and
+  not recognise, such as `/theme`, is **not** auto-detected: the body stays on the transcript, and
   the mirror only shows that panel after the operator manually taps "Show terminal" in the pane
   actions sheet (`2026-09-11-ux-panel-mirror.png`).
 - **Passes.** A shell pane, and an agent pane with no journal yet, show the plain mirror with no
@@ -157,9 +166,11 @@ The 2026-09-11 re-walk fixed and rechecked a number of these screens; see
 `android/acceptance/2026-09-11-ux-walk.md` for the dated ledger and captures. Items not covered by
 that ledger remain observations from the original walk rather than verified current defects.
 
-Reviewed from the captures taken during the two S25 Ultra walks on 2026-09-10 (all under
-`android/acceptance/2026-09-10-*.png`; the walk's full set sits in `/tmp/s25/` on workstation). The
-question for each screen is the one asked of the Claude pane: does it read as a native app that
+Reviewed from the captures taken during the two S25 Ultra walks on 2026-09-10. The captures cited
+here are kept under `android/acceptance/2026-09-10-*.png` as synthetic recaptures of the current
+build, because the originals showed a real session and the walk's full set was never published.
+Observations quote the original captures; where the replacement cannot show the same state, the
+bullet says what it shows instead. The question for each screen is the one asked of the Claude pane: does it read as a native app that
 happens to talk to terminals, or as a terminal tool wearing an app's chrome? Functional defects
 found on the walk are already fixed and committed; what follows is design.
 
@@ -169,31 +180,34 @@ The strongest screen. "Nothing needs you", then Needs input, Ready · unseen, Wo
 Spaces: the triage order is right, the cards are quiet, and a blocked pane surfaces in red with a
 badge on Spaces. What holds it back:
 
-- **Titles are session-log names, truncated.** Four of five Working rows read "Codex session log
-  01a0…" with the identifier cut by the ellipsis, so the only distinguishing text is the space
-  beneath. The row should lead with the space and tab and demote the agent's auto-title, or
-  truncate in the middle so the tail of the id survives.
+- **Titles are session-log names, truncated.** In the original capture four of five Working rows
+  read "Codex session log 01a0…" with the identifier cut by the ellipsis, so the only
+  distinguishing text was the space beneath. The row should lead with the space and tab and demote
+  the agent's auto-title, or truncate in the middle so the tail of the id survives. The synthetic
+  recapture has short demo titles and does not reproduce the truncation.
 - **Two ways to collapse, drawn two ways.** Recent has an up-arrow toggle at the left; Spaces has
   the same toggle plus a "+" at the right; Working has none. The sort control ("Newest ↓") is a
   text button in a header row otherwise made of icons.
-- **The Spaces list is the app's longest surface and the least informative.** Fourteen rows of
-  name, age and a pane count in a grey pill. Nothing says which panes are working, blocked or
+- **The Spaces list is the app's longest surface and the least informative.** In the original,
+  fourteen rows of name, age and a pane count in a grey pill (the recapture has two spaces). Nothing says which panes are working, blocked or
   done inside a space, which is the question the operator has when scanning it.
 - **The build stamp** ("Android app build 1.5.1-debug") sits in the scroll body of every list
   screen. It belongs in Settings only.
 
 ### A.2 Space (`2026-09-10-space.png`)
 
-Three horizontal strips stack under the header before any content: SPACES chips, then tab chips,
-then the overview title. That is 40% of the first screen spent on navigation the dashboard
-already did. Specifics:
+In the original capture three horizontal strips stacked under the header before any content:
+SPACES chips, then tab chips, then the overview title. That was 40% of the first screen spent on
+navigation the dashboard already did. The synthetic recapture shows the current build, which has
+the header, one tab strip and the pane cards, and no spaces strip or overview card. Specifics of
+the original:
 
 - **The spaces strip repeats the dashboard.** A "← Back" chip and every other space, when the
   operator just chose this one. A back arrow in the header and the current space's name is
   enough; the sibling switch belongs in the pane switcher, which already lists them.
-- **The tab chips truncate at the screen edge** ("track-guide-prose" clipped, the "+" half
-  visible) with no affordance that the row scrolls.
-- **The overview card** ("StormLens · 3 tabs · 3 panes") restates the header.
+- **The tab chips truncate at the screen edge** (the last chip clipped, the "+" half visible)
+  with no affordance that the row scrolls.
+- **The overview card** ("<space> · N tabs · M panes") restated the header.
 - **Pane cards say "shell" three times.** A card should show something that distinguishes the
   panes: the last command, the cwd difference, or the tab name in the card rather than as a
   small grey label above it.
@@ -212,10 +226,12 @@ Better than the Claude pane because a shell's grid is the information. Still:
 
 ### A.4 Keys drawer (`2026-09-10-keys-drawer.png`)
 
-Functionally complete and now correct; visually it is the busiest surface in the app. In one
-drawer: a Keys/123 segment, a staged-chip row with Send keys and Clear, eight key buttons, a full
-width Space bar, three modifier toggles, a Presets disclosure, a Function keys disclosure. Opened,
-it covers two thirds of the screen and leaves one line of terminal. The modifiers read as plain
+The original was functionally complete and now correct; visually it was the busiest surface in the
+app. In one drawer: a Keys/123 segment, a staged-chip row with Send keys and Clear, eight key
+buttons, a full width Space bar, three modifier toggles, a Presets disclosure, a Function keys
+disclosure. Opened, it covered two thirds of the screen and left one line of terminal. The
+synthetic recapture shows the current compact drawer: one row of keys, the modifiers and a More
+button that opens the presets sheet. The modifiers read as plain
 text ("⇧ Shift  Ctrl  Alt") until armed, so their tappability is not visible. A phone keyboard
 solves the same problem with one row and a long-press: Ctrl and Alt as sticky keys on the mode
 row, arrows and Esc/Tab/Enter as one compact row, Presets and F-keys behind a single "More".
@@ -233,8 +249,10 @@ row, arrows and Esc/Tab/Enter as one compact row, Presets and F-keys behind a si
 ### A.6 Switcher (`2026-09-10-switcher.png`)
 
 Rows carry space · tab on one line and agent · title on the next, so the identifier walls from
-the dashboard return here at three lines per row. The current pane is not marked. Working is a
-plain grey heading; Recent is a collapsible pill; the two groups look like different controls.
+the dashboard return here at three lines per row. In the original the current pane was not
+marked; the synthetic recapture shows the current build, which marks it with a dark pill. Working
+is a plain grey heading; Recent is a collapsible pill; the two groups look like different
+controls.
 
 ### A.7 History (`2026-09-10-claude-pane-history.png`)
 
@@ -300,9 +318,11 @@ A missed. Cited captures are saved under `android/acceptance/`.
 
 ### B.1 Space (`2026-09-10-space-strip-missing-current.png`)
 
-- **The spaces strip does not contain the current space.** Viewing `collie-ui-test`, the strip
-  reads "← Back · StormLens · flock · pitwall · pen …" and the current space is off-screen to the
-  right, unselected. A strip that exists to show where you are does not show where you are.
+- **The spaces strip did not contain the current space.** In the original capture the strip read
+  "← Back" followed by other spaces, and the current space was off-screen to the right,
+  unselected. A strip that exists to show where you are did not show where you are. That state
+  cannot be reproduced: the current build has no sibling strip, so the replacement capture shows
+  the Space screen with all of its tabs.
 - The current space's chips carry status dots and agent icons on the Space screen but the strip
   chips carry only a dot, so the two rows encode the same panes two ways.
 
@@ -317,15 +337,20 @@ A missed. Cited captures are saved under `android/acceptance/`.
 - **Type mode says the same thing twice and hides its stop.** The field hint becomes "Typing
   directly into terminal…" and a second label "Direct terminal typing armed" appears under it,
   while the Send button, now a stop control, keeps the paper-plane icon.
-- **An attached image is a file path in the draft** (`2026-09-10-upload-path-in-draft.png`): after
-  the picker, the composer holds `$HOME/.local/state/collie/uploads/wM_p1-….png` across three
-  lines with "Image added — path in message." beneath. That is the bridge's storage location shown
-  to the operator; an attachment should be a chip or thumbnail the send expands.
+- **An attached image was a file path in the draft**: after the picker, the original composer held
+  the bridge's upload path across three lines with "Image added — path in message." beneath.
+  That was the bridge's storage location shown to the operator; an attachment should be a chip or
+  thumbnail the send expands. The current build does that, and
+  `2026-09-10-upload-path-in-draft.png` is a synthetic recapture of it: the draft holds only the
+  operator's words and the attachment is an "Image" chip with a thumbnail beneath the composer.
 - **Staged key chips overflow with no cue.** Four chips fill the row and the fourth is clipped at
   the edge; the row scrolls, but nothing indicates it.
-- **Presets expanded leaves zero terminal rows** (`2026-09-10-keys-presets-no-terminal.png`). The
-  drawer, the mode row and the composer take the whole screen; the terminal the keys act on is not
-  visible at all, so the effect of Ctrl R or Ctrl U cannot be seen without closing the drawer.
+- **Presets expanded left zero terminal rows.** In the original the drawer, the mode row and the
+  composer took the whole screen; the terminal the keys act on was not visible at all, so the
+  effect of Ctrl R or Ctrl U could not be seen without closing the drawer.
+  `2026-09-10-keys-presets-no-terminal.png` is a synthetic recapture of the current build, where
+  presets and function keys open in their own sheet and the header, tab strip and terminal rows
+  stay visible above it.
 - **Tree connectors render with the wrong glyph.** Claude's "⎿" child marker draws as a hooked
   "⌊" with a gap in the system mono face, which lacks the box-drawing coverage. This is the one
   place a bundled mono face is warranted, not as a picker but as the mirror's face.
@@ -339,8 +364,10 @@ A missed. Cited captures are saved under `android/acceptance/`.
 - **Worktree creation is three sheets for one input.** Repository choice (one option, `collie-app`),
   then a sheet whose only content is "Create new branch", then the branch field. The final sheet
   says nothing about where the worktree will be made or from which base.
-- **Disconnect is a black button with red text** (`2026-09-10-disconnect-sheet.png`) under a body
-  of grey prose. A destructive confirm needs a red fill or a red outline, not red on black.
+- **Disconnect was a black button with red text** under a body of grey prose. A destructive
+  confirm needs a red fill or a red outline, not red on black. `2026-09-10-disconnect-sheet.png`
+  is a synthetic recapture of the current build, where the confirm is a solid red button; the
+  server address in it is covered by a box.
 
 ### B.4 Settings and pairing (captures 107, 110, 115, 216, 217)
 

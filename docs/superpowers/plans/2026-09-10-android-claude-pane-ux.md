@@ -1194,7 +1194,7 @@ CHANGELOG line: `- Web: the Claude mirror joins the grid's soft wraps so a parag
 - Create: `web/src/fixtures/panes/claude--soft-wrapped-paragraph.txt`
 - Modify: `web/src/lib/harness/claude/reflow.test.ts`
 
-The fixture is the Herdr read behind `android/acceptance/2026-09-10-claude-pane-wrap.png` (the capture §1 of the proposal cites). Take it from the phone-visible pane via the bridge: `curl -s -H "Authorization: Bearer $(bin/collie devices token S25U-native 2>/dev/null || true)" https://collie.example-tailnet.ts.net/api/pane/<id>` is not available without the credential, so use the Herdr socket read the bridge uses: `herdr pane read <id> --lines 80` on workstation, saving the `text` field. If the pane no longer exists, reproduce: open a Claude pane, send "Explain in two paragraphs how Herdr's pane read works", wait for the answer, then read.
+The fixture is the Herdr read of a Claude pane whose paragraphs show the double wrapping that §1 of the proposal describes. The capture that showed it is not kept: it came from a real session, and `android/acceptance/2026-09-10-claude-pane-mirror.png` is now a synthetic recapture of the fixed build. Take it from the phone-visible pane via the bridge: `curl -s -H "Authorization: Bearer $(bin/collie devices token S25U-native 2>/dev/null || true)" https://collie.example-tailnet.ts.net/api/pane/<id>` is not available without the credential, so use the Herdr socket read the bridge uses: `herdr pane read <id> --lines 80` on workstation, saving the `text` field. If the pane no longer exists, reproduce: open a Claude pane, send "Explain in two paragraphs how Herdr's pane read works", wait for the answer, then read.
 
 - [ ] **Step 1: Failing test** (append)
 
@@ -1239,7 +1239,7 @@ CHANGELOG line: `- Web: a phone-width Claude capture pins the soft-wrap reflow.`
 **Interfaces:**
 - The `spaces_strip` row is removed. The header shows a back arrow and the current space's name (existing `pane_header` pattern). Sibling switching moves to the switcher, which already lists spaces (A.2). The `+` (new space) moves to the tab strip's end after the `+ tab` button, keeping `SpaceActionModel.canUse(..., "createSpace")`.
 - `renderTabStrip` marks the current tab with `active=true` and, after `addView`, posts `binding.tabsStrip.post { binding.tabsStrip.smoothScrollTo(chip.left - 24.dp, 0) }` for the active chip so it is on screen (B.1's rule applied to the strip that remains). The strip's `HorizontalScrollView` gets `requiresFadingEdge="horizontal"` and `fadingEdgeLength="24dp"` as the scroll cue.
-- The overview card ("StormLens · 3 tabs · 3 panes") is removed; the header subtitle carries `N tabs · M panes`.
+- The overview card ("<space> · N tabs · M panes") is removed; the header subtitle carries `N tabs · M panes`.
 - Pane cards show the tab name inside the card's metadata line and the last non-blank mirror line (`PaneSummary.preview` if the wire has it; else `terminalTitle`) instead of "shell" three times.
 
 - [ ] **Step 1: Failing tests**
@@ -1629,7 +1629,7 @@ CHANGELOG line: `- Android: Updates counts releases behind, shows the blocked re
   - Dashboard: rows lead with space › tab; chevrons; Spaces rows show counts; switcher marks current pane.
   - Settings unpaired (revoke `S25U-native` with `bin/collie devices revoke`, then re-pair with `bin/collie pair`): pairing card first, outlined field; paired: no pairing card, red Disconnect, Unpair label.
   - Updates: "N releases behind", Remind button, blocked reason line.
-- [ ] **Step 5: Commit** the captures and the ticked §6 list.
+- [ ] **Step 5: Commit** the captures and the ticked §6 list. The captures that were committed from the real S25 session were later replaced with synthetic ones from a demo session (2026-10-08); their file names are unchanged, and the proposal's §1, §6 and appendices say what each one now shows.
 
 ```bash
 git add android/acceptance ANDROID_CLAUDE_PANE_UX_PROPOSAL.md
