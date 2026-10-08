@@ -127,7 +127,7 @@ jobs:
           cat > "$RUNNER_TEMP/android-notes.md" <<EOF
           Native Android client for a self-hosted Collie server. Requires Android 8.0 or newer.
 
-          This is a draft: complete the device acceptance checklist before publishing.
+          This is a draft: complete the artifact smoke check in android/RELEASING.md before publishing, and list what it covered here.
 
           [Setup](https://github.com/$GITHUB_REPOSITORY/blob/$RELEASE_TAG/android/GETTING_STARTED.md)
           · [Android changelog](https://github.com/$GITHUB_REPOSITORY/blob/$RELEASE_TAG/ANDROID_CHANGELOG.md)

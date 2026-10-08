@@ -3,8 +3,8 @@ import { join, relative } from "node:path";
 
 const EXPECTED_APPLICATION_ID = "com.lateapex.collie";
 const EXPECTED_ACTIVITY = "com.lateapex.collie.ui.MainActivity";
-const EXPECTED_VERSION_NAME = "1.5.1";
-const EXPECTED_VERSION_CODE = 2;
+const EXPECTED_VERSION_NAME = "1.5.2";
+const EXPECTED_VERSION_CODE = 3;
 const EXPECTED_COMPILE_SDK = 36;
 const EXPECTED_TARGET_SDK = 36;
 const EXPECTED_MIN_SDK = 26;

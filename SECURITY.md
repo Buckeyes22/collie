@@ -16,10 +16,9 @@ credentials, unreviewed diagnostic exports or private terminal content.
 
 This fork's security policy covers the native Android app and its Android release tooling.
 
-There are no published Android releases yet. Once distribution begins, security fixes target
-the newest published Android release; users should update to that release. Older development
-APKs and local modifications have no maintenance guarantee. Server vulnerabilities belong with
-the [upstream Collie project](https://github.com/AltanS/collie/security).
+Security fixes target the newest published Android release; users should update to that
+release. Older development APKs and local modifications have no maintenance
+guarantee. Server vulnerabilities belong with the [upstream Collie project](https://github.com/AltanS/collie/security).
 
 Relevant boundaries include credential storage, diagnostic exports, TLS validation, redirect
 refusal, screen-bound terminal writes, exported Android components and APK signing. The client

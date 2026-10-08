@@ -10,8 +10,8 @@ Android app releases are independent of server/PWA releases.
 | --- | --- | --- |
 | Application ID | `com.lateapex.collie` | Preserve for in-place upgrades. |
 | Debug application ID | `com.lateapex.collie.debug` | Development only; separate local data. |
-| versionName | `1.5.1` | Pick the next Android SemVer at release time. |
-| versionCode | `2` | Increase for every distributed update. |
+| versionName | `1.5.2` | Pick the next Android SemVer at release time. |
+| versionCode | `3` | Increase for every distributed update. |
 | Tag | `android-vX.Y.Z` | Must match the APK's versionName. |
 | Changelog | `ANDROID_CHANGELOG.md` | Record app changes separately from the server. |
 
