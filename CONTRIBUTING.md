@@ -93,3 +93,7 @@ Include Android app and server versions separately. Give reproduction steps and 
 behavior; keep pairing codes, bearer credentials and private terminal content out of reports.
 Use [private security reporting](SECURITY.md) for vulnerabilities. Contributions receive review
 when maintainer time permits; there is no promised response schedule.
+
+> **Note.** Automatic labelling is off. If the maintainer turns it on, a new issue's or pull
+> request's title, body, existing label names and, for a pull request, changed file paths are
+> sent to OpenRouter for classification. Keep private content out of issues either way.

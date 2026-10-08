@@ -56,6 +56,12 @@ jobs:
           # Never take a label away. A maintainer's manual label outranks a glob.
           sync-labels: false
 
+  # Opt-in (repo variable COLLIE_LLM_TRIAGE=true). When on, each new issue or PR sends its
+  # title, its body (first 6,000 characters), the names of labels already on it, and, for a
+  # pull request, its changed file paths (up to 200) to OpenRouter under the OPENROUTER_API_KEY
+  # account. OpenRouter forwards them to the configured model's provider. Diff content is never
+  # sent. Before enabling: set a credit limit on that key at
+  # https://openrouter.ai/settings/keys so a flood of issues cannot run up a bill.
   classify:
     name: llm labels
     # Issues on open, PRs on open only, plus manual re-runs. `synchronize` deliberately does not
