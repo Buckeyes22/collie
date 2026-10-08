@@ -483,10 +483,10 @@ describe("the status banner", () => {
     const solo = (await statusBanner(harness({ ready: true }).deps)).join("\n");
     expect(solo).toContain("local     http://127.0.0.1:8787");
 
-    const moved = harness({ ready: false, env: { COLLIE_HOST: "192.168.77.1" } });
+    const moved = harness({ ready: false, env: { COLLIE_HOST: "192.0.2.1" } });
     const lines = (await statusBanner(moved.deps)).join("\n");
-    expect(lines).toContain("local     http://192.168.77.1:8787");
-    expect(lines).toContain("isn't answering on 192.168.77.1:8787");
+    expect(lines).toContain("local     http://192.0.2.1:8787");
+    expect(lines).toContain("isn't answering on 192.0.2.1:8787");
     // Not "no 127.0.0.1 anywhere": the `tailnet` row's no-name fallback names loopback on purpose,
     // and says why on the same line. The `local` row is the one that claimed it silently.
     expect(lines).not.toContain("local     http://127.0.0.1");
@@ -513,11 +513,11 @@ describe("the status banner", () => {
   test("a peer's banner names the pack, not a tailnet door it does not serve", async () => {
     const h = harness({
       ready: true,
-      env: { COLLIE_HOST: "192.168.77.2" },
+      env: { COLLIE_HOST: "192.0.2.2" },
       files: { [`${STATE}/pack-trust.json`]: serializeTrustStore(peerStore()) },
     });
     const lines = (await statusBanner(h.deps)).join("\n");
-    expect(lines).toContain("local     http://192.168.77.2:8787");
+    expect(lines).toContain("local     http://192.0.2.2:8787");
     expect(lines).toContain("pack      peer — no front door here");
     expect(lines).not.toContain("tailnet");
   });

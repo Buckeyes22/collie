@@ -46,7 +46,7 @@ MockWebServer call and physical server/network transitions were not exercised.
 On 2026-10-07, the full `:app:testDebugUnitTest` task passed **536 tests, 0 failures, 0 errors, and
 0 skipped**. This includes all five `HardeningLifecycle*` suites: 8 tests total (API client 1,
 backoff 2, polling 3, repository 1, one-shot body 1), each passing according to its JUnit XML under
-`/home/chris/git/collie/android/app/build/test-results/testDebugUnitTest/`. The same current Gradle
+`android/app/build/test-results/testDebugUnitTest/`. The same current Gradle
 run passed `lintDebug`, `lintRelease`, `assembleDebug`, `assembleDebugAndroidTest`, and
 `assembleRelease` (`BUILD SUCCESSFUL`; 135 actionable tasks, 15 executed and 120 up-to-date, recorded
 in `/tmp/collie-native-clipping-fix-gradle-retry.log`). The release APK from this task is unsigned.
@@ -55,8 +55,8 @@ on the read-only wrapper lock; that limitation was resolved for the passing run 
 current test status.
 
 The final API 36 phone-emulator run at
-`/home/chris/collie-android-lab/hardening-1.5.1-debug-36-phone-pIokH3`, recorded in
-`/tmp/collie-z2-verified-36-phone.log` (2026-10-07 23:19:49–23:23:04 UTC), passed 69 selected
+`$HOME/collie-android-lab/hardening-1.5.1-debug-36-phone-pIokH3`, recorded in
+`/tmp/collie-lab-host-verified-36-phone.log` (2026-10-07 23:19:49–23:23:04 UTC), passed 69 selected
 instrumentation tests: five baseline tests, all 51 `NativeInteractionTest` cases, four UI-device
 cases at 200% font and 320 dp width, eight focused layout cases, and one connected TalkBack platform
 test. The interaction suite passed background polling stop/resume, fixture network failure and
@@ -68,9 +68,9 @@ this run did not test Android radio/VPN changes or a live bridge/server restart.
 not physical-device or battery evidence.
 
 The same final debug build passed selected API 26 phone and API 36 foldable suites. API 26 phone
-evidence at `/home/chris/collie-android-lab/hardening-1.5.1-debug-26-phone-0K8vsN` records nine
+evidence at `$HOME/collie-android-lab/hardening-1.5.1-debug-26-phone-0K8vsN` records nine
 tests (five baseline and four UI cases). API 36 foldable evidence at
-`/home/chris/collie-android-lab/hardening-1.5.1-debug-36-foldable-WkuvUJ` records eight tests (five
+`$HOME/collie-android-lab/hardening-1.5.1-debug-36-foldable-WkuvUJ` records eight tests (five
 baseline and three UI cases) and a 2208×1840 → 1080×2092 → 2208×1840 folded/unfolded/folded state
 cycle. Foreground captures `/tmp/collie-verified-folded-200.png` and
 `/tmp/collie-verified-unfolded-200.png` were visually reviewed. These emulator checks do not replace

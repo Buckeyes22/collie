@@ -332,7 +332,7 @@ Expected: PASS, 4 tests.
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/chris/git/collie
+cd "$HOME/git/collie"
 git add android/app/src/main/java/com/lateapex/collie/diagnostics/DiagnosticsWriter.kt android/app/src/test/java/com/lateapex/collie/diagnostics/DiagnosticsWriterTest.kt
 git commit -m "feat(android): add the rotating encrypted-on-seal diagnostics writer"
 ```
@@ -540,7 +540,7 @@ didn't break Task 1's tests).
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/chris/git/collie
+cd "$HOME/git/collie"
 git add android/app/src/main/java/com/lateapex/collie/diagnostics/DiagnosticsRecorder.kt android/app/src/main/java/com/lateapex/collie/diagnostics/DiagnosticsAppendable.kt android/app/src/main/java/com/lateapex/collie/diagnostics/DiagnosticsWriter.kt android/app/src/test/java/com/lateapex/collie/diagnostics/DiagnosticsRecorderTest.kt
 git commit -m "feat(android): add DiagnosticsRecorder as the one entry point for diagnostic events"
 ```
@@ -627,7 +627,7 @@ Expected: PASS, all `NativePreferencesTest` tests including the new one.
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/chris/git/collie
+cd "$HOME/git/collie"
 git add android/app/src/main/java/com/lateapex/collie/ui/NativePreferences.kt android/app/src/test/java/com/lateapex/collie/ui/NativePreferencesTest.kt
 git commit -m "feat(android): add a diagnostics-capture preference, default on"
 ```
@@ -741,7 +741,7 @@ Expected: PASS, 3 tests.
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/chris/git/collie
+cd "$HOME/git/collie"
 git add android/app/src/main/java/com/lateapex/collie/diagnostics/AnrWatchdog.kt android/app/src/test/java/com/lateapex/collie/diagnostics/AnrWatchdogTest.kt
 git commit -m "feat(android): add the main-thread-freeze watchdog"
 ```
@@ -864,7 +864,7 @@ this codebase — it's exercised indirectly through Robolectric Activity tests s
 `defaultHttpClient` signature change lands; stage both together:
 
 ```bash
-cd /home/chris/git/collie
+cd "$HOME/git/collie"
 git add android/app/src/main/java/com/lateapex/collie/AppContainer.kt
 # staged here; the commit itself happens at the end of Task 6, together with that task's files
 ```
@@ -1164,7 +1164,7 @@ and every existing Robolectric test that touches `CollieApplication.container` (
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/chris/git/collie
+cd "$HOME/git/collie"
 git add android/app/src/main/java/com/lateapex/collie/AppContainer.kt android/app/src/main/java/com/lateapex/collie/diagnostics/DiagnosticsInterceptor.kt android/app/src/main/java/com/lateapex/collie/diagnostics/DiagnosticsRecorder.kt android/app/src/main/java/com/lateapex/collie/network/CollieApiClient.kt android/app/src/test/java/com/lateapex/collie/diagnostics/DiagnosticsInterceptorTest.kt
 git commit -m "feat(android): capture every network call, with the bearer value hard-excluded"
 ```
@@ -1359,7 +1359,7 @@ Expected: PASS, zero failures.
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/chris/git/collie
+cd "$HOME/git/collie"
 git add android/app/src/main/java/com/lateapex/collie/CollieApplication.kt android/app/src/test/java/com/lateapex/collie/CollieApplicationTest.kt
 git commit -m "feat(android): capture lifecycle events, crashes, and ANRs"
 ```
@@ -1535,7 +1535,7 @@ Expected: PASS — the new test and every existing `PaneActivityTest` test.
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/chris/git/collie
+cd "$HOME/git/collie"
 git add android/app/src/main/java/com/lateapex/collie/AppContainer.kt android/app/src/main/java/com/lateapex/collie/ui/PaneActivity.kt android/app/src/test/java/com/lateapex/collie/ui/PaneActivityTest.kt android/app/src/test/java/com/lateapex/collie/diagnostics/RecordingDiagnosticsRecorder.kt android/app/src/test/java/com/lateapex/collie/diagnostics/DiagnosticsInterceptorTest.kt
 git commit -m "feat(android): record every pane-body decision change"
 ```
@@ -1756,7 +1756,7 @@ Expected: PASS — the two new tests and every existing `PaneViewModelTest` test
 - [ ] **Step 5: Commit**
 
 ```bash
-cd /home/chris/git/collie
+cd "$HOME/git/collie"
 git add android/app/src/main/java/com/lateapex/collie/ui/PaneViewModel.kt android/app/src/test/java/com/lateapex/collie/ui/PaneViewModelTest.kt
 git commit -m "feat(android): record send-reply and send-keys actions before their network call"
 ```
@@ -1904,7 +1904,7 @@ to
 ```
 
 ```bash
-cd /home/chris/git/collie
+cd "$HOME/git/collie"
 git add android/app/src/main/java/com/lateapex/collie/ui/SettingsLocalPreferences.kt android/app/src/main/res/values/settings_ids.xml android/app/src/main/res/values/settings_strings.xml android/app/src/test/java/com/lateapex/collie/ui/SettingsActivityTest.kt CHANGELOG.md
 git commit -m "feat(android): add a Settings switch for diagnostics capture"
 ```
@@ -2300,7 +2300,7 @@ to
 ```
 
 ```bash
-cd /home/chris/git/collie
+cd "$HOME/git/collie"
 git add android/app/src/main/java/com/lateapex/collie/AppContainer.kt android/app/src/main/java/com/lateapex/collie/diagnostics/DiagnosticsExport.kt android/app/src/main/java/com/lateapex/collie/ui/SettingsActivity.kt android/app/src/main/java/com/lateapex/collie/ui/SettingsLocalPreferences.kt android/app/src/main/AndroidManifest.xml android/app/src/main/res/xml/diagnostics_file_paths.xml android/app/src/test/java/com/lateapex/collie/diagnostics/DiagnosticsExportTest.kt android/app/src/test/java/com/lateapex/collie/ui/SettingsActivityTest.kt CHANGELOG.md
 git commit -m "feat(android): add the Send diagnostics share-sheet export"
 ```
@@ -2492,7 +2492,7 @@ to
 ```
 
 ```bash
-cd /home/chris/git/collie
+cd "$HOME/git/collie"
 git add bridge/server.ts bridge/server.test.ts CHANGELOG.md
 git commit -m "feat(bridge): log every request with a client-correlatable trace id"
 ```

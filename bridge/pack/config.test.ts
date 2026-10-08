@@ -115,7 +115,7 @@ describe("bindIsWildcard — which binds answer on every interface", () => {
     expect(bindIsWildcard("127.0.0.1")).toBe(false);
     expect(bindIsWildcard("::1")).toBe(false);
     expect(bindIsWildcard("100.101.102.103")).toBe(false); // a tailnet IP
-    expect(bindIsWildcard("192.168.1.20")).toBe(false); // a LAN IP
+    expect(bindIsWildcard("192.0.2.20")).toBe(false); // a LAN IP
     expect(bindIsWildcard("nas.tail.ts.net")).toBe(false); // a hostname
   });
 });

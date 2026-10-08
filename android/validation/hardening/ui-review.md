@@ -1,7 +1,7 @@
 # Android UI and accessibility hardening review
 
 Review date: 2026-10-07
-Machine: z2 isolated emulator lab
+Machine: isolated emulator lab host
 Device/emulator profiles: API 26 phone, API 36 Pixel 7 phone, API 36 foldable
 Build/APK identity: Android 1.5.1 debug candidate; hashes below
 Device interaction: all three emulator profiles passed on 2026-10-07
@@ -21,13 +21,13 @@ from state 2 to 0 and back to 2. The reported display geometry changed from 2208
 and buttons fitting on screen. These emulator results do not substitute for a physical foldable or
 operator-server acceptance.
 
-Evidence: `/home/chris/collie-android-lab/hardening-1.5.1-debug-26-phone-0K8vsN/`;
-`/home/chris/collie-android-lab/hardening-1.5.1-debug-36-phone-pIokH3/`;
-`/home/chris/collie-android-lab/hardening-1.5.1-debug-36-foldable-WkuvUJ/`;
+Evidence: `$HOME/collie-android-lab/hardening-1.5.1-debug-26-phone-0K8vsN/`;
+`$HOME/collie-android-lab/hardening-1.5.1-debug-36-phone-pIokH3/`;
+`$HOME/collie-android-lab/hardening-1.5.1-debug-36-foldable-WkuvUJ/`;
 `/tmp/collie-verified-folded-200.png`;
 `/tmp/collie-verified-unfolded-200.png`;
-`/tmp/collie-z2-verified-26-and-fold.log`;
-`/tmp/collie-z2-verified-36-phone.log`.
+`/tmp/collie-lab-host-verified-26-and-fold.log`;
+`/tmp/collie-lab-host-verified-36-phone.log`.
 
 ### TalkBack labels, focus and control state — PLATFORM FOCUS AND ACTIVATION PASS; SPOKEN CHECK OPEN
 
@@ -42,9 +42,9 @@ These checks establish platform node focus and activation. They do not verify sp
 order across the whole app, announcements, or TalkBack traversal on other screens; those remain
 manual acceptance checks. No TTS output was synthesized or asserted.
 
-Evidence: `/home/chris/git/collie/android/app/src/androidTest/java/com/lateapex/collie/ui/TalkBackDeviceTest.kt`;
-`/home/chris/git/collie/android/app/src/androidTest/java/com/lateapex/collie/ui/HardeningUiDeviceTest.kt`;
-`/home/chris/collie-android-lab/hardening-1.5.1-debug-36-phone-pIokH3/`.
+Evidence: `android/app/src/androidTest/java/com/lateapex/collie/ui/TalkBackDeviceTest.kt`;
+`android/app/src/androidTest/java/com/lateapex/collie/ui/HardeningUiDeviceTest.kt`;
+`$HOME/collie-android-lab/hardening-1.5.1-debug-36-phone-pIokH3/`.
 
 ### Text/display scaling — PASS ON API 26 AND API 36 PHONE; FOLDABLE CAPTURE PASS
 
@@ -72,13 +72,13 @@ failed the intended button-height assertion; the current candidate passed it. Th
 observed setup-label clipping defect and the tested surfaces, not every screen at Android's maximum
 font scaling.
 
-Evidence: `/home/chris/git/collie/android/app/src/main/res/layout/activity_main.xml`;
-`/home/chris/git/collie/android/app/src/main/res/layout/activity_pane.xml`;
-`/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PackFormation.kt`;
-`/home/chris/git/collie/android/app/src/test/java/com/lateapex/collie/ui/PaneLayoutTest.kt`;
-`/home/chris/git/collie/android/app/src/test/java/com/lateapex/collie/ui/PackFormationTextLayoutTest.kt`;
-`/home/chris/git/collie/android/app/src/androidTest/java/com/lateapex/collie/ui/HardeningUiDeviceTest.kt`;
-`/tmp/collie-z2-clipping-negative.log`.
+Evidence: `android/app/src/main/res/layout/activity_main.xml`;
+`android/app/src/main/res/layout/activity_pane.xml`;
+`android/app/src/main/java/com/lateapex/collie/ui/PackFormation.kt`;
+`android/app/src/test/java/com/lateapex/collie/ui/PaneLayoutTest.kt`;
+`android/app/src/test/java/com/lateapex/collie/ui/PackFormationTextLayoutTest.kt`;
+`android/app/src/androidTest/java/com/lateapex/collie/ui/HardeningUiDeviceTest.kt`;
+`/tmp/collie-lab-host-clipping-negative.log`.
 
 ### Light/dark contrast — PASS IN SOURCE AND RESOURCE TEST
 
@@ -95,10 +95,10 @@ The complete JVM suite passed the focused resource contrast test, which resolves
 resources and checks the actual token pairs. This covers the reviewed resource combinations; it is
 not a full visual contrast audit across every composited screen state.
 
-Evidence: `/home/chris/git/collie/android/app/src/main/res/values/colors.xml`;
-`/home/chris/git/collie/android/app/src/main/res/values-night/colors.xml`;
-`/home/chris/git/collie/android/app/src/main/res/values/settings_native_parity.xml`;
-`/home/chris/git/collie/android/app/src/test/java/com/lateapex/collie/ui/AccessibilityContrastTest.kt`.
+Evidence: `android/app/src/main/res/values/colors.xml`;
+`android/app/src/main/res/values-night/colors.xml`;
+`android/app/src/main/res/values/settings_native_parity.xml`;
+`android/app/src/test/java/com/lateapex/collie/ui/AccessibilityContrastTest.kt`.
 
 ### Reduced motion — STATIC PACK VIEW; ANIMATION SCALES DISABLED DURING DEVICE RUNS
 
@@ -107,8 +107,8 @@ source review found no reduced-motion defect there. The hardening runs disabled 
 window, transition and animator duration scales before interaction testing. This does not establish
 a full-system reduced-motion experience across every screen or third-party component.
 
-Evidence: `/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PackFormation.kt`;
-`/home/chris/collie-android-lab/hardening-1.5.1-debug-36-phone-pIokH3/`.
+Evidence: `android/app/src/main/java/com/lateapex/collie/ui/PackFormation.kt`;
+`$HOME/collie-android-lab/hardening-1.5.1-debug-36-phone-pIokH3/`.
 
 ## Verification and device disposition
 
@@ -124,12 +124,12 @@ The final candidate APK hashes are debug
 `ceb6944b493d32ece7baf1194fc51df285dbe32f5eb7aeb1a18eeb89b68bdc38`. Evidence directories and run
 windows are:
 
-- API 36 phone: `/home/chris/collie-android-lab/hardening-1.5.1-debug-36-phone-pIokH3/`,
-  2026-10-07T23:19:49Z–23:23:04Z; log `/tmp/collie-z2-verified-36-phone.log`.
-- API 26 phone: `/home/chris/collie-android-lab/hardening-1.5.1-debug-26-phone-0K8vsN/`,
+- API 36 phone: `$HOME/collie-android-lab/hardening-1.5.1-debug-36-phone-pIokH3/`,
+  2026-10-07T23:19:49Z–23:23:04Z; log `/tmp/collie-lab-host-verified-36-phone.log`.
+- API 26 phone: `$HOME/collie-android-lab/hardening-1.5.1-debug-26-phone-0K8vsN/`,
   2026-10-07T23:25:21Z–23:25:50Z.
-- API 36 foldable: `/home/chris/collie-android-lab/hardening-1.5.1-debug-36-foldable-WkuvUJ/`,
-  2026-10-07T23:25:53Z–23:26:58Z; combined log `/tmp/collie-z2-verified-26-and-fold.log`.
+- API 36 foldable: `$HOME/collie-android-lab/hardening-1.5.1-debug-36-foldable-WkuvUJ/`,
+  2026-10-07T23:25:53Z–23:26:58Z; combined log `/tmp/collie-lab-host-verified-26-and-fold.log`.
 
 The complete JVM suite previously passed 536 tests, including three `PackFormationTextLayoutTest`
 cases and the actual-resource contrast test. The current device candidate includes the setup CTA

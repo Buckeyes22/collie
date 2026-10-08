@@ -640,7 +640,7 @@ Exit: a release-signed APK/AAB has reproducible provenance and completed physica
 From `android/`:
 
 ```bash
-export ANDROID_HOME=/home/chris/Android/Sdk
+export ANDROID_HOME=$HOME/Android/Sdk
 export ANDROID_SDK_ROOT="$ANDROID_HOME"
 ./gradlew --no-daemon :app:dependencies --write-locks
 ./gradlew --no-daemon testDebugUnitTest lintDebug assembleDebug
@@ -661,9 +661,9 @@ git diff --check
 Physical-device build/install:
 
 ```bash
-/home/chris/Android/Sdk/platform-tools/adb devices -l
-/home/chris/Android/Sdk/platform-tools/adb install -r android/app/build/outputs/apk/debug/app-debug.apk
-/home/chris/Android/Sdk/platform-tools/adb shell am start -n \
+$HOME/Android/Sdk/platform-tools/adb devices -l
+$HOME/Android/Sdk/platform-tools/adb install -r android/app/build/outputs/apk/debug/app-debug.apk
+$HOME/Android/Sdk/platform-tools/adb shell am start -n \
   com.lateapex.collie.debug/com.lateapex.collie.ui.MainActivity
 ```
 

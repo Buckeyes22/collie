@@ -100,7 +100,7 @@ describe("configuredPublicUrl", () => {
 });
 
 // F13: `collie start`'s banner printed `local http://127.0.0.1:8787` on a machine bound to
-// 192.168.77.1, where loopback carried nothing at all — a URL that refuses to connect, printed
+// 192.0.2.1, where loopback carried nothing at all — a URL that refuses to connect, printed
 // two lines under a readiness probe that had resolved the bind correctly and said "running".
 describe("the local bridge address", () => {
   test("an absent COLLIE_HOST is loopback, exactly as it always was", () => {
@@ -109,8 +109,8 @@ describe("the local bridge address", () => {
   });
 
   test("a moved bind is the address the bridge actually bound", () => {
-    expect(localBridgeUrl({ COLLIE_HOST: "192.168.77.1" }, 8787)).toBe("http://192.168.77.1:8787");
-    expect(localBridgeHostPort({ COLLIE_HOST: "192.168.77.1" }, 8787)).toBe("192.168.77.1:8787");
+    expect(localBridgeUrl({ COLLIE_HOST: "192.0.2.1" }, 8787)).toBe("http://192.0.2.1:8787");
+    expect(localBridgeHostPort({ COLLIE_HOST: "192.0.2.1" }, 8787)).toBe("192.0.2.1:8787");
   });
 
   test("a wildcard bind answers on loopback too, so loopback is what it promises", () => {
