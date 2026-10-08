@@ -1,17 +1,62 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/licenses_scroll"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/licenses_root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/collie_background"
-    android:clipToPadding="false">
-    <TextView
-        android:id="@+id/licenses_text"
+    android:orientation="vertical">
+
+    <FrameLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:padding="16dp"
-        android:fontFamily="monospace"
-        android:textColor="@color/collie_foreground"
-        android:textIsSelectable="true"
-        android:textSize="11sp" />
-</ScrollView>
+        android:background="@drawable/bg_pane_header"
+        android:minHeight="@dimen/collie_header_height">
+
+        <com.lateapex.collie.ui.CollieWideMaxWidthLinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:gravity="center_vertical"
+            android:minHeight="@dimen/collie_header_height"
+            android:orientation="horizontal"
+            android:paddingStart="8dp"
+            android:paddingEnd="8dp">
+
+            <androidx.appcompat.widget.AppCompatImageButton
+                android:id="@+id/licenses_back_button"
+                style="@style/Widget.Collie.Header.IconButton"
+                android:contentDescription="@string/settings_back"
+                android:padding="6dp"
+                android:src="@drawable/collie_mark" />
+
+            <com.lateapex.collie.ui.CollieHeadingTextView
+                android:id="@+id/licenses_title"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="8dp"
+                android:layout_weight="1"
+                android:accessibilityHeading="true"
+                android:includeFontPadding="false"
+                android:text="@string/licenses_title"
+                android:textColor="@color/collie_foreground"
+                android:textSize="16sp" />
+        </com.lateapex.collie.ui.CollieWideMaxWidthLinearLayout>
+    </FrameLayout>
+
+    <ScrollView
+        android:id="@+id/licenses_scroll"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:clipToPadding="false">
+        <TextView
+            android:id="@+id/licenses_text"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:padding="16dp"
+            android:fontFamily="monospace"
+            android:textColor="@color/collie_foreground"
+            android:textIsSelectable="true"
+            android:textSize="11sp" />
+    </ScrollView>
+</LinearLayout>

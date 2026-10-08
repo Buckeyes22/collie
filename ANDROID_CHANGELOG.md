@@ -24,3 +24,5 @@ the first Android release from this fork.
 - The pane header shortens the server's reported home, not a hardcoded one.
 - The APK packages a license and source line for every runtime library.
 - Settings opens an Open-source licenses screen with every packaged notice.
+- The open-source licenses screen has a visible heading, sits below the status bar, and uses the monospace face.
+- Agent tile accents sit in the corner, clear of the glyph.
