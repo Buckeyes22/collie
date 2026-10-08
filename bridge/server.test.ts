@@ -1200,7 +1200,7 @@ describe("isLoopbackPeer", () => {
     expect(isLoopbackPeer("::ffff:127.0.0.1")).toBe(true);
     expect(isLoopbackPeer(null)).toBe(true);
     expect(isLoopbackPeer("10.0.0.1")).toBe(false);
-    expect(isLoopbackPeer("192.168.1.1")).toBe(false);
+    expect(isLoopbackPeer("192.0.2.1")).toBe(false);
     expect(isLoopbackPeer("8.8.8.8")).toBe(false);
   });
 

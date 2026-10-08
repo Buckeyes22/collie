@@ -1,5 +1,7 @@
 # Android Trusted Web Activity — comprehensive implementation plan
 
+> **Note.** Superseded by ADR 0036; endpoints are examples.
+
 **Status:** Superseded by [ADR 0036](./.adr/0036-the-android-app-is-a-native-rest-client.md)
 and the [native Android implementation plan](./ANDROID_NATIVE_IMPLEMENTATION_PLAN.md) (2026-09-04)
 
@@ -49,7 +51,7 @@ The milestone produces four durable outcomes:
 
 1. a reviewed, reproducible Bubblewrap/Gradle project under `android/`;
 2. a release certificate association at
-   `https://ed8.taile7b6b1.ts.net/.well-known/assetlinks.json`;
+   `https://collie.example-tailnet.ts.net/.well-known/assetlinks.json`;
 3. a signed APK whose package ID and signer exactly match that association; and
 4. an acceptance record proving fullscreen TWA behavior, pairing, offline shell, delegated Web
    Push, and notification deep links on the S25 Ultra.
@@ -149,7 +151,7 @@ Resolve the provisional values from the specification:
 | Application ID | `com.lateapex.collie` | Confirm namespace is acceptable and intended for long-term use |
 | App/launcher name | `Collie` | Confirm fork retains Collie branding and MIT attribution |
 | Release key alias | `collie-release` | Stable, non-secret, used for every private update |
-| Launch origin | `https://ed8.taile7b6b1.ts.net` | Exact scheme and host; no path or trailing-slash ambiguity |
+| Launch origin | `https://collie.example-tailnet.ts.net` | Exact scheme and host; no path or trailing-slash ambiguity |
 | Initial Android version | `versionCode=1`, `versionName=1.5.0` | Matches first source baseline without extending Collie's version checker |
 | Tool pin | `@bubblewrap/cli@1.25.0` | Current stable checked on 2026-09-04; review before execution if delayed |
 
@@ -160,7 +162,7 @@ allow both the provisional and final ID to survive in tracked files.
 
 Decide and record, without recording secret values:
 
-- the absolute keystore location outside `/home/chris/git/collie`;
+- the absolute keystore location outside the repository checkout;
 - the backup location and recovery owner;
 - the password-manager item names for store/key passwords;
 - the stable alias; and
@@ -317,9 +319,9 @@ inspect compatibility, then change one version at a time with a build after each
 Before generation, verify the live manifest and assets:
 
 ```bash
-curl -fsS https://ed8.taile7b6b1.ts.net/manifest.webmanifest | jq .
-curl -fsSI https://ed8.taile7b6b1.ts.net/web-app-manifest-512x512.png
-curl -fsSI https://ed8.taile7b6b1.ts.net/badge-96x96.png
+curl -fsS https://collie.example-tailnet.ts.net/manifest.webmanifest | jq .
+curl -fsSI https://collie.example-tailnet.ts.net/web-app-manifest-512x512.png
+curl -fsSI https://collie.example-tailnet.ts.net/badge-96x96.png
 ```
 
 Record manifest name, start URL, scope, display, orientation, theme/background colors, and icon URLs.
@@ -337,7 +339,7 @@ Command shape:
 ```bash
 cd android
 npx --no-install bubblewrap init \
-  --manifest="https://ed8.taile7b6b1.ts.net/manifest.webmanifest" \
+  --manifest="https://collie.example-tailnet.ts.net/manifest.webmanifest" \
   --directory="<temporary-generation-directory>"
 ```
 
@@ -664,7 +666,7 @@ From the workstation:
 ```bash
 curl -fsS -D /tmp/collie-assetlinks.headers \
   -o /tmp/collie-assetlinks.json \
-  https://ed8.taile7b6b1.ts.net/.well-known/assetlinks.json
+  https://collie.example-tailnet.ts.net/.well-known/assetlinks.json
 jq -e . /tmp/collie-assetlinks.json
 cmp web/public/.well-known/assetlinks.json /tmp/collie-assetlinks.json
 ```
@@ -726,9 +728,9 @@ generator's actual output filenames.
 Use API 36 build-tools:
 
 ```bash
-/home/chris/Android/Sdk/build-tools/36.0.0/apksigner verify \
+$HOME/Android/Sdk/build-tools/36.0.0/apksigner verify \
   --verbose --print-certs <SIGNED_APK>
-/home/chris/Android/Sdk/build-tools/36.0.0/aapt dump badging <SIGNED_APK>
+$HOME/Android/Sdk/build-tools/36.0.0/aapt dump badging <SIGNED_APK>
 sha256sum <SIGNED_APK>
 ```
 
@@ -797,7 +799,7 @@ Prepare the phone:
 Install the first build:
 
 ```bash
-/home/chris/Android/Sdk/platform-tools/adb install <SIGNED_APK>
+$HOME/Android/Sdk/platform-tools/adb install <SIGNED_APK>
 ```
 
 Use `adb install -r` only for later builds after confirming the same package and signer with a higher

@@ -1049,21 +1049,21 @@ describe("collie leave", () => {
   // five seconds forever, under a banner that said "activating" and "yet".
   test("the pack's wide bind is retired, so the machine comes back as a plain loopback collie", async () => {
     const h = harness(peerStore(), [jsonReply({ removed: "laptop" }, 200, "desk")], {
-      ctx: context({ COLLIE_HOST: "192.168.77.2", COLLIE_PACK_TIMEOUT_MS: "60000" }),
+      ctx: context({ COLLIE_HOST: "192.0.2.2", COLLIE_PACK_TIMEOUT_MS: "60000" }),
     });
-    h.files.write(`${CONFIG}/.env`, "COLLIE_HOST=192.168.77.2\nCOLLIE_PORT=8787\n");
+    h.files.write(`${CONFIG}/.env`, "COLLIE_HOST=192.0.2.2\nCOLLIE_PORT=8787\n");
     expect(await cmdLeave(h.deps)).toBe(EXIT.OK);
     expect(h.files.read(`${CONFIG}/.env`)).toBe("COLLIE_PORT=8787\n");
-    expect(text(h.io)).toContain("COLLIE_HOST=192.168.77.2 removed");
+    expect(text(h.io)).toContain("COLLIE_HOST=192.0.2.2 removed");
     expect(text(h.io)).toContain("ADR 0013");
   });
 
   test("a bind the operator owns is not second-guessed", async () => {
-    const env = { COLLIE_HOST: "192.168.77.2", COLLIE_ALLOW_NON_LOOPBACK_BIND: "1", COLLIE_PACK_TIMEOUT_MS: "60000" };
+    const env = { COLLIE_HOST: "192.0.2.2", COLLIE_ALLOW_NON_LOOPBACK_BIND: "1", COLLIE_PACK_TIMEOUT_MS: "60000" };
     const h = harness(peerStore(), [jsonReply({ removed: "laptop" }, 200, "desk")], { ctx: context(env) });
-    h.files.write(`${CONFIG}/.env`, "COLLIE_HOST=192.168.77.2\n");
+    h.files.write(`${CONFIG}/.env`, "COLLIE_HOST=192.0.2.2\n");
     expect(await cmdLeave(h.deps)).toBe(EXIT.OK);
-    expect(h.files.read(`${CONFIG}/.env`)).toBe("COLLIE_HOST=192.168.77.2\n");
+    expect(h.files.read(`${CONFIG}/.env`)).toBe("COLLIE_HOST=192.0.2.2\n");
     expect(text(h.io)).not.toContain("removed from");
   });
 
@@ -1077,7 +1077,7 @@ describe("collie leave", () => {
 
   test("a bind Collie cannot reach says what will happen, and names the variable", async () => {
     const h = harness(peerStore(), [jsonReply({ removed: "laptop" }, 200, "desk")], {
-      ctx: context({ COLLIE_HOST: "192.168.77.2", COLLIE_PACK_TIMEOUT_MS: "60000" }),
+      ctx: context({ COLLIE_HOST: "192.0.2.2", COLLIE_PACK_TIMEOUT_MS: "60000" }),
     });
     // The value is real, but it comes from a systemd `Environment=` rather than the .env this owns.
     expect(await cmdLeave(h.deps)).toBe(EXIT.OK);
@@ -1087,10 +1087,10 @@ describe("collie leave", () => {
 
   // F22: the restart below prints the health banner, and the banner resolves what it probes from
   // `ctx.env`. Left at the value this run started with, the documented tear-down ended on
-  // `⚠ Collie isn't answering on 192.168.77.2:8787 yet` about a machine that was healthy on
+  // `⚠ Collie isn't answering on 192.0.2.2:8787 yet` about a machine that was healthy on
   // loopback — the same alarm F12 used to raise, now false, at the end of the same command.
   test("the closing banner probes the bind as REWRITTEN, not the one this run started with", async () => {
-    const ctx = context({ COLLIE_HOST: "192.168.77.2", COLLIE_PACK_TIMEOUT_MS: "60000" });
+    const ctx = context({ COLLIE_HOST: "192.0.2.2", COLLIE_PACK_TIMEOUT_MS: "60000" });
     const probed: (string | undefined)[] = [];
     const h = harness(peerStore(), [jsonReply({ removed: "laptop" }, 200, "desk")], {
       ctx,
@@ -1101,7 +1101,7 @@ describe("collie leave", () => {
         return Promise.resolve(EXIT.OK);
       },
     });
-    h.files.write(`${CONFIG}/.env`, "COLLIE_HOST=192.168.77.2\nCOLLIE_PORT=8787\n");
+    h.files.write(`${CONFIG}/.env`, "COLLIE_HOST=192.0.2.2\nCOLLIE_PORT=8787\n");
     expect(await cmdLeave(h.deps)).toBe(EXIT.OK);
     expect(probed).toEqual(["127.0.0.1"]);
     expect(ctx.env.COLLIE_HOST).toBeUndefined();
@@ -1110,10 +1110,10 @@ describe("collie leave", () => {
   test("a bind Collie could NOT remove is still the bind — the env keeps it", async () => {
     // The other half of the same rule: the machine really does still bind that address, so a banner
     // that probed loopback here would be the mirror-image lie. Nothing was rewritten; nothing moves.
-    const ctx = context({ COLLIE_HOST: "192.168.77.2", COLLIE_PACK_TIMEOUT_MS: "60000" });
+    const ctx = context({ COLLIE_HOST: "192.0.2.2", COLLIE_PACK_TIMEOUT_MS: "60000" });
     const h = harness(peerStore(), [jsonReply({ removed: "laptop" }, 200, "desk")], { ctx });
     expect(await cmdLeave(h.deps)).toBe(EXIT.OK);
-    expect(ctx.env.COLLIE_HOST).toBe("192.168.77.2");
+    expect(ctx.env.COLLIE_HOST).toBe("192.0.2.2");
   });
 
   test("a lead refuses to leave — that would strand its peers", async () => {
@@ -1548,14 +1548,14 @@ describe("collie pack remove", () => {
   test("it prints the ssh line that finishes the job, and keeps the record it is built from", async () => {
     const h = harness(leadStore({ peers: [member({ memberId: "nas" })] }), [], {
       ops: fakeOps({
-        nas: { sshHost: "op@192.168.77.2", path: "/home/op/.collie", port: 8787, recordedAt: T0 },
+        nas: { sshHost: "op@192.0.2.2", path: "/home/op/.collie", port: 8787, recordedAt: T0 },
       }),
     });
     expect(await cmdPackRemove(h.deps, ["nas"])).toBe(EXIT.OK);
-    expect(text(h.io)).toContain("ssh op@192.168.77.2 /home/op/.collie/bin/collie leave");
+    expect(text(h.io)).toContain("ssh op@192.0.2.2 /home/op/.collie/bin/collie leave");
     expect(text(h.io)).toContain("/state/pack-ops.json");
     // The row survives — this is the whole finding.
-    expect(await h.deps.ops.get("nas")).toMatchObject({ sshHost: "op@192.168.77.2" });
+    expect(await h.deps.ops.get("nas")).toMatchObject({ sshHost: "op@192.0.2.2" });
   });
 
   test("a member this lead never SSH'd to says so instead of inventing a command", async () => {

@@ -1,5 +1,7 @@
 # Android Trusted Web Activity — implementation specification
 
+> **Note.** Superseded by ADR 0036; endpoints are examples.
+
 **Status:** Superseded by [ADR 0036](./.adr/0036-the-android-app-is-a-native-rest-client.md)
 and the [native Android implementation plan](./ANDROID_NATIVE_IMPLEMENTATION_PLAN.md) (2026-09-04)
 
@@ -36,7 +38,7 @@ the PWA in a WebView, or add a Capacitor bridge in the first release.
 
 The result is complete when a release-signed APK installed on the S25 Ultra:
 
-1. launches `https://ed8.taile7b6b1.ts.net/` without browser chrome;
+1. launches `https://collie.example-tailnet.ts.net/` without browser chrome;
 2. renders the same Collie UI and uses the same same-origin API as the browser-installed PWA;
 3. retains or can re-establish the existing pairing credential in browser-owned origin storage;
 4. receives the existing Web Push notifications under the Android application's identity;
@@ -99,7 +101,7 @@ The first Android release MUST avoid that expansion of the security boundary.
 - Reproducible Bubblewrap configuration and Gradle wrapper.
 - A release signing-key workflow in which no private key or password enters Git.
 - `web/public/.well-known/assetlinks.json`, copied into `web/dist` by the normal web build.
-- A verified TWA association for `https://ed8.taile7b6b1.ts.net`.
+- A verified TWA association for `https://collie.example-tailnet.ts.net`.
 - Notification delegation through `TrustedWebActivityService`/Android Browser Helper.
 - Release APK generation, signature verification, `adb` installation, and device validation.
 - Documentation of configuration, building, key custody, verification, and recovery.
@@ -129,9 +131,9 @@ Android application.
 | --- | --- |
 | Application name | `Collie` |
 | Launcher name | `Collie` |
-| Launch origin | `https://ed8.taile7b6b1.ts.net` |
-| Start URL | `https://ed8.taile7b6b1.ts.net/` |
-| Web manifest URL | `https://ed8.taile7b6b1.ts.net/manifest.webmanifest` |
+| Launch origin | `https://collie.example-tailnet.ts.net` |
+| Start URL | `https://collie.example-tailnet.ts.net/` |
+| Web manifest URL | `https://collie.example-tailnet.ts.net/manifest.webmanifest` |
 | Application ID | Fork-owned reverse-DNS identifier; recommended `com.lateapex.collie` |
 | Release-key alias | Stable, non-secret name; recommended `collie-release` |
 | Signing-key lifetime | Long enough to outlive the application; Android release guidance requires validity beyond 2033-10-22 |
@@ -219,7 +221,7 @@ The checked-in Bubblewrap configuration MUST express at least the following beha
   "name": "Collie",
   "launcherName": "Collie",
   "packageId": "com.lateapex.collie",
-  "host": "ed8.taile7b6b1.ts.net",
+  "host": "collie.example-tailnet.ts.net",
   "startUrl": "/",
   "scope": "/",
   "display": "standalone",
@@ -274,7 +276,7 @@ on every workstation.
 As verified on 2026-09-04, this URL returns HTTP 404:
 
 ```text
-https://ed8.taile7b6b1.ts.net/.well-known/assetlinks.json
+https://collie.example-tailnet.ts.net/.well-known/assetlinks.json
 ```
 
 Until it returns a valid statement for the certificate that signed the installed APK, the browser
@@ -461,7 +463,7 @@ This workstation was verified on 2026-09-04 to have:
 - Android SDK platforms 34 and 36;
 - Android build-tools 34.0.0, 35.0.0, and 36.0.0;
 - an Android 36 Google APIs emulator image; and
-- `adb` at `/home/chris/Android/Sdk/platform-tools/adb`, not on the current `PATH`.
+- `adb` at `$HOME/Android/Sdk/platform-tools/adb`, not on the current `PATH`.
 
 A global `gradle` executable is absent and is not required. The generated, committed Gradle wrapper
 MUST drive builds. Build instructions MUST either export the Android SDK path locally or use the

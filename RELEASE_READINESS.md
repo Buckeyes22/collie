@@ -68,15 +68,15 @@ recovery, cross-origin ETag isolation, and one-shot body delegation. All 82 JUni
 tests, zero failures/errors/skips. The final full run above passed `lintDebug`, `lintRelease`, and
 debug, instrumentation, and minified unsigned release APK builds.
 
-Earlier z2 lab runs completed clean full-source builds and five baseline instrumentation tests on
+Earlier lab runs completed clean full-source builds and five baseline instrumentation tests on
 the API 26 and API 36 phone profiles; those historical run records remain at
-`/home/chris/collie-android-lab/run-26-phone-dui0R0` and
-`/home/chris/collie-android-lab/run-36-phone-g5nbSo`. For the final current candidate, the debug and
-test APK pair was built by the final workstation Gradle run above, transferred to z2, and verified
+`$HOME/collie-android-lab/run-26-phone-dui0R0` and
+`$HOME/collie-android-lab/run-36-phone-g5nbSo`. For the final current candidate, the debug and
+test APK pair was built by the final workstation Gradle run above, transferred to lab-host, and verified
 against the 350 Android source/config inputs in its archive. The tested APK SHA-256 values are
 `6c8918c234a6924dadddd1c28640fd033b1cb6b094a92978b99e94e53186d04c` and
 `ceb6944b493d32ece7baf1194fc51df285dbe32f5eb7aeb1a18eeb89b68bdc38`. The API 36 phone run
-`/home/chris/collie-android-lab/hardening-1.5.1-debug-36-phone-pIokH3` passed 69 cases (five
+`$HOME/collie-android-lab/hardening-1.5.1-debug-36-phone-pIokH3` passed 69 cases (five
 baseline, 51 interaction, four 200%-font/320-dp UI, eight focused layout, one connected TalkBack
 platform test; 2026-10-07 23:19:49–23:23:04 UTC). It covered background polling stop/resume,
 synthetic fixture network loss/recovery, and harmless fixture writes exactly once. The final
@@ -84,9 +84,9 @@ button-height clipping regression fails on the earlier APK and passes on this bu
 test verified the platform gear label, accessibility focus and activation into Settings; spoken
 output and full navigation were not assessed.
 
-The API 26 phone run `/home/chris/collie-android-lab/hardening-1.5.1-debug-26-phone-0K8vsN` passed
+The API 26 phone run `$HOME/collie-android-lab/hardening-1.5.1-debug-26-phone-0K8vsN` passed
 nine cases (five baseline and four UI; 2026-10-07 23:25:21–23:25:50 UTC). The API 36 foldable run
-`/home/chris/collie-android-lab/hardening-1.5.1-debug-36-foldable-WkuvUJ` passed eight cases (five
+`$HOME/collie-android-lab/hardening-1.5.1-debug-36-foldable-WkuvUJ` passed eight cases (five
 baseline and three UI; 2026-10-07 23:25:53–23:26:58 UTC) and completed the 2208×1840 → 1080×2092 →
 2208×1840 fold-state cycle. Foreground folded/unfolded captures were visually reviewed at
 `/tmp/collie-verified-folded-200.png` and `/tmp/collie-verified-unfolded-200.png`. These emulator

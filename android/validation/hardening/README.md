@@ -1,7 +1,7 @@
 # Android hardening bundle — 2026-10-07
 
 The current Android source builds and its JVM, HTTP regression and resource checks pass.
-The isolated z2 emulator lab is operational. Device observations and follow-up coverage
+The isolated emulator lab is operational. Device observations and follow-up coverage
 are separated below. Expanded physical-device validation is follow-up work for the initial release;
 this record does not claim those measurements have been performed.
 
@@ -57,53 +57,50 @@ end-to-end tests verify redaction, removed historical candidates, other reachabl
 untracked files and the shallow-history boundary. Root/web typechecks, full-tree lint, Android
 configuration, ShellCheck, workflow lint, version consistency and documentation links are also checked.
 
-## z2 access and isolated lab
+## Lab host access and isolated lab
 
 Live SSH and KVM checks supersede the earlier restricted-session socket failures.
 
-The working route is the existing user SSH configuration and the user-provided LAN address:
+The working route is an SSH alias for the lab host in the operator's user SSH configuration:
 
 ```bash
-ssh -F /home/chris/.ssh/config -o BatchMode=yes -o ConnectTimeout=5 \
-  chris@192.168.22.127 'hostname; whoami'
+ssh lab-host 'hostname; whoami'
 ```
 
-It returned `z2` and `chris`. The workstation's default system SSH configuration has a permissions
-error, so the explicit user-config route is retained. Live checks found JDK 21.0.12.1, usable KVM,
-16 threads, 61 GiB RAM and ample root filesystem space. The lab does not use `/mnt/data`.
-The earlier partial doclayer source was `wiki/prometheus-sports-app-z2-gate-copies.md@9e097ae0`,
-updated 2026-10-05; installed tool and capacity claims here come from live checks on 2026-10-07.
+It returned the lab host name and the operator's account. Live checks found JDK 21.0.12.1, usable
+KVM, 16 threads, 61 GiB RAM and ample root filesystem space. The lab does not use `/mnt/data`.
+Lab capacity: live checks on 2026-10-07.
 
 SDK, Gradle state, Android user state and fresh AVDs live under
-`/home/chris/collie-android-lab` on z2. Installed tools include emulator 37.2.12, platform-tools
+`$HOME/collie-android-lab` on lab-host. Installed tools include emulator 37.2.12, platform-tools
 37.0.1, platform 36 revision 2, build tools 36.0.0, and Google APIs x86_64 images for API 26
 revision 16 and API 36 revision 7. The phone/foldable profiles are Pixel 2, Pixel 7 and Pixel Fold.
 A dedicated ADB server on port 5038 and an account-wide lock serialize owned emulator ports
 5660/5662/5664. Only these disposable lab AVDs are wiped; process-group cleanup stops the launched
 emulator and its children. Existing Android installations, apps and physical devices are untouched.
 
-The reusable source runners are `/home/chris/git/collie/scripts/android-emulator-lab.sh` and
-`/home/chris/git/collie/scripts/android-device-hardening.sh`. Transferred copies are under
-`/home/chris/collie-android-lab/runners` on z2. The build runner copies Android and shared parity
+The reusable source runners are `scripts/android-emulator-lab.sh` and
+`scripts/android-device-hardening.sh`. Transferred copies are under
+`$HOME/collie-android-lab/runners` on lab-host. The build runner copies Android and shared parity
 fixture inputs, verifies source hashes before/after building and records APK/tool identities.
 The device runner verifies a strict two-APK manifest, copies the pair into run-specific evidence,
 checks the API and checks instrumentation's reported result rather than ADB's exit code alone.
 
 Clean remote builds and baseline instrumentation passed on API 26 and API 36 phones: five cases
 each cover native launch, system insets, agent artwork and encrypted Keystore round-trip/wipe.
-Run directories are `/home/chris/collie-android-lab/run-26-phone-dui0R0` and
-`/home/chris/collie-android-lab/run-36-phone-g5nbSo`. An early API 26 runner cleanup/lock inheritance
+Run directories are `$HOME/collie-android-lab/run-26-phone-dui0R0` and
+`$HOME/collie-android-lab/run-36-phone-g5nbSo`. An early API 26 runner cleanup/lock inheritance
 failure was fixed; its instrumentation passed, and the corrected API 36 runner exited successfully.
 
 ## Final emulator results
 
 All three profiles used the same verified APK pair and passed **86 instrumentation cases**.
 
-| Profile | Passed cases | UTC range on 2026-10-07 | Retained z2 run directory |
+| Profile | Passed cases | UTC range on 2026-10-07 | Retained lab-host run directory |
 | --- | --- | --- | --- |
-| API 36 Pixel 7 phone | 69: baseline 5, full interaction 51, UI 4, narrow-font flows 8, TalkBack platform 1 | 23:19:49–23:23:04 | `/home/chris/collie-android-lab/hardening-1.5.1-debug-36-phone-pIokH3` |
-| API 26 Pixel 2 phone | 9: baseline 5 and UI 4 | 23:25:21–23:25:50 | `/home/chris/collie-android-lab/hardening-1.5.1-debug-26-phone-0K8vsN` |
-| API 36 Pixel Fold | 8: baseline 5 and UI 3; additional posture/display capture checks | 23:25:53–23:26:58 | `/home/chris/collie-android-lab/hardening-1.5.1-debug-36-foldable-WkuvUJ` |
+| API 36 Pixel 7 phone | 69: baseline 5, full interaction 51, UI 4, narrow-font flows 8, TalkBack platform 1 | 23:19:49–23:23:04 | `$HOME/collie-android-lab/hardening-1.5.1-debug-36-phone-pIokH3` |
+| API 26 Pixel 2 phone | 9: baseline 5 and UI 4 | 23:25:21–23:25:50 | `$HOME/collie-android-lab/hardening-1.5.1-debug-26-phone-0K8vsN` |
+| API 36 Pixel Fold | 8: baseline 5 and UI 3; additional posture/display capture checks | 23:25:53–23:26:58 | `$HOME/collie-android-lab/hardening-1.5.1-debug-36-foldable-WkuvUJ` |
 
 The debug APK SHA-256 is
 `6c8918c234a6924dadddd1c28640fd033b1cb6b094a92978b99e94e53186d04c`;
@@ -126,13 +123,13 @@ Phone rotation assertions are excluded from this large-window profile under Andr
 The new full-label regression failed the previous APK at 320 dp/200% font because fixed-height
 buttons clipped wrapped labels. Wrap-content button heights with a 48 dp minimum and vertical
 padding fixed it; every final profile passed. The expected negative result is retained in
-`/tmp/collie-z2-clipping-negative.log`. An earlier duplicate-key observation came from a 482 ms
+`/tmp/collie-lab-host-clipping-negative.log`. An earlier duplicate-key observation came from a 482 ms
 injected gesture exceeding the intentional 350 ms repeat threshold. A controlled 40 ms short tap
 now passes the full suite with the exact key-count assertion intact; production repeat behavior
 was unchanged. Recovery checks now wait for bounded observable state instead of a fixed sleep.
 
-Final device logs are `/tmp/collie-z2-verified-36-phone.log` and
-`/tmp/collie-z2-verified-26-and-fold.log`. These final results supersede interim device attempts.
+Final device logs are `/tmp/collie-lab-host-verified-36-phone.log` and
+`/tmp/collie-lab-host-verified-26-and-fold.log`. These final results supersede interim device attempts.
 No owned emulator processes remained after cleanup.
 
 ## Reproduce device checks
@@ -147,10 +144,10 @@ English QWERTY Gboard is its prerequisite. The current API 36 image has Gboard a
 
 ```bash
 export JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64
-bash /home/chris/collie-android-lab/runners/android-emulator-lab.sh validate \
-  /home/chris/collie-android-lab /home/chris/collie-android-lab/checkout 26-phone
-COLLIE_LAB_TALKBACK=1 bash /home/chris/collie-android-lab/runners/android-device-hardening.sh \
-  /home/chris/collie-android-lab /home/chris/collie-android-lab/reviewed-candidate 36-phone
+bash $HOME/collie-android-lab/runners/android-emulator-lab.sh validate \
+  $HOME/collie-android-lab $HOME/collie-android-lab/checkout 26-phone
+COLLIE_LAB_TALKBACK=1 bash $HOME/collie-android-lab/runners/android-device-hardening.sh \
+  $HOME/collie-android-lab $HOME/collie-android-lab/reviewed-candidate 36-phone
 ```
 
 Repeat device checks for `26-phone` and `36-foldable`. Fold evidence requires active state IDs

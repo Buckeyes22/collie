@@ -495,18 +495,18 @@ describe("collie pack add", () => {
     expect(text(h.io)).not.toContain(token!);
   });
 
-  // F8: `--peer-address 192.168.77.2:8787` was concatenated with `--port`, printed as
-  // `192.168.77.2:8787:8787`, and written into the member's COLLIE_HOST — an address `Bun.serve` can
+  // F8: `--peer-address 192.0.2.2:8787` was concatenated with `--port`, printed as
+  // `192.0.2.2:8787:8787`, and written into the member's COLLIE_HOST — an address `Bun.serve` can
   // never bind. The member was left half-enrolled with a dead service.
   test("a --peer-address that is not a bare host is refused BEFORE any ssh runs", async () => {
     for (const bad of [
-      "192.168.77.2:8787",
-      "https://192.168.77.2",
-      "192.168.77.2/collie",
-      "op@192.168.77.2",
+      "192.0.2.2:8787",
+      "https://192.0.2.2",
+      "192.0.2.2/collie",
+      "op@192.0.2.2",
       "[fd7a::1]:8787",
       "[fd7a::1]",
-      " 192.168.77.2 ",
+      " 192.0.2.2 ",
     ]) {
       const h = harness();
       expect(await run(h, ["nas.example", "--peer-address", bad])).toBe(EXIT.USAGE);
@@ -520,7 +520,7 @@ describe("collie pack add", () => {
   });
 
   test("a bare host — name, IPv4 or an unbracketed IPv6 literal — is accepted", async () => {
-    for (const good of ["192.168.77.2", "collie-2.tail1234.ts.net", "fd7a::1"]) {
+    for (const good of ["192.0.2.2", "collie-2.tail1234.ts.net", "fd7a::1"]) {
       const h = harness();
       expect(await run(h, ["nas.example", "--peer-address", good])).toBe(EXIT.OK);
       expect(h.calls[2]!.script).toContain(`printf 'COLLIE_HOST=%s\\n' '${good}'`);
@@ -532,8 +532,8 @@ describe("collie pack add", () => {
   // not accept. Re-running with the flag produced the identical refusal: a closed loop with no exit.
   test("an http:// lead address is refused at parse time, naming a remedy that exists", async () => {
     for (const [args, env] of [
-      [["nas.example", "--address", "http://192.168.77.1:8787"], {}],
-      [["nas.example"], { COLLIE_PUBLIC_URL: "http://192.168.77.1:8787" }],
+      [["nas.example", "--address", "http://192.0.2.1:8787"], {}],
+      [["nas.example"], { COLLIE_PUBLIC_URL: "http://192.0.2.1:8787" }],
     ] as const) {
       const h = harness({ env });
       expect(await run(h, [...args])).toBe(EXIT.USAGE);
@@ -555,7 +555,7 @@ describe("collie pack add", () => {
   });
 
   test("a value typed at the prompt is held to the same rule", async () => {
-    const h = harness({ prompt: "192.168.77.2:8787", answers: { probe: { stdout: probeOut({ address: "" }) } } });
+    const h = harness({ prompt: "192.0.2.2:8787", answers: { probe: { stdout: probeOut({ address: "" }) } } });
     expect(await run(h)).toBe(EXIT.FAIL);
     expect(text(h.io)).toContain("is not a bind address");
     // The prompt comes after leg 1, so the probe has run — but nothing was installed or written.

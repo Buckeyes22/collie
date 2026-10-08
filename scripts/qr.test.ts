@@ -87,7 +87,7 @@ function locate(modules: boolean[][], truth: boolean[][]): { row: number; col: n
 const URLS = [
   "https://my-laptop.tailnet-example.ts.net",      // the shape `tailscale serve` publishes
   "http://host.example:8787",                       // SERVE_MODE=http (Headscale / .internal)
-  "https://a-really-long-machine-name-for-good-measure.tail1a2b3c.ts.net", // pushes to a bigger version
+  "https://a-really-long-machine-name-for-measure.example-tailnet.ts.net", // pushes to a bigger version
 ];
 
 describe("qr", () => {

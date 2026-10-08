@@ -1525,8 +1525,8 @@ export function leadAddressRefusal(
  *
  * **The flag says *address*; the value is a bare HOST, and nothing checked which.** Leg 3 writes it
  * verbatim into the member's `COLLIE_HOST`, and this lead dials `` `${peerHost}:${port}` `` — so
- * `--peer-address 192.168.77.2:8787` printed `192.168.77.2:8787:8787` twice and wrote
- * `COLLIE_HOST=192.168.77.2:8787`, which `Bun.serve` can never bind. The member was left
+ * `--peer-address 192.0.2.2:8787` printed `192.0.2.2:8787:8787` twice and wrote
+ * `COLLIE_HOST=192.0.2.2:8787`, which `Bun.serve` can never bind. The member was left
  * half-enrolled with a dead service and nothing on screen naming the cause (F8).
  *
  * **Splitting `host:port` here instead was considered and refused.** `--port` already exists, and it
@@ -1559,7 +1559,7 @@ export function peerHostRefusalLines(value: string, refusal: string): string[] {
   return [
     `error: --peer-address ${value} is not a bind address — ${refusal}.`,
     "       Give a BARE HOST — a hostname or an IP address and nothing else:",
-    "         --peer-address collie-2.tail1234.ts.net    --peer-address 192.168.77.2",
+    "         --peer-address collie-2.tail1234.ts.net    --peer-address 192.0.2.2",
     "       It is written verbatim into that machine's COLLIE_HOST, so it must be an address that",
     `       machine can BIND, and the port it is dialled on comes from \`${PEER_HOST_PORT_HINT}\`.`,
   ];

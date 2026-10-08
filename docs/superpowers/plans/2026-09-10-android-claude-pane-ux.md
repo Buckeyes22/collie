@@ -61,7 +61,7 @@ bun run typecheck && (cd web && bun run typecheck); echo exit=$?
 bun run lint | tail -2
 
 # INSTALL — put the debug build on the S25 Ultra.
-adb -s 192.168.22.99:37363 install -r android/app/build/outputs/apk/debug/app-debug.apk
+adb -s 192.0.2.10:37363 install -r android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
 ## Lanes and file ownership
@@ -439,10 +439,11 @@ Source: JetBrains Mono 2.304 Regular, OFL 1.1, from `https://github.com/JetBrain
 - [ ] **Step 3: Implement**
 
 ```bash
+export COLLIE_REPO=/path/to/collie  # your checkout
 cd /tmp && curl -sSLO https://github.com/JetBrains/JetBrainsMono/releases/download/v2.304/JetBrainsMono-2.304.zip \
   && unzip -o -q JetBrainsMono-2.304.zip 'fonts/ttf/JetBrainsMono-Regular.ttf' 'OFL.txt' \
-  && cp fonts/ttf/JetBrainsMono-Regular.ttf /home/chris/git/collie/android/app/src/main/res/font/jetbrains_mono_regular.ttf \
-  && cp OFL.txt /home/chris/git/collie/android/app/src/main/res/raw/license_jetbrains_mono.txt
+  && cp fonts/ttf/JetBrainsMono-Regular.ttf "$COLLIE_REPO"/android/app/src/main/res/font/jetbrains_mono_regular.ttf \
+  && cp OFL.txt "$COLLIE_REPO"/android/app/src/main/res/raw/license_jetbrains_mono.txt
 ```
 `res/font/collie_mono.xml`:
 ```xml
@@ -1193,7 +1194,7 @@ CHANGELOG line: `- Web: the Claude mirror joins the grid's soft wraps so a parag
 - Create: `web/src/fixtures/panes/claude--soft-wrapped-paragraph.txt`
 - Modify: `web/src/lib/harness/claude/reflow.test.ts`
 
-The fixture is the Herdr read behind `android/acceptance/2026-09-10-claude-pane-wrap.png` (the capture §1 of the proposal cites). Take it from the phone-visible pane via the bridge: `curl -s -H "Authorization: Bearer $(bin/collie devices token S25U-native 2>/dev/null || true)" https://ed8.taile7b6b1.ts.net/api/pane/<id>` is not available without the credential, so use the Herdr socket read the bridge uses: `herdr pane read <id> --lines 80` on ed8, saving the `text` field. If the pane no longer exists, reproduce: open a Claude pane, send "Explain in two paragraphs how Herdr's pane read works", wait for the answer, then read.
+The fixture is the Herdr read behind `android/acceptance/2026-09-10-claude-pane-wrap.png` (the capture §1 of the proposal cites). Take it from the phone-visible pane via the bridge: `curl -s -H "Authorization: Bearer $(bin/collie devices token S25U-native 2>/dev/null || true)" https://collie.example-tailnet.ts.net/api/pane/<id>` is not available without the credential, so use the Herdr socket read the bridge uses: `herdr pane read <id> --lines 80` on workstation, saving the `text` field. If the pane no longer exists, reproduce: open a Claude pane, send "Explain in two paragraphs how Herdr's pane read works", wait for the answer, then read.
 
 - [ ] **Step 1: Failing test** (append)
 
@@ -1614,7 +1615,7 @@ CHANGELOG line: `- Android: Updates counts releases behind, shows the blocked re
 
 - [ ] **Step 3: Install** with INSTALL. Expected: `Success`.
 
-- [ ] **Step 4: Walk §6** on the S25 Ultra (wireless ADB `192.168.22.99:37363`; `screencap` each state to `android/acceptance/2026-09-10-ux-<state>.png`). Each of these is a PASS only when the named state is observed in the capture:
+- [ ] **Step 4: Walk §6** on the S25 Ultra (wireless ADB `192.0.2.10:37363`; `screencap` each state to `android/acceptance/2026-09-10-ux-<state>.png`). Each of these is a PASS only when the named state is observed in the capture:
   - Claude pane opens on the transcript; the body mode row is hidden; user turn renders as a card.
   - Send `AskUserQuestion`-shaped prompt (teammate agent `collie-49` can be asked to trigger one); body switches to the mirror with row "Terminal · agent is asking"; answering switches back within one poll.
   - Tap "Show terminal" on the transcript; mirror shows with statusline row pinned; a long paragraph wraps once (no ragged indent); `⎿` renders as a straight tree marker.

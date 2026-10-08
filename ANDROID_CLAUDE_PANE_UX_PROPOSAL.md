@@ -158,7 +158,7 @@ The 2026-09-11 re-walk fixed and rechecked a number of these screens; see
 that ledger remain observations from the original walk rather than verified current defects.
 
 Reviewed from the captures taken during the two S25 Ultra walks on 2026-09-10 (all under
-`android/acceptance/2026-09-10-*.png`; the walk's full set sits in `/tmp/s25/` on ed8). The
+`android/acceptance/2026-09-10-*.png`; the walk's full set sits in `/tmp/s25/` on workstation). The
 question for each screen is the one asked of the Claude pane: does it read as a native app that
 happens to talk to terminals, or as a terminal tool wearing an app's chrome? Functional defects
 found on the walk are already fixed and committed; what follows is design.
@@ -318,7 +318,7 @@ A missed. Cited captures are saved under `android/acceptance/`.
   directly into terminal…" and a second label "Direct terminal typing armed" appears under it,
   while the Send button, now a stop control, keeps the paper-plane icon.
 - **An attached image is a file path in the draft** (`2026-09-10-upload-path-in-draft.png`): after
-  the picker, the composer holds `/home/chris/.local/state/collie/uploads/wM_p1-….png` across three
+  the picker, the composer holds `$HOME/.local/state/collie/uploads/wM_p1-….png` across three
   lines with "Image added — path in message." beneath. That is the bridge's storage location shown
   to the operator; an attachment should be a chip or thumbnail the send expands.
 - **Staged key chips overflow with no cue.** Four chips fill the row and the fourth is clipped at
