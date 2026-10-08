@@ -17,3 +17,8 @@ that version has not been published as an Android release by this fork.
 - Improve dark destructive-button contrast and scale pack diagram labels with system text settings.
 - Correct unverified artwork attribution claims and record remaining provenance requirements before release.
 - Let setup action buttons grow to keep wrapped labels visible at large font and display sizes.
+- Goose's notice names its copyright holder, Block, Inc.
+- Claude, Codex, pi, OMP and Antigravity panes show locally authored tiles.
+- The pane header shortens the server's reported home, not a hardcoded one.
+- The APK packages a license and source line for every runtime library.
+- Settings opens an Open-source licenses screen with every packaged notice.

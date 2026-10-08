@@ -121,6 +121,8 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - Android signing refuses an APK whose recorded build inputs do not match the checkout.
 - Every workflow action is pinned to a reviewed commit.
 - Example hosts in collie remote's help use documentation names.
+- A notices test pins the packaged third-party copyright lines.
+- Android release tooling generates a dependency license inventory from the lockfile.
 
 ## [1.5.1] - 2026-09-04
 
