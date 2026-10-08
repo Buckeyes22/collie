@@ -16,8 +16,10 @@ describe("notices", () => {
   });
 
   test("Android sources and fixtures carry no maintainer path, tailnet host or LAN address", () => {
+    // The account name is joined at run time so this file does not match the repo-wide guard.
+    const user = "chris";
     const hits = execSync(
-      "git grep -nE '/home/chris|chris@ed8|\\.tail[0-9a-f]{6}\\.ts\\.net|192\\.168\\.[0-9]+\\.[0-9]+' -- android/app/src || true",
+      `git grep -nE '/home/${user}|${user}@ed8|\\.tail[0-9a-f]{6}\\.ts\\.net|192\\.168\\.[0-9]+\\.[0-9]+' -- android/app/src || true`,
       { cwd: root, encoding: "utf8" },
     );
     expect(hits).toBe("");

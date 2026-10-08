@@ -4,11 +4,10 @@ import { join } from "node:path";
 
 const root = join(import.meta.dir, "..");
 
-// Paths outside the check: the Android sources are cleaned in their own change, the history
-// review quotes the private values it reviews, and the remediation plan names the patterns.
+// Paths outside the check: the Android sources have their own guard in notices.test.ts, and the
+// remediation plan names the patterns.
 const excluded = [
   "android/app/src",
-  "android/validation/hardening/history-assets-review.md",
   "docs/superpowers/plans/2026-10-08-public-release-remediation.md",
 ];
 
