@@ -123,6 +123,7 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - Example hosts in collie remote's help use documentation names.
 - A notices test pins the packaged third-party copyright lines.
 - Android release tooling generates a dependency license inventory from the lockfile.
+- The release workflow's dependency scan installs its pinned Grype version.
 
 ## [1.5.1] - 2026-09-04
 

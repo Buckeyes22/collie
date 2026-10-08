@@ -50,7 +50,7 @@ jobs:
         uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
         with:
           sbom: android/app/build/reports/dependencies/sbom.cdx.json
-          grype-version: "0.116.1"
+          grype-version: "v0.116.1"
           config: android/grype.yaml
           severity-cutoff: high
           fail-build: true
