@@ -1,5 +1,10 @@
 # Collie
 
+> **Note.** This is upstream Collie's README, kept for reference. Collie's server and PWA come
+> from [AltanS/collie](https://github.com/AltanS/collie); install them from there. This
+> repository builds the native Android client. Start at [README.md](README.md) and
+> [Getting started](android/GETTING_STARTED.md).
+
 <p align="center">
   <img src="assets/collie-hero.webp" alt="A collie herding a flock of sheep" width="640">
 </p>
