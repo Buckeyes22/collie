@@ -116,6 +116,8 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - Prepare the native notification v1 provider contract and generate APK-linked Android dependency inventories with release audit gating.
 - Add isolated Android emulator build and device hardening runners and a redacted reachable-history audit helper.
 - Correct the blanket CC0 artwork comment and document unresolved asset provenance.
+- The PWA ships the shadcn/ui and shadcn-chat MIT notices under /licenses/.
+- The bundled Nerd Font symbol subsets ship every glyph family's license.
 
 ## [1.5.1] - 2026-09-04
 
