@@ -1,3 +1,4 @@
+// Adapted from shadcn/ui (MIT): see web/public/licenses/shadcn-ui.txt.
 import * as React from "react";
 import { X } from "lucide-react";
 

@@ -1,3 +1,4 @@
+// Adapted from shadcn-chat (MIT): see web/public/licenses/shadcn-chat.txt.
 import * as React from "react";
 import { ArrowDown } from "lucide-react";
 

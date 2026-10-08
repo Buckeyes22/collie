@@ -5,6 +5,16 @@ provides the bridge API, PWA, terminal adapter contracts, design language and or
 The Android-focused fork is maintained at [Buckeyes22/collie](https://github.com/Buckeyes22/collie).
 The original MIT copyright and permission notice remain in [LICENSE](LICENSE).
 
+## Web components
+
+The retained PWA adapts components from two MIT projects. Their notices ship in the built app
+under `/licenses/`:
+
+| Upstream | Files | Notice |
+| --- | --- | --- |
+| [shadcn/ui](https://github.com/shadcn-ui/ui) | `ui/button`, `ui/badge`, `ui/card`, `ui/sheet`, `ui/switch` | [shadcn-ui.txt](web/public/licenses/shadcn-ui.txt) |
+| [shadcn-chat](https://github.com/jakobhoeg/shadcn-chat) | `ui/chat/chat-input`, `ui/chat/chat-message-list`, `hooks/use-auto-scroll` | [shadcn-chat.txt](web/public/licenses/shadcn-chat.txt) |
+
 The native client bundles Aldrich and JetBrains Mono with their font licenses. Agent icons have
 their own notices and reuse terms. The APK includes these notices as Android resources:
 

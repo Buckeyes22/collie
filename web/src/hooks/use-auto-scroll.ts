@@ -1,3 +1,4 @@
+// Adapted from shadcn-chat (MIT): see web/public/licenses/shadcn-chat.txt.
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { hasResizeObserver } from "@/lib/env";
 
