@@ -118,6 +118,8 @@ PATH. Details and rollback: [`docs/upgrading.md`](./docs/upgrading.md) → *Upgr
 - Correct the blanket CC0 artwork comment and document unresolved asset provenance.
 - The PWA ships the shadcn/ui and shadcn-chat MIT notices under /licenses/.
 - The bundled Nerd Font symbol subsets ship every glyph family's license.
+- Android signing refuses an APK whose recorded build inputs do not match the checkout.
+- Every workflow action is pinned to a reviewed commit.
 
 ## [1.5.1] - 2026-09-04
 
