@@ -68,13 +68,23 @@ bun run check:android
 The build produces `android/app/build/outputs/apk/release/app-release-unsigned.apk`.
 This unsigned APK is a signing input, not an installable public release.
 
+Record what produced it, on the clean release commit and straight after the build:
+
+```bash
+bash scripts/android-build-manifest.sh
+```
+
+This writes `build-inputs.json` beside the APK: the commit, the `gradle.lockfile` hash and the
+unsigned APK hash. It refuses a dirty tree.
+
 With signing variables loaded, run from the repository root:
 
 ```bash
 bash scripts/android-release.sh
 ```
 
-The helper checks package identity, non-debuggable status, version syntax and the expected tag,
+The helper checks the build-inputs manifest against the checkout and the APK, and refuses a dirty
+tree. It also checks package identity, non-debuggable status, version syntax and the expected tag,
 then signs and verifies the APK against the pinned certificate. It passes passwords through
 apksigner's environment-variable inputs. Android documents those options in
 [apksigner](https://developer.android.com/tools/apksigner).
@@ -86,8 +96,8 @@ details, source/version metadata, the MIT license and bundled asset notices. Ver
 (cd android/app/build/release-dist && sha256sum -c SHA256SUMS)
 ```
 
-The metadata records whether the source tree is dirty. Public candidates must come from the
-clean release commit. Preserve the R8 mapping from `android/app/build/outputs/mapping/release/mapping.txt`
+The metadata embeds the verified build inputs (`buildInputsVerified`). Public candidates must come
+from the clean release commit. Preserve the R8 mapping from `android/app/build/outputs/mapping/release/mapping.txt`
 in private release evidence for crash investigation.
 
 ## Dependency inventory and vulnerability scan

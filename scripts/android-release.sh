@@ -16,6 +16,15 @@ done
 [[ -f "$COLLIE_ANDROID_KEYSTORE" ]] || die "release keystore file is missing"
 [[ -x "$tools/apksigner" && -x "$tools/aapt" ]] || die "set ANDROID_HOME to an SDK with Build Tools 36.0.0"
 [[ -f "$unsigned" ]] || die "run android/gradlew assembleRelease first"
+manifest="$(dirname "$unsigned")/build-inputs.json"
+[[ -f "$manifest" ]] || die "run scripts/android-build-manifest.sh after assembleRelease"
+[[ -z "$(git -C "$repo_root" status --porcelain)" ]] || die "refusing to sign from a dirty worktree"
+field() { sed -n "s/^  \"$1\": \"\([0-9a-f]*\)\",\{0,1\}$/\1/p" "$manifest"; }
+[[ "$(field sourceCommit)" == "$(git -C "$repo_root" rev-parse HEAD)" ]] || die "HEAD is not the commit that built this APK"
+[[ "$(field lockfileSha256)" == "$(sha256sum "$repo_root/android/app/gradle.lockfile" | cut -d ' ' -f 1)" ]] ||
+  die "gradle.lockfile changed since the APK was built"
+[[ "$(field unsignedApkSha256)" == "$(sha256sum "$unsigned" | cut -d ' ' -f 1)" ]] ||
+  die "the unsigned APK is not the one the manifest recorded"
 command -v bun >/dev/null || die "install Bun to generate the release SBOM"
 [[ ! -e "$output" ]] || die "release output already exists; choose a new COLLIE_ANDROID_RELEASE_DIR"
 
@@ -50,6 +59,7 @@ digest="$(sha256sum "$stage/$apk" | cut -d ' ' -f 1)"
 cp "$repo_root/LICENSE" "$stage/LICENSE.txt"
 cp "$repo_root/android/app/src/main/res/raw/third_party_notices.txt" "$stage/"
 cp "$repo_root"/android/app/src/main/res/raw/license_*.txt "$stage/"
+cp "$manifest" "$stage/"
 cat > "$stage/release-metadata.json" <<EOF
 {
   "tag": "$tag",
@@ -57,7 +67,8 @@ cat > "$stage/release-metadata.json" <<EOF
   "versionName": "$version",
   "versionCode": $code,
   "sourceCommit": "$commit",
-  "worktreeDirty": $(if [[ -n "$(git -C "$repo_root" status --porcelain)" ]]; then echo true; else echo false; fi),
+  "buildInputs": $(cat "$manifest"),
+  "buildInputsVerified": true,
   "apk": "$apk",
   "sha256": "$digest",
   "signingCertificateSha256": "$actual_cert"

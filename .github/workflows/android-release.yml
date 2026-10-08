@@ -17,13 +17,13 @@ jobs:
     if: github.repository == 'Buckeyes22/collie'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
         with:
           distribution: temurin
           java-version: "21"
-      - uses: oven-sh/setup-bun@v2
-      - uses: android-actions/setup-android@v3
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
       - name: Install pinned SDK
         run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
       - name: Validate native boundaries
@@ -33,6 +33,8 @@ jobs:
       - name: Test, lint, and build release
         working-directory: android
         run: ./gradlew --no-daemon testDebugUnitTest lintDebug lintRelease assembleRelease
+      - name: Record build inputs
+        run: bash scripts/android-build-manifest.sh
       - name: Inventory locked release dependencies
         env:
           RELEASE_TAG: ${{ github.ref_name }}
@@ -53,18 +55,19 @@ jobs:
           output-file: android/app/build/reports/dependencies/grype.json
       - name: Preserve dependency evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: android-dependencies
           if-no-files-found: warn
           path: android/app/build/reports/dependencies/
       - name: Preserve unsigned build and mapping
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: android-unsigned
           if-no-files-found: error
           path: |
             android/app/build/outputs/apk/release/app-release-unsigned.apk
+            android/app/build/outputs/apk/release/build-inputs.json
             android/app/build/outputs/mapping/release/mapping.txt
 
   sign:
@@ -76,16 +79,16 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
         with:
           distribution: temurin
           java-version: "21"
-      - uses: oven-sh/setup-bun@v2
-      - uses: android-actions/setup-android@v3
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
       - name: Install signing tools
         run: sdkmanager "build-tools;36.0.0"
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: android-unsigned
           path: android/app/build/outputs
