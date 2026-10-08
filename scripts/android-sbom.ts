@@ -2,10 +2,8 @@ import { createHash } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 
-/** A locked build-input inventory, not a claim about what R8 retained in the APK. */
-export function androidSbom(lockfile: string, version: string, apkSha256: string) {
-  if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?$/.test(version)) throw new Error("Invalid Android version");
-  if (!/^[a-f0-9]{64}$/.test(apkSha256)) throw new Error("Invalid APK SHA-256");
+/** The locked releaseRuntimeClasspath modules, sorted by `group:name`. */
+export function releaseModules(lockfile: string) {
   const modules = new Map<string, { group: string; name: string; version: string }>();
   for (const line of lockfile.split(/\r?\n/)) {
     if (!line.trim() || line.startsWith("#")) continue;
@@ -23,6 +21,14 @@ export function androidSbom(lockfile: string, version: string, apkSha256: string
     modules.set(key, { group, name, version: dependencyVersion });
   }
   if (modules.size === 0) throw new Error("No locked release runtime dependencies");
+  return [...modules.values()].toSorted((a, b) => `${a.group}:${a.name}`.localeCompare(`${b.group}:${b.name}`));
+}
+
+/** A locked build-input inventory, not a claim about what R8 retained in the APK. */
+export function androidSbom(lockfile: string, version: string, apkSha256: string) {
+  if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?$/.test(version)) throw new Error("Invalid Android version");
+  if (!/^[a-f0-9]{64}$/.test(apkSha256)) throw new Error("Invalid APK SHA-256");
+  const modules = releaseModules(lockfile);
   const rootRef = `collie-android:${version}`;
   return {
     $schema: "http://cyclonedx.org/schema/bom-1.6.schema.json",
@@ -44,7 +50,7 @@ export function androidSbom(lockfile: string, version: string, apkSha256: string
         { name: "collie:limitations", value: "Includes resolved platform modules and code removed by R8; excludes build/test tooling and bundled assets. Dependency edges and third-party licenses are not inferred from the lockfile." },
       ],
     },
-    components: [...modules.values()].toSorted((a, b) => `${a.group}:${a.name}`.localeCompare(`${b.group}:${b.name}`)).map((m) => {
+    components: modules.map((m) => {
       const purl = `pkg:maven/${encodeURIComponent(m.group)}/${encodeURIComponent(m.name)}@${encodeURIComponent(m.version)}`;
       return { type: "library", "bom-ref": purl, group: m.group, name: m.name, version: m.version, purl };
     }),

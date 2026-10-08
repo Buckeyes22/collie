@@ -1,0 +1,16 @@
+{
+  "rules": [
+    { "prefix": "androidx.", "license": "Apache-2.0", "source": "https://android.googlesource.com/platform/frameworks/support" },
+    { "prefix": "com.google.android.material:", "license": "Apache-2.0", "source": "https://github.com/material-components/material-components-android" },
+    { "prefix": "com.google.errorprone:", "license": "Apache-2.0", "source": "https://github.com/google/error-prone" },
+    { "prefix": "com.google.guava:", "license": "Apache-2.0", "source": "https://github.com/google/guava" },
+    { "prefix": "com.squareup.okhttp3:", "license": "Apache-2.0", "source": "https://github.com/square/okhttp",
+      "extra": "OkHttp bundles the Public Suffix List, Mozilla Public License 2.0, https://publicsuffix.org/; its notice ships inside the okhttp artifact." },
+    { "prefix": "com.squareup.okio:", "license": "Apache-2.0", "source": "https://github.com/square/okio" },
+    { "prefix": "org.jetbrains:annotations", "license": "Apache-2.0", "source": "https://github.com/JetBrains/java-annotations" },
+    { "prefix": "org.jetbrains.kotlin:", "license": "Apache-2.0", "source": "https://github.com/JetBrains/kotlin" },
+    { "prefix": "org.jetbrains.kotlinx:kotlinx-coroutines", "license": "Apache-2.0", "source": "https://github.com/Kotlin/kotlinx.coroutines" },
+    { "prefix": "org.jetbrains.kotlinx:kotlinx-serialization", "license": "Apache-2.0", "source": "https://github.com/Kotlin/kotlinx.serialization" },
+    { "prefix": "org.jspecify:", "license": "Apache-2.0", "source": "https://github.com/jspecify/jspecify" }
+  ]
+}
