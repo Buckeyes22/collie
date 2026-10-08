@@ -1395,6 +1395,8 @@ Expected: `{"enabled":true}`, `HTTP/2.0 204`, then `main` and `release tags`. Th
 
 ### Task 17: The signing environment and a backed-up production key (BLOCKER for Actions APKs)
 
+> **Note.** Outcome 2026-10-08: Steps 1–2 ran. The key was generated in `~/secure` and backed up to the Vaultwarden item "Collie for Android release key", and a restore was verified. Chris declined Steps 3–5 in favour of local signing: `android-v1.5.2` was signed with `scripts/android-release.sh` and published from this machine. The Actions sign job therefore stops at its missing-secrets check by design. Run Steps 3–5 to move signing into CI.
+
 **Closes:** *No environment or signing secrets exist; android-release.yml:102 will refuse signing.*
 
 `android-release.yml`'s `sign` job declares `environment: android-release` and reads five secrets: `COLLIE_ANDROID_KEYSTORE_BASE64`, `COLLIE_ANDROID_KEY_ALIAS`, `COLLIE_ANDROID_STORE_PASSWORD`, `COLLIE_ANDROID_KEY_PASSWORD` and `COLLIE_ANDROID_CERT_SHA256`. `gh api repos/Buckeyes22/collie/environments` returns no environments. Chris runs every step here himself. The key is his, and it must never pass through a session transcript.
