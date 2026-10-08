@@ -1,7 +1,7 @@
 # Android history and asset hardening review
 
 **Review date:** 2026-10-07
-**Disposition:** `REVIEW-NEEDED` for public sharing of historical acceptance evidence and unresolved vendor marks; `COVERAGE-LIMITED` for history outside the inspected local graph and public-fork mirror. No repository history, screenshots, or APK binaries were changed.
+**Disposition:** `PASS` as of 2026-10-08 for the published ref set: private captures and operational metadata were replaced at the tip, vendor marks were replaced with locally authored tiles, and earlier revisions stay in public history by decision (see Publication ref set). The 2026-10-07 findings below are kept as the record of what was reviewed.
 
 ## Scope and coverage
 
@@ -29,11 +29,11 @@ Media inventory across the inspected local and mirror trees covered 241 distinct
 | `PASS` | Focused-scanner high-confidence credential patterns | The focused indicator scan found no AWS access keys, GitHub/Slack tokens, Google API keys, JWTs, or credential assignments in the full mirror or worktree. | Gitleaks' separate synthetic GitHub PAT control was detected; interpret its scan with the v8.30.1 upstream false-negative caveat above. No matching values were reproduced. |
 | `PASS` | Gitleaks generic API-key finding (false positive) | `docs/install.md`, commit `cbaa6b72bc5e685bee146e9b2c94db7bebaac880`, line 165. | The match is a multiplexer configuration setting in documentation: an uppercase environment-style name assigned a short lowercase option value. It is not a credential. Secret text and full matched line were not reproduced. |
 | `PASS` | Generic bearer-shaped values | [`bridge/pack/forward.test.ts`](../../../bridge/pack/forward.test.ts) and [`cli/update.test.ts`](../../../cli/update.test.ts); mirror commits include `2a4cc87bbcbbc50e8035609186cf535a24075b00` and `7c42d2f965685000e1f81379c16f54610b3d6b46`. | Test authorization examples; values were redacted during review and are not treated as credentials. |
-| `REVIEW-NEEDED` | Private network address in operational evidence | `.superpowers/lanes/FIX/report.md` (untracked from the tree on 2026-10-08; history only), commit `257acadbd8eb80551299dd0ba042c41517b985a1`. | Appears in wireless-debugging troubleshooting context and reads as real device/network evidence. It is not a credential. Treat the report as private operational material before public distribution. |
-| `REVIEW-NEEDED` | Private network address in changelog | `CHANGELOG.md`, including mirror revisions `51bcba6d8dd2…` and `2facb4651fdd…`. | Appears in historical pack-enrollment release notes as an example address for a peer endpoint. It may be documentation/example material, but resembles operational private-network data; assess before public sharing. Values were not reproduced. |
-| `REVIEW-NEEDED` | Tailnet hostname and workstation-local path in a configuration template | [`.env.example`](../../../.env.example), 16 reachable blob revisions including boundary commit `2eff683d74511398923d4cb5a5ee7ac4f758ff32`. | A concrete-looking tailnet hostname occurs in the template; classify as private deployment metadata, not a credential. The workstation-path matches are mostly variable examples and comments. Review the template before publishing. |
-| `REVIEW-NEEDED` | Private endpoint in superseded TWA material | [`ANDROID_TWA_SPEC.md`](../../../ANDROID_TWA_SPEC.md) and [`ANDROID_TWA_IMPLEMENTATION_PLAN.md`](../../../ANDROID_TWA_IMPLEMENTATION_PLAN.md), historical commits `4e725c0843b4e349a5a6837b4a938d43f7777db3`, `be300d70ef9640ba7631e56c146cd0b81fc940e5`, and later revisions. | The files are explicitly superseded/cancelled, but still retain private endpoint and local-path details. Preserve the historical record; assess redaction before public sharing. |
-| `REVIEW-NEEDED` | Historical deployment host references | [`README.md`](../../../README.md), `DEPLOYMENT.md` (historical path; not present in the current tree), [`android/README.md`](../../../android/README.md), and related docs/test files; examples include commits `9464c146e5cbcc161a69c7f70771cd58673d4cba` and `4c007340bcdf7854102f9c41ec18d5a7b5ca5500`. | Reachable earlier blobs include private tailnet host references. Current [`README.md`](../../../README.md) no longer matches the host rule. The older commits remain in reachable history and were not rewritten. |
+| `FIX` | Private network address in operational evidence | `.superpowers/lanes/FIX/report.md` (untracked from the tree on 2026-10-08; history only), commit `257acadbd8eb80551299dd0ba042c41517b985a1`. | Appears in wireless-debugging troubleshooting context and reads as real device/network evidence. It is not a credential. Treat the report as private operational material before public distribution. | Untracked from the tree and `.superpowers/` ignored on 2026-10-08; earlier revisions remain in history (D1). |
+| `FIX` | Private network address in changelog | `CHANGELOG.md`, including mirror revisions `51bcba6d8dd2…` and `2facb4651fdd…`. | Appears in historical pack-enrollment release notes as an example address for a peer endpoint. It may be documentation/example material, but resembles operational private-network data; assess before public sharing. Values were not reproduced. | The current `CHANGELOG.md` carries no private address; earlier revisions remain in history (D1). |
+| `FIX` | Tailnet hostname and workstation-local path in a configuration template | [`.env.example`](../../../.env.example), 16 reachable blob revisions including boundary commit `2eff683d74511398923d4cb5a5ee7ac4f758ff32`. | A concrete-looking tailnet hostname occurs in the template; classify as private deployment metadata, not a credential. The workstation-path matches are mostly variable examples and comments. Review the template before publishing. | `.env.example` now uses `collie.example-tailnet.ts.net`; earlier revisions remain in history (D1). |
+| `FIX` | Private endpoint in superseded TWA material | [`ANDROID_TWA_SPEC.md`](../../../ANDROID_TWA_SPEC.md) and [`ANDROID_TWA_IMPLEMENTATION_PLAN.md`](../../../ANDROID_TWA_IMPLEMENTATION_PLAN.md), historical commits `4e725c0843b4e349a5a6837b4a938d43f7777db3`, `be300d70ef9640ba7631e56c146cd0b81fc940e5`, and later revisions. | The files are explicitly superseded/cancelled, but still retain private endpoint and local-path details. Preserve the historical record; assess redaction before public sharing. | Both TWA documents now use example endpoints and carry a superseded note; earlier revisions remain in history (D1). |
+| `FIX` | Historical deployment host references | [`README.md`](../../../README.md), `DEPLOYMENT.md` (historical path; not present in the current tree), [`android/README.md`](../../../android/README.md), and related docs/test files; examples include commits `9464c146e5cbcc161a69c7f70771cd58673d4cba` and `4c007340bcdf7854102f9c41ec18d5a7b5ca5500`. | Reachable earlier blobs include private tailnet host references. Current [`README.md`](../../../README.md) no longer matches the host rule. The older commits remain in reachable history and were not rewritten. | No tracked text matches the host, address or workstation-path rules (`scripts/redaction.test.ts`, `scripts/notices.test.ts`); earlier revisions remain in history (D1). |
 | `PASS` | Private-address test fixtures | `bridge/*test.ts`, `cli/*test.ts`, `web/src/playground/fixtures.ts`, and related test files at boundary commit `2eff683d74511398923d4cb5a5ee7ac4f758ff32`. | Match contexts are test or fixture examples. No operational credential was identified. |
 
 All matched values, full matched lines, and transcript contents were kept out of this report and tool output. The absolute repository paths below identify reviewed files only.
@@ -108,6 +108,26 @@ The current [`android/app/src/main/res/raw/third_party_notices.txt`](../../../an
 
 Pinned-source license/vector checks used official-source artifacts and the vendor-brand review used official pages consulted on **2026-10-07**; exact URLs are recorded above. This table records provenance evidence and known gaps; it is not legal advice or a determination that any mark is cleared for distribution.
 
+## Publication ref set
+
+Recorded 2026-10-08 from a fresh `git clone --mirror` of `Buckeyes22/collie`.
+
+| Ref class | Count |
+| --- | --- |
+| `refs/heads/*` | 1 (`main`) |
+| `refs/tags/*` | 61 (upstream `v*` server releases) |
+| `refs/pull/*` | 1 (`refs/pull/1`, GitHub-owned, cannot be deleted) |
+
+Deleted from the remote on 2026-10-08, after the maintainer approved the list:
+`audit/content-redaction`, `commands/operator-rows`, `fix/110-partial-arrival`,
+`fix/122-public-url` and `feat/android-twa`.
+
+The published graph holds 1,593 commits. The focused indicator scanner ran over it, inside the bare mirror, and found 1,306 candidate blobs in 183 paths. By rule: 112 workstation-path, 50 tailnet-host, 18 private-IPv4, 2 bearer-value (test files) and 1 private-key-block (the unparseable test fixture classified above). Gitleaks 8.30.0, its archive checksum verified, scanned 1,587 commits with `--all --full-history -m`. It found one result: the `docs/install.md` multiplexer setting already classified as a documentation false positive.
+
+Author and committer addresses are upstream Collie's contributors plus this fork's maintainer. All of them were already public on upstream and on this fork before the review.
+
+**History decision (D1).** The repository has been public since the fork was created, so its earlier screenshots and operational metadata are already mirrored by forks, clones and caches. A rewrite cannot recall them and would break every fork and tag. They remain in history. The tip carries synthetic captures and example addresses, and the guards above keep new ones out.
+
 ## Validation
 
 - `python3 -m py_compile scripts/audit-android-history-assets.py` — passed.
@@ -117,4 +137,4 @@ Pinned-source license/vector checks used official-source artifacts and the vendo
 - `scripts/audit-android-history-assets.py` against `GIT_DIR=/tmp/collie-release-full-history.git` — completed against 69 refs and 1,466 commits; mirror is non-shallow.
 - Gitleaks 8.30.1 and 8.30.0 Linux x64 release archives — archive checksums verified before extracting their binaries; archive checksums and extracted binary digests were kept distinct. Both synthetic randomized GitHub PAT-shaped controls were detected. The v8.30.0 merge-inclusive history run and default-rules worktree run are detailed above; the mirror finding was the same documentation false positive. Interpret as coverage-limited given the official v8.30.1 false-negative report; no complete secret-detection claim is made.
 - Pinned Goose/OpenCode license terms — compared with packaged notice text after whitespace normalization; exact body matches.
-- No edits were made to Git history or screenshot assets. This history/assets review makes no independent claims about live provider delivery, device behavior, CI/release validation, APK publication, or SBOM results.
+- Git history was not rewritten. On 2026-10-08 the screenshot assets listed under Visual asset review were recaptured from a synthetic session. This history/assets review makes no independent claims about live provider delivery, device behavior, CI/release validation, APK publication, or SBOM results.
