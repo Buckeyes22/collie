@@ -84,6 +84,18 @@ class AgentIconsTest {
         }
     }
 
+    @Test
+    fun formerVendorMarkTilesAreLocallyAuthored() {
+        val names = listOf("claude", "codex", "pi", "omp", "antigravity")
+        val res = java.io.File("src/main/res/drawable")
+        names.forEach { name ->
+            val xml = res.resolve("ic_agent_$name.xml").readText()
+            assertTrue("$name tile must declare local authorship", xml.contains("Locally authored"))
+        }
+        // The OpenAI knot path that ic_agent_codex.xml carried must be gone.
+        assertFalse(res.resolve("ic_agent_codex.xml").readText().contains("M22.2819,9.8211"))
+    }
+
     private companion object {
         const val ANDROID_NAMESPACE = "http://schemas.android.com/apk/res/android"
     }
