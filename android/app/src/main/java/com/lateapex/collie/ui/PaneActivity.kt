@@ -431,12 +431,27 @@ class PaneActivity : AppCompatActivity() {
         binding.paneAgentIcon.setImageResource(agentIcon(agentName))
         binding.paneAgentIcon.contentDescription = getString(R.string.pane_agent_icon_description, agentName)
         binding.paneTitle.text = title
-        binding.paneCwd.text = DisplayText.abbreviateHome(cwd)
+        binding.paneCwd.text = cwd
+        applyHomeToHeader(cwd)
         binding.tabStrip.contentDescription = getString(R.string.pane_tab_strip_description, tabLabel, status)
         binding.paneStatus.text = PaneStatusVocabulary.label(resources, agentName, status)
         binding.paneStatus.setTextColor(PaneStatusVocabulary.colour(this, status))
         binding.paneStatusDot.isVisible = !agentName.equals("shell", ignoreCase = true)
         binding.paneStatusDot.backgroundTintList = ColorStateList.valueOf(PaneStatusVocabulary.colour(this, status))
+    }
+
+    /**
+     * The header first shows the raw path; once the server reports its home the path is shortened.
+     * A later render of the live pane replaces the text, so the shortened intent path applies only
+     * while the header still shows the path it was computed from.
+     */
+    private fun applyHomeToHeader(cwd: String) {
+        lifecycleScope.launch {
+            val result = repository.launchers(address.scope)
+            if (result is ApiResult.Success && !isFinishing && binding.paneCwd.text.toString() == cwd) {
+                binding.paneCwd.text = DisplayText.abbreviateHome(cwd, result.value.home)
+            }
+        }
     }
 
     /** Find is a full header-row takeover on the web route, not an extra row above the mirror. */

@@ -150,6 +150,7 @@ class SettingsActivityTest {
                 R.id.settings_behavior_preferences,
                 R.id.settings_server_controls,
                 R.id.settings_connection_card,
+                R.id.settings_licenses_button,
                 R.id.settings_build_stamp,
             ),
             (0 until content.childCount).map { content.getChildAt(it).id },

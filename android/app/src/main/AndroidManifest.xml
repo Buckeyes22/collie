@@ -40,6 +40,10 @@
             android:exported="false"
             android:parentActivityName=".ui.SettingsActivity" />
         <activity
+            android:name=".ui.LicensesActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.SettingsActivity" />
+        <activity
             android:name=".ui.PackActivity"
             android:exported="false"
             android:parentActivityName=".ui.SettingsActivity" />

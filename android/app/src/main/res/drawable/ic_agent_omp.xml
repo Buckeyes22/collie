@@ -4,8 +4,8 @@
     android:height="16dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
-    <path android:fillColor="#0F0A14" android:pathData="M0,0H24V24H0Z" />
-    <group android:scaleX="0.617" android:scaleY="0.617" android:translateX="4.6" android:translateY="4.6">
-        <path android:fillColor="#9B4DFF" android:pathData="M1.2,0H22.8V4.8H16.8V24H12V4.8H8.4V18H3.6V4.8H1.2Z" />
-    </group>
+    <path android:fillColor="#080A0F" android:pathData="M0,0H24V24H0Z" />
+    <!-- Locally authored M identification tile; this is not omp.sh's logo artwork. -->
+    <path android:fillColor="#FFFFFF" android:pathData="M4,20V4H7.5L12,10.5L16.5,4H20V20H17V9.5L12,16.5L7,9.5V20Z" />
+    <path android:fillColor="#B07CF0" android:pathData="M17,3H21V7H17Z" />
 </vector>

@@ -26,3 +26,9 @@ their own notices and reuse terms. The APK includes these notices as Android res
 The [Android developer guide](android/README.md#bundled-artwork-and-typeface) records the assets'
 sources and modifications. Brand marks identify agents supported by the server and do not imply
 endorsement. Preserve the notices when redistributing the app.
+
+## Agent tiles
+
+The PWA's agent tiles (`web/src/components/agent-icon-data.ts`) are upstream Collie's selection,
+with their recorded sources in that file's header. They identify the agent a pane runs and imply
+no endorsement. The Android app does not package the Claude, Codex, pi, OMP or Antigravity marks.

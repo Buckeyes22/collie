@@ -259,13 +259,11 @@ weight, 400, so Android UI styles must not request or synthesize heavier variant
 use in app chrome. Keep the two in sync rather than redrawing or tracing the brand mark
 independently.
 
-The native dashboard and pane header reuse the agent marks documented in
-`web/src/components/agent-icon-data.ts`: Claude and Codex/OpenAI through Simple Icons, OpenCode from
-the project's `favicon-v3.svg`, pi from pi.dev, and OMP from omp.sh. Their Android vectors adapt
-the recorded glyph geometry and colors; OMP's small native tile uses the official gradient's
-midpoint color. The Antigravity tile is an angular letter A and does not match the current
-official Google product icon. Its original source/authorship remains a provenance finding; do not
-describe it as a verified conversion of Google's mark.
+Claude, Codex, pi, OMP and Antigravity use locally authored letter or glyph tiles on a neutral
+square, like Kimi and Qwen. They identify the agent a pane runs and redistribute no vendor
+artwork, so they carry no third-party notice. The PWA's `web/src/components/agent-icon-data.ts`
+keeps upstream Collie's own tile selection; see ACKNOWLEDGMENTS.md. OpenCode's tile still adapts
+the project's `favicon-v3.svg`.
 
 Additional native agent tiles cover the rest of Herdr's detected integrations and locally installed
 agent CLIs. GitHub Copilot uses the 24×24 path distributed by

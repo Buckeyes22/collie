@@ -89,6 +89,9 @@ class SettingsActivity : AppCompatActivity() {
         binding.settingsConnectionBridgeValue.setText(R.string.settings_parity_bridge_connecting)
         binding.settingsBuildStamp.text = getString(R.string.settings_parity_build_stamp, BuildConfig.VERSION_NAME)
         binding.disconnectButton.setOnClickListener { confirmDisconnect() }
+        binding.settingsLicensesButton.setOnClickListener {
+            startActivity(Intent(this, LicensesActivity::class.java))
+        }
         binding.root.findViewById<View>(R.id.settings_diagnostics_send_button)?.setOnClickListener {
             confirmSendDiagnostics()
         }

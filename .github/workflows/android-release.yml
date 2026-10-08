@@ -29,6 +29,7 @@ jobs:
       - name: Validate native boundaries
         run: |
           bun run check:android
+          bun scripts/android-dependency-notices.ts --check
           cmp LICENSE android/app/src/main/res/raw/license_collie.txt
       - name: Test, lint, and build release
         working-directory: android

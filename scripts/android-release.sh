@@ -58,6 +58,7 @@ commit="$(git -C "$repo_root" rev-parse HEAD)"
 digest="$(sha256sum "$stage/$apk" | cut -d ' ' -f 1)"
 cp "$repo_root/LICENSE" "$stage/LICENSE.txt"
 cp "$repo_root/android/app/src/main/res/raw/third_party_notices.txt" "$stage/"
+cp "$repo_root/android/app/src/main/res/raw/dependency_notices.txt" "$stage/"
 cp "$repo_root"/android/app/src/main/res/raw/license_*.txt "$stage/"
 cp "$manifest" "$stage/"
 cat > "$stage/release-metadata.json" <<EOF
