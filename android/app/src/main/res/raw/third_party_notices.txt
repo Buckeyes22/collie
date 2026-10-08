@@ -60,6 +60,7 @@ recoloring, and placement on a Hermes identification tile.
 BLOCK GOOSE DESKTOP ICON
 Source: Block Goose, commit dce69009546ce5f20522d010fa3f1d57abbe2c3f
 https://github.com/block/goose/blob/dce69009546ce5f20522d010fa3f1d57abbe2c3f/ui/desktop/src/images/icon.svg
+Copyright 2024 Block, Inc.
 Licensed under Apache License 2.0.
 Modified here by extracting the silhouette and converting it to Android
 VectorDrawable, then translating, cropping, scaling, and recoloring it.
@@ -255,7 +256,7 @@ no NOTICE file. The complete Apache License 2.0 follows.
       same "printed page" as the copyright notice for easier
       identification within third-party archives.
 
-   Copyright [yyyy] [name of copyright owner]
+   Copyright 2024 Block, Inc.
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
