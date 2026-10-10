@@ -13,7 +13,30 @@ import org.robolectric.RobolectricTestRunner
 class AgentSemanticParserTest {
     @Test
     fun fixtureCorpusIsExhaustivelyAndExplicitlyClassified() {
+        // New slider/resume/trust recipes and clipped commands stay raw until native key recipes are proven.
         val expected = mapOf(
+            "omp--select-menu-other.txt" to null,
+            "omp--select-menu-noted.txt" to null,
+            "claude--trust-prompt-unnumbered.txt" to null,
+            "claude--menu-resume-picker--w80-second.txt" to null,
+            "claude--menu-resume-picker--w60-first.txt" to null,
+            "claude--menu-resume-picker--w120-third.txt" to null,
+            "claude--menu-resume-picker--w120-search.txt" to null,
+            "claude--menu-resume-picker--w120-first.txt" to null,
+            "claude--menu-resume-picker--w120-all-sanitized.txt" to null,
+            "claude--menu-effort-slider.txt" to null,
+            "claude--menu-effort-slider--w80.txt" to null,
+            "claude--menu-effort-slider--w80-ultracode.txt" to null,
+            "claude--menu-effort-slider--w80-low.txt" to null,
+            "claude--menu-effort-slider--w60.txt" to null,
+            "claude--menu-effort-slider--w60-ultracode.txt" to null,
+            "claude--menu-effort-slider--w60-low.txt" to null,
+            "claude--menu-effort-slider--w40.txt" to null,
+            "claude--menu-effort-slider--w40-ultracode.txt" to null,
+            "claude--menu-effort-slider--w40-low.txt" to null,
+            "claude--menu-effort-slider--w132.txt" to null,
+            "claude--menu-effort-slider--w120.txt" to null,
+            "claude--autocomplete-slash-clipped.txt" to null,
             "agy--permission-bash.txt" to SemanticKind.PROMPT_SELECT,
             "agy--permission-edit.txt" to SemanticKind.PROMPT_SELECT,
             "agy--plan-approval.txt" to SemanticKind.PROMPT_SELECT,
@@ -100,10 +123,11 @@ class AgentSemanticParserTest {
         val directory = fixtureDirectory()
         val relevant = directory.listFiles().orEmpty().map(File::getName).filter(::isRelevantFixture).sorted()
         assertEquals("A new interactive fixture must be explicitly classified here", expected.keys.sorted(), relevant)
+        val mismatches = mutableListOf<String>()
         expected.forEach { (name, kind) ->
             val agent = name.substringBefore("--")
             val surface = AgentSemanticParser.detect(agent, File(directory, name).readText(), 41)
-            assertEquals(name, kind, surface?.kind)
+            if (kind != surface?.kind) mismatches += "$name: expected $kind, actual ${surface?.kind}"
             if (name == "codex--ask-notes-focused.txt" || name.startsWith("grok--ask-multi") ||
                 name in CLAUDE_FOCUSED_PLAN_FIXTURES
             ) {
@@ -114,6 +138,7 @@ class AgentSemanticParserTest {
                 assertEquals("Antigravity alias: $name", kind, alias?.kind)
             }
         }
+        assertEquals("Native fixture classifications", emptyList<String>(), mismatches)
     }
 
     @Test

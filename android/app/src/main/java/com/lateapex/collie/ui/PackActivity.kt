@@ -23,8 +23,8 @@ import com.lateapex.collie.domain.Scope
 import com.lateapex.collie.network.AgentStatus
 import com.lateapex.collie.network.ApiFailure
 import com.lateapex.collie.network.ApiResult
-import com.lateapex.collie.network.PackMember
-import com.lateapex.collie.network.PackStatusResponse
+import com.lateapex.collie.network.CrewMember
+import com.lateapex.collie.network.CrewStatusResponse
 import com.lateapex.collie.network.SnapshotResponse
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -43,7 +43,7 @@ class PackActivity : AppCompatActivity() {
     private lateinit var emptyTitle: TextView
     private lateinit var emptyDescription: TextView
     private var pollJob: Job? = null
-    private var status: PackStatusResponse? = null
+    private var status: CrewStatusResponse? = null
     private var selectedMemberId: String? = null
     private var memberDialog: CollieBottomSheetDialog? = null
     private var memberDialogBody: LinearLayout? = null
@@ -115,7 +115,7 @@ class PackActivity : AppCompatActivity() {
     }
 
     private suspend fun load() = coroutineScope {
-        val packRequest = async { repository.pack() }
+        val packRequest = async { repository.crew() }
         val snapshotRequest = async { repository.snapshot() }
         when (val result = packRequest.await()) {
             is ApiResult.Success -> render(result.value, (snapshotRequest.await() as? ApiResult.Success)?.value)
@@ -127,12 +127,12 @@ class PackActivity : AppCompatActivity() {
         }
     }
 
-    private fun render(value: PackStatusResponse, snapshot: SnapshotResponse?) {
+    private fun render(value: CrewStatusResponse, snapshot: SnapshotResponse?) {
         status = value
         emptyCard.isVisible = false
         formation.isVisible = true
         summary.isVisible = true
-        val leadId = value.members.firstOrNull(PackMember::isLead)?.id.orEmpty()
+        val leadId = value.members.firstOrNull(CrewMember::isLead)?.id.orEmpty()
         val blocked = snapshot?.agents.orEmpty()
             .filter { it.status == AgentStatus.BLOCKED }
             .groupingBy { pane -> pane.host ?: leadId }
@@ -150,7 +150,7 @@ class PackActivity : AppCompatActivity() {
         val reachable = value.members.count { it.health == "reachable" }
         summary.text = getString(
             R.string.pack_formation_summary,
-            value.pack.name.ifBlank { value.pack.id },
+            value.crew.name.ifBlank { value.crew.id },
             resources.getQuantityString(R.plurals.pack_machines, value.members.size, value.members.size),
             reachable,
         )
@@ -224,7 +224,7 @@ class PackActivity : AppCompatActivity() {
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
     }
 
-    private fun showMember(member: PackMember) {
+    private fun showMember(member: CrewMember) {
         selectedMemberId = member.id
         val dialog = memberDialog ?: CollieBottomSheetDialog(this, member.name.ifBlank { member.id }).also { sheet ->
             memberDialogBody = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -241,7 +241,7 @@ class PackActivity : AppCompatActivity() {
         if (!dialog.isShowing) dialog.show()
     }
 
-    private fun refreshMemberSheet(member: PackMember) {
+    private fun refreshMemberSheet(member: CrewMember) {
         val currentStatus = status ?: return
         memberDialogBody?.apply {
             removeAllViews()
@@ -290,7 +290,7 @@ class PackActivity : AppCompatActivity() {
                 facts.addView(factRow(getString(R.string.pack_summary_deputy), deputyDetail))
                 facts.addView(factRow(
                     getString(R.string.pack_summary_secret),
-                    getString(R.string.pack_secret_value, currentStatus.pack.secretGeneration, timeAgo(currentStatus.pack.rotatedAt, currentStatus.ts)),
+                    getString(R.string.pack_secret_value, currentStatus.crew.secretGeneration, timeAgo(currentStatus.crew.rotatedAt, currentStatus.ts)),
                 ))
             }
             addView(facts)
@@ -331,7 +331,7 @@ class PackActivity : AppCompatActivity() {
             }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         }
 
-    private fun goTo(member: PackMember) {
+    private fun goTo(member: CrewMember) {
         repository.selectScope(Scope(host = if (member.isLead) null else member.id))
         memberDialog?.dismiss()
         startActivity(Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP))

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+import { hostFor } from "./host.ts";
 import {
   defaultSocketPath,
   envBool,
@@ -9,7 +10,10 @@ import {
   loadConfig,
   nonLoopbackBindRefusal,
   resolveBridgeHost,
+  resolveStateDir,
+  normaliseBasePath,
 } from "./config.ts";
+import { DEFAULT_MAX_UPLOAD_BYTES } from "./uploads.ts";
 
 // loadConfig is the deployment contract — env vars in, a resolved Config out. Pure (just reads
 // process.env + homedir), so we drive it by mutating the environment and restoring it after.
@@ -20,13 +24,16 @@ const KEYS = [
   "COLLIE_POLL_MS",
   "COLLIE_POLL_IDLE_MS",
   "COLLIE_NOTIFY_DELAY_MS",
+  "COLLIE_CACHE_WARN_SECONDS",
   "COLLIE_READ_LINES",
   "COLLIE_TRANSCRIPT",
   "COLLIE_TRANSCRIPT_ROOT",
+  "COLLIE_REDACT",
   "COLLIE_CODEX_ROOT",
   "COLLIE_PI_ROOT",
   "COLLIE_OPENCODE_ROOT",
   "COLLIE_GROK_ROOT",
+  "COLLIE_HERMES_ROOT",
   // Each harness's own home var participates in journal-root resolution, so the suite must own them
   // too — otherwise a developer with CODEX_HOME set gets different results than CI.
   "CODEX_HOME",
@@ -49,6 +56,8 @@ const KEYS = [
   "COLLIE_STATE_DIR",
   "COLLIE_MULTI_SESSION",
   "COLLIE_SKIP_SERVE",
+  "COLLIE_MAX_UPLOAD_MB",
+  "COLLIE_UPLOAD_EXTRA_TYPES",
   "HERDR_SOCKET_PATH",
   "HERDR_PLUGIN_STATE_DIR",
   "HERDR_PLUGIN_CONFIG_DIR",
@@ -85,10 +94,11 @@ describe("loadConfig", () => {
     expect(cfg.transcript).toBe(true);
     // One root by default, and it is a list of one rather than a special case (issue #92).
     expect(cfg.journalRoots.claude).toHaveLength(1);
-    expect(cfg.journalRoots.claude[0]).toEndWith("/.claude/projects");
+    expect(cfg.journalRoots.claude[0]).toBe(join(homedir(), ".claude", "projects"));
     // OpenCode keeps ONE sqlite database at the top of its XDG data dir — no per-session files.
     expect(cfg.journalRoots.opencode).toEqual([join(homedir(), ".local", "share", "opencode")]);
     expect(cfg.journalRoots.grok).toEqual([join(homedir(), ".grok", "sessions")]);
+    expect(cfg.journalRoots.hermes).toEqual([join(homedir(), ".hermes")]);
     expect(cfg.submitKeys).toEqual(["Enter"]);
     expect(cfg.trustedUser).toBe("");
     expect(cfg.trustedUserOptional).toBe(false);
@@ -158,6 +168,19 @@ describe("loadConfig", () => {
     expect(loadConfig().transcript).toBe(true);
   });
 
+  test("COLLIE_REDACT masks secrets by default and turns off with off/0/false/no", () => {
+    expect(loadConfig().redact).toBe(true);
+    for (const off of ["off", "0", "false", "no", "OFF"]) {
+      process.env.COLLIE_REDACT = off;
+      expect(loadConfig().redact).toBe(false);
+    }
+    process.env.COLLIE_REDACT = "on";
+    expect(loadConfig().redact).toBe(true);
+    // A typo must not quietly turn the mask off.
+    process.env.COLLIE_REDACT = "banana";
+    expect(loadConfig().redact).toBe(true);
+  });
+
   // COLLIE_TRANSCRIPT_ROOT predates the per-harness split and meant Claude's root — it keeps meaning
   // exactly that, so an existing deployment's env survives the change untouched.
   test("COLLIE_TRANSCRIPT_ROOT relocates the CLAUDE journal root", () => {
@@ -205,16 +228,21 @@ describe("loadConfig", () => {
     process.env.XDG_DATA_HOME = "/srv/share";
     process.env.GROK_HOME = "/srv/grok";
     const cfg = loadConfig();
-    expect(cfg.journalRoots.codex).toEqual(["/srv/codex/sessions"]);
-    expect(cfg.journalRoots.pi).toEqual(["/srv/pi/sessions"]);
-    expect(cfg.journalRoots.opencode).toEqual(["/srv/share/opencode"]);
-    expect(cfg.journalRoots.grok).toEqual(["/srv/grok/sessions"]);
+    expect(cfg.journalRoots.codex).toEqual([join("/srv/codex", "sessions")]);
+    expect(cfg.journalRoots.pi).toEqual([join("/srv/pi", "sessions")]);
+    expect(cfg.journalRoots.opencode).toEqual([join("/srv/share", "opencode")]);
+    expect(cfg.journalRoots.grok).toEqual([join("/srv/grok", "sessions")]);
   });
 
   test("an explicit COLLIE_* root beats the harness's home var", () => {
     process.env.CODEX_HOME = "/srv/codex";
     process.env.COLLIE_CODEX_ROOT = "/elsewhere/rollouts";
     expect(loadConfig().journalRoots.codex).toEqual(["/elsewhere/rollouts"]);
+  });
+
+  test("COLLIE_HERMES_ROOT relocates Hermes state.db", () => {
+    process.env.COLLIE_HERMES_ROOT = "/srv/hermes";
+    expect(loadConfig().journalRoots.hermes).toEqual(["/srv/hermes"]);
   });
 
   // The operator's rows sit beside their .env, and the launcher hands us that dir precisely so the
@@ -273,6 +301,41 @@ describe("loadConfig", () => {
     expect(loadConfig().notifyDelayMs).toBe(0);
   });
 
+  test("COLLIE_CACHE_WARN_SECONDS defaults to 300 and is bounded at 30 and 3600", () => {
+    // The push window for a watched pane (ADR 0042), and NOT the quarter-of-the-TTL threshold that
+    // turns the countdown chip amber. Two numbers with two jobs, so this one has its own bounds: a
+    // window shorter than one idle poll is noise, and an hour is past the longest TTL any rule claims.
+    expect(loadConfig().cacheWarnSeconds).toBe(300);
+    process.env.COLLIE_CACHE_WARN_SECONDS = "600";
+    expect(loadConfig().cacheWarnSeconds).toBe(600);
+    process.env.COLLIE_CACHE_WARN_SECONDS = "29";
+    expect(loadConfig().cacheWarnSeconds).toBe(300);
+    process.env.COLLIE_CACHE_WARN_SECONDS = "3601";
+    expect(loadConfig().cacheWarnSeconds).toBe(300);
+    process.env.COLLIE_CACHE_WARN_SECONDS = "five minutes";
+    expect(loadConfig().cacheWarnSeconds).toBe(300);
+  });
+
+  test("uses the default upload cap when unset, and resolves COLLIE_MAX_UPLOAD_MB to bytes", () => {
+    expect(loadConfig().maxUploadBytes).toBe(DEFAULT_MAX_UPLOAD_BYTES);
+    process.env.COLLIE_MAX_UPLOAD_MB = "5";
+    expect(loadConfig().maxUploadBytes).toBe(5 * 1024 * 1024);
+  });
+
+  test("an out-of-range or non-integer COLLIE_MAX_UPLOAD_MB falls back to the default", () => {
+    process.env.COLLIE_MAX_UPLOAD_MB = "0";
+    expect(loadConfig().maxUploadBytes).toBe(DEFAULT_MAX_UPLOAD_BYTES);
+    process.env.COLLIE_MAX_UPLOAD_MB = "9999";
+    expect(loadConfig().maxUploadBytes).toBe(DEFAULT_MAX_UPLOAD_BYTES);
+    process.env.COLLIE_MAX_UPLOAD_MB = "not-a-number";
+    expect(loadConfig().maxUploadBytes).toBe(DEFAULT_MAX_UPLOAD_BYTES);
+  });
+
+  test("COLLIE_UPLOAD_EXTRA_TYPES normalises entries: lowercased, leading dot forgiven, invalid dropped, deduped", () => {
+    process.env.COLLIE_UPLOAD_EXTRA_TYPES = " .RB, ex ,bad name,rb";
+    expect(loadConfig().uploadExtraTypes).toEqual(["rb", "ex"]);
+  });
+
   test("reads the public-hosts allowlist, trimming and dropping blanks", () => {
     process.env.COLLIE_PUBLIC_HOSTS = " collie.example.ts.net , collie.example.com:8443 ,";
     expect(loadConfig().publicHosts).toEqual([
@@ -301,7 +364,7 @@ describe("loadConfig", () => {
 
   test("carries a non-loopback bind and its escape hatch without deciding either", () => {
     process.env.COLLIE_HOST = "0.0.0.0";
-    // loadConfig REPORTS the bind; it does not refuse it. The refusal needs the pack mode, which is
+    // loadConfig REPORTS the bind; it does not refuse it. The refusal needs the crew mode, which is
     // resolved after this runs (bridge/index.ts) — see nonLoopbackBindRefusal below.
     expect(loadConfig().host).toBe("0.0.0.0");
     expect(loadConfig().allowNonLoopbackBind).toBe(false);
@@ -374,20 +437,35 @@ describe("isLoopbackBindHost", () => {
 
 describe("defaultSocketPath", () => {
   test("unix default lives under ~/.config/herdr", () => {
-    expect(defaultSocketPath("linux", {}, "/home/u")).toBe(join("/home/u", ".config", "herdr", "herdr.sock"));
-    expect(defaultSocketPath("darwin", {}, "/Users/u")).toBe(join("/Users/u", ".config", "herdr", "herdr.sock"));
+    expect(defaultSocketPath(hostFor("linux"), {}, "/home/u")).toBe("/home/u/.config/herdr/herdr.sock");
+    expect(defaultSocketPath(hostFor("darwin"), {}, "/Users/u")).toBe("/Users/u/.config/herdr/herdr.sock");
   });
 
   test("win32 default honours APPDATA", () => {
-    expect(defaultSocketPath("win32", { APPDATA: "C:\\Users\\u\\AppData\\Roaming" }, "C:\\Users\\u")).toBe(
-      join("C:\\Users\\u\\AppData\\Roaming", "herdr", "herdr.sock"),
+    expect(defaultSocketPath(hostFor("win32"), { APPDATA: "C:\\Users\\u\\AppData\\Roaming" }, "C:\\Users\\u")).toBe(
+      "C:\\Users\\u\\AppData\\Roaming\\herdr\\herdr.sock",
     );
   });
 
   test("win32 falls back to <home>/AppData/Roaming when APPDATA is unset", () => {
-    expect(defaultSocketPath("win32", {}, "C:\\Users\\u")).toBe(
-      join("C:\\Users\\u", "AppData", "Roaming", "herdr", "herdr.sock"),
+    expect(defaultSocketPath(hostFor("win32"), {}, "C:\\Users\\u")).toBe(
+      "C:\\Users\\u\\AppData\\Roaming\\herdr\\herdr.sock",
     );
+  });
+});
+
+// #226: a Herdr plugin action carries HERDR_PLUGIN_STATE_DIR and the service does not, so honouring it
+// sent `push-test` (and every other state-reading action) to a directory the bridge never uses.
+describe("resolveStateDir", () => {
+  test("ignores the state dir Herdr injects into a plugin action", () => {
+    expect(resolveStateDir({ HERDR_PLUGIN_STATE_DIR: "/h/.local/state/herdr/plugins/herdr.collie" }, "/h")).toBe(
+      join("/h", ".local", "state", "collie"),
+    );
+  });
+
+  test("COLLIE_STATE_DIR still moves it, with or without Herdr's variable beside it", () => {
+    expect(resolveStateDir({ COLLIE_STATE_DIR: "/s" }, "/h")).toBe("/s");
+    expect(resolveStateDir({ COLLIE_STATE_DIR: "/s", HERDR_PLUGIN_STATE_DIR: "/p" }, "/h")).toBe("/s");
   });
 });
 
@@ -407,7 +485,7 @@ describe("resolveBridgeHost", () => {
   });
 });
 
-// Exported so mode-scoped config (bridge/pack/config.ts) parses its env in this exact style instead
+// Exported so mode-scoped config (bridge/crew/config.ts) parses its env in this exact style instead
 // of growing a second reader. The env source is injectable, which is the only new thing here — the
 // truth table below is the one loadConfig has always used.
 describe("envBool", () => {
@@ -431,5 +509,32 @@ describe("envBool", () => {
   test("defaults to process.env when no source is given", () => {
     process.env.COLLIE_MULTI_SESSION = "off";
     expect(envBool("COLLIE_MULTI_SESSION", true)).toBe(false);
+  });
+});
+
+// ADR 0052: the mount is a runtime setting, and this is its one reader.
+describe("normaliseBasePath — COLLIE_BASE_PATH as the bridge mounts it", () => {
+  test("the root for unset, empty and a bare slash", () => {
+    for (const v of [undefined, "", "  ", "/", "//"]) expect(normaliseBasePath(v)).toBe("/");
+  });
+
+  test("one leading and one trailing slash around the given segments", () => {
+    for (const v of ["collie", "/collie", "collie/", "/collie/", "//collie//", " /collie "]) {
+      expect(normaliseBasePath(v)).toBe("/collie/");
+    }
+    expect(normaliseBasePath("apps/collie")).toBe("/apps/collie/");
+  });
+
+  test("refuses what a URL path cannot carry, and answers the root", () => {
+    for (const v of ["..", "/a/../b", "./collie", "a b", "a?b", "a#b", "a\\b"]) {
+      expect(normaliseBasePath(v)).toBe("/");
+    }
+  });
+
+  test("loadConfig carries it", () => {
+    process.env.COLLIE_BASE_PATH = "collie";
+    expect(loadConfig().basePath).toBe("/collie/");
+    delete process.env.COLLIE_BASE_PATH;
+    expect(loadConfig().basePath).toBe("/");
   });
 });

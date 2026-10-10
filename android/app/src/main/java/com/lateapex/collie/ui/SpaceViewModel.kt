@@ -143,7 +143,7 @@ internal class SpaceViewModel(
     }
 
     private suspend fun loadConfig() {
-        val result = repository.config()
+        val result = repository.config(scope)
         if (result is ApiResult.Success) {
             mutableState.value = mutableState.value.copy(mux = result.value.mux)
         }
@@ -180,7 +180,7 @@ internal class SpaceViewModel(
                 }
                 is ApiResult.Failure -> {
                     pollingBackoff.failed()
-                    if (result.error is ApiFailure.Http && result.error.message == "device not paired") {
+                    if (result.error is ApiFailure.Http && result.error.message in setOf("device not paired", "device expired")) {
                         repository.demoteToReadOnly()
                     }
                     mutableState.value = mutableState.value.copy(

@@ -68,8 +68,8 @@
     <string name="updates_native_log_hide">Hide log tail</string>
     <string name="updates_native_retry">Retry</string>
     <string name="updates_native_action">Update to %1$s</string>
-    <string name="updates_native_action_pack">Update pack to %1$s</string>
-    <string name="updates_native_retry_pack">Retry pack update</string>
+    <string name="updates_native_action_pack">Update crew to %1$s</string>
+    <string name="updates_native_retry_pack">Retry crew update</string>
     <string name="updates_native_major_placeholder">Major server update</string>
     <string name="updates_native_major_action">Cross to %1$s</string>
     <string name="updates_native_starting">Starting…</string>
@@ -79,10 +79,10 @@
     <string name="updates_native_confirm_title">Update to %1$s?</string>
     <string name="updates_native_confirm_body">Your terminal session stays alive. The phone view drops for up to 30 seconds.</string>
     <string name="updates_native_confirm_action">Yes, update</string>
-    <string name="updates_native_pack_confirm_title">Update the pack to %1$s?</string>
+    <string name="updates_native_pack_confirm_title">Update the crew to %1$s?</string>
     <string name="updates_native_pack_confirm_body">This machine goes first. Each peer then levels itself to the same release, checks its own health and rolls back on its own if it fails.</string>
-    <string name="updates_native_pack_confirm_action">Yes, update the pack</string>
-    <string name="updates_native_retry_pack_confirm_title">Retry the pack update?</string>
+    <string name="updates_native_pack_confirm_action">Yes, update the crew</string>
+    <string name="updates_native_retry_pack_confirm_title">Retry the crew update?</string>
     <string name="updates_native_retry_pack_confirm_body">This machine is already current, so only the peers run. Each one gets one more attempt.</string>
     <string name="updates_native_retry_pack_confirm_action">Yes, retry</string>
     <string name="updates_native_major_confirm_title">Cross the major to %1$s?</string>

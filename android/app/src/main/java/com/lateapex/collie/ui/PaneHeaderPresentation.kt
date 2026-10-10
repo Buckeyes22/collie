@@ -14,7 +14,7 @@ internal data class PaneHeaderPresentation(
 
 internal object PaneHeaderPresenter {
     fun present(pane: PaneSummary, tabPaneCount: Int): PaneHeaderPresentation {
-        val ownName = pane.paneLabel ?: pane.sessionName
+        val ownName = pane.paneLabel ?: pane.sessionName ?: pane.soleTabName
         val fallback = buildString {
             append(pane.workspaceLabel.ifBlank { pane.workspaceId })
             pane.tabLabel?.takeIf(String::isNotBlank)?.let { append(" › ").append(it) }

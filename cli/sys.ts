@@ -1,19 +1,31 @@
 import { spawn } from "node:child_process";
+import { githubHeaders, type GithubCredential } from "../bridge/update.ts";
 import {
+  accessSync,
+  closeSync,
+  constants,
   existsSync,
   mkdirSync,
   openSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
+  lstatSync,
+  mkdtempSync,
+  realpathSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
+  writeSync,
 } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { connect } from "node:net";
+import { HOST, type Host } from "../bridge/host.ts";
+import { createPrivateDir } from "../bridge/owner-only.ts";
 
 import type { Environment } from "./context.ts";
-import { findTool } from "./tools.ts";
+import { envKey, findTool } from "./tools.ts";
 
 // The two seams every lifecycle verb reaches the outside world through: running a system tool, and
 // touching the filesystem. Both are interfaces so `bun test` can drive `start`/`stop`/`status`
@@ -30,9 +42,47 @@ export interface ExecResult {
   stderr: string;
   /** False when the tool is not installed anywhere we look — distinct from "ran and failed". */
   found: boolean;
+  /**
+   * The signal that ended the child, when one did and the bound had not expired (`SIGKILL` from a
+   * code-signing refusal, say). Absent otherwise. `code` still reads 124 then, as it always has.
+   */
+  signal?: string;
+}
+
+/**
+ * Per-call changes to a child's environment that WIN over the {@link Exec}'s own: a string sets the
+ * name, `null` removes it. See {@link Exec.capture} for where this sits in the precedence.
+ */
+export type EnvOverride = Readonly<Record<string, string | null>>;
+
+/**
+ * `env` with {@link EnvOverride} applied: `null` deletes, a string sets. `env` itself when there is
+ * nothing to apply, so the usual call allocates nothing. Exported for `cli/sys.test.ts`.
+ */
+export function withEnvOverride(env: Environment, over: EnvOverride | undefined): Environment {
+  if (over === undefined) return env;
+  const names = Object.keys(over);
+  if (names.length === 0) return env;
+  const out: Environment = { ...env };
+  for (const name of names) {
+    const value = over[name];
+    if (value === null || value === undefined) delete out[name];
+    else out[name] = value;
+  }
+  return out;
 }
 
 const NOT_FOUND: ExecResult = { code: 127, stdout: "", stderr: "", found: false };
+
+/** What a bounded, logged client call answered. See {@link Exec.runLogged}. */
+export interface LoggedResult {
+  /** Exit code, or 124 on expiry — the coreutils `timeout` convention {@link Exec.capture} keeps. */
+  code: number;
+  /** True when the bound expired and the child was killed: a fact no exit code can carry. */
+  timedOut: boolean;
+  /** stderr as well as logged, because the caller has to say WHY in one line of a run record. */
+  stderr: string;
+}
 
 export interface Exec {
   /** Absolute path of `tool`, or null when it isn't installed. */
@@ -41,42 +91,170 @@ export interface Exec {
    * Run `tool`, capturing both streams. `timeoutMs` bounds the wall clock: on expiry the child is
    * killed and the result reads as an ordinary failure (code 124, the coreutils `timeout`
    * convention) — a caller probing a binary it does not yet trust must never hang with it.
+   *
+   * THE CHILD'S ENVIRONMENT, lowest to highest precedence, for this one call only (the process's
+   * real environment is never touched):
+   *
+   *   1. `envAdd`, a default. It layers UNDER this `Exec`'s own environment, so a name already set
+   *      there is never overridden. It exists for a probe that needs a plausible value for a name
+   *      the caller's env may simply lack (`systemdUserReachable` in `cli/lifecycle.ts`,
+   *      `XDG_RUNTIME_DIR`).
+   *   2. This `Exec`'s own environment.
+   *   3. `envOverride`, which WINS: a string replaces the name, `null` removes it. It exists for a
+   *      child that must not see what this process inherited, the case being ANOTHER install's
+   *      `collie`. That binary resolves its own root from `COLLIE_PLUGIN_ROOT` first
+   *      (`bridge/root.ts`), so a candidate smoke-tested under this process's value reports this
+   *      process's version, not its own (#283).
+   *   4. Then the git relocators are filtered out, whatever 1 to 3 said ({@link withoutGitRelocators}).
    */
-  capture(tool: string, args: readonly string[], timeoutMs?: number): ExecResult;
+  capture(
+    tool: string,
+    args: readonly string[],
+    timeoutMs?: number,
+    envAdd?: Readonly<Record<string, string>>,
+    envOverride?: EnvOverride,
+  ): ExecResult;
   /** Run `tool` with our own stdio — for `journalctl`, whose output IS the result. */
   inherit(tool: string, args: readonly string[]): ExecResult;
   /**
    * Run `tool` in `cwd` with our own stdio — the build steps, whose output IS the operator's
    * progress report and whose working directory is load-bearing (the shell's `( cd … && bun … )`:
    * the root and `web/` trees are installed, typechecked and built separately).
+   *
+   * `pathPrefix`, when given, is prepended to the CHILD's `PATH`. A tool resolved to an absolute
+   * path off this PATH ({@link resolveTool}) still has children that look it up by NAME — `bun
+   * cli/main.ts build` spawns `bun install` and Vite — so running the absolute path alone would
+   * hand the grandchild the very lookup failure the resolution just repaired. `scripts/collie-ctl.sh`
+   * carries the same prepend for the same reason. Already-present directories are not re-added.
+   *
+   * `envOverride` wins over this `Exec`'s own environment exactly as it does for
+   * {@link Exec.capture}, and the git relocators stay filtered after it.
    */
-  runIn(tool: string, args: readonly string[], cwd: string): ExecResult;
+  runIn(tool: string, args: readonly string[], cwd: string, pathPrefix?: string, envOverride?: EnvOverride): ExecResult;
+  /**
+   * Run `command` in `cwd` synchronously with a bound, appending both streams to `logPath`.
+   *
+   * For a client that ANSWERS. `systemd-run` without `--wait` returns as soon as the user manager
+   * has accepted the job and started the unit, so its exit code IS the manager's answer to "does
+   * the runner exist yet" — the question {@link Exec.spawnDetached} cannot ask, and the reason the
+   * handoff in `cli/update.ts` waits for this tier instead of firing and hoping.
+   *
+   * Neither existing seam does this job: {@link Exec.capture} takes no `cwd` and no `env` and
+   * writes no log, and {@link Exec.inherit} would put the client's complaint on a terminal nobody
+   * is watching instead of in the file the operator is told to read.
+   */
+  runLogged(
+    command: readonly string[],
+    opts: { cwd: string; env: Record<string, string>; logPath: string; timeoutMs: number },
+  ): LoggedResult;
   /**
    * Start the unsupervised bridge: detached, both streams appended to `logPath`, and unref'd so
    * this process can exit while it keeps running. Returns its pid, or null if it never started.
+   *
+   * `detached: true` gives the child a new SESSION, not a new cgroup. So a caller that is the main
+   * process of a `.service` takes this child down with it the moment it exits: the default
+   * `KillMode=control-group` kills whatever is left in the unit's cgroup, the child included, and
+   * any client the child was in the middle of running. A caller that needs the child to outlive it
+   * has to escape that cgroup through a manager ({@link Exec.runLogged}), or not be a service's
+   * main process.
    */
   spawnDetached(
     command: readonly string[],
     opts: { cwd: string; env: Record<string, string>; logPath: string },
   ): number | null;
-  /** `ps -p <pid> -o command=` — the process's command line, or null if there is no such process. */
-  processCommand(pid: number): string | null;
+  /**
+   * `ps -p <pid> -o command=` (`Win32_Process` on Windows) — the process's command line, or null if
+   * there is no such process.
+   *
+   * `timeoutMs` bounds the Windows query only, where it has to start PowerShell. It defaults to
+   * {@link PROCESS_QUERY_TIMEOUT_MS}, short because the synchronous liveness probes under the update
+   * lock and a crew run call this and must not stall; a caller that can afford to wait for a slow
+   * PowerShell start asks for more. A query past its bound reads as null.
+   */
+  processCommand(pid: number, timeoutMs?: number): string | null;
+  /**
+   * {@link Exec.processCommand} with its three answers kept apart: the process runs (with its
+   * command line, `""` when the table does not show it), there is no such process, or the table
+   * could not be read in time. The Windows restart needs the third: a slow PowerShell is neither a
+   * process that is gone nor a stranger, and each of the three gets its own sentence.
+   */
+  processLookup(pid: number, timeoutMs?: number): ProcessLookup;
+  /**
+   * Every running process whose executable is one of `names` (`collie.exe`, `bun.exe`), with its
+   * command line, in one query: `Win32_Process` on Windows, `ps` elsewhere. `null` when the process
+   * table cannot be read at all. Added for the Task Scheduler tier's `stop`, whose last step makes
+   * sure no launcher or bridge of this checkout is left (cli/lifecycle.ts).
+   */
+  listProcesses(names: readonly string[], timeoutMs?: number): ProcessRow[] | null;
   kill(pid: number): void;
 }
 
+/** {@link Exec.processLookup}'s answer. */
+export type ProcessLookup =
+  | { readonly kind: "running"; readonly command: string }
+  | { readonly kind: "gone" }
+  | { readonly kind: "unknown"; readonly why: string };
+
+/** One row of {@link Exec.listProcesses}. */
+export interface ProcessRow {
+  readonly pid: number;
+  readonly command: string;
+}
+
+/** `<pid> <command line>` lines, as both process-table queries print them. */
+export function parseProcessRows(text: string): ProcessRow[] {
+  const rows: ProcessRow[] = [];
+  for (const line of text.split(/\r?\n/)) {
+    const m = /^\s*(\d+) (.+)$/.exec(line);
+    if (m !== null) rows.push({ pid: Number(m[1]), command: m[2]!.trim() });
+  }
+  return rows;
+}
+
+/** The executable's own name, without folders or `.exe`, folded: what `names` is matched against off Windows. */
+const stem = (name: string): string => (name.split(/[\\/]/).at(-1) ?? name).replace(/\.exe$/i, "").toLowerCase();
+
 export interface Files {
   exists(p: string): boolean;
+  /**
+   * May this process EXECUTE `p` — an `access(p, X_OK)` probe that a directory never passes.
+   *
+   * Separate from {@link Files.exists} because the two shell copies of the tool lookup ask `[ -x ]`,
+   * and `[ -e ]` would answer yes for things that cannot be run: a half-written download, a
+   * `~/.bun/bin/bun` left behind as an empty file, a directory that happens to carry the name.
+   * {@link resolveTool} must reject those exactly where the shim rejects them, or the preflight and
+   * the update would name a Bun that dies with EACCES.
+   *
+   * The directory case is explicit because search permission on a directory IS `X_OK`: without the
+   * `stat(2)`, a directory named `bun` would resolve as the tool.
+   */
+  executable(p: string): boolean;
   /** File contents, or null when missing/unreadable. */
   read(p: string): string | null;
+  /**
+   * The entry's own type, without following a symlink, or null when it cannot be read.
+   *
+   * Build scratch setup uses this rather than `stat`: the checkout's `bin` must itself be a real
+   * directory, never a link or another redirected object.
+   */
+  entryType(p: string): "file" | "directory" | "symlink" | "other" | null;
   /**
    * Entry names directly under `p`, or `[]` when it is not a readable directory. The only directory
    * listing any verb does: `join` clears the herd notification slots of the sessions this machine
    * runs, and those are discovered from the herdr config root exactly as the bridge discovers them.
    */
   list(p: string): string[];
+  /** Entry names directly under `p`, throwing when the directory cannot be read. */
+  listStrict(p: string): string[];
+  /** The canonical absolute path after resolving every symlink, or null when it cannot be read. */
+  realpath(p: string): string | null;
+  /** Atomically create and return a new directory whose path starts with `prefix`. */
+  mkdtemp(prefix: string): string;
   /** Write `text`, creating the parent directory. `mode` is applied to the file. */
   write(p: string, text: string, mode?: number): void;
   mkdirp(p: string, mode?: number): void;
+  /** The sha256 of a file's bytes, in hex, or null when it cannot be read. */
+  digest(p: string): string | null;
   /** Remove a file. Missing is success — this is `rm -f`. */
   remove(p: string): void;
   /** Remove a tree. Missing is success — this is `rm -rf`. */
@@ -87,6 +265,37 @@ export interface Files {
    * how `build` can replace `bin/collie` while a supervised process is executing the old one.
    */
   rename(from: string, to: string): void;
+  /**
+   * Who OWNS `p` — the uid off `stat(2)`, or null when it cannot be read at all.
+   *
+   * One of the three facts a packaged install is recognised by, and the one that catches a tree
+   * unpacked as root inside `$HOME`. It is ownership, never writability: `access(p, W_OK)` is always
+   * true for uid 0, so a bridge running as root would otherwise see a package-manager-owned tree as its own.
+   */
+  ownerUid(p: string): number | null;
+  /**
+   * May this process write into `p` — an `access(p, W_OK)` probe, or null when it cannot be answered.
+   *
+   * Null is not "no". A path that cannot be stat'ed at all says nothing about who may write it, and
+   * {@link Files.ownerUid} is the fact that answers such a tree. The caller turns null into the open
+   * direction (not read-only), because claiming a read-only root from a failed probe would refuse
+   * updates on an install nobody could describe.
+   */
+  writable(p: string): boolean | null;
+  /**
+   * `stat(2)`'s two facts about `p` — the inode and the last modification, in epoch ms — or null
+   * when it cannot be read at all. Symlinks are FOLLOWED, which is what makes it answer about
+   * `/proc/<pid>/exe`: the inode it reports there is the executable the process is running, even
+   * after the file behind it has been unlinked.
+   *
+   * Added for the restart-pending check (`cli/doctor.ts`). A package manager replaces `bin/collie`
+   * and restarts nothing, so the running process and the installed file are two different inodes at
+   * one path — and on a rebuild of the same version, the inode is the only thing that says so.
+   */
+  stat(p: string): { inode: number; mtimeMs: number } | null;
+  /** Where a symlink points, unresolved, or null when `p` is not one. `/proc/<pid>/exe` answers with
+   *  a path carrying ` (deleted)` when the executable behind it is gone — the whole signal. */
+  readlink(p: string): string | null;
 }
 
 /**
@@ -118,9 +327,17 @@ export type NetDownload =
  * `download` hashes while it writes rather than handing bytes back, so a ~100 MB artifact never
  * exists in memory and the verification in `cli/update.ts` stays a string comparison.
  */
+/**
+ * Options for one request. `redirect: "error"` is what a request to a rehearsal mirror carries
+ * (`MIRROR_FETCH` in `bridge/update.ts`); absent, the request is the one it always was.
+ */
+export interface NetOptions {
+  readonly redirect?: "error";
+}
+
 export interface Net {
-  getJson(url: string): Promise<NetJson>;
-  download(url: string, dest: string): Promise<NetDownload>;
+  getJson(url: string, opts?: NetOptions): Promise<NetJson>;
+  download(url: string, dest: string, opts?: NetOptions): Promise<NetDownload>;
   /**
    * `GET url`, answered **whatever the status is**, with one response header read off it.
    *
@@ -142,73 +359,178 @@ const NET_TIMEOUT_MS = 20_000;
  */
 const netFailure = (message: string): NetFailure => ({ status: null, message });
 
-export const realNet: Net = {
-  async getJson(url) {
-    try {
-      const res = await fetch(url, {
-        headers: { accept: "application/json", "user-agent": "collie-update" },
-        signal: AbortSignal.timeout(NET_TIMEOUT_MS),
-      });
-      if (!res.ok) return { ok: false, failure: { status: res.status, message: `HTTP ${res.status}` } };
-      return { ok: true, value: await res.json() };
-    } catch (err) {
-      return { ok: false, failure: netFailure(err instanceof Error ? err.message : String(err)) };
-    }
-  },
-  async probe(url, header) {
-    try {
-      const res = await fetch(url, {
-        headers: { accept: "application/json", "user-agent": "collie-update" },
-        signal: AbortSignal.timeout(NET_TIMEOUT_MS),
-      });
-      // The body is best effort and the status is not: a door that answered at all is a door that is
-      // up, and an unreadable body is one field missing from an answer that already arrived.
-      const body = await res.json().catch(() => null);
-      return { ok: true, status: res.status, header: res.headers.get(header), body };
-    } catch (err) {
-      return { ok: false, failure: netFailure(err instanceof Error ? err.message : String(err)) };
-    }
-  },
-  async download(url, dest) {
-    try {
-      const res = await fetch(url, {
-        headers: { "user-agent": "collie-update" },
-        signal: AbortSignal.timeout(NET_TIMEOUT_MS),
-      });
-      if (!res.ok) return { ok: false, failure: { status: res.status, message: `HTTP ${res.status}` } };
-      if (res.body === null) return { ok: false, failure: { status: res.status, message: "empty response" } };
-      mkdirSync(dirname(dest), { recursive: true });
-      const hasher = new Bun.CryptoHasher("sha256");
-      const sink = Bun.file(dest).writer();
-      let size = 0;
-      for await (const chunk of res.body) {
-        hasher.update(chunk);
-        size += chunk.byteLength;
-        sink.write(chunk);
+/**
+ * The real {@link Net}. `credential` is the operator's GitHub token when the env holds one (#254),
+ * and `githubHeaders` sends it to `api.github.com` alone: `download` and `probe` never carry it,
+ * because neither ever addresses the API.
+ */
+export function realNet(credential: GithubCredential | null = null): Net {
+  return {
+    async getJson(url, opts) {
+      try {
+        const init: RequestInit = {
+          headers: githubHeaders(url, credential, { accept: "application/json", "user-agent": "collie-update" }),
+          signal: AbortSignal.timeout(NET_TIMEOUT_MS),
+        };
+        if (opts?.redirect !== undefined) init.redirect = opts.redirect;
+        const res = await fetch(url, init);
+        if (!res.ok) return { ok: false, failure: { status: res.status, message: `HTTP ${res.status}` } };
+        return { ok: true, value: await res.json() };
+      } catch (err) {
+        return { ok: false, failure: netFailure(err instanceof Error ? err.message : String(err)) };
       }
-      await sink.end();
-      return { ok: true, sha256: hasher.digest("hex"), size };
-    } catch (err) {
-      return { ok: false, failure: netFailure(err instanceof Error ? err.message : String(err)) };
-    }
-  },
-};
+    },
+    async probe(url, header) {
+      try {
+        const res = await fetch(url, {
+          headers: { accept: "application/json", "user-agent": "collie-update" },
+          signal: AbortSignal.timeout(NET_TIMEOUT_MS),
+        });
+        // The body is best effort and the status is not: a door that answered at all is a door that is
+        // up, and an unreadable body is one field missing from an answer that already arrived.
+        const body = await res.json().catch(() => null);
+        return { ok: true, status: res.status, header: res.headers.get(header), body };
+      } catch (err) {
+        return { ok: false, failure: netFailure(err instanceof Error ? err.message : String(err)) };
+      }
+    },
+    async download(url, dest, opts) {
+      try {
+        const init: RequestInit = { headers: { "user-agent": "collie-update" }, signal: AbortSignal.timeout(NET_TIMEOUT_MS) };
+        if (opts?.redirect !== undefined) init.redirect = opts.redirect;
+        const res = await fetch(url, init);
+        if (!res.ok) return { ok: false, failure: { status: res.status, message: `HTTP ${res.status}` } };
+        if (res.body === null) return { ok: false, failure: { status: res.status, message: "empty response" } };
+        mkdirSync(dirname(dest), { recursive: true });
+        const hasher = new Bun.CryptoHasher("sha256");
+        const sink = Bun.file(dest).writer();
+        let size = 0;
+        for await (const chunk of res.body) {
+          hasher.update(chunk);
+          size += chunk.byteLength;
+          sink.write(chunk);
+        }
+        await sink.end();
+        return { ok: true, sha256: hasher.digest("hex"), size };
+      } catch (err) {
+        return { ok: false, failure: netFailure(err instanceof Error ? err.message : String(err)) };
+      }
+    },
+  };
+}
 
-export function realExec(env: Environment, home: string): Exec {
+/**
+ * `env` with `dir` at the FRONT of `PATH`, or `env` unchanged when there is nothing to add.
+ *
+ * The front, not the back: the directory is being added because it holds the tool this process
+ * already resolved, so it has to outrank anything else on the PATH that answers the same name.
+ *
+ * Mirrors the shim's `case ":${PATH}:" in *":${BUN_DIR}:"*) ;;` — a directory already on the PATH is
+ * left where it is rather than duplicated onto the front.
+ *
+ * Windows is the same rule in its own spelling: the variable is usually keyed `Path` in a copied
+ * environment and is `;`-separated. Reading `env.PATH` there finds nothing, so the child's PATH was
+ * the directory ALONE — the resolved tool still ran, and every other name it shelled out to (`bash`
+ * for the version gate first) was "not found". The value is written back under the key it was read
+ * from, so the child never carries both `Path` and `PATH`.
+ *
+ * Exported for `cli/sys.test.ts` only. A `runIn` runs its child with inherited stdio, so the env it
+ * built is not observable from the outside, and this is the half worth pinning.
+ */
+export function withPathPrefix(
+  env: Environment,
+  dir: string | undefined,
+  host: Host = HOST,
+): Environment {
+  if (dir === undefined || dir === "") return env;
+  const key = envKey(env, "PATH", host);
+  const sep = host.path.delimiter;
+  const path = env[key] ?? "";
+  if (path.split(sep).includes(dir)) return env;
+  return { ...env, [key]: path === "" ? dir : `${dir}${sep}${path}` };
+}
+
+/**
+ * The git variables that RELOCATE a repository, and which no child of Collie's may inherit.
+ *
+ * Each of these tells git where the repository, its index or its object store actually is, and git
+ * obeys them from any working directory — they defeat discovery outright rather than adjust it. So
+ * a `collie` run with `GIT_DIR` in its environment asks every question about SOMEBODY ELSE'S
+ * repository: `isGitCheckout` reports a checkout where there is no `.git` at all, `originOf` reads
+ * that repository's remote, and `update` would advance it. There is no path prefix and no `-C` that
+ * overrides them, which is why this is the seam and not a flag on one call.
+ *
+ * Two ways in, both ordinary. A shell profile that exports them for a dotfiles manager — the same
+ * population issue #243 came from. And a git HOOK: git sets `GIT_DIR` and `GIT_PREFIX` for every
+ * hook it runs, so a hook that calls `collie` hands them over without anyone writing them down.
+ *
+ * NOT stripped: `GIT_CEILING_DIRECTORIES`, which only stops discovery walking UP. That can make
+ * Collie answer "not a checkout" where it would otherwise answer "checkout", and that direction is
+ * refusal, never deletion. Also not stripped: credential, ssh and config-file variables, which
+ * decide how git AUTHENTICATES rather than which repository it is looking at. Removing those would
+ * break ordinary setups to fix nothing here.
+ */
+const GIT_RELOCATORS = [
+  "GIT_DIR",
+  "GIT_WORK_TREE",
+  "GIT_COMMON_DIR",
+  "GIT_INDEX_FILE",
+  "GIT_OBJECT_DIRECTORY",
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+  "GIT_NAMESPACE",
+  "GIT_PREFIX",
+] as const;
+
+/**
+ * `env` without the variables in {@link GIT_RELOCATORS}, or `env` itself when it carries none —
+ * the common case, so the usual call allocates nothing.
+ *
+ * Applied to EVERY child, not only to git. A child that is itself a launcher (the detached update
+ * runner, the bridge) would otherwise pass them on, and the git call that misreads them happens one
+ * process further down where nothing is looking.
+ *
+ * Exported for `cli/sys.test.ts`.
+ */
+export function withoutGitRelocators(env: Environment): Environment {
+  if (!GIT_RELOCATORS.some((name) => env[name] !== undefined)) return env;
+  const clean: Environment = { ...env };
+  for (const name of GIT_RELOCATORS) delete clean[name];
+  return clean;
+}
+
+export function realExec(rawEnv: Environment, home: string): Exec {
+  // ONCE, here: every seam below reads this `env`, so no path can forget it.
+  const env = withoutGitRelocators(rawEnv);
   const resolve = (tool: string): string | null => findTool(tool, env, home);
   return {
     which: resolve,
-    capture(tool, args, timeoutMs) {
+    capture(tool, args, timeoutMs, envAdd, envOverride) {
       const bin = resolve(tool);
       if (bin === null) return NOT_FOUND;
-      const r = Bun.spawnSync([bin, ...args], { env, timeout: timeoutMs });
-      return {
-        // A timed-out child has no exit code — it was killed. 124 keeps the seam's "number" contract.
-        code: r.exitCode ?? 124,
+      // `env` (this Exec's own) is spread OVER `envAdd`, so a name it already carries wins over the
+      // caller-supplied default, and `envOverride` goes over both — see the seam's doc comment.
+      // Filtered AFTER the merge, not only in the closure: `env` no longer carries a relocator, so a
+      // caller's layer is the one way one could come back, and "every child starts without them"
+      // has to hold without trusting a caller.
+      const spawnEnv = withoutGitRelocators(
+        withEnvOverride(envAdd === undefined ? env : { ...envAdd, ...env }, envOverride),
+      );
+      const r = Bun.spawnSync([bin, ...args], {
+        env: spawnEnv,
+        timeout: timeoutMs,
+        // This bounds the direct probe even when the candidate ignores SIGTERM.
+        killSignal: "SIGKILL",
+      });
+      const timedOut = r.exitedDueToTimeout === true;
+      const result: ExecResult = {
+        // Check Bun's timeout fact before its exit code: a timed-out child has no successful answer.
+        code: timedOut ? 124 : (r.exitCode ?? 124),
         stdout: r.stdout.toString(),
         stderr: r.stderr.toString(),
         found: true,
       };
+      if (!timedOut && r.exitCode === null && r.signalCode) result.signal = r.signalCode;
+      return result;
     },
     inherit(tool, args) {
       const bin = resolve(tool);
@@ -220,16 +542,39 @@ export function realExec(env: Environment, home: string): Exec {
       });
       return { code: r.exitCode, stdout: "", stderr: "", found: true };
     },
-    runIn(tool, args, cwd) {
+    runIn(tool, args, cwd, pathPrefix, envOverride) {
       const bin = resolve(tool);
       if (bin === null) return NOT_FOUND;
       const r = Bun.spawnSync([bin, ...args], {
         cwd,
-        env,
+        env: withoutGitRelocators(withEnvOverride(withPathPrefix(env, pathPrefix), envOverride)),
         stdout: "inherit",
         stderr: "inherit",
       });
       return { code: r.exitCode, stdout: "", stderr: "", found: true };
+    },
+    runLogged(command, opts) {
+      const [tool, ...args] = command;
+      const bin = tool === undefined ? null : resolve(tool);
+      if (bin === null) return { code: 127, timedOut: false, stderr: "" };
+      const r = Bun.spawnSync([bin, ...args], {
+        cwd: opts.cwd,
+        env: withoutGitRelocators(opts.env),
+        timeout: opts.timeoutMs,
+      });
+      const stderr = r.stderr.toString();
+      // Append, never truncate, and open the same way the detached runner opens it: this is the one
+      // file the operator is pointed at, and on a refused handoff it is the only thing written.
+      mkdirSync(dirname(opts.logPath), { recursive: true });
+      const fd = openSync(opts.logPath, "a");
+      try {
+        writeSync(fd, r.stdout.toString());
+        writeSync(fd, stderr);
+      } finally {
+        closeSync(fd);
+      }
+      const timedOut = r.exitedDueToTimeout === true;
+      return { code: timedOut ? 124 : r.exitCode, timedOut, stderr };
     },
     spawnDetached(command, opts) {
       const [program, ...args] = command;
@@ -241,7 +586,7 @@ export function realExec(env: Environment, home: string): Exec {
       try {
         const child = spawn(program, args, {
           cwd: opts.cwd,
-          env: opts.env,
+          env: withoutGitRelocators(opts.env),
           detached: true,
           stdio: ["ignore", fd, fd],
         });
@@ -251,7 +596,11 @@ export function realExec(env: Environment, home: string): Exec {
         return null;
       }
     },
-    processCommand(pid) {
+    processCommand(pid, timeoutMs = PROCESS_QUERY_TIMEOUT_MS) {
+      if (process.platform === "win32") {
+        const found = windowsProcessLookup(resolve("powershell"), pid, env, timeoutMs);
+        return found.kind === "running" && found.command !== "" ? found.command : null;
+      }
       const bin = resolve("ps");
       if (bin === null) return null;
       const r = Bun.spawnSync([bin, "-p", String(pid), "-o", "command="], {
@@ -260,6 +609,30 @@ export function realExec(env: Environment, home: string): Exec {
       if (r.exitCode !== 0) return null;
       const out = r.stdout.toString().trim();
       return out === "" ? null : out;
+    },
+    processLookup(pid, timeoutMs = PROCESS_QUERY_TIMEOUT_MS) {
+      if (process.platform === "win32") return windowsProcessLookup(resolve("powershell"), pid, env, timeoutMs);
+      const bin = resolve("ps");
+      if (bin === null) return { kind: "unknown", why: "ps is not installed" };
+      const r = Bun.spawnSync([bin, "-p", String(pid), "-o", "command="], { env });
+      if (r.exitCode !== 0) return { kind: "gone" };
+      return { kind: "running", command: r.stdout.toString().trim() };
+    },
+    listProcesses(names, timeoutMs = PROCESS_QUERY_TIMEOUT_MS) {
+      if (process.platform === "win32") {
+        const powershell = resolve("powershell");
+        if (powershell === null) return null;
+        const list = names.map((n) => `'${n.replaceAll("'", "''")}'`).join(",");
+        const query = `${POWERSHELL_UTF8}Get-CimInstance Win32_Process | Where-Object { @(${list}) -contains $_.Name } | ForEach-Object { [string]$_.ProcessId + ' ' + $_.CommandLine }`;
+        const r = Bun.spawnSync([powershell, "-NoProfile", "-NonInteractive", "-Command", query], { env, timeout: timeoutMs });
+        return r.exitCode === 0 ? parseProcessRows(r.stdout.toString()) : null;
+      }
+      const bin = resolve("ps");
+      if (bin === null) return null;
+      const r = Bun.spawnSync([bin, "-eo", "pid=,args="], { env, timeout: timeoutMs });
+      if (r.exitCode !== 0) return null;
+      const wanted = new Set(names.map(stem));
+      return parseProcessRows(r.stdout.toString()).filter((row) => wanted.has(stem(row.command.split(" ")[0] ?? "")));
     },
     kill(pid) {
       try {
@@ -271,11 +644,93 @@ export function realExec(env: Environment, home: string): Exec {
   };
 }
 
+/**
+ * The first statement of every PowerShell query whose output Collie reads back. Windows PowerShell
+ * writes to a pipe in the OEM code page, so a path with a letter outside ASCII (a user name such as
+ * `Jürgen`) came back changed, and the identity check then failed on this install's own process.
+ * UTF-8 is what Bun decodes. In a `try`: a PowerShell with no console at all refuses the setting,
+ * and its answer is then no worse than before.
+ */
+export const POWERSHELL_UTF8 = "try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}; ";
+
+/**
+ * The PowerShell that asks `Win32_Process` about one pid. The first line is `running` or `gone`, so a
+ * process whose command line Windows does not show is not taken for one that has exited; the
+ * command line follows on the second line.
+ */
+export function windowsProcessScript(pid: number): string {
+  return `${POWERSHELL_UTF8}$p = Get-CimInstance Win32_Process -Filter 'ProcessId = ${pid}'; if ($null -eq $p) { 'gone' } else { 'running'; [string]$p.CommandLine }`;
+}
+
+/** {@link windowsProcessScript}'s output, read back. Anything else is `unknown`, never a guess. */
+export function parseWindowsProcessAnswer(stdout: string): ProcessLookup {
+  const [first = "", ...rest] = stdout.split(/\r?\n/);
+  if (first.trim() === "gone") return { kind: "gone" };
+  if (first.trim() === "running") return { kind: "running", command: rest.join(" ").trim() };
+  return { kind: "unknown", why: "the process query printed no answer" };
+}
+
+/**
+ * {@link Exec.processLookup} on Windows, where there is no `ps` that takes `-o` (Git's MSYS `ps`
+ * does not). Asked through `Win32_Process`, as the community Windows script asked it. Windows
+ * PowerShell can take tens of seconds to start under Task Scheduler, so the caller picks the bound,
+ * and a query past it is `unknown`, never `gone`: see {@link Exec.processCommand}.
+ */
+function windowsProcessLookup(
+  powershell: string | null,
+  pid: number,
+  env: Environment,
+  timeoutMs: number,
+): ProcessLookup {
+  if (!Number.isInteger(pid) || pid <= 0) return { kind: "gone" };
+  if (powershell === null) return { kind: "unknown", why: "PowerShell is not on PATH" };
+  const r = Bun.spawnSync([powershell, "-NoProfile", "-NonInteractive", "-Command", windowsProcessScript(pid)], {
+    env,
+    timeout: timeoutMs,
+  });
+  if (r.exitedDueToTimeout === true) {
+    return { kind: "unknown", why: `PowerShell did not answer within ${Math.round(timeoutMs / 1000)}s` };
+  }
+  if (r.exitCode !== 0) return { kind: "unknown", why: `PowerShell exited ${r.exitCode ?? "on a signal"}` };
+  return parseWindowsProcessAnswer(r.stdout.toString());
+}
+
+/**
+ * The default bound for {@link Exec.processCommand}'s Windows query. A liveness probe that runs past
+ * it reads as "not running", which is no worse than before Windows had an answer here at all, when
+ * every such probe read null; a restart that must recognise the bridge it kills asks for
+ * {@link PROCESS_QUERY_SLOW_START_MS} instead.
+ */
+export const PROCESS_QUERY_TIMEOUT_MS = 10_000;
+
+/** The bound for a caller that can wait out a slow PowerShell start (the Windows restart). */
+export const PROCESS_QUERY_SLOW_START_MS = 60_000;
+
 export const realFiles: Files = {
   exists: (p) => existsSync(p),
+  executable(p) {
+    try {
+      if (statSync(p).isDirectory()) return false;
+      accessSync(p, constants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  },
   read(p) {
     try {
       return readFileSync(p, "utf8");
+    } catch {
+      return null;
+    }
+  },
+  entryType(p) {
+    try {
+      const entry = lstatSync(p);
+      if (entry.isFile()) return "file";
+      if (entry.isDirectory()) return "directory";
+      if (entry.isSymbolicLink()) return "symlink";
+      return "other";
     } catch {
       return null;
     }
@@ -287,11 +742,28 @@ export const realFiles: Files = {
       return [];
     }
   },
+  listStrict: (p) => readdirSync(p),
+  realpath(p) {
+    try {
+      return realpathSync(p);
+    } catch {
+      return null;
+    }
+  },
+  mkdtemp: (prefix) => mkdtempSync(prefix),
   write(p, text, mode) {
     mkdirSync(dirname(p), { recursive: true });
     writeFileSync(p, text, mode === undefined ? undefined : { mode });
   },
   mkdirp(p, mode) {
+    // A private folder (0700) this command creates first, before any bridge has started: on Windows
+    // the mode does nothing, so it gets its private access list now, once, when it is born
+    // (`bridge/owner-only.ts`). That is a birth, not a repair: an existing folder is never changed
+    // here (only the bridge repairs, at start), and nothing here runs a process per write.
+    if (process.platform === "win32" && mode === 0o700 && !existsSync(p)) {
+      createPrivateDir(p, HOST);
+      return;
+    }
     mkdirSync(p, { recursive: true, mode });
   },
   remove(p) {
@@ -303,7 +775,172 @@ export const realFiles: Files = {
   rename(from, to) {
     renameSync(from, to);
   },
+  digest(p) {
+    try {
+      return new Bun.CryptoHasher("sha256").update(readFileSync(p)).digest("hex");
+    } catch {
+      return null;
+    }
+  },
+  ownerUid(p) {
+    // Windows has no POSIX uid, and Node/Bun report a constant 0 there regardless of who owns the
+    // file — that is not "owned by root", it is "this platform does not have the concept", and the
+    // two must not collide: on win32 every non-checkout, non-versions/ install would answer uid 0
+    // and `collie update` would refuse forever. `null` reads as "nothing to claim about the owner"
+    // exactly like a failed `stat`, which is what the caller already treats it as.
+    if (process.platform === "win32") return null;
+    try {
+      return statSync(p).uid;
+    } catch {
+      // ENOENT, EACCES on a parent — nothing readable, so nothing to claim about the owner.
+      return null;
+    }
+  },
+  writable(p) {
+    try {
+      accessSync(p, constants.W_OK);
+      return true;
+    } catch (e) {
+      // EACCES / EPERM / EROFS are an ANSWER: this process may not write here. Anything else —
+      // ENOENT above all — is the probe failing to reach the question, which is `null`.
+      //
+      // SAFETY: the assertion asserts NOTHING. `catch` binds `unknown`, every Node errno error
+      // carries a string `code`, and anything that does not read `undefined` here and falls to
+      // `null` — the same answer an unrecognised code gets. Nothing is called on the value.
+      const code = (e as { code?: string }).code;
+      return code === "EACCES" || code === "EPERM" || code === "EROFS" ? false : null;
+    }
+  },
+  stat(p) {
+    try {
+      const s = statSync(p);
+      return { inode: Number(s.ino), mtimeMs: s.mtimeMs };
+    } catch {
+      // ENOENT on a path nothing sits at, EACCES on another user's `/proc` entry — both are
+      // "no fact", which is what the decision treats null as.
+      return null;
+    }
+  },
+  readlink(p) {
+    try {
+      return readlinkSync(p);
+    } catch {
+      return null;
+    }
+  },
 };
+
+// ── One tool lookup list, spelled once ───────────────────────────────────────
+//
+// Three places used to look for Bun and no two of them looked in the same order: the shim's six
+// candidates (`scripts/collie-ctl.sh`), the remote probe's nine (`cli/remote.ts`), and the
+// preflight's bare `which`. An operator whose Bun sits in a directory their login shell exports and
+// a plugin action does not therefore got a RED preflight blocking an update the shim would have
+// built without complaint (#169).
+//
+// So the list lives here, once, and the two shell copies spell it in the same order because they
+// run where TypeScript cannot: `resolve_bun` bootstraps the binary Bun compiles, and `collie_tool`
+// is shipped down an ssh pipe. `cli/sys.test.ts` parses both files and fails on a drift.
+//
+// The PREDICATE matches too, not just the order: both shells ask `[ -x "$candidate" ]`, so this side
+// asks {@link Files.executable} rather than {@link Files.exists}. A candidate that is present but
+// not runnable is not the tool, and all three copies have to agree on that or they resolve to
+// different paths on the same host.
+//
+// This is NOT `bridge/tools.ts`'s `findTool`, and it does not replace it. That one searches PATH
+// plus a generic fallback set for a system tool; this one is the Bun installer's own locations, it
+// honours `$BUN_INSTALL`, and it is a fixed ordered list on purpose — a shell can spell it.
+
+/**
+ * The absolute candidate paths for `tool`, in the canonical order. PURE: it reads nothing.
+ *
+ * `$BUN_INSTALL` is the operator's explicit choice, so it outranks the default `~/.bun`. An EMPTY
+ * value counts as unset, exactly as the shell's `${BUN_INSTALL:-…}` reads it.
+ */
+export function toolCandidates(env: Environment, home: string, tool: string): string[] {
+  const declared = env.BUN_INSTALL;
+  const bunRoot = declared === undefined || declared === "" ? join(home, ".bun") : declared;
+  return [
+    join(bunRoot, "bin", tool),
+    join(home, ".bun", "bin", tool),
+    join(home, ".local", "bin", tool),
+    `/usr/local/bin/${tool}`,
+    `/opt/homebrew/bin/${tool}`,
+    `/usr/bin/${tool}`,
+    `/bin/${tool}`,
+    `/usr/sbin/${tool}`,
+    `/sbin/${tool}`,
+  ];
+}
+
+/** Where a tool was found, and whether PATH is what named it. */
+export interface ResolvedTool {
+  readonly path: string;
+  /** True when PATH answered. False when it took a candidate this PATH does not name. */
+  readonly onPath: boolean;
+}
+
+/** A Bun that both resolved to an absolute path and answered a bounded version probe. */
+export interface RunnableBun extends ResolvedTool {
+  readonly version: string;
+}
+
+/** The three answers a source build needs before it may rely on Bun. */
+export type BunReadiness =
+  | { readonly kind: "missing" }
+  | { readonly kind: "unrunnable"; readonly tool: ResolvedTool }
+  | { readonly kind: "ready"; readonly bun: RunnableBun };
+
+/** A compiler probe must never leave an update waiting on a broken executable. */
+export const BUN_PROBE_TIMEOUT_MS = 5_000;
+
+/**
+ * Walk {@link toolCandidates} for `tool`: PATH first, then each candidate that is EXECUTABLE — the
+ * shells' `[ -x ]`, never a bare "is there a file here".
+ *
+ * PATH's answer is taken ONLY when it is absolute. `command -v` reports a shell function or an
+ * alias as a bare word, and a bare word is not a path — it is whatever the caller's cwd and PATH
+ * make of it later. The shim and the remote probe both carry the same guard, for the same reason.
+ */
+export function resolveTool(
+  exec: Pick<Exec, "which">,
+  files: Pick<Files, "executable">,
+  env: Environment,
+  home: string,
+  tool: string,
+): ResolvedTool | null {
+  const onPath = exec.which(tool);
+  if (onPath !== null && isAbsolute(onPath)) return { path: onPath, onPath: true };
+  for (const candidate of toolCandidates(env, home, tool)) {
+    if (files.executable(candidate)) return { path: candidate, onPath: false };
+  }
+  return null;
+}
+
+/**
+ * Resolve Bun exactly once, then probe THAT absolute path before a source update changes a
+ * checkout. A non-empty first version line proves only that the resolved candidate answers the
+ * bounded probe successfully; it intentionally neither identifies the program as Bun nor makes a
+ * policy decision about how old a runnable Bun is.
+ */
+export function resolveRunnableBun(
+  exec: Pick<Exec, "which" | "capture">,
+  files: Pick<Files, "executable">,
+  env: Environment,
+  home: string,
+): BunReadiness {
+  const tool = resolveTool(exec, files, env, home, "bun");
+  if (tool === null) return { kind: "missing" };
+  try {
+    const result = exec.capture(tool.path, ["--version"], BUN_PROBE_TIMEOUT_MS);
+    const version = result.stdout.trim().split("\n")[0]?.trim() ?? "";
+    return result.found && result.code === 0 && version !== ""
+      ? { kind: "ready", bun: { ...tool, version } }
+      : { kind: "unrunnable", tool };
+  } catch {
+    return { kind: "unrunnable", tool };
+  }
+}
 
 // ── Readiness ────────────────────────────────────────────────────────────────
 // "Is the bridge up?" is a TCP connect to the loopback port, never a `systemctl is-active` reading:

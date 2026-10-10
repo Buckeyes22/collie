@@ -107,6 +107,7 @@ internal object PaneSwitcherModel {
         val own = listOf(
             pane.paneLabel,
             pane.sessionName,
+            pane.soleTabName,
             pane.terminalTitle.takeUnless { staleTitle },
         ).firstNotNullOfOrNull { it?.takeIf(String::isNotBlank) }
         val shortCwd = pane.cwd.takeIf(String::isNotBlank)?.let { shortenHome(it, home) }

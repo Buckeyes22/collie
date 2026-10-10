@@ -1,0 +1,1206 @@
+import { describe, expect, test } from "bun:test";
+
+import { AuditLog, type AuditEntry } from "../bridge/audit.ts";
+import { CREW_PROTOCOL_VERSION } from "../bridge/crew/enrollment.ts";
+import { leadStore, material, member, peerStore, T0 } from "../bridge/crew/fixtures.ts";
+import { type OpsRecord, parseCrewOps } from "../bridge/crew/ops-store.ts";
+import { serializeTrustStore, TrustStore, type TrustStoreData, type TrustStoreIo } from "../bridge/crew/trust-store.ts";
+import { UPDATE_RUN_SCHEMA, type UpdateRun } from "../bridge/update-run.ts";
+import { capture, context, fakeExec, fakeFiles, fakeOps, ROOT, type SeededFiles, type SeededOps, probeDefaults, probeOutput, type ProbeField } from "./fakes.ts";
+import type { InstallKind } from "./install-kind.ts";
+import { EXIT } from "./io.ts";
+import type { CrewUpdateRow } from "../bridge/update-action.ts";
+import {
+  answersThisBuild,
+  cmdCrewUpdate,
+  peerReportLines,
+  packagedMembers,
+  type CrewUpdateDeps,
+} from "./crew-update.ts";
+import type { RemoteResult } from "./remote.ts";
+import {
+  PREFLIGHT_SCHEMA,
+  type PreflightCheck,
+  type PreflightOptions,
+  type PreflightReport,
+} from "./update-check.ts";
+import { hostFor } from "../bridge/host.ts";
+
+// `collie crew update` against fakes for every seam. NOTHING here spawns `ssh`, dials a network or
+// touches a disk: the transport records `(host, script)` pairs and answers from a table, the one
+// confirmation is a value, and both stores are in memory. Same safety boundary `cli/remote.test.ts`
+// draws for `crew add` — a verb that rebuilds software on other people's machines is exactly the one
+// a test suite must never be able to run for real.
+
+type Leg = "probe" | "install" | "restart" | "status";
+
+/** Which leg a script is, read off the script itself — never off call ordering. */
+function legOf(script: string): Leg {
+  if (script.includes("collie-probe:")) return "probe";
+  if (script.includes("collie-install:")) return "install";
+  if (script.includes('"$ROOT/bin/collie" restart')) return "restart";
+  if (script.includes("update --status --json")) return "status";
+  throw new Error(`unrecognised leg script:\n${script}`);
+}
+
+const COMMIT = "abc123def4567890abc123def4567890abc123de";
+/** How git abbreviates {@link COMMIT} here — the build stamp's `+<sha>` half. */
+const SHORT = "abc123d";
+const OLD_COMMIT = "0000feed0000feed0000feed0000feed0000feed";
+const VERSION = "1.2.3";
+const OLD_VERSION = "1.2.2";
+const CHECKOUT = "/home/pat/.collie";
+
+// `probeDefaults()` FIRST, then this suite's own values. The shared table is the one place the
+// field list lives (`cli/fakes.ts`, held against the golden script by `cli/probe-contract.test.ts`),
+// so this cannot be short a field the way it was until 2026-10-01. What stays here is the VALUES,
+// which are this suite's subject: a member on an older version, mid-update.
+const PROBE_DEFAULTS = {
+  ...probeDefaults(),
+  home: "/home/pat",
+  git: "/usr/bin/git",
+  bun: "/home/pat/.bun/bin/bun",
+  herdr: "/usr/local/bin/herdr",
+  configdir: "/home/pat/.config/herdr/plugins/config/herdr.collie",
+  envhost: "",
+  envport: "",
+  checkout: CHECKOUT,
+  // A git checkout by default, which is what every member in this suite was before #248: the
+  // release route's members set `checkoutgit`/`installroot` themselves.
+  checkoutgit: "yes",
+  installroot: "",
+  commit: OLD_COMMIT,
+  branch: "",
+  dirty: "no",
+  dirtyfiles: "",
+  version: OLD_VERSION,
+  address: "100.64.0.9",
+  port: "busy",
+  curl: "/usr/bin/curl",
+  tar: "/usr/bin/tar",
+  sha256: "/usr/bin/sha256sum",
+} satisfies Record<string, string>;
+
+function probeOut(over: Partial<Record<ProbeField, string>> = {}): string {
+  return probeOutput({ ...PROBE_DEFAULTS, ...over });
+}
+
+interface Recorded {
+  host: string;
+  leg: Leg;
+  script: string;
+  /** What rode the leg's stdin — the bundle, or Collie's own installer on the release route. */
+  stdin: string | null;
+}
+
+interface HarnessOptions {
+  store?: TrustStoreData | null;
+  /** Seeded ops records, by member id. Absent ⇒ that member has no remembered ssh host. */
+  ops?: SeededOps;
+  /** Per-host probe field overrides. */
+  probes?: Record<string, Record<string, string>>;
+  /** Per-host, per-leg canned results. */
+  answers?: Record<string, Partial<Record<Leg, Partial<RemoteResult>>>>;
+  confirm?: boolean | null;
+  /** The preflight the gate reads. Absent ⇒ nothing red anywhere. */
+  preflight?: PreflightReport;
+  /** What the running bridge banked off the crew link (§19). Absent ⇒ it knows nothing. */
+  peerReported?: readonly CrewUpdateRow[];
+  /** What this LEAD answers with. Absent ⇒ the build being pushed, so the lead is not behind. */
+  leadVersion?: string;
+  /** This lead's own update: what `start` returns, and the records its runner writes, in order. */
+  lead?: { start?: number; records?: readonly (UpdateRun | null)[] };
+  /** Which members answer `hello`, and with which version. `false` ⇒ it does not answer at all. */
+  hello?: Record<string, string | false>;
+  bundle?: string | null;
+  /** What this LEAD's own install classifies as. Absent ⇒ an ordinary git checkout. */
+  installKind?: InstallKind;
+}
+
+function opsRecord(sshHost: string): OpsRecord {
+  return { sshHost, path: CHECKOUT, port: 8787, recordedAt: T0 };
+}
+
+function harness(opts: HarnessOptions = {}) {
+  const initial =
+    opts.store === undefined
+      ? leadStore({ peers: [member({ memberId: "nas", address: "100.64.0.9:8787" })] })
+      : opts.store;
+  let contents = initial === null ? null : serializeTrustStore(initial);
+  const storeIo: TrustStoreIo = {
+    read: async () => contents,
+    write: async (_p, d) => {
+      contents = d;
+    },
+  };
+  const out = capture();
+  const calls: Recorded[] = [];
+  // Everything that happens on a machine, in the order it happened — the ssh legs AND the lead's own
+  // update, which is what "lead first" is asserted against.
+  const events: string[] = [];
+  const audit: AuditEntry[] = [];
+  const confirms: string[] = [];
+  const ops = fakeOps(opts.ops ?? { nas: opsRecord("nas.example") });
+  // What the preflight seam was ASKED, in order — the route overrides a run hands the member walk.
+  const preflights: PreflightOptions[] = [];
+  let reads = 0;
+  /** How many times the lead was asked for a `git bundle` — zero on the release route. */
+  let bundles = 0;
+
+  // The build stamp is what `collieVersionBare` answers with, so it is what decides whether this
+  // lead is behind the commit it is about to hand out.
+  const seeded: SeededFiles = { [`${ROOT}/herdr-plugin.toml`]: `id = "herdr.collie"\nversion = "${VERSION}"\n` };
+  if (opts.leadVersion !== undefined) {
+    seeded[`${ROOT}/web/dist/build-info.json`] = JSON.stringify({ version: opts.leadVersion });
+  }
+
+  const exec = fakeExec({
+    answers: [
+      [`git -C ${ROOT} rev-parse HEAD`, { stdout: `${COMMIT}\n` }],
+      [`git -C ${ROOT} rev-parse --short ${COMMIT}`, { stdout: `${SHORT}\n` }],
+      [`git -C ${ROOT} status --porcelain`, { stdout: "" }],
+      [`git -C ${ROOT} show ${COMMIT}:herdr-plugin.toml`, { stdout: `version = "${VERSION}"\n` }],
+    ],
+  });
+
+  const deps: CrewUpdateDeps = {
+    host: hostFor("linux"),
+    // The same reason the other crew suites set it: `PeerClient`'s REAL `setTimeout` must never fire
+    // and report a fake member as unreachable.
+    ctx: context({ COLLIE_CREW_TIMEOUT_MS: "60000" }),
+    io: out,
+    exec,
+    files: fakeFiles(seeded),
+    store: new TrustStore("/state", storeIo),
+    ops,
+    // SAFETY: `AuditLog` hands its sink the line it just serialised from an `AuditEntry` — the
+    // log's own round trip, not foreign input.
+    audit: new AuditLog((l: string) => void audit.push(JSON.parse(l) as AuditEntry), { now: () => T0 }),
+    fetch: async (url) => {
+      // Every dial in this verb is a `hello` at a member's own address; the member is named by it.
+      const who = Object.keys(opts.hello ?? {}).find((id) => url.includes(addressOf(initial, id))) ?? "nas";
+      const answer = opts.hello?.[who];
+      if (answer === false) throw new Error("connection refused");
+      const version = answer ?? VERSION;
+      return new Response(JSON.stringify({ protocol: CREW_PROTOCOL_VERSION, member: who, version }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+          "x-crew-protocol": String(CREW_PROTOCOL_VERSION),
+          "x-crew-member": who,
+        },
+      });
+    },
+    now: () => T0,
+    random: () => "r",
+    mintIdentity: () => Promise.resolve(material("fresh")),
+    readStdin: () => Promise.resolve(""),
+    restart: () => Promise.resolve(EXIT.OK),
+    serve: () => Promise.resolve(EXIT.OK),
+    unserve: () => EXIT.OK,
+    clearNotifications: () => Promise.resolve(),
+    preflight: (o) => {
+      preflights.push(o ?? {});
+      return Promise.resolve(opts.preflight ?? { schema: PREFLIGHT_SCHEMA, verdict: "green", checks: [] });
+    },
+    peerReported: () => Promise.resolve(opts.peerReported ?? []),
+    lead: {
+      start: () => {
+        events.push("lead");
+        return Promise.resolve(opts.lead?.start ?? EXIT.OK);
+      },
+      record: () => {
+        const records = opts.lead?.records ?? [run("done")];
+        return records[Math.min(reads++, records.length - 1)] ?? null;
+      },
+    },
+    // Every wait in this verb is a poll interval, and no test may spend one.
+    sleep: () => Promise.resolve(),
+    remote: (host) => ({
+      run: async (script, stdin) => {
+        const leg = legOf(script);
+        calls.push({ host, leg, script, stdin: stdin ?? null });
+        events.push(`${host}:${leg}`);
+        const stdout =
+          leg === "probe"
+            ? probeOut(opts.probes?.[host] ?? {})
+            : leg === "install"
+              ? `collie-install:root=${CHECKOUT}\ncollie-install:version=${VERSION}`
+              : "";
+        return { code: 0, stdout, stderr: "", spawned: true, ...opts.answers?.[host]?.[leg] };
+      },
+      close: () => {},
+    }),
+    confirm: (question) => {
+      confirms.push(question);
+      return opts.confirm === undefined ? true : opts.confirm;
+    },
+    prompt: () => null,
+    gitBundle: () => {
+      bundles += 1;
+      return Promise.resolve(opts.bundle === undefined ? "QkFTRTY0LWJ1bmRsZQ==" : opts.bundle);
+    },
+    reload: () => Promise.resolve(initial),
+    installKind: () => opts.installKind ?? { kind: "linked-clone", alsoLayout: false },
+  };
+
+  return {
+    deps,
+    io: out,
+    calls,
+    confirms,
+    ops,
+    events,
+    preflights,
+    get bundles() {
+      return bundles;
+    },
+  };
+}
+
+/** One update record, as the lead's runner would have written it. */
+function run(state: UpdateRun["state"], over: Partial<UpdateRun> = {}): UpdateRun {
+  return {
+    schema: UPDATE_RUN_SCHEMA,
+    state,
+    from: OLD_VERSION,
+    to: VERSION,
+    startedAt: T0,
+    updatedAt: T0,
+    pid: 4242,
+    attempt: 0,
+    ...over,
+  };
+}
+
+const redCheck = (id: string, reason: string, remedy?: string): PreflightCheck =>
+  remedy === undefined ? { id, verdict: "red", reason } : { id, verdict: "red", reason, remedy };
+
+/** A preflight that is red on one member and green everywhere else. */
+function redOn(memberId: string, check: PreflightCheck): PreflightReport {
+  return {
+    schema: PREFLIGHT_SCHEMA,
+    verdict: "red",
+    checks: [],
+    crew: [{ memberId, host: `${memberId}.example`, verdict: "red", checks: [check] }],
+  };
+}
+
+/**
+ * A green preflight in which the named members reported a `packaged` install kind.
+ *
+ * Green, because nothing is wrong with such an install — which is the whole reason the walk has to
+ * read the KIND rather than wait for the gate to go red over it.
+ */
+function ownedOn(...memberIds: readonly string[]): PreflightReport {
+  return {
+    schema: PREFLIGHT_SCHEMA,
+    verdict: "green",
+    checks: [],
+    crew: memberIds.map((memberId) => ({
+      memberId,
+      host: `${memberId}.example`,
+      verdict: "green" as const,
+      installKind: "packaged" as const,
+      checks: [
+        { id: "reachable", verdict: "green" as const, reason: "answered over ssh" },
+        { id: "package", verdict: "green" as const, reason: "updates come from your package manager" },
+      ],
+    })),
+  };
+}
+
+/** A member's address in a fixture store — what the fake `fetch` matches a dial against. */
+function addressOf(data: TrustStoreData | null, memberId: string): string {
+  return data?.peers.find((p) => p.memberId === memberId)?.address ?? "nowhere";
+}
+
+const text = (io: ReturnType<typeof capture>): string => [...io.stdout, ...io.stderr].join("\n");
+const legs = (h: ReturnType<typeof harness>): string[] => h.calls.map((c) => `${c.host}:${c.leg}`);
+
+// ── The release route's fixtures (#248) ──────────────────────────────────────
+// An install.sh member keeps its Collie behind `<root>/current`, beside a `<root>/versions`. That
+// is the shape the probe reports and the only one a lead with no commit can advance.
+const MEMBER_INSTALL_ROOT = "/home/pat/.local/share/collie";
+const MEMBER_CURRENT = `${MEMBER_INSTALL_ROOT}/current`;
+
+/** Probe overrides for a member that carries an install.sh layout, running `version`. */
+const binaryMember = (version: string) => ({
+  checkout: MEMBER_CURRENT,
+  checkoutgit: "no",
+  installroot: MEMBER_INSTALL_ROOT,
+  commit: "",
+  dirty: "",
+  version,
+});
+
+/**
+ * A lead with no commit: install.sh's layout, running {@link VERSION} with a build stamp.
+ *
+ * The stamp is here to prove it is NOT used: the verify leg on this route compares the release and
+ * nothing else, so this lead levels a member whose stamp is some other builder's.
+ */
+const RELEASE_LEAD: HarnessOptions = { installKind: { kind: "binary" }, leadVersion: `${VERSION}+${SHORT}` };
+
+const twoPeers = () =>
+  leadStore({
+    peers: [
+      member({ memberId: "nas", address: "100.64.0.9:8787" }),
+      member({ memberId: "pi", address: "100.64.0.10:8787" }),
+    ],
+  });
+
+// ── Who may run it, and on what ──────────────────────────────────────────────
+
+describe("crew update is a lead's verb, over named members", () => {
+  test("a solo collie has no peers to level, and is told what its own update is", async () => {
+    const h = harness({ store: null });
+    expect(await cmdCrewUpdate(h.deps, ["--all"])).toBe(EXIT.STATE);
+    expect(text(h.io)).toContain("not in a crew");
+    expect(text(h.io)).toContain("`collie update`");
+    expect(h.calls).toEqual([]);
+  });
+
+  test("a peer refuses: peers are updated from the lead", async () => {
+    const h = harness({ store: peerStore() });
+    expect(await cmdCrewUpdate(h.deps, ["--all"])).toBe(EXIT.STATE);
+    expect(text(h.io)).toContain("peers are updated from the lead");
+    expect(h.calls).toEqual([]);
+  });
+
+  test("a bare `crew update` is a usage error that LISTS the members — never a mass ssh", async () => {
+    const h = harness({ store: twoPeers(), hello: { nas: "1.2.2", pi: VERSION } });
+    expect(await cmdCrewUpdate(h.deps, [])).toBe(EXIT.USAGE);
+    const rendered = text(h.io);
+    expect(rendered).toContain("usage: collie crew update");
+    expect(rendered).toContain("nas  1.2.2");
+    expect(rendered).toContain(`pi  ${VERSION} — current`);
+    expect(h.calls).toEqual([]);
+  });
+
+  test("`--all` with names is a usage error rather than a guess at which one wins", async () => {
+    const h = harness();
+    expect(await cmdCrewUpdate(h.deps, ["--all", "nas"])).toBe(EXIT.USAGE);
+    expect(h.calls).toEqual([]);
+  });
+
+  test("a member that is not in the roster is refused by name", async () => {
+    const h = harness();
+    expect(await cmdCrewUpdate(h.deps, ["ghost"])).toBe(EXIT.STATE);
+    expect(text(h.io)).toContain('no enrolled member "ghost"');
+  });
+
+  test("the lead is never a target — its own update is `collie update`", async () => {
+    const h = harness();
+    const self = (await h.deps.store.load())!.self.memberId;
+    expect(await cmdCrewUpdate(h.deps, [self])).toBe(EXIT.USAGE);
+    expect(text(h.io)).toContain("`collie update`");
+    expect(h.calls).toEqual([]);
+  });
+
+  // #248: a packaged or a binary lead has no commit, and it used to stop here with the raw git
+  // error "is not a git checkout" about a perfectly healthy install. It now levels its members the
+  // way `crew add` installs them — to the release this lead runs itself.
+  test("a packaged lead takes the release route rather than being refused", async () => {
+    const h = harness({ installKind: { kind: "packaged" }, probes: { "nas.example": binaryMember("1.0.0") } });
+    expect(await cmdCrewUpdate(h.deps, ["--all"])).toBe(EXIT.OK);
+    const rendered = text(h.io);
+    expect(rendered).not.toContain("is not a git checkout");
+    expect(rendered).not.toContain("phone's Updates page");
+    expect(legs(h)).toEqual(["nas.example:probe", "nas.example:install", "nas.example:restart"]);
+  });
+
+  test("a binary lead takes the same route", async () => {
+    const h = harness({ installKind: { kind: "binary" }, probes: { "nas.example": binaryMember("1.0.0") } });
+    expect(await cmdCrewUpdate(h.deps, ["--all"])).toBe(EXIT.OK);
+    expect(text(h.io)).toContain(`installing v${VERSION} from AltanS/collie`);
+  });
+
+  test("a route override describes one machine, so it refuses a multi-member run", async () => {
+    const h = harness({ store: twoPeers(), ops: { nas: opsRecord("nas.example"), pi: opsRecord("pi.example") } });
+    expect(await cmdCrewUpdate(h.deps, ["--all", "--host", "elsewhere"])).toBe(EXIT.USAGE);
+    expect(text(h.io)).toContain("--host/--path/--port describe ONE machine");
+    expect(h.calls).toEqual([]);
+  });
+});
+
+// ── The probe phase ──────────────────────────────────────────────────────────
+
+describe("what the probe decides, before anything is sent", () => {
+  test("a member with no ops record is skipped with the remedy, and does not fail the run", async () => {
+    const h = harness({ ops: {} });
+    expect(await cmdCrewUpdate(h.deps, ["nas"])).toBe(EXIT.OK);
+    const rendered = text(h.io);
+    expect(rendered).toContain("no ssh record — run `collie crew add <host>` once to teach it");
+    expect(rendered).toContain("nas         skipped");
+    expect(h.calls).toEqual([]);
+    expect(h.confirms).toEqual([]);
+  });
+
+  // ── A PACKAGED PEER (ADR 0035) ────────────────────────────────────────────
+  //
+  // Its own preflight is GREEN, so the gate above cannot catch it and must not try to. What these
+  // pin is that the WALK reads the kind off that green report, and that the reading stops the push.
+
+  test("a packaged member is skipped with the shared sentence", async () => {
+    const h = harness({ preflight: ownedOn("nas") });
+    expect(await cmdCrewUpdate(h.deps, ["nas"])).toBe(EXIT.OK);
+    const rendered = text(h.io);
+    expect(rendered).toContain("updates come from your package manager");
+    expect(rendered).toContain("nas         skipped  packaged");
+    // The whole point: nothing was sent. No probe, no bundle, no restart — and no consent asked for
+    // an operation with nothing in it.
+    expect(h.calls).toEqual([]);
+    expect(h.confirms).toEqual([]);
+  });
+
+  // THE CONTROL for the test above. Identical run, identical member, and the ONE difference is that
+  // its report names no install kind — so the walk has nothing to read and the push proceeds.
+  test("control: the same member without that kind is probed and pushed to as before", async () => {
+    const h = harness();
+    expect(await cmdCrewUpdate(h.deps, ["nas"])).toBe(EXIT.OK);
+    expect(legs(h)).toContain("nas.example:install");
+    expect(text(h.io)).not.toContain("package manager");
+  });
+
+  test("a packaged member does not stop the members this run CAN level", async () => {
+    const h = harness({
+      store: twoPeers(),
+      ops: { nas: opsRecord("nas.example"), pi: opsRecord("pi.example") },
+      hello: { nas: VERSION, pi: VERSION },
+      preflight: ownedOn("pi"),
+    });
+    expect(await cmdCrewUpdate(h.deps, ["--all"])).toBe(EXIT.OK);
+    expect(legs(h)).toContain("nas.example:install");
+    // `pi` was never reached at all — the skip is decided before a runner is opened for it.
+    expect(legs(h).filter((l) => l.startsWith("pi."))).toEqual([]);
+    // Counted apart from a member with no ssh record: two different things for the operator to do.
+    expect(h.confirms[0]).toContain("1 packaged");
+    expect(h.confirms[0]).not.toContain("without an ssh record");
+  });
+
+  test("a member already at this commit is listed and left alone — no push, no prompt", async () => {
+    const h = harness({ probes: { "nas.example": { commit: COMMIT, version: VERSION } } });
+    expect(await cmdCrewUpdate(h.deps, ["nas"])).toBe(EXIT.OK);
+    expect(legs(h)).toEqual(["nas.example:probe"]);
+    expect(h.confirms).toEqual([]);
+    expect(text(h.io)).toContain(`already at ${VERSION}`);
+    expect(text(h.io)).toContain("nas         current");
+  });
+
+  test("a dirty remote checkout is REFUSED per member, not prompted", async () => {
+    const h = harness({ probes: { "nas.example": { dirty: "yes", dirtyfiles: "M bridge/index.ts " } } });
+    expect(await cmdCrewUpdate(h.deps, ["nas"])).toBe(EXIT.FAIL);
+    const rendered = text(h.io);
+    expect(rendered).toContain("has uncommitted changes");
+    expect(rendered).toContain("will not");
+    expect(legs(h)).toEqual(["nas.example:probe"]);
+    expect(h.confirms).toEqual([]);
+  });
+
+  test("a machine with no Collie checkout is told to run `crew add`, not `crew update`", async () => {
+    const h = harness({ probes: { "nas.example": { checkout: "" } } });
+    expect(await cmdCrewUpdate(h.deps, ["nas"])).toBe(EXIT.FAIL);
+    expect(text(h.io)).toContain("`collie crew add` installs the first");
+    expect(legs(h)).toEqual(["nas.example:probe"]);
+  });
+
+  test("ssh that cannot reach a host fails that member and says it is a key problem when it is", async () => {
+    const h = harness({
+      answers: { "nas.example": { probe: { code: 255, stderr: "Permission denied (publickey)." } } },
+    });
+    expect(await cmdCrewUpdate(h.deps, ["nas"])).toBe(EXIT.FAIL);
+    expect(text(h.io)).toContain("`ssh-add` your key");
+    expect(text(h.io)).toContain("nas         FAILED");
+  });
+});
+
+describe("packagedMembers reads the install KIND, never a check id", () => {
+  test("a member whose report names `packaged` is in the set", () => {
+    const owned = packagedMembers(ownedOn("nas", "pi").crew ?? []);
+    expect([...owned]).toEqual(["nas", "pi"]);
+  });
+
+  // The control, and the reason this reads a kind rather than an id. A report full of green checks
+  // — including one whose id happens to be `package` — says nothing about the kind, and a member
+  // older than the field says nothing either. Neither may be read as packaged.
+  test("a member that names no kind is not in the set, whatever its checks are called", () => {
+    expect(
+      packagedMembers([
+        {
+          memberId: "nas",
+          host: "nas.example",
+          verdict: "green",
+          checks: [
+            { id: "doctor", verdict: "green", reason: "collie doctor is clean" },
+            { id: "package", verdict: "green", reason: "a check that merely shares the name" },
+          ],
+        },
+      ]).size,
+    ).toBe(0);
+  });
+});
+
+// ── The preflight gate ───────────────────────────────────────────────────────
+
+describe("the preflight runs first, and one red aborts the whole run", () => {
+  test("a red member aborts before a single machine is touched, naming it and the reason", async () => {
+    const h = harness({
+      preflight: redOn("nas", redCheck("disk", "203 MiB free at /home/pat/.collie", "free some space there")),
+    });
+    expect(await cmdCrewUpdate(h.deps, ["nas"])).toBe(EXIT.FAIL);
+    const rendered = text(h.io);
+    expect(rendered).toContain("error: the preflight is red on nas — 203 MiB free at /home/pat/.collie");
+    expect(rendered).toContain("clear it with: free some space there");
+    expect(rendered).toContain("Nothing was pushed, built or restarted");
+    expect(h.calls).toEqual([]);
+    expect(h.confirms).toEqual([]);
+  });
+
+  test("a red on the LEAD itself aborts too — it is one of the machines being updated", async () => {
+    const h = harness({
+      preflight: {
+        schema: PREFLIGHT_SCHEMA,
+        verdict: "red",
+        checks: [redCheck("service", "no systemd user unit — an update would have nothing to restart")],
+      },
+    });
+    expect(await cmdCrewUpdate(h.deps, ["nas"])).toBe(EXIT.FAIL);
+    expect(text(h.io)).toContain("the preflight is red on this lead — no systemd user unit");
+    expect(h.calls).toEqual([]);
+  });
+
+  test("a red about a member this run has no route to does not abort the members it can reach", async () => {
+    const h = harness({
+      store: twoPeers(),
+      ops: { nas: opsRecord("nas.example") },
+      hello: { nas: VERSION, pi: VERSION },
+      preflight: redOn("pi", redCheck("ops-record", 'no ssh record for "pi"', "collie crew update pi --host <ssh-host>")),
+    });
+    expect(await cmdCrewUpdate(h.deps, ["--all"])).toBe(EXIT.OK);
+    expect(legs(h)).toContain("nas.example:install");
+  });
+
+  // ── §19 — THE PEER-REPORTED VERDICT, BESIDE THE SSH ONE (M16/03) ───────────
+  test("peer-reported preflight: the link's verdict is printed beside the walk's, dated", async () => {
+    const h = harness({
+      ops: { nas: opsRecord("nas.example") },
+      hello: { nas: VERSION },
+      peerReported: [
+        { name: "nas", version: VERSION, verdict: "green", reasons: [], asOf: T0 - 6 * 60 * 60 * 1000 },
+      ],
+    });
+    expect(await cmdCrewUpdate(h.deps, ["nas"])).toBe(EXIT.OK);
+    // The stamp is the MEMBER's, and it is shown: a green from six hours ago and a green from four
+    // seconds ago are different claims.
+    expect(text(h.io)).toContain("preflight: nas reports green over the link (as of 6h ago)");
+  });
+
+  test("peer-reported preflight: a disagreement is named, and the ssh walk still decides", async () => {
+    const h = harness({
+      ops: { nas: opsRecord("nas.example") },
+      hello: { nas: VERSION },
+      // The walk found nothing wrong; the member itself says it is red. Neither is silently preferred.
+      peerReported: [
+        {
+          name: "nas",
+          version: VERSION,
+          verdict: "red",
+          reasons: ["working tree has tracked changes: bridge/server.ts"],
+          asOf: T0 - 30_000,
+        },
+      ],
+      preflight: {
+        schema: PREFLIGHT_SCHEMA,
+        verdict: "green",
+        checks: [],
+        crew: [{ memberId: "nas", host: "nas.example", verdict: "green", checks: [] }],
+      },
+    });
+    expect(await cmdCrewUpdate(h.deps, ["nas"])).toBe(EXIT.OK);
+    const rendered = text(h.io);
+    expect(rendered).toContain("preflight: nas reports red over the link — working tree has tracked changes");
+    expect(rendered).toContain("they disagree: ssh says green, the link says red — this run follows the ssh walk");
+    // Consent, ordering and abort behaviour are untouched: the run went ahead on the walk's verdict.
+    expect(h.confirms).toHaveLength(1);
+    expect(legs(h)).toContain("nas.example:install");
+  });
+
+  // Reads need a pairing token since ADR 0086, and this process holds none: the banked verdicts come
+  // off this collie's own `GET /api/update/check`, sent with the bridge's local read credential.
+  test("the banked verdicts are read off the own bridge with the local read credential, when there is one", async () => {
+    const secret = "A".repeat(43);
+    for (const written of [true, false]) {
+      const h = harness({ ops: { nas: opsRecord("nas.example") }, hello: { nas: VERSION } });
+      if (written) h.deps.files.write(`${h.deps.ctx.stateDir}/local-secret`, `${secret}\n`, 0o600);
+      const asked: (string | null)[] = [];
+      const crewFetch = h.deps.fetch;
+      // No `peerReported` seam, so the run takes the real read of its own bridge.
+      const { peerReported: _banked, ...rest } = h.deps;
+      const deps: CrewUpdateDeps = {
+        ...rest,
+        fetch: async (url, init) => {
+          if (!url.endsWith("/api/update/check")) return crewFetch(url, init);
+          asked.push(new Headers(init?.headers).get("authorization"));
+          return new Response(JSON.stringify({ crew: [] }), { status: 200 });
+        },
+      };
+      expect(await cmdCrewUpdate(deps, ["nas"])).toBe(EXIT.OK);
+      expect(asked).toEqual([written ? `Bearer ${secret}` : null]);
+    }
+  });
+
+  test("peer-reported preflight: a member the link knows nothing about prints nothing", () => {
+    const rows: CrewUpdateRow[] = [{ name: "pi", version: null, verdict: "green", reasons: [], asOf: T0 }];
+    // `pi` is not a target of this run, so its row is not this run's business.
+    expect(peerReportLines([], rows, new Set(["nas"]), T0)).toEqual([]);
+    // And a member that has never produced a report says so rather than reading as checked.
+    expect(
+      peerReportLines([], [{ name: "nas", version: null, verdict: "unknown", reasons: [], asOf: null }], new Set(["nas"]), T0),
+    ).toEqual(["preflight: nas reports unknown over the link (never checked there)"]);
+  });
+
+  test("a member the probe refuses aborts the run before anything is pushed", async () => {
+    const h = harness({
+      store: twoPeers(),
+      ops: { nas: opsRecord("nas.example"), pi: opsRecord("pi.example") },
+      probes: { "nas.example": { dirty: "yes", dirtyfiles: "M bridge/index.ts " } },
+    });
+    expect(await cmdCrewUpdate(h.deps, ["--all"])).toBe(EXIT.FAIL);
+    expect(legs(h).filter((l) => l.endsWith("install"))).toEqual([]);
+    expect(h.confirms).toEqual([]);
+    expect(text(h.io)).toContain("the run stopped at nas");
+  });
+});
+
+// ── The lead's own turn ──────────────────────────────────────────────────────
+
+describe("the lead goes first", () => {
+  test("a lead behind the build it is handing out takes it first, before any peer", async () => {
+    const h = harness({ leadVersion: OLD_VERSION });
+    expect(await cmdCrewUpdate(h.deps, ["nas"])).toBe(EXIT.OK);
+    // The probe is read-only; the first thing that CHANGES a machine is the lead's own update.
+    expect(h.events).toEqual(["nas.example:probe", "lead", "nas.example:install", "nas.example:restart"]);
+    expect(h.confirms[0]).toContain("this lead first");
+    expect(text(h.io)).toContain(`this lead: ${OLD_VERSION} — it takes ${VERSION} first`);
+  });
+
+  test("a lead already running the build is not updated at all", async () => {
+    const h = harness();
+    expect(await cmdCrewUpdate(h.deps, ["nas"])).toBe(EXIT.OK);
+    expect(h.events).not.toContain("lead");
+    expect(h.confirms[0]).not.toContain("this lead first");
+  });
+
+  test("the flow WAITS on the lead's record, and a rollback there stops the run", async () => {
+    const h = harness({
+      leadVersion: OLD_VERSION,
+      lead: {
+        records: [
+          run("staging"),
+          run("restarting"),
+          run("rolled-back", { reason: "the service came back as 1.2.2", recovery: "collie update --rollback" }),
+        ],
+      },
+    });
+    expect(await cmdCrewUpdate(h.deps, ["nas"])).toBe(EXIT.FAIL);
+    const rendered = text(h.io);
+    expect(rendered).toContain("this lead's own update ended as rolled-back");
+    expect(rendered).toContain("recover with: collie update --rollback");
+    expect(rendered).toContain("§7.1 tolerates version skew");
+    // No peer was touched: the probe is the only thing that ran.
+    expect(legs(h)).toEqual(["nas.example:probe"]);
+    expect(text(h.io)).toContain("nas         skipped  not attempted — this lead's own update did not land");
+  });
+
+  test("a lead whose updater never settles stops the run rather than pushing anyway", async () => {
+    const h = harness({ leadVersion: OLD_VERSION, lead: { records: [run("staging")] } });
+    expect(await cmdCrewUpdate(h.deps, ["nas"])).toBe(EXIT.FAIL);
+    expect(text(h.io)).toContain("this lead's own update did not finish");
+    expect(legs(h)).toEqual(["nas.example:probe"]);
+  });
+
+  test("a lead whose update will not even start stops the run", async () => {
+    const h = harness({ leadVersion: OLD_VERSION, lead: { start: EXIT.FAIL } });
+    expect(await cmdCrewUpdate(h.deps, ["nas"])).toBe(EXIT.FAIL);
+    expect(text(h.io)).toContain("this lead's own update would not start");
+    expect(legs(h)).toEqual(["nas.example:probe"]);
+  });
+});
+
+// ── The one consent ──────────────────────────────────────────────────────────
+
+describe("consent is asked once, for the whole operation", () => {
+  test("two behind members are one question, naming the build and both of them", async () => {
+    const h = harness({
+      store: twoPeers(),
+      ops: { nas: opsRecord("nas.example"), pi: opsRecord("pi.example") },
+      hello: { nas: VERSION, pi: VERSION },
+    });
+    expect(await cmdCrewUpdate(h.deps, ["--all"])).toBe(EXIT.OK);
+    expect(h.confirms).toHaveLength(1);
+    expect(h.confirms[0]).toContain(`update 2 members to ${VERSION}`);
+    expect(h.confirms[0]).toContain("nas (1.2.2)");
+    expect(h.confirms[0]).toContain("pi (1.2.2)");
+  });
+
+  test("the members that are NOT being touched are named in the same question", async () => {
+    const h = harness({
+      store: twoPeers(),
+      ops: { nas: opsRecord("nas.example") },
+      probes: { "nas.example": {} },
+    });
+    await cmdCrewUpdate(h.deps, ["--all"]);
+    expect(h.confirms[0]).toContain("without an ssh record");
+  });
+
+  test("no is no: nothing is pushed, built or restarted", async () => {
+    const h = harness({ confirm: false });
+    expect(await cmdCrewUpdate(h.deps, ["nas"])).toBe(EXIT.STATE);
+    expect(legs(h)).toEqual(["nas.example:probe"]);
+    expect(text(h.io)).toContain("left alone");
+  });
+
+  test("a non-interactive run aborts legibly rather than reading EOF as yes", async () => {
+    const h = harness({ confirm: null });
+    expect(await cmdCrewUpdate(h.deps, ["nas"])).toBe(EXIT.FAIL);
+    expect(text(h.io)).toContain("this run is not interactive, and it would have asked");
+    expect(legs(h)).toEqual(["nas.example:probe"]);
+  });
+});
+
+// ── The work ─────────────────────────────────────────────────────────────────
+
+describe("a member's turn: push, restart, verify", () => {
+  test("the happy path runs all three legs and reports the version the LEAD observed", async () => {
+    const h = harness();
+    expect(await cmdCrewUpdate(h.deps, ["nas"])).toBe(EXIT.OK);
+    expect(legs(h)).toEqual(["nas.example:probe", "nas.example:install", "nas.example:restart"]);
+    const rendered = text(h.io);
+    expect(rendered).toContain(`crew update — ${VERSION} (${COMMIT.slice(0, 12)})`);
+    expect(rendered).toContain(`✓ push`);
+    expect(rendered).toContain("its bridge came back");
+    expect(rendered).toContain(`answers at 100.64.0.9:8787 · ${VERSION}`);
+    expect(rendered).toContain(`nas         updated  ${OLD_VERSION} → ${VERSION}`);
+    expect(rendered).toContain(`✓ 1 updated, 0 already current, 0 skipped, 0 failed — every member named runs ${VERSION}`);
+  });
+
+  test("the commit is bundled ONCE for the whole run, however many members take it", async () => {
+    let bundles = 0;
+    const h = harness({
+      store: twoPeers(),
+      ops: { nas: opsRecord("nas.example"), pi: opsRecord("pi.example") },
+      hello: { nas: VERSION, pi: VERSION },
+    });
+    const wrapped = { ...h.deps, gitBundle: () => (bundles++, Promise.resolve("QkFTRTY0")) };
+    expect(await cmdCrewUpdate(wrapped, ["--all"])).toBe(EXIT.OK);
+    expect(bundles).toBe(1);
+  });
+
+  test("the first failure aborts, and every member after it is left untouched", async () => {
+    const h = harness({
+      store: twoPeers(),
+      ops: { nas: opsRecord("nas.example"), pi: opsRecord("pi.example") },
+      hello: { nas: VERSION, pi: VERSION },
+      answers: { "nas.example": { install: { code: 24, stderr: "error: the build failed on this machine" } } },
+    });
+    expect(await cmdCrewUpdate(h.deps, ["--all"])).toBe(EXIT.FAIL);
+    const rendered = text(h.io);
+    expect(rendered).toContain("the build failed on nas.example");
+    // Nothing was sent to the member after it. That is the whole rule (M15/06).
+    expect(legs(h)).not.toContain("pi.example:install");
+    expect(rendered).toContain("nas         FAILED");
+    expect(rendered).toContain("pi          skipped  not attempted — the run stopped at nas");
+    expect(rendered).toContain("the run stopped at nas — every member after it was left untouched");
+  });
+
+  test("the abort names the recovery command for the member that failed", async () => {
+    const h = harness({
+      answers: { "nas.example": { install: { code: 24, stderr: "error: the build failed" } } },
+    });
+    expect(await cmdCrewUpdate(h.deps, ["nas"])).toBe(EXIT.FAIL);
+    expect(text(h.io)).toContain("recover with: collie crew update nas");
+  });
+
+  test("the abort says why stopping is safe: CREW_PROTOCOL §7.1 tolerates skew", async () => {
+    const h = harness({
+      answers: { "nas.example": { install: { code: 24, stderr: "error: the build failed" } } },
+    });
+    await cmdCrewUpdate(h.deps, ["nas"]);
+    expect(text(h.io)).toContain("§7.1 tolerates version skew");
+  });
+
+  test("a restart that fails says the new build is on disk and the old one is still running", async () => {
+    const h = harness({ answers: { "nas.example": { restart: { code: 1, stderr: "error: the unit did not come back" } } } });
+    expect(await cmdCrewUpdate(h.deps, ["nas"])).toBe(EXIT.FAIL);
+    expect(text(h.io)).toContain("has the new build on disk and the old one still running");
+  });
+
+  test("a member the lead cannot reach afterwards is a FAILURE, not a green run", async () => {
+    const h = harness({ hello: { nas: false } });
+    expect(await cmdCrewUpdate(h.deps, ["nas"])).toBe(EXIT.FAIL);
+    expect(text(h.io)).toContain("cannot reach it at 100.64.0.9:8787");
+    expect(text(h.io)).toContain("nas         FAILED");
+  });
+
+  // ── What counts as "it came back running what we pushed" ───────────────────
+  // A built Collie reports `<semver>+<short sha>`, so the manifest version alone is only half of the
+  // string. The first field run compared against that half and warned about a member running exactly
+  // the commit it had just been sent — under a ✓ calling the same string a success.
+
+  test("a member answering the version AND the pushed commit is not warned about at all", async () => {
+    const h = harness({ hello: { nas: `${VERSION}+${SHORT}` } });
+    expect(await cmdCrewUpdate(h.deps, ["nas"])).toBe(EXIT.OK);
+    const rendered = text(h.io);
+    expect(rendered).not.toContain("warn: nas answers as");
+    expect(rendered).toContain(`answers at 100.64.0.9:8787 · ${VERSION}+${SHORT}`);
+    expect(rendered).not.toContain("(expected");
+  });
+
+  test("git may abbreviate the same commit longer there than here, and that is still this build", async () => {
+    const h = harness({ hello: { nas: `${VERSION}+${COMMIT.slice(0, 10)}` } });
+    expect(await cmdCrewUpdate(h.deps, ["nas"])).toBe(EXIT.OK);
+    expect(text(h.io)).not.toContain("warn: nas answers as");
+  });
+
+  test("a member built from ANOTHER commit never passes the health gate — it aborts the run", async () => {
+    const h = harness({ hello: { nas: `${VERSION}+beefbee` } });
+    expect(await cmdCrewUpdate(h.deps, ["nas"])).toBe(EXIT.FAIL);
+    const rendered = text(h.io);
+    expect(rendered).toContain(`nas did not come back running ${VERSION}+${SHORT}`);
+    expect(rendered).toContain(`it answers as ${VERSION}+beefbee, not ${VERSION}+${SHORT}`);
+  });
+
+  test("a member that comes back reporting a different version fails the run, loudly", async () => {
+    const h = harness({ hello: { nas: "9.9.9" } });
+    expect(await cmdCrewUpdate(h.deps, ["nas"])).toBe(EXIT.FAIL);
+    expect(text(h.io)).toContain(`it answers as 9.9.9, not ${VERSION}+${SHORT}`);
+    // The gate polls, and only asks the member's own updater once it has given up.
+    expect(legs(h)).toContain("nas.example:status");
+  });
+
+  test("the member's own updater record is the reason, and its recovery command is the one printed", async () => {
+    const h = harness({
+      hello: { nas: false },
+      answers: {
+        "nas.example": {
+          status: {
+            stdout: JSON.stringify(
+              run("rolled-back", { reason: "the service came back as 1.2.2", recovery: "collie update --rollback" }),
+            ),
+          },
+        },
+      },
+    });
+    expect(await cmdCrewUpdate(h.deps, ["nas"])).toBe(EXIT.FAIL);
+    const rendered = text(h.io);
+    expect(rendered).toContain("its own updater reports rolled-back");
+    expect(rendered).toContain("nas says: the service came back as 1.2.2");
+    expect(rendered).toContain("recover with: ssh nas.example -- collie update --rollback");
+  });
+
+  test("a bundle this checkout cannot produce fails every member instead of half of them", async () => {
+    const h = harness({
+      store: twoPeers(),
+      ops: { nas: opsRecord("nas.example"), pi: opsRecord("pi.example") },
+      bundle: null,
+    });
+    expect(await cmdCrewUpdate(h.deps, ["--all"])).toBe(EXIT.FAIL);
+    expect(legs(h).filter((l) => l.endsWith("install"))).toEqual([]);
+    expect(text(h.io)).toContain("not attempted — the bundle failed here");
+  });
+});
+
+describe("answersThisBuild", () => {
+  test("the version alone is the most an unstamped member can say, and it is not evidence against us", () => {
+    expect(answersThisBuild(VERSION, VERSION, COMMIT)).toBe(true);
+    expect(answersThisBuild(OLD_VERSION, VERSION, COMMIT)).toBe(false);
+  });
+
+  test("the build half must abbreviate the commit that was pushed", () => {
+    expect(answersThisBuild(`${VERSION}+${SHORT}`, VERSION, COMMIT)).toBe(true);
+    expect(answersThisBuild(`${VERSION}+${COMMIT}`, VERSION, COMMIT)).toBe(true);
+    expect(answersThisBuild(`${VERSION}+beefbee`, VERSION, COMMIT)).toBe(false);
+    expect(answersThisBuild(`${VERSION}+ab`, VERSION, COMMIT)).toBe(false);
+  });
+
+  test("a marker on either half means it is not that commit — `-dirty` and `-dev` both fail", () => {
+    expect(answersThisBuild(`${VERSION}+${SHORT}-dirty`, VERSION, COMMIT)).toBe(false);
+    expect(answersThisBuild(`${VERSION}-dev+${SHORT}`, VERSION, COMMIT)).toBe(false);
+  });
+});
+
+// ── The ops record ───────────────────────────────────────────────────────────
+
+describe("the ops record", () => {
+  test("an override refreshes it, so the next run needs no flags", async () => {
+    const h = harness({ ops: { nas: opsRecord("old.example") } });
+    expect(await cmdCrewUpdate(h.deps, ["nas", "--host", "nas.new", "--port", "9000"])).toBe(EXIT.OK);
+    expect(h.calls.every((c) => c.host === "nas.new")).toBe(true);
+    expect(parseCrewOps(h.ops.contents()!)?.members.nas).toEqual({
+      sshHost: "nas.new",
+      path: CHECKOUT,
+      port: 9000,
+      recordedAt: T0,
+      // `crew update` arms nothing — only `crew deputy` writes this pair, and a record it refreshes
+      // must not silently claim an anchor it did not create.
+      anchoredGeneration: null,
+      anchoredAt: null,
+    });
+  });
+
+  test("a run with no override rewrites nothing — the file is not a log", async () => {
+    const h = harness();
+    const before = h.ops.contents();
+    expect(await cmdCrewUpdate(h.deps, ["nas"])).toBe(EXIT.OK);
+    expect(h.ops.contents()).toBe(before);
+  });
+
+  test("the preflight walk is given the overridden route, not the stale record", async () => {
+    // The bug this asserts against: the gate ran before the flags were used against a machine, so
+    // a record pointing at a checkout that no longer exists went red — and the red's own remedy was
+    // to pass the very flags the gate had ignored.
+    const h = harness({ ops: { nas: opsRecord("old.example") } });
+    expect(
+      await cmdCrewUpdate(h.deps, ["nas", "--host", "nas.new", "--path", "/opt/collie", "--port", "9000"]),
+    ).toBe(EXIT.OK);
+    expect(h.preflights).toHaveLength(1);
+    expect(h.preflights[0]!.overrides).toEqual({
+      nas: { sshHost: "nas.new", path: "/opt/collie", port: 9000 },
+    });
+  });
+
+  test("a run with no flags hands the walk the recorded route, so nothing changes for it", async () => {
+    const h = harness();
+    expect(await cmdCrewUpdate(h.deps, ["nas"])).toBe(EXIT.OK);
+    expect(h.preflights[0]!.overrides).toEqual({
+      nas: { sshHost: "nas.example", path: CHECKOUT, port: 8787 },
+    });
+  });
+
+  test("an override is remembered once the probe proves it, even when a later leg fails", async () => {
+    const h = harness({
+      ops: { nas: opsRecord("old.example") },
+      answers: { "nas.new": { install: { code: 1, stderr: "the build blew up" } } },
+    });
+    expect(await cmdCrewUpdate(h.deps, ["nas", "--host", "nas.new", "--port", "9000"])).toBe(EXIT.FAIL);
+    // The push failed — the run as a whole is a failure — but the route the operator typed
+    // correctly must not be lost: the probe reached `nas.new` and found a real checkout there
+    // before the push ever ran, and that is proof enough to keep.
+    expect(parseCrewOps(h.ops.contents()!)?.members.nas).toEqual({
+      sshHost: "nas.new",
+      path: CHECKOUT,
+      port: 9000,
+      recordedAt: T0,
+      anchoredGeneration: null,
+      anchoredAt: null,
+    });
+  });
+});
+
+// ── Tilde expansion in remote paths ───────────────────────────────────────────
+
+describe("a --path with a tilde is expanded on the far side, never here", () => {
+  test("`~/…` reaches the remote shell as \"$HOME\"/rest, quoted — never a literal tilde", async () => {
+    const h = harness({ ops: { nas: opsRecord("old.example") } });
+    expect(
+      await cmdCrewUpdate(h.deps, ["nas", "--host", "nas.new", "--path", "~/apps/collie-stable"]),
+    ).toBe(EXIT.OK);
+    const probed = h.calls.find((c) => c.leg === "probe");
+    expect(probed?.script).toContain(`"$HOME"/'apps/collie-stable'`);
+    expect(probed?.script).not.toContain("~");
+  });
+
+  test("bare `~` reaches the remote shell as \"$HOME\"", async () => {
+    const h = harness({ ops: { nas: opsRecord("old.example") } });
+    expect(await cmdCrewUpdate(h.deps, ["nas", "--host", "nas.new", "--path", "~"])).toBe(EXIT.OK);
+    const probed = h.calls.find((c) => c.leg === "probe");
+    // Two entries since #248: the probe looks behind `<path>/current` too, because that is where an
+    // install.sh member keeps its Collie.
+    expect(probed?.script).toContain(`for _d in "$HOME" "$HOME"/'current'; do`);
+    expect(probed?.script).not.toContain("~");
+  });
+
+  test("a path without a tilde is still single-quoted, exactly as before", async () => {
+    const h = harness({ ops: { nas: opsRecord("old.example") } });
+    expect(
+      await cmdCrewUpdate(h.deps, ["nas", "--host", "nas.new", "--path", "/opt/collie"]),
+    ).toBe(EXIT.OK);
+    const probed = h.calls.find((c) => c.leg === "probe");
+    expect(probed?.script).toContain(`for _d in '/opt/collie' '/opt/collie/current'; do`);
+  });
+});
+
+// A single, deliberately un-asserted print of the whole plain transcript, so the shape of what an
+// operator reads is reviewable in one place rather than inferred from twenty `toContain`s.
+describe("the plain transcript", () => {
+  test("reads as one report: plan, work, table", async () => {
+    const h = harness({
+      store: twoPeers(),
+      ops: { nas: opsRecord("nas.example") },
+      hello: { nas: VERSION, pi: VERSION },
+    });
+    await cmdCrewUpdate(h.deps, ["--all"]);
+    expect(h.io.stdout).toEqual([
+      "crew update — 1.2.3 (abc123def456)",
+      "preflight: nothing red on this lead or on 1 member.",
+      "→ nas         1.2.2 at 0000feed0000 · nas.example:/home/pat/.collie",
+      "· pi          no ssh record — run `collie crew add <host>` once to teach it",
+      "",
+      "nas:",
+      "  pushing abc123def456 (0 KiB base64) to /home/pat/.collie…",
+      "  ✓ push        1.2.3 at /home/pat/.collie",
+      "  ✓ restart     its bridge came back",
+      "  ✓ verify      answers at 100.64.0.9:8787 · 1.2.3",
+      "",
+      "summary:",
+      "  nas         updated  1.2.2 → 1.2.3",
+      "  pi          skipped  no ssh record",
+      "✓ 1 updated, 0 already current, 1 skipped, 0 failed — 1 still behind this lead's 1.2.3",
+    ]);
+  });
+});
+
+// ── The release route (#248) ─────────────────────────────────────────────────
+// A lead with no commit levels its members to the release it runs itself. Everything below is
+// decided from ONE fact about the lead (its install kind) and ONE about each member (what Collie is
+// already there) — and the member's fact comes from leg 1, never from an assumption.
+
+describe("the release route", () => {
+  test("a member behind the lead's release is installed from it, and nothing is bundled", async () => {
+    const h = harness({ ...RELEASE_LEAD, probes: { "nas.example": binaryMember("1.0.0") } });
+    expect(await cmdCrewUpdate(h.deps, ["nas"])).toBe(EXIT.OK);
+    expect(h.bundles).toBe(0);
+    expect(legs(h)).toEqual(["nas.example:probe", "nas.example:install", "nas.example:restart"]);
+    const install = h.calls.find((c) => c.leg === "install")!;
+    expect(install.script).toContain(`COLLIE_TAG='v${VERSION}'`);
+    expect(install.script).toContain(`DIR='${MEMBER_INSTALL_ROOT}'`);
+    // The payload IS Collie's own installer, out of this binary — never fetched on the far machine.
+    expect(install.stdin?.startsWith("#!/bin/sh\n")).toBe(true);
+    // The restart addresses the binary behind `current`, which is the one that will be running.
+    expect(h.calls.find((c) => c.leg === "restart")!.script).toContain(MEMBER_CURRENT);
+    expect(text(h.io)).toContain(`installing v${VERSION} from AltanS/collie at ${MEMBER_INSTALL_ROOT} on nas.example…`);
+    expect(text(h.io)).toContain(`nas         updated  1.0.0 → ${VERSION}`);
+  });
+
+  test("a member already at this release is current — the build stamp is not a difference", async () => {
+    const h = harness({ ...RELEASE_LEAD, probes: { "nas.example": binaryMember(`${VERSION}+ab12cd3`) } });
+    expect(await cmdCrewUpdate(h.deps, ["nas"])).toBe(EXIT.OK);
+    expect(legs(h)).toEqual(["nas.example:probe"]);
+    expect(text(h.io)).toContain(`already at ${VERSION}+ab12cd3 — this lead's own release`);
+    expect(text(h.io)).toContain(`nas         current  ${VERSION}+ab12cd3`);
+  });
+
+  // A checkout is somebody's working tree. Converting it from here would move it, and the remedy is
+  // one command typed there — so it is skipped, never failed, and the run carries on.
+  test("a member running from git is skipped by name, and the other members still run", async () => {
+    const h = harness({
+      ...RELEASE_LEAD,
+      store: twoPeers(),
+      ops: { nas: opsRecord("nas.example"), pi: opsRecord("pi.example") },
+      probes: { "nas.example": binaryMember("1.0.0") },
+      hello: { nas: `${VERSION}+${SHORT}`, pi: VERSION },
+    });
+    expect(await cmdCrewUpdate(h.deps, ["--all"])).toBe(EXIT.OK);
+    const rendered = text(h.io);
+    expect(rendered).toContain(`· pi          a git checkout at ${CHECKOUT}, and this lead has no commit to push`);
+    expect(rendered).toContain(`run \`collie update --to-tag v${VERSION}\` there`);
+    expect(rendered).toContain("pi          skipped  source checkout");
+    expect(legs(h)).toEqual(["nas.example:probe", "pi.example:probe", "nas.example:install", "nas.example:restart"]);
+    // Counted apart in the one question, the way a packaged peer and a routeless one already are.
+    expect(h.confirms[0]).toContain("1 on a source checkout");
+  });
+
+  // The case the stamp comparison broke: a nix or brew lead has no build stamp at all, and the
+  // member it installs from the release tarball always has one.
+  test("a lead with no build stamp levels a member that comes back with one", async () => {
+    const h = harness({
+      installKind: { kind: "packaged" },
+      probes: { "nas.example": binaryMember("1.0.0") },
+      hello: { nas: `${VERSION}+704b674` },
+    });
+    expect(await cmdCrewUpdate(h.deps, ["nas"])).toBe(EXIT.OK);
+    expect(text(h.io)).toContain(`nas         updated  1.0.0 → ${VERSION}`);
+  });
+
+  test("a Collie that is neither shape is blocked, and named", async () => {
+    const h = harness({
+      ...RELEASE_LEAD,
+      probes: { "nas.example": { checkout: "/opt/collie", checkoutgit: "no", installroot: "", commit: "", dirty: "" } },
+    });
+    expect(await cmdCrewUpdate(h.deps, ["nas"])).toBe(EXIT.FAIL);
+    expect(text(h.io)).toContain("the Collie at /opt/collie on nas.example is neither a git checkout nor an");
+    expect(text(h.io)).toContain("nas         FAILED   neither a checkout nor an install.sh layout");
+    expect(legs(h)).toEqual(["nas.example:probe"]);
+  });
+
+  test("a member with no Collie at all is blocked — `crew add` installs the first one", async () => {
+    const h = harness({ ...RELEASE_LEAD, probes: { "nas.example": { checkout: "", checkoutgit: "", commit: "" } } });
+    expect(await cmdCrewUpdate(h.deps, ["nas"])).toBe(EXIT.FAIL);
+    expect(text(h.io)).toContain("error: no Collie at nas.example (/home/pat/.collie).");
+    expect(text(h.io)).toContain("nas         FAILED   no Collie there");
+  });
+
+  // Refused before the first ssh byte rather than discovered after N probes, the rule every cheap
+  // refusal in this verb follows.
+  test("a lead whose own version cannot be read refuses before anything is dialled", async () => {
+    const h = harness({ installKind: { kind: "binary" }, leadVersion: "not-a-version" });
+    expect(await cmdCrewUpdate(h.deps, ["nas"])).toBe(EXIT.FAIL);
+    expect(text(h.io)).toContain("cannot read this lead's version, so there is no release to level the members to.");
+    expect(text(h.io)).toContain("is a binary install");
+    expect(h.calls).toHaveLength(0);
+  });
+
+  test("the one question names the tag, and never a commit that does not exist", async () => {
+    const h = harness({ ...RELEASE_LEAD, probes: { "nas.example": binaryMember("1.0.0") } });
+    expect(await cmdCrewUpdate(h.deps, ["nas"])).toBe(EXIT.OK);
+    expect(h.confirms[0]).toBe(`update 1 member to v${VERSION} over ssh: nas (1.0.0)?`);
+    expect(h.io.stdout[0]).toBe(`crew update — ${VERSION}`);
+  });
+
+  // THE TAG IS THE CONTRACT, AND THE STAMP IS NOT. The member installs the release tarball, whose
+  // stamp is the release commit; this lead's own stamp is whoever built THIS copy, and a packaged
+  // lead carries a different one or none. Comparing the two failed a member running exactly the
+  // release it was told to run — found in the VM rehearsal of #248.
+  test("the verify leg takes any stamp under the right release, and refuses another release", async () => {
+    for (const reported of [`${VERSION}+704b674`, `${VERSION}+${SHORT}`, VERSION]) {
+      const ok = harness({
+        ...RELEASE_LEAD,
+        probes: { "nas.example": binaryMember("1.0.0") },
+        hello: { nas: reported },
+      });
+      expect(await cmdCrewUpdate(ok.deps, ["nas"])).toBe(EXIT.OK);
+      expect(text(ok.io)).toContain(`✓ verify      answers at 100.64.0.9:8787 · ${reported}`);
+    }
+
+    const bad = harness({
+      ...RELEASE_LEAD,
+      probes: { "nas.example": binaryMember("1.0.0") },
+      hello: { nas: `1.2.4+${SHORT}` },
+    });
+    expect(await cmdCrewUpdate(bad.deps, ["nas"])).toBe(EXIT.FAIL);
+    // The failure names the TAG, which is the thing the member was told to install.
+    expect(text(bad.io)).toContain(`nas did not come back running v${VERSION}`);
+    expect(text(bad.io)).toContain(`it answers as 1.2.4+${SHORT}, not v${VERSION}`);
+    expect(text(bad.io)).not.toContain(`running ${VERSION}+`);
+  });
+});
+
+// ── The bundle route's mirror image (#248) ───────────────────────────────────
+
+describe("a member that takes releases, on a lead that pushes a commit", () => {
+  // Before #248 the probe could not see such a member at all, so this run said "no Collie checkout
+  // there" about a machine that has one. It is named rather than written over: a `git bundle` into
+  // an install.sh layout would clone a second Collie beside the one that is running.
+  test("is skipped by name, and the phone is named as what levels it", async () => {
+    const h = harness({ probes: { "nas.example": binaryMember("1.0.0") } });
+    expect(await cmdCrewUpdate(h.deps, ["nas"])).toBe(EXIT.OK);
+    const rendered = text(h.io);
+    expect(rendered).toContain(`· nas         binary install at ${MEMBER_INSTALL_ROOT}, which takes releases`);
+    expect(rendered).toContain("the phone's Updates page levels it");
+    expect(rendered).toContain("nas         skipped  binary install");
+    expect(rendered).not.toContain("no Collie");
+    expect(legs(h)).toEqual(["nas.example:probe"]);
+    expect(h.bundles).toBe(0);
+  });
+});

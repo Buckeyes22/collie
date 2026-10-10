@@ -20,7 +20,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.accessibility.AccessibilityNodeInfoCompat
 import androidx.customview.widget.ExploreByTouchHelper
 import com.lateapex.collie.R
-import com.lateapex.collie.network.PackMember
+import com.lateapex.collie.network.CrewMember
 import kotlin.math.floor
 import kotlin.math.hypot
 import kotlin.math.max
@@ -28,7 +28,7 @@ import kotlin.math.max
 enum class PackFormationRole { LEAD, DEPUTY, PEER }
 
 data class PackFormationNode(
-    val member: PackMember,
+    val member: CrewMember,
     val role: PackFormationRole,
     val x: Float,
     val y: Float,
@@ -43,7 +43,7 @@ internal enum class PackRingState {
     UNKNOWN,
 }
 
-internal fun packRingState(member: PackMember, hostState: DashboardHostState?): PackRingState = when {
+internal fun packRingState(member: CrewMember, hostState: DashboardHostState?): PackRingState = when {
     member.health == "incompatible" || member.health == "conflicted" -> PackRingState.LOUD
     hostState == DashboardHostState.LIVE -> PackRingState.LIVE
     hostState == DashboardHostState.STALE -> PackRingState.STALE
@@ -70,8 +70,8 @@ object PackFormationLayout {
     const val NAME_LABEL_GAP = 5f
     private const val NAME_LABEL_BOTTOM_PAD = 8f
 
-    fun nodes(members: List<PackMember>, deputyId: String?): List<PackFormationNode> {
-        val lead = members.firstOrNull(PackMember::isLead)
+    fun nodes(members: List<CrewMember>, deputyId: String?): List<PackFormationNode> {
+        val lead = members.firstOrNull(CrewMember::isLead)
         val deputy = deputyId?.let { id -> members.firstOrNull { it.id == id && !it.isLead } }
         val peers = members.filter { it !== lead && it !== deputy }
         val nodes = mutableListOf<PackFormationNode>()
@@ -206,7 +206,7 @@ class PackFormationView @JvmOverloads constructor(
     private var nodes: List<PackFormationNode> = emptyList()
     private var blockedCounts: Map<String, Int> = emptyMap()
     private var hostStates: Map<String, DashboardHostState> = emptyMap()
-    private var selectedListener: ((PackMember) -> Unit)? = null
+    private var selectedListener: ((CrewMember) -> Unit)? = null
     private var labelTopInset = 0f
     internal val laidOutNodes: List<PackFormationNode> get() = nodes
     private val accessibilityHelper = object : ExploreByTouchHelper(this) {
@@ -260,11 +260,11 @@ class PackFormationView @JvmOverloads constructor(
     }
 
     internal fun submit(
-        members: List<PackMember>,
+        members: List<CrewMember>,
         deputyId: String?,
         blocked: Map<String, Int>,
         hostStates: Map<String, DashboardHostState> = emptyMap(),
-        onSelected: (PackMember) -> Unit,
+        onSelected: (CrewMember) -> Unit,
     ) {
         sourceNodes = PackFormationLayout.nodes(members, deputyId)
         nodes = sourceNodes

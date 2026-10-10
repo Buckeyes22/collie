@@ -21,7 +21,14 @@ import com.lateapex.collie.network.NotificationState
 import com.lateapex.collie.network.NotifyPreferences
 import com.lateapex.collie.network.NotifyPreferencesPatch
 import com.lateapex.collie.network.OriginValidator
-import com.lateapex.collie.network.PackStatusResponse
+import com.lateapex.collie.network.CrewStatusResponse
+import com.lateapex.collie.network.ChatAfter
+import com.lateapex.collie.network.ChatBefore
+import com.lateapex.collie.network.PaneChatResponse
+import com.lateapex.collie.network.StartTarget
+import com.lateapex.collie.network.WorktreeBase
+import com.lateapex.collie.network.WorktreeFolder
+import com.lateapex.collie.network.WorktreePlanResponse
 import com.lateapex.collie.network.PairResult
 import com.lateapex.collie.network.PaneHistoryResponse
 import com.lateapex.collie.network.PaneReadResponse
@@ -139,14 +146,33 @@ class CollieRepository(
 
     suspend fun snapshot(scope: Scope = selectedScope.value): ApiResult<SnapshotResponse> =
         withConnection { configured ->
-            api.snapshot(configured, scope).also { result ->
-                if (result is ApiResult.Success && connection.value == configured) {
-                    mutableDeviceWriteAuthorization.value = DeviceWriteAuthorization.from(result.value.device)
-                }
+            val result = api.snapshot(configured, scope)
+            if (result is ApiResult.Success && connection.value == configured) {
+                mutableDeviceWriteAuthorization.value = DeviceWriteAuthorization.from(result.value.device)
             }
+            if (result is ApiResult.Success && !scope.viewAll && scope.session != null) {
+                // A narrow snapshot omits its session tags; they are supplied by the request.
+                result.copy(value = result.value.copy(
+                    agents = result.value.agents.map { it.copy(session = it.session ?: scope.session) },
+                    shellPanes = result.value.shellPanes.map { it.copy(session = it.session ?: scope.session) },
+                ))
+            } else result
         }
 
-    suspend fun config(): ApiResult<BridgeConfigResponse> = withConnection(api::config)
+    /** Resolve the implicit local host for pane joins, while keeping other crew identities intact. */
+    suspend fun paneSnapshot(scope: Scope): ApiResult<SnapshotResponse> {
+        val result = snapshot(scope)
+        if (result !is ApiResult.Success || scope.host != null) return result
+        val lead = result.value.servers?.firstOrNull { it.isLead }?.id ?: return result
+        return result.copy(value = result.value.copy(
+            agents = result.value.agents.map { if (it.host == lead) it.copy(host = null) else it },
+            shellPanes = result.value.shellPanes.map { if (it.host == lead) it.copy(host = null) else it },
+            tabs = result.value.tabs.map { if (it.host == lead) it.copy(host = null) else it },
+            workspaces = result.value.workspaces.map { if (it.host == lead) it.copy(host = null) else it },
+        ))
+    }
+
+    suspend fun config(scope: Scope = selectedScope.value): ApiResult<BridgeConfigResponse> = withConnection { api.config(it, scope) }
 
     suspend fun refresh(scope: Scope = selectedScope.value): ApiResult<ActionResponse> =
         withConnection { api.refresh(it, scope) }
@@ -158,7 +184,7 @@ class CollieRepository(
         api.revokeDevice(it, label)
     }
 
-    suspend fun pack(): ApiResult<PackStatusResponse> = withConnection(api::pack)
+    suspend fun crew(): ApiResult<CrewStatusResponse> = withConnection(api::crew)
 
     suspend fun history(
         address: PaneAddress,
@@ -167,6 +193,22 @@ class CollieRepository(
         etag: String? = null,
     ): ApiResult<PaneHistoryResponse> = withConnection {
         api.history(it, address, limit, before, etag)
+    }
+
+    suspend fun chat(address: PaneAddress, limit: Int = 200, after: ChatAfter? = null, before: ChatBefore? = null, etag: String? = null): ApiResult<PaneChatResponse> = withConnection {
+        api.chat(it, address, limit, after, before, etag)
+    }
+
+    suspend fun startLaunch(scope: Scope, target: StartTarget, requestId: String, cwd: String? = null): ApiResult<CreateResponse> = withWritableConnection {
+        api.startLaunch(it, scope, target, requestId, cwd)
+    }
+
+    suspend fun planWorktree(scope: Scope, cwd: String, branch: String? = null, parent: String? = null): ApiResult<WorktreePlanResponse> = withConnection {
+        api.planWorktree(it, scope, cwd, branch, parent)
+    }
+
+    suspend fun createWorktreeAt(scope: Scope, cwd: String, branch: String, target: StartTarget, requestId: String, base: WorktreeBase = WorktreeBase(), folder: WorktreeFolder = WorktreeFolder()): ApiResult<WorktreeOpenResponse> = withWritableConnection {
+        api.createWorktreeAt(it, scope, cwd, branch, target, requestId, base, folder)
     }
 
     suspend fun closePane(address: PaneAddress): ApiResult<ActionResponse> = withWritableConnection {
@@ -295,7 +337,7 @@ class CollieRepository(
         // with the shorter cached body when a bridge keys ETags to pane revision rather than size.
         // The origin is part of the key so switching servers cannot reuse another server's body.
         val cached = cacheMutex.withLock { paneCache[cacheKey] }?.takeIf { it.lines == lines }
-        return when (val result = api.pane(configured, address, lines, cached?.etag, markSeen)) {
+        return when (val result = withConnectionOf(configured) { api.pane(it, address, lines, cached?.etag, markSeen) }) {
             is ApiResult.Success -> {
                 val entry = CachedPane(result.value, result.etag, lines)
                 cacheMutex.withLock { paneCache[cacheKey] = entry }
@@ -359,7 +401,20 @@ class CollieRepository(
 
     private suspend fun <T> withConnection(block: suspend (Connection) -> ApiResult<T>): ApiResult<T> {
         val configured = connection.value ?: return notConnected()
-        return block(configured)
+        return withConnectionOf(configured, block)
+    }
+
+    /** Keep the cached read and its credential on the same server across suspending cache locks. */
+    private suspend fun <T> withConnectionOf(configured: Connection, block: suspend (Connection) -> ApiResult<T>): ApiResult<T> {
+        if (connection.value !== configured) return ApiResult.Failure(ApiFailure.Protocol("Connection changed; refresh before trying again"))
+        val result = block(configured)
+        if (result is ApiResult.Failure && result.error is ApiFailure.Http && result.error.status == 403 &&
+            result.error.message in setOf("device not paired", "device expired") && connection.value === configured
+        ) {
+            demoteToReadOnly()
+            cacheMutex.withLock { paneCache.clear() }
+        }
+        return result
     }
 
     private suspend fun <T> withWritableConnection(
@@ -372,7 +427,7 @@ class CollieRepository(
         if (!mutableDeviceWriteAuthorization.value.permitsWrites) {
             return ApiResult.Failure(ApiFailure.Http(403, "device not authorised", "device.not_authorised"))
         }
-        return block(configured)
+        return withConnectionOf(configured, block)
     }
 
     private fun <T> notConnected(): ApiResult<T> =

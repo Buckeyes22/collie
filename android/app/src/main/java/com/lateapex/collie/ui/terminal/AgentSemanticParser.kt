@@ -68,7 +68,7 @@ object AgentSemanticParser {
             "codex" -> detectCodex(lines, revision)
             "grok" -> detectGrok(lines, revision)
             "agy", "antigravity" -> detectAgy(lines, revision)
-            // The web OMP adapter intentionally remains Tier 1/raw and claims no dialog grammar.
+            // Native OMP dialogs stay raw until their key recipes have been verified here.
             "omp" -> null
             else -> null
         }

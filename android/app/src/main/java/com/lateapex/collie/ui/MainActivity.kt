@@ -31,6 +31,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.google.android.material.button.MaterialButton
+import com.lateapex.collie.CollieApplication
 import com.lateapex.collie.BuildConfig
 import com.lateapex.collie.R
 import com.lateapex.collie.databinding.ActivityMainBinding
@@ -1123,9 +1124,14 @@ class MainActivity : AppCompatActivity() {
     private fun launch(launcher: Launcher) {
         if (!launchingCommands.add(launcher.command)) return
         render(viewModel.state.value)
+        val repository = (application as CollieApplication).container.repository
+        val launchConnection = repository.connection.value
+        val launchScope = viewModel.currentScope
         lifecycleScope.launch {
             try {
-                handleCreate(viewModel.launch(launcher.command))
+                if (!confirmLauncher(this@MainActivity, launcher, launchScope.host ?: launchConnection?.origin?.value.orEmpty())) return@launch
+                if (repository.connection.value !== launchConnection || viewModel.currentScope != launchScope) return@launch
+                handleCreate(viewModel.launch(launcher.command), launchScope)
             } finally {
                 launchingCommands.remove(launcher.command)
                 render(viewModel.state.value)

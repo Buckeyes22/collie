@@ -134,6 +134,12 @@ export interface MuxPane extends MuxIdentity {
   readonly tabId: string;
   /** The tab's label, when it carries information. Absent for a positional default. */
   readonly tabLabel?: string;
+  /**
+   * True when `tabLabel` is a name the OPERATOR set, not the multiplexer's own: never a positional
+   * default, and never tmux's automatic window name (which the adapter reports as the pane's folder).
+   * Only such a name may name a pane (bridge/state-engine.ts, `soleTabName`). Absent otherwise.
+   */
+  readonly tabNamed?: true;
   /** The pane's working directory. Empty when the multiplexer does not report one. */
   readonly cwd: string;
   /**
@@ -211,7 +217,7 @@ export interface MuxPane extends MuxIdentity {
    *
    * It is the RAW FACT the adapter already holds, reported as a raw fact. Exactly TWO modules in the
    * tree read it, and both spend it on presentation only — it never reaches {@link agent}, {@link
-   * status}, the session ref or the triage sort:
+   * status}, the session ref or triage:
    *
    *  • `bridge/beacon/hint.ts`, where it may become a sentence for the operator.
    *  • `bridge/state-engine.ts`, where "a shell in the foreground under a non-empty {@link
@@ -236,6 +242,12 @@ export interface MuxPane extends MuxIdentity {
    * capability, no grammar and no sort. See the module that composes it, beside the decorator.
    */
   readonly hint?: string;
+  /**
+   * Content revision from the multiplexer's snapshot — changes when the pane's screen changes.
+   * Herdr provides this natively; tmux and zellij can only derive it per-read, so it is absent
+   * from their snapshot and optional here.
+   */
+  readonly revision?: number;
 }
 
 /** One space — a project-scoped container of tabs. Collie's word; the port never uses another. */
@@ -264,6 +276,13 @@ export interface MuxSpace {
    * always a bug. `false` means "this is the repo itself", which is what a worktree row nests under.
    */
   readonly isWorktree?: boolean;
+  /**
+   * The space's own folder, when the multiplexer keeps one: herdr reports the checkout of the
+   * worktree a workspace sits in, tmux reports `session_path` (the folder a session was started
+   * in). zellij keeps none, and omits it. A FACT the adapter reads, never a guess from the panes:
+   * the Changes view derives its fallback from the panes itself (bridge/changes-root.ts).
+   */
+  readonly folder?: string;
 }
 
 /** One tab within a space — a layout holding one or more panes. */
@@ -300,7 +319,8 @@ export interface MuxSnapshot {
  * `styling` is on the contract because it is BEHAVIOURAL, not cosmetic: on at least one multiplexer
  * the two formats take different paths through the terminal core, and one of them can move the
  * operator's own screen (see the note above the read in bridge/server.ts). A caller that only wants
- * words — the session-name scrape in state-engine.ts — must be able to say so.
+ * words must be able to say so. The session-name scrape in state-engine.ts reads `preserve`, because
+ * colour is what tells a `/rename` name from a mode badge.
  */
 export interface MuxGridRequest {
   readonly scope: "viewport" | "recent";
@@ -344,13 +364,34 @@ export interface MuxCreatedPane {
 export interface MuxTabRequest {
   readonly spaceId: string;
   readonly label?: string;
+  /**
+   * Where to open it, or nothing.
+   *
+   * A BLANK STRING IS NOTHING, and it is not a defensive nicety: {@link MuxPane.cwd} is empty when
+   * the multiplexer reports no working directory, and the launch route hands a neighbouring pane's
+   * `cwd` straight through here. So "unknown" arrives spelled `""`, and an adapter that turned that
+   * into a flag asked its multiplexer to open a tab in a directory called nothing (measured on
+   * zellij, M22/04: `--cwd ` with no value, and zellij refused the whole launch).
+   * MUX_CONTRACT.md § Contract-owned rules, *A blank cwd*.
+   */
   readonly cwd?: string;
 }
 
-/** What a new space asks for. */
+/** What a new space asks for. `cwd` follows {@link MuxTabRequest.cwd}: blank is nothing. */
 export interface MuxSpaceRequest {
   readonly cwd: string;
   readonly label?: string;
+}
+
+/**
+ * The directory a create request actually asked for, or `undefined` when it asked for none.
+ *
+ * One function rather than three `!== undefined && !== ""` tests, because the rule is the
+ * contract's and a per-adapter spelling of it is how it comes to be spelled three ways
+ * (MUX_CONTRACT.md § Contract-owned rules, *A blank cwd*).
+ */
+export function requestedCwd(cwd: string | undefined): string | undefined {
+  return cwd === undefined || cwd.trim().length === 0 ? undefined : cwd;
 }
 
 // ── Worktrees ─────────────────────────────────────────────────────────────────
@@ -382,6 +423,18 @@ export interface MuxWorktreeScope {
 /** What a new worktree asks for. */
 export interface MuxWorktreeCreateRequest extends MuxWorktreeScope {
   readonly branch: string;
+  /**
+   * The ref the new branch is cut from. Absent means the multiplexer's own choice, which for Herdr
+   * is the HEAD of `repoRoot`. Already checked by the bridge (bridge/worktree-base.ts); an adapter
+   * that cannot honour it ignores it, as tmux, zellij, tuios and tern do with the whole call.
+   */
+  readonly base?: string;
+  /**
+   * The absolute folder the checkout is made in. Absent means the multiplexer's own place, which for
+   * Herdr is `<worktrees directory>/<repo>/<slug>`. Already checked by the bridge on every use
+   * (bridge/worktree-folder.ts, ADR 0093); an adapter that cannot honour it ignores the whole call.
+   */
+  readonly path?: string;
 }
 
 /** Which existing worktree to show. */
@@ -453,6 +506,26 @@ export interface MuxWatchOptions {
   onDown(reason: string): void;
 }
 
+/**
+ * ONE OTHER INSTANCE OF THIS MULTIPLEXER, ON THIS MACHINE.
+ *
+ * What "instance" means is the multiplexer's own answer, and it is the thing a second Collie session
+ * would be built against: a Herdr session's socket, and nothing at all on a multiplexer that keeps no
+ * such list. `endpoint` is opaque here exactly as {@link MuxTarget.endpoint} is opaque in the
+ * registry, and for the same reason: one adapter's address is meaningless to another.
+ *
+ * `name` is what the operator's phone will call it, so it is short, stable, and the multiplexer's own
+ * word for the thing. It is a Map key in `bridge/sessions.ts` and NEVER used to build a path.
+ *
+ * IT CARRIES NO HOST, and it may never grow one: everything listed here runs on this machine, which
+ * is the whole of what a mux adapter can see (ADR 0011, ADR 0022, ADR 0036). Another machine is
+ * reached by talking to the Collie on it.
+ */
+export interface MuxSession {
+  readonly name: string;
+  readonly endpoint: string;
+}
+
 /** The handle a watch hands back. `close()` is idempotent. */
 export interface MuxSubscription {
   close(): void;
@@ -520,6 +593,21 @@ export interface MuxAdapter {
   /** One pane's rendered screen. Needs `paneGrid`; `recent` past the viewport needs `gridScrollback`. */
   readGrid(paneId: string, request: MuxGridRequest): Promise<MuxOutcome<MuxGrid>>;
 
+  /**
+   * The same rows with soft wraps undone, when the multiplexer can produce them.
+   *
+   * The mirror renders the grid, so a URL longer than the pane arrives in fragments and the web app
+   * can only make an anchor out of the first one — a truncated href (`web/src/lib/links.ts`). This
+   * read is what says what the whole URL was. OPTIONAL by design: a multiplexer without it (or one
+   * whose panes never soft-wrap) simply yields no repair, exactly as today.
+   *
+   * Read in the same escape-carrying form as `readGrid`, and the caller strips the styling: this is
+   * only ever read for the URLs in it. Not `text`, which is the format Herdr was observed to harvest
+   * an idle alt-screen pane with, scrolling the operator's terminal; `ansi` never was
+   * (HERDR_API.md → `pane.read`).
+   */
+  readLogicalText?(paneId: string, lines: number): Promise<MuxOutcome<string>>;
+
   /** Type literal text into a pane, submitting nothing. Needs `typeText`. */
   typeText(paneId: string, text: string): Promise<MuxAck>;
 
@@ -575,6 +663,27 @@ export interface MuxAdapter {
   /** Show an existing worktree as a space. Needs `openWorktree`. */
   openWorktree(request: MuxWorktreeOpenRequest): Promise<MuxOutcome<MuxWorktreeOpened>>;
 
+  /**
+   * The OTHER instances of this multiplexer on this machine, each with the endpoint to dial it.
+   * Needs `listSessions`.
+   *
+   * One bridge can front several of them: `bridge/sessions.ts` starts a runtime per answer, and the
+   * phone selects one with `?session=<name>`. The primary is the one the operator configured, and it
+   * is listed like any other when the multiplexer lists it.
+   *
+   * THE DECLARED-FALSE ANSWER IS `unsupported`, naming this capability, not a throw, and not an
+   * empty list. An empty list is a real answer with a different meaning ("this multiplexer keeps
+   * such a list, and right now it holds nothing else"), and the two must stay tellable apart: the
+   * first pins the registry to the primary for good, the second is a state that changes by itself.
+   *
+   * A read, and a cheap one: it is called on the registry's rescan timer, so an adapter that has to
+   * shell out to answer says so in its own note (MUX_CONTRACT.md).
+   *
+   * Host-local like every other method here. A session is on THIS machine or it is not this
+   * adapter's to report (ADR 0036).
+   */
+  listSessions(): Promise<MuxOutcome<readonly MuxSession[]>>;
+
   /** Watch for change. Always available — an adapter with no push satisfies it by polling. */
   watch(options: MuxWatchOptions): MuxSubscription;
 }
@@ -601,4 +710,15 @@ export interface MuxAdapter {
  */
 export function muxDataFields(adapter: MuxAdapter): Pick<MuxAdapter, "logo"> {
   return adapter.logo === undefined ? {} : { logo: adapter.logo };
+}
+
+/**
+ * The OPTIONAL methods, gathered the way {@link muxDataFields} gathers the optional data fields.
+ *
+ * A decorator spreads this rather than conditionally spreading inline, so a multiplexer that cannot
+ * unwrap (tmux) never comes out of a decorator appearing to offer the read: absent stays absent.
+ */
+export function muxOptionalMethods(adapter: MuxAdapter): Pick<MuxAdapter, "readLogicalText"> {
+  const readLogicalText = adapter.readLogicalText?.bind(adapter);
+  return readLogicalText === undefined ? {} : { readLogicalText };
 }

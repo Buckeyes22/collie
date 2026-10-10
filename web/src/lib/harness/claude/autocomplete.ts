@@ -9,7 +9,9 @@
 // raw mirror with `composerReady` false, so every send stalled. Raising the cap is the wrong fix and
 // .adr/0004 says why: the row count is not what protects that walk (the blank line above a dialog's
 // footer is), and a taller blind window admits MORE screens it should refuse. So the popup is matched
-// POSITIVELY, by its own shape, and peeled before the walk starts.
+// POSITIVELY, by its own shape. Since ADR 0048 the box is found by its own frame and this grammar only
+// LABELS the rows under it (chrome.ts classifyTail): a popup it cannot read no longer hides the box,
+// it just stays on the raw mirror instead of becoming a list.
 //
 // The shape, and nothing about colour:
 //
@@ -20,12 +22,27 @@
 //     …
 //                                                         ← the run ends at the last non-blank line
 //
-// SELECTION IS SGR-ONLY. The highlighted entry is painted in a different colour (SGR 38;2;… plus a
-// bold run over the matched substring) and is otherwise byte-identical to its neighbours — there is
-// no pointer glyph, no bracket, no indent change. So nothing here may key on colour: the parse this
-// grammar runs over is line TEXT, and every row is tested by shape alone. Matching on colour would
-// also break the moment a theme changes, which is the same mistake `extractStatusLines` avoids by
-// matching the statusline by position.
+// SELECTION WAS SGR-ONLY UNTIL CLAUDE CODE 2.1.291. Before it, the highlighted entry is painted in a
+// different colour (SGR 38;2;… plus a bold run over the matched substring) and is otherwise
+// byte-identical to its neighbours — no pointer glyph, no bracket, no indent change. Nothing here keys
+// on colour: the parse this grammar runs over is line TEXT, and every row is tested by shape alone.
+// Matching on colour would also break the moment a theme changes, which is the same mistake
+// `extractStatusLines` avoids by matching the statusline by position.
+//
+// THE POINTED SHAPE (Claude Code 2.1.291, capture lab 2026-10-06). The popup now marks the selected
+// entry with a "❯" and indents every entry four columns, so the name column lines up under the
+// pointer's text:
+//
+//     <bottom border>
+//     "  ❯ /model                    Set the AI model…"   ← POINTED entry row ("  ❯ " = four columns)
+//     "    /mobile                   Show QR code to…"    ← entry row, four spaces
+//     "                              app"                 ← continuation, on the description column
+//
+// Both shapes are read, one per run: a run whose entries sit at two spaces is the old shape and may
+// carry no pointer; a run whose entries sit at four columns is the pointed shape and must carry
+// exactly one "❯". The pointer is a selection mark, not a key, so it reaches no model field: the
+// AutocompleteModel stays keyless. The run hands its row out (AutocompleteRun.pointer) for one reason:
+// chrome.ts steps over a "❯"-led row under the box only when it can name who drew it.
 //
 // THE DESCRIPTION COLUMN IS DERIVED, NEVER ASSUMED. Claude lays the popup out against its widest
 // entry name, so the column sits at 43 in the capture above and at 23 in
@@ -39,16 +56,49 @@ import type { StyledLine } from "../../blocks";
 import type { AutocompleteEntry, AutocompleteModel } from "../autocomplete-model";
 import { isBlank, isBoxBorder, lineText } from "./markers";
 
-// An ENTRY row: exactly two leading spaces, the completion name, a gap of at least two spaces, then
+// An ENTRY row: a lead-in (two spaces, or the 2.1.291 four-column lead, see LEAD), the completion name, a gap of at least two spaces, then
 // the description. The name is a leading "/" plus the character set Claude's command ids actually use
 // — letters, digits, `-`, `_`, and the `:` that namespaces a plugin command (`/typescript:fix-types`).
 // It deliberately admits NO further "/", which is what keeps an ordinary path-carrying statusline row
 // ("  /home/altan/project   main") out of the run.
-const ENTRY_ROW = /^ {2}(\/[A-Za-z0-9][A-Za-z0-9:_-]*)( {2,})(\S.*)$/;
+//
+// A name may also START WITH "…" (U+2026) instead of "/": on a narrow pane Claude caps the name column
+// and clips a long plugin command from the LEFT, so the slash and the head of the namespace are gone
+// ("  …ugin:refactor-dependencies   (plugin) Applies…", observed live at 82 columns). The clipped row
+// carries the same charset after the ellipsis, and it must still land on the run's description column
+// like every other entry, so the column agreement below stays the discriminator. Claude's `@` file
+// popup is NOT admitted: no capture of it exists in fixtures/panes, and a grammar for a shape nobody
+// has seen is a guess.
+//
+// TWO SHAPES THE CAPTURE LAB FOUND (Claude Code 2.1.274, 2026-09-17), both real, both previously
+// unread, so the whole popup fell to an `unknown` tail and stayed on the raw mirror:
+//
+//   1. THE CLIP CAN LAND ON A HYPHEN. The cut is by column, not by token, so the first character
+//      after the "…" is whatever happened to be there: "  …-dependencies-across-packages  Refactor…"
+//      (claude-lab--popup-slash-clipped--w82.txt). Only the clipped form may open on "-", "_" or
+//      ":" — a real "/" command id always starts with a letter or a digit, so the "/" arm keeps its
+//      stricter first character.
+//   2. A NAME COLUMN CAN CARRY A PARENTHESISED ALIAS. A skill that declares a short name prints
+//      both: "  …opic-skills:morning (morning)  Render…" (claude-lab--popup-slash-mo--w82.txt). The
+//      single space before the bracket is inside the NAME column, not the two-space column gap, so
+//      the alias is part of the name and the gap rule is untouched.
+const NAME = String.raw`(?:\/[A-Za-z0-9]|\u2026[A-Za-z0-9:_-])[A-Za-z0-9:_-]*(?: \([A-Za-z0-9:_-]+\))?`;
+
+// The entry's lead-in, captured so the description column can be measured from it: two spaces (the
+// old shape), "  ❯ " (the 2.1.291 pointed entry) or four spaces (its unpointed neighbours). NAME never
+// starts with a space, so a four-space row cannot match the two-space arm.
+const LEAD = String.raw`( {2}❯ | {4}| {2})`;
+
+const ENTRY_ROW = new RegExp(String.raw`^${LEAD}(${NAME})( {2,})(\S.*)$`);
 
 // The same row with no description at all — a bare completion. Accepted so a popup whose entries
 // carry no blurb still matches; it contributes no description column.
-const BARE_ENTRY_ROW = /^ {2}(\/[A-Za-z0-9][A-Za-z0-9:_-]*) *$/;
+const BARE_ENTRY_ROW = new RegExp(String.raw`^${LEAD}(${NAME}) *$`);
+
+/** Whether an entry's lead-in is the 2.1.291 pointed shape's: "  ❯ " or four spaces. */
+function isFourColumnLead(lead: string): boolean {
+  return lead.length === 4;
+}
 
 // A CONTINUATION row: whitespace, then text. Its indent is checked against the run's derived
 // description column, so this pattern only has to say "indented, non-empty" — the column does the
@@ -62,13 +112,15 @@ const CONTINUATION_ROW = /^( {4,})(\S.*)$/;
 // still a real popup. A tight cap here would simply re-create the bug this module exists to fix (23
 // rows observed for `/model` alone, and the list grows with the operator's skills). The cap remains
 // only so a pathological buffer can't be walked without bound.
-const MAX_AUTOCOMPLETE_LINES = 60;
+export const MAX_AUTOCOMPLETE_LINES = 60;
 
 /** Where the popup sits, and what it listed. `start` is the index of its FIRST row — the line
  *  immediately below the input box's bottom border, and the exclusive end of everything above. */
 export interface AutocompleteRun {
   start: number;
   entries: AutocompleteEntry[];
+  /** Index of the "❯"-pointed entry row (the 2.1.291 shape), or -1 for the old pointerless shape. */
+  pointer: number;
 }
 
 /**
@@ -101,32 +153,49 @@ export function findAutocompleteRun(texts: string[], end: number): AutocompleteR
   if (i < 0 || !isBoxBorder(texts[i]!)) return null;
 
   const start = i + 1;
-  const entries = readEntries(texts, start, end);
-  return entries === null ? null : { start, entries };
+  const read = readEntries(texts, start, end);
+  return read === null ? null : { start, ...read };
 }
 
 /**
  * Read the run [start, end) top-down into entries, or null when it isn't one. Every entry row that
  * carries a description must agree on the description column, and every continuation row must land on
  * that same column and belong to an entry above it. A run whose first row is a continuation is
- * refused outright: the popup's first row under the border is always an entry.
+ * refused outright: the popup's first row under the border is always an entry. Every entry row must
+ * also agree on the shape (the two-space lead or the four-column pointed lead), and a pointed-shape
+ * run must carry exactly one "❯" — so the pointer is returned as a row index, -1 for the old shape.
  */
-function readEntries(texts: string[], start: number, end: number): AutocompleteEntry[] | null {
+function readEntries(
+  texts: string[],
+  start: number,
+  end: number,
+): { entries: AutocompleteEntry[]; pointer: number } | null {
   const entries: AutocompleteEntry[] = [];
   let column = -1; // the description column, fixed by the first entry row that has a description
+  let fourColumn: boolean | null = null; // fixed by the first entry row
+  let pointer = -1;
   for (let j = start; j < end; j++) {
     const t = texts[j]!;
-    const entry = ENTRY_ROW.exec(t);
+    const entry = ENTRY_ROW.exec(t) ?? BARE_ENTRY_ROW.exec(t);
     if (entry !== null) {
-      const at = 2 + entry[1]!.length + entry[2]!.length;
+      const lead = entry[1]!;
+      const fourColumnRow = isFourColumnLead(lead);
+      if (fourColumn === null) fourColumn = fourColumnRow;
+      else if (fourColumnRow !== fourColumn) return null;
+      if (lead.includes("❯")) {
+        if (pointer >= 0) return null;
+        pointer = j;
+      }
+      const name = entry[2]!;
+      const gap = entry[3];
+      if (gap === undefined) {
+        entries.push({ name, description: "" });
+        continue;
+      }
+      const at = lead.length + name.length + gap.length;
       if (column < 0) column = at;
       else if (at !== column) return null;
-      entries.push({ name: entry[1]!, description: entry[3]!.trimEnd() });
-      continue;
-    }
-    const bare = BARE_ENTRY_ROW.exec(t);
-    if (bare !== null) {
-      entries.push({ name: bare[1]!, description: "" });
+      entries.push({ name, description: entry[4]!.trimEnd() });
       continue;
     }
     const cont = CONTINUATION_ROW.exec(t);
@@ -136,7 +205,9 @@ function readEntries(texts: string[], start: number, end: number): AutocompleteE
     // Claude soft-wraps the description at a word boundary, so the dropped break was a space.
     last.description = last.description === "" ? cont[2]!.trimEnd() : `${last.description} ${cont[2]!.trimEnd()}`;
   }
-  return entries.length === 0 ? null : entries;
+  if (entries.length === 0) return null;
+  if (fourColumn === true && pointer < 0) return null;
+  return { entries, pointer };
 }
 
 /** The detection result `claudeBuildBlocks` needs: the model plus `startLine`, the index of the
@@ -151,9 +222,9 @@ export interface AutocompleteRegion {
  * pads the viewport), exactly as every other tail-anchored grammar does.
  *
  * Deliberately does NOT check that the input box is really there — that is the caller's to pair with
- * (`claudeBuildBlocks` gates on `hasInputBox`), which keeps this module free of any dependency on
- * chrome.ts and therefore free of the import cycle that would otherwise form: chrome.ts is the one
- * that peels this run before its own walk.
+ * (`claudeBuildBlocks` gates on `inputBoxTail` answering `autocomplete`), which keeps this module free
+ * of any dependency on chrome.ts and therefore free of the import cycle that would otherwise form:
+ * chrome.ts is the one that classifies this run as the box's tail.
  */
 export function detectAutocompleteRegion(lines: StyledLine[]): AutocompleteRegion | null {
   const texts = lines.map(lineText);

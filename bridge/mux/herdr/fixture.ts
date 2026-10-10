@@ -5,8 +5,8 @@
 // conformance engine (../conformance.ts) drives the WHOLE translation layer — the wire joins, the key
 // spelling, the event split, the refusal mapping — without a socket.
 //
-// WHY A HAND-WRITTEN FAKE AND NOT `bridge/pack/fake-herdr.ts`. That one is a real unix-socket daemon,
-// because its subject is the pack TRANSPORT: two Collie processes and a live connection between them.
+// WHY A HAND-WRITTEN FAKE AND NOT `bridge/crew/fake-herdr.ts`. That one is a real unix-socket daemon,
+// because its subject is the crew TRANSPORT: two Collie processes and a live connection between them.
 // Conformance's subject is the adapter, and the five things it has to simulate — a reconnect, a
 // multiplexer restart, an out-of-band rename, changed pane content, a pane dying — are state
 // transitions, not bytes. Doing them in memory keeps the pure layer deterministic and keeps it
@@ -37,6 +37,7 @@ import type {
   WireTab,
   WireWorkspace,
   WireWorktree,
+  WireWorktreeListing,
 } from "./client.ts";
 
 const IDLE: AgentStatus = "idle";
@@ -325,6 +326,26 @@ export class FakeHerdr implements HerdrRpc {
     ];
   }
 
+  /**
+   * `worktree.list` by workspace, as herdr 0.9.3 answers it: the repo whose bookkeeping names the
+   * workspace, `not_git_worktree` for one outside every modelled repo (the seeded spaces are plain
+   * folders), and `workspace_not_found` for an id the session does not have.
+   */
+  async workspaceWorktrees(workspaceId: string): Promise<WireWorktreeListing> {
+    this.assertConnected("worktree.list");
+    if (!this.workspaces.some((workspace) => workspace.workspace_id === workspaceId)) {
+      throw notFound("worktree.list", "workspace_not_found", workspaceId);
+    }
+    for (const [repoRoot, repo] of this.worktreesByRepo) {
+      if (!repo.some((worktree) => worktree.open_workspace_id === workspaceId)) continue;
+      return {
+        source: { repo_root: repoRoot, source_checkout_path: repoRoot },
+        worktrees: await this.listWorktrees(repoRoot),
+      };
+    }
+    throw new Error("herdr worktree.list: not_git_worktree: Herdr worktree actions require a path inside a Git work tree");
+  }
+
   async createWorktree(opts: { cwd: string; branch: string }): Promise<CreatedShell> {
     this.assertConnected("worktree.create");
     const repo = this.worktreesByRepo.get(opts.cwd) ?? [];
@@ -519,7 +540,12 @@ export const herdrConformanceFixture: MuxConformanceFixture = {
   mux: "herdr",
   create(): Promise<MuxConformanceWorld> {
     const fake = new FakeHerdr();
-    const adapter = new HerdrMux(fake);
+    // Two sessions, because the `listSessions` leg of conformance has to see a real answer: the
+    // primary's own socket plus one named session, exactly the shape `./sessions.ts` reads off disk.
+    const adapter = new HerdrMux(fake, () => [
+      { name: "default", endpoint: "/tmp/collie-conformance/herdr.sock" },
+      { name: "conformance", endpoint: "/tmp/collie-conformance/sessions/conformance/herdr.sock" },
+    ]);
     return Promise.resolve({
       adapter,
       writes: () => fake.writes(),

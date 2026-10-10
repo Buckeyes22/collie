@@ -38,8 +38,8 @@
     <string name="filter_spaces">Filter spaces</string>
     <string name="launch_title">LAUNCH</string>
     <string name="build_stamp">Android app build %1$s</string>
-    <string name="pack_footer_label">Pack · %1$s · %2$d reachable</string>
-    <string name="pack_footer_accessibility">Open the pack overview</string>
+    <string name="pack_footer_label">Crew · %1$s · %2$d reachable</string>
+    <string name="pack_footer_accessibility">Open the crew overview</string>
     <plurals name="pack_machine_count">
         <item quantity="one">%1$d machine</item>
         <item quantity="other">%1$d machines</item>
@@ -137,7 +137,7 @@
     <string name="origin_invalid_detail">Origin is invalid: %1$s</string>
     <string name="origin_invalid">Enter a valid HTTPS Collie origin.</string>
     <string name="error_proxy_sign_in">Sign-in is required by the fronting proxy (HTTP %1$d).</string>
-    <string name="error_device_not_paired">This device is not paired for terminal control.</string>
+    <string name="error_device_not_paired">Pair this device to read and control sessions.</string>
     <string name="error_device_unauthorised">This device is read-only at the fronting proxy.</string>
     <string name="error_http">Collie returned HTTP %1$d.</string>
     <string name="error_network">Collie could not be reached.</string>
@@ -145,7 +145,7 @@
     <string name="error_subject">%1$s: %2$s</string>
     <string name="action_error">%1$s: %2$s</string>
     <string name="unavailable">Unavailable</string>
-    <string name="pack_unavailable">Pack unavailable</string>
+    <string name="pack_unavailable">Crew unavailable</string>
     <string name="pane_take_over">Take over</string>
     <string name="pane_use_type">Use Type</string>
     <string name="pane_terminal_draft">Draft on terminal: %1$s</string>
@@ -185,4 +185,12 @@
         <item quantity="one">%1$d ready</item>
         <item quantity="other">%1$d ready</item>
     </plurals>
+    <string name="launch_no_prompts_title">Start without permission prompts?</string>
+    <string name="launch_no_prompts_body">This launcher lets the agent act without asking for permission.
+
+Machine: %1$s
+Command: %2$s
+Folder: %3$s</string>
+    <string name="launch_no_prompts_start">Start without prompts</string>
+    <string name="pane_transcript_queued">Queued: %1$s</string>
 </resources>

@@ -33,9 +33,11 @@
 //   • Plain-text refusals (`text("bad body", 400)`, a 403 gate reason, a 405). They are not JSON, so
 //     there is no field to add one to — coding them would mean changing the response shape, which is
 //     exactly what this change promised not to do.
-//   • Pack-link errors (`bridge/pack/`). That surface is versioned separately (PACK_PROTOCOL.md) and
+//   • Crew-link errors (`bridge/crew/`). That surface is versioned separately (CREW_PROTOCOL.md) and
 //     is guarded at commit time (ADR 0025); it keeps today's bodies in this release.
-//   • Push/OS notification text (`bridge/notifications.ts`). Different surface, different follow-up.
+//   • Push notification titles. Same rule, different surface: `bridge/push-titles.ts` is their catalogue.
+
+import { renderTemplate } from "./template.ts";
 
 /** The values a sentence may need interpolated — named, so a translated sentence can use them too. */
 export type ApiErrorDetail = Readonly<Record<string, string | number>>;
@@ -87,6 +89,60 @@ export const ERROR_CODES = {
    * snapshot — closed, or never existed. Nothing was created.
    */
   "launch.pane_unknown": "pane not found",
+  /**
+   * A launch named a `harness` id this host does not start (`bridge/harness-launch.ts`). The ids are
+   * the list `GET /api/launchers` answered, so nothing a phone was shown is refused (ADR 0091).
+   */
+  "launch.unknown_harness": "unknown agent: {harness}",
+  /** A launch's `cwd` carries a control character, a `..` segment, or `~name`. A path with no leading `/` or `~` is a folder under home. */
+  "launch.bad_folder": "the folder cannot be used: no .. and no control characters",
+  /** A launch's folder is not a directory on the machine that runs it. Nothing was created. */
+  "launch.folder_missing": "there is no folder {folder} on this machine",
+
+  // ── One-off runs and their history: POST /api/launch `{ run }`, /api/launch/recent/* (ADR 0095) ──
+  /** A one-off run came with no paired device to attribute it to. Nothing ran. */
+  "launch.no_device": "this request names no paired device",
+  /** The operator turned one-off runs off on this machine (`[phone] run = false`). Nothing ran. */
+  "launch.run_off": "running a one-off command from a phone is turned off on this machine",
+  /** The line breaks the character rule, is empty, or is longer than {max} characters. Nothing ran. */
+  "launch.bad_line": "the command cannot be run: {problem}",
+  /** A one-off run never starts on a new branch. Nothing was created. */
+  "launch.run_no_branch": "a one-off command cannot start on a new branch",
+  /** No history entry has this line on this machine. */
+  "launch.recent_unknown": "that command is not in this machine's history",
+  /** `commands-recent.json` is there and is not a file this Collie may write over. */
+  "launch.recent_unreadable": "commands-recent.json cannot be read; move it away to keep a history",
+
+  // ── Rows added from a phone: POST /api/launchers/added, /remove, /rename (ADR 0094) ──────────
+  // Each refusal is answered before the store is written: nothing was added, removed or renamed.
+  /** The operator turned phone-added rows off on this machine (`[phone] adds = false`). */
+  "launcher.adds_off": "adding launchers from a phone is turned off on this machine",
+  /** The operator has not turned free lines on (`[phone] free_text`, off by default). */
+  "launcher.free_text_off": "a command typed by hand is turned off on this machine",
+  /** The line or the label breaks the character rule, is empty, or is too long. */
+  "launcher.bad_text": "{field}: {problem}",
+  /** A recipe named an agent Collie does not start, an option its table does not list, or two of one group. */
+  "launcher.bad_recipe": "{reason}",
+  /** The same line is already a row, in `launchers.toml` or added before. */
+  "launcher.duplicate": "this command is already a launcher",
+  /** This machine keeps at most {max} phone-added rows. */
+  "launcher.added_full": "this machine already has {max} added launchers; remove one first",
+  /** No added row has this id on this machine. */
+  "launcher.unknown_row": "no such launcher",
+  /** `launchers-added.json` is there and is not a file this Collie may write over. */
+  "launcher.store_unreadable": "launchers-added.json cannot be read; move it away to add launchers",
+  /** The write came with no device name, so the row could not be attributed. */
+  "launcher.no_device": "this request names no paired device",
+
+  // ── The new-space folder list: POST /api/folders/star (#289, M40/02) ───────────────
+  /**
+   * The folder is in neither list. Only a folder a space already opened in can be starred, so this
+   * is a RACE GUARD: the sheet offers a star only on a row it read, and this is the tap that landed
+   * after that row aged out of Recent on another device's create. Nothing was stored.
+   */
+  "folders.unknown": "{folder} is not in Recent, so it cannot be starred",
+  /** Twelve favourites already. A star never drops one the operator chose, so nothing was stored. */
+  "folders.favourites_full": "favourites are full ({max}); remove one first",
 
   // ── Worktrees: /api/workspace/:id/worktree[s|/open|/remove] (ADR 0032) ─────────────
   /** The list could not be read — the space is not in a Git work tree, or the mux refused. */
@@ -108,13 +164,46 @@ export const ERROR_CODES = {
   "worktree.branch_required": "branch required",
   /** This space is not in a Git work tree, so it has no worktrees to show. */
   "worktree.not_a_repo": "{reason}",
+  /**
+   * The branch name would read as a flag or is one Git refuses (`bridge/worktree-branch.ts`). Checked
+   * before the multiplexer is touched, so nothing was created (ADR 0089).
+   */
+  "worktree.invalid_branch": "invalid branch",
+  /**
+   * The starting point is not `{ kind: "default" }` or `{ kind: "ref", ref }`, the ref is one Git
+   * refuses, or it names no commit in this repo. Checked before the multiplexer is touched, so
+   * nothing was created (ADR 0089, amended).
+   */
+  "worktree.invalid_base": "invalid base",
 
-  // ── Image upload: POST /api/pane/:id/upload → UploadResponse ───────────────────────
-  /** Refused on the declared Content-Length (413) or on the decoded size (200 + ok:false). */
-  "upload.too_large": "image too large (max 10 MB)",
+  // ── A branch's own folder: POST /api/worktree with a parent (ADR 0093) ────────────────
+  // Each is a refusal of the parent folder the phone named, checked on every use by
+  // `bridge/worktree-folder.ts` before the multiplexer is touched. Nothing was created.
+  /** Empty, too long, a control character, relative, or a `..` segment. */
+  "worktree.folder_invalid": "the folder must be an absolute path with no ..",
+  /** Nothing is there, or it is not a directory. */
+  "worktree.folder_missing": "the folder does not exist",
+  /** A link sits somewhere in the path below the home folder. */
+  "worktree.folder_link": "the folder goes through a link",
+  /** The folder is not inside the home folder. */
+  "worktree.folder_outside_home": "the folder must be inside the home folder",
+  /** A folder whose name starts with a dot, `.git` included, is on the path. */
+  "worktree.folder_hidden": "the folder may not be or sit inside a hidden folder",
+  /** The folder is inside the repository the branch is cut from. */
+  "worktree.folder_in_repo": "the folder may not be inside the repository",
+  /** The branch's folder already exists there. */
+  "worktree.target_exists": "{path} already exists",
+
+  // ── Attachment upload: POST /api/pane/:id/upload → UploadResponse ──────────────────
+  /**
+   * Refused on the declared Content-Length (413) or on the decoded size (200 + ok:false). The
+   * number is the HOST's own `COLLIE_MAX_UPLOAD_MB`, so it is interpolated rather than written:
+   * two members of one crew may answer this with two different sentences, both true.
+   */
+  "upload.too_large": "file too large (max {maxMb} MB)",
   /** The multipart body carried no `file` part. */
   "upload.no_file": "no file",
-  /** A content type Collie has no extension for — it will not write bytes it cannot name. */
+  /** Not an image Collie recognises and not a text type it accepts — it will not write bytes it cannot name. */
   "upload.bad_type": "unsupported type: {type}",
   /** The bytes arrived but the host write failed (disk full, permissions). */
   "upload.write_failed": "{reason}",
@@ -144,17 +233,30 @@ export const ERROR_CODES = {
   /** Revoke named a label no device holds. */
   "device.unknown": "unknown device",
 
+  // ── The prompt-cache watch list: /api/notifications/cache-watch (ADR 0042) ─────────
+  /**
+   * The `(host, session, paneId)` the request named is in no current snapshot — closed, renumbered,
+   * or on a member that has stopped answering. Nothing was stored.
+   */
+  "cache.pane_unknown": "pane not found",
+  /**
+   * The pane names no harness session, so there is nothing to key a watch by. A RACE GUARD: the read
+   * already answered `watchable: false` and the sheet already disabled its switch, so this is the tap
+   * that landed after the harness dropped its session.
+   */
+  "cache.no_session": "this pane's agent names no session",
+
   // ── Addressing: the `(host, session)` a request named does not exist ───────────────
   "session.unknown": "unknown session: {session}",
   "host.unknown": "unknown host: {host}",
 
-  // ── The pack overview: GET /api/pack ───────────────────────────────────────────────
+  // ── The crew overview: GET /api/crew ───────────────────────────────────────────────
   /**
-   * This collie is not a lead with a pack, so it has no pack to report. Both refusals are this one
+   * This collie is not a lead with a crew, so it has no crew to report. Both refusals are this one
    * code on purpose: a solo instance and a peer differ in what they ARE, not in what the phone can
    * do about it — a peer is not a front door (ADR 0013), so neither has an overview to show.
    */
-  "pack.not_lead": "this collie is not the lead of a pack",
+  "crew.not_lead": "this collie is not the lead of a crew",
 
   // ── Starting an update from the phone: POST /api/update (M15/05) ───────────────────
   /** The body carried no confirm. One tap plus one confirm is the contract; nothing moved. */
@@ -171,6 +273,18 @@ export const ERROR_CODES = {
   "update.target_mismatch": "this device asked for {asked}, but this collie would install {would}",
   /** Nothing newer to take. */
   "update.none_available": "there is no newer release to take",
+  /**
+   * A peers-only start where the only member behind runs a packaged install (ADR 0035). Its own
+   * package manager owns it, so no run from here can move it — which is a different answer from
+   * "the crew is level", and the operator is owed the difference.
+   */
+  "update.peers_packaged": "{name} is a packaged install, so its updates come from its own package manager",
+  /**
+   * A package manager owns this install's folder (ADR 0035). Its own preflight is GREEN, so nothing
+   * else on this gate would stop the start — which is exactly why this refusal exists here and not
+   * only in the client, whose disabled button this file's own contract calls a courtesy.
+   */
+  "update.packaged": "updates come from this machine's package manager — Collie does not replace its files",
   /** The handoff itself failed — nothing was staged and nothing restarted. */
   "update.start_failed": "the update could not be started: {reason}",
 } as const;
@@ -218,21 +332,3 @@ export function apiError(code: ErrorCode, detail?: ApiErrorDetail): ApiErrorBody
   return body;
 }
 
-/**
- * Fill `{name}` slots from `detail`, in ONE pass.
- *
- * One pass is the load-bearing part: several templates are `{reason}` filled with a multiplexer's
- * own words, and those words are not Collie's to trust. A second pass over the result would let a
- * refusal that happens to contain `{maxBytes}` reach into this table's other values.
- *
- * A slot with no matching field renders empty. That is a programming error, not a runtime condition
- * — `error-codes.test.ts` fails any `apiError` call that names a slotted code without passing a
- * detail object — so it does not throw here, where throwing would turn a wording bug into a 500 on
- * a live phone.
- */
-function renderTemplate(template: string, detail: ApiErrorDetail | undefined): string {
-  return template.replace(/\{(\w+)\}/g, (_match, name: string) => {
-    const value = detail?.[name];
-    return value === undefined ? "" : String(value);
-  });
-}

@@ -24,7 +24,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.lateapex.collie.CollieApplication
 import com.lateapex.collie.R
 import com.lateapex.collie.domain.Connection
-import com.lateapex.collie.network.PackMember
+import com.lateapex.collie.network.CrewMember
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -200,7 +200,7 @@ class HardeningUiDeviceTest {
                         (1..6).map { member("peer-$it") }
                     val blocked = members.associate { it.id to 3 }
                     val view = PackFormationView(context)
-                    var selected: PackMember? = null
+                    var selected: CrewMember? = null
                     view.submit(members, "deputy", blocked, onSelected = { selected = it })
 
                     val widthPx = (240f * context.resources.displayMetrics.density).toInt()
@@ -315,7 +315,7 @@ class HardeningUiDeviceTest {
         connection?.let(app.container.connectionStore::save)
     }
 
-    private fun member(id: String, lead: Boolean = false) = PackMember(
+    private fun member(id: String, lead: Boolean = false) = CrewMember(
         id = id,
         name = "Fixture $id",
         isLead = lead,

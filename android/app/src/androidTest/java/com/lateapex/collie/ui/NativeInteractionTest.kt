@@ -1002,9 +1002,9 @@ class NativeInteractionTest {
             updateStarts++
             return ok(UpdateStartResponse(true, target, major))
         }
-        override suspend fun pack(connection: Connection) = ok(PackStatusResponse(
-            PackIdentity("fixture", "Fixture pack", 1, 1), PackSelf("lead", "Fixture host", "1.5.1"), null,
-            listOf(PackMember("lead", "Fixture host", true, health = "reachable", lastSeenAt = 1,
+        override suspend fun crew(connection: Connection) = ok(CrewStatusResponse(
+            CrewIdentity("fixture", "Fixture pack", 1, 1), CrewSelf("lead", "Fixture host", "1.5.1"), null,
+            listOf(CrewMember("lead", "Fixture host", true, health = "reachable", lastSeenAt = 1,
                 version = "1.5.1", secretBehind = false, provisional = false)), 1,
         ))
         override suspend fun transcribe(connection: Connection, audio: AudioUpload): ApiResult<SttResponse> {

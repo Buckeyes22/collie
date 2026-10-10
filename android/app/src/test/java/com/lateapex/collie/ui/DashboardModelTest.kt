@@ -275,7 +275,7 @@ class DashboardModelTest {
             server("old", reachable = true).copy(
                 name = "Attic",
                 protocol = "incompatible",
-                protocolDetail = "pack protocol 2",
+                protocolDetail = "crew protocol 2",
             ),
         )
         val rows = DashboardModel.items(
@@ -679,7 +679,7 @@ class DashboardModelTest {
         val pack = root.findViewById<View>(R.id.dashboard_pack_link)
         val build = root.findViewById<TextView>(R.id.build_text)
 
-        assertEquals("Pack · 3 machines · 2 reachable", root.findViewById<TextView>(R.id.dashboard_pack_text).text)
+        assertEquals("Crew · 3 machines · 2 reachable", root.findViewById<TextView>(R.id.dashboard_pack_text).text)
         assertTrue(root.indexOfChild(pack) < root.indexOfChild(build))
         pack.performClick()
         assertTrue(packOpened)

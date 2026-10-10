@@ -1,6 +1,6 @@
 package com.lateapex.collie.ui
 
-import com.lateapex.collie.network.PackMember
+import com.lateapex.collie.network.CrewMember
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -56,7 +56,7 @@ class PackFormationLayoutTest {
         )
     }
 
-    private fun member(id: String, lead: Boolean = false) = PackMember(
+    private fun member(id: String, lead: Boolean = false) = CrewMember(
         id = id,
         name = id,
         isLead = lead,

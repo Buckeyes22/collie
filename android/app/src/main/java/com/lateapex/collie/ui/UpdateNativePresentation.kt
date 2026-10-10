@@ -2,7 +2,7 @@ package com.lateapex.collie.ui
 
 import com.lateapex.collie.network.PreflightCheck
 import com.lateapex.collie.network.UpdateCheckResponse
-import com.lateapex.collie.network.UpdatePackMember
+import com.lateapex.collie.network.UpdateCrewMember
 import com.lateapex.collie.network.UpdatePeerLeg
 import com.lateapex.collie.network.UpdateRun
 
@@ -30,13 +30,16 @@ internal object UpdateNativePresentation {
 
     fun visibleRun(value: UpdateCheckResponse): UpdateRun? = value.run?.takeUnless { it.state == "idle" }
 
-    fun hasActiveRun(value: UpdateCheckResponse?): Boolean = value?.run?.state in activeStates
+    fun peerLegs(value: UpdateCheckResponse): List<UpdatePeerLeg> = value.run?.peers ?: value.peers.orEmpty()
+
+    fun hasActiveRun(value: UpdateCheckResponse?): Boolean = value != null &&
+        (value.run?.state in activeStates || peerLegs(value).any { it.state in activeStates || it.state == "updating" })
 
     fun freshestRun(current: UpdateRun?, standby: UpdateRun): UpdateRun =
         if (current != null && current.updatedAt > standby.updatedAt) current else standby
 
     fun peerRows(
-        pack: List<UpdatePackMember> = emptyList(),
+        pack: List<UpdateCrewMember> = emptyList(),
         legs: List<UpdatePeerLeg> = emptyList(),
     ): List<NativeUpdatePeerRow> {
         val byName = linkedMapOf<String, NativeUpdatePeerRow>()
@@ -77,16 +80,16 @@ internal object UpdateNativePresentation {
         return byName.values.sortedWith(compareBy<NativeUpdatePeerRow> { it.rank }.thenBy { it.name })
     }
 
-    fun peersBehind(value: UpdateCheckResponse): Int = value.pack.orEmpty().count {
-        value.current.isNotEmpty() && it.version != null && it.version != value.current
+    fun peersBehind(value: UpdateCheckResponse): Int = value.crew.orEmpty().count {
+        it.installKind != "packaged" && value.current.isNotEmpty() && it.version != null && it.version != value.current
     }
 
-    fun peersFailed(value: UpdateCheckResponse): Int = visibleRun(value)?.peers.orEmpty().count {
+    fun peersFailed(value: UpdateCheckResponse): Int = peerLegs(value).count {
         it.state in failedPeerStates
     }
 
     fun action(value: UpdateCheckResponse): NativeUpdateAction {
-        val hasPeers = value.pack.orEmpty().isNotEmpty() || visibleRun(value)?.peers.orEmpty().isNotEmpty()
+        val hasPeers = value.crew.orEmpty().isNotEmpty() || peerLegs(value).isNotEmpty()
         return when {
             value.releaseAvailable && hasPeers -> NativeUpdateAction.UPDATE_PACK
             value.releaseAvailable -> NativeUpdateAction.UPDATE
@@ -111,18 +114,18 @@ internal object UpdateNativePresentation {
         writeAuthorized: Boolean,
         action: NativeUpdateAction = action(value),
     ): Boolean {
-        if (!writeAuthorized || busy || value.run?.state in activeStates || action == NativeUpdateAction.NONE) return false
+        if (!writeAuthorized || busy || hasActiveRun(value) || value.packageCommand != null || action == NativeUpdateAction.NONE) return false
         if (action == NativeUpdateAction.RETRY_PACK) return true
         return value.preflight != null && redCheck(value) == null
     }
 
     fun canStartMajor(value: UpdateCheckResponse, busy: Boolean, writeAuthorized: Boolean): Boolean =
-        writeAuthorized && !busy && value.majorAvailable != null && value.run?.state !in activeStates &&
+        writeAuthorized && !busy && value.majorAvailable != null && !hasActiveRun(value) && value.packageCommand == null &&
             value.preflight != null && redCheck(value) == null
 
     fun isUpToDate(value: UpdateCheckResponse): Boolean =
         !value.releaseAvailable && value.majorAvailable == null && value.latest != null &&
-            visibleRun(value) == null && peersBehind(value) == 0
+            visibleRun(value) == null && !hasActiveRun(value) && !value.restartNeeded && peersBehind(value) == 0 && peersFailed(value) == 0
 
     fun worstPreflight(checks: List<PreflightCheck>): String = when {
         checks.any { it.verdict == "red" } -> "red"

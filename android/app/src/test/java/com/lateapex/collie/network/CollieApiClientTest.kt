@@ -218,7 +218,10 @@ class CollieApiClientTest {
         }
         server.takeRequest().also { request ->
             assertEquals("/api/workspace/w1/worktree?host=desk&session=work", request.path)
-            assertEquals("{\"branch\":\"feature/native\"}", request.body.readUtf8())
+            val body = Json.parseToJsonElement(request.body.readUtf8()) as kotlinx.serialization.json.JsonObject
+            assertEquals("feature/native", (body["branch"] as kotlinx.serialization.json.JsonPrimitive).content)
+            assertTrue((body["requestId"] as kotlinx.serialization.json.JsonPrimitive).content.isNotBlank())
+            assertEquals(setOf("branch", "requestId"), body.keys)
         }
         assertEquals("/api/tab/w1%3At2/close?host=desk&session=work", server.takeRequest().path)
     }
@@ -384,6 +387,105 @@ class CollieApiClientTest {
     fun transcriptionTimeoutScalesWithTheBoundedClip() {
         assertEquals(81L, CollieApiClient.sttTimeoutSeconds(1))
         assertTrue(CollieApiClient.sttTimeoutSeconds(AudioUpload.MAX_BYTES) > 300L)
+    }
+
+    @Test
+    fun crewUsesTheRenamedEndpointAndDecodesTheCrewIdentity() = runBlocking {
+        server.enqueue(jsonResponse("""{"crew":{"id":"c","name":"Lab","secretGeneration":1,"rotatedAt":0},"self":{"id":"lead","name":"Lead","version":"1.19.0"},"deputy":null,"members":[],"ts":1}"""))
+        val result = api.crew(Connection(origin, "phone", "token")) as ApiResult.Success
+        assertEquals("Lab", result.value.crew.name)
+        assertEquals("/api/crew", server.takeRequest().path)
+    }
+
+    @Test
+    fun mountedConfigRequestsKeepBearerScopeAndAnAuthorityOnlyOriginForWrites() = runBlocking {
+        val mounted = Connection(CollieOrigin(server.url("/tools/collie/").toString()), "phone", "token")
+        server.enqueue(jsonResponse("""{"mux":{"name":"tmux","capabilities":{"createWorktree":false}},"redact":true}"""))
+        val config = api.config(mounted, Scope(host = "peer", session = "work")) as ApiResult.Success
+        assertEquals(false, config.value.mux?.supports("createWorktree"))
+        val read = server.takeRequest()
+        assertEquals("/tools/collie/api/config?host=peer&session=work", read.path)
+        assertEquals("Bearer token", read.getHeader("Authorization"))
+        assertEquals("XMLHttpRequest", read.getHeader("X-Requested-With"))
+        server.enqueue(jsonResponse("""{"ok":true}"""))
+        api.reply(mounted, PaneAddress(paneId = "p"), "hi")
+        val write = server.takeRequest()
+        assertEquals("/tools/collie/api/pane/p/reply", write.path)
+        assertEquals(origin.headerValue, write.getHeader("Origin"))
+    }
+
+    @Test
+    fun liveChatUsesGenerationAndRevisionWhileOlderPagesUseTheTurnCursor() = runBlocking {
+        val connection = Connection(origin, "phone", "token")
+        val pane = PaneAddress(Scope(host = "peer", session = "work"), "p")
+        server.enqueue(jsonResponse("""{"paneId":"p","available":true,"page":"live","gen":2,"rev":3,"head":1,"oldest":1,"hasOlder":false,"upserts":[{"uuid":"u","ts":"","role":"assistant","seq":1,"parts":[]}],"queued":[]}""").setHeader("ETag", "live-3"))
+        val first = api.chat(connection, pane, etag = "must-not-send") as ApiResult.Success
+        val initial = server.takeRequest()
+        assertNull(initial.getHeader("If-None-Match"))
+        assertEquals("1", initial.getHeader("X-Collie-Seen"))
+        server.enqueue(MockResponse().setResponseCode(304).setHeader("ETag", "live-3"))
+        assertTrue(api.chat(connection, pane, after = ChatAfter(2, 3), etag = first.etag) is ApiResult.NotModified)
+        val poll = server.takeRequest()
+        assertEquals("/api/pane/p/chat?limit=200&after=2%3A3&host=peer&session=work", poll.path)
+        assertEquals("live-3", poll.getHeader("If-None-Match"))
+        server.enqueue(jsonResponse("""{"paneId":"p","available":true,"page":"older","gen":2,"hasOlder":false,"upserts":[]}"""))
+        api.chat(connection, pane, before = ChatBefore(1, "u:a"), etag = "must-not-send")
+        val older = server.takeRequest()
+        assertEquals("/api/pane/p/chat?limit=200&before=1%3Au%3Aa&host=peer&session=work", older.path)
+        assertNull(older.getHeader("If-None-Match"))
+    }
+
+    @Test
+    fun malformedLiveChatCannotReplaceTheThreadWithAnUnnumberedTurn() = runBlocking {
+        server.enqueue(jsonResponse("""{"paneId":"p","available":true,"page":"live","gen":2,"rev":3,"head":1,"oldest":1,"upserts":[{"uuid":"u","ts":"","role":"assistant","parts":[]}]}"""))
+        assertTrue(api.chat(Connection(origin, "phone", "token"), PaneAddress(paneId = "p")) is ApiResult.Failure)
+    }
+
+    @Test
+    fun launchByIdCarriesTheSameIntentIdAndDoesNotRetryAWrittenRequest() = runBlocking {
+        server.enqueue(jsonResponse(createdPaneResponse()))
+        api.startLaunch(Connection(origin, "phone", "token"), Scope(host = "peer"), StartTarget(harness = "codex"), "intent-1", "/repo")
+        val request = server.takeRequest()
+        assertEquals("/api/launch?host=peer", request.path)
+        val body = Json.parseToJsonElement(request.body.readUtf8()).toString()
+        assertTrue(body.contains("\"harness\":\"codex\""))
+        assertTrue(body.contains("\"requestId\":\"intent-1\""))
+        assertFalse(body.contains("command"))
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test
+    fun legacyCrewFallbackIsReadOnlyAndDoesNotHideCurrentRoleRefusals() = runBlocking {
+        val connection = Connection(origin, "phone", "token")
+        server.enqueue(MockResponse().setResponseCode(404).setBody("not found"))
+        server.enqueue(jsonResponse("""{"pack":{"id":"c","name":"Legacy","secretGeneration":1,"rotatedAt":0},"self":{"id":"lead","name":"Lead","version":"1.5.0"},"deputy":null,"members":[],"ts":1}"""))
+        assertEquals("Legacy", (api.crew(connection) as ApiResult.Success).value.crew.name)
+        assertEquals("/api/crew", server.takeRequest().path)
+        assertEquals("/api/pack", server.takeRequest().path)
+        server.enqueue(MockResponse().setResponseCode(404).setHeader("Content-Type", "application/json").setBody("""{"error":"not lead","code":"crew.not_lead"}"""))
+        assertTrue(api.crew(connection) is ApiResult.Failure)
+        assertEquals("/api/crew", server.takeRequest().path)
+        assertEquals(3, server.requestCount)
+    }
+
+    @Test
+    fun worktreeFolderPlanAndCreateUseTheCurrentBaseAndFolderContracts() = runBlocking {
+        val connection = Connection(origin, "phone", "token")
+        server.enqueue(jsonResponse("""{"ok":true,"repoRoot":"/repo","currentBranch":"topic","defaultBranch":"main","branchValid":true,"remembered":{"base":"current","folder":"parent","parent":"/trees"},"defaultTarget":{"path":"/default/topic","exists":false},"parentTarget":{"ok":true,"path":"/trees/topic"}}"""))
+        val plan = api.planWorktree(connection, Scope(session = "work"), "/repo/sub", "next", "/trees") as ApiResult.Success
+        assertEquals("topic", plan.value.currentBranch)
+        assertEquals("/api/worktree/plan?cwd=%2Frepo%2Fsub&branch=next&parent=%2Ftrees&session=work", server.takeRequest().path)
+        server.enqueue(jsonResponse("""{"ok":true,"pane":{"paneId":"p","workspaceId":"w","workspaceLabel":"next","tabId":"t","cwd":"/trees/next"},"launcherStarted":true,"replayed":false}"""))
+        api.createWorktreeAt(connection, Scope(), "/repo/sub", "next", StartTarget(shell = true), "intent-tree", WorktreeBase("ref", "topic"), WorktreeFolder("parent", "/trees"))
+        val created = server.takeRequest()
+        assertEquals("/api/worktree", created.path)
+        assertEquals(Json.parseToJsonElement("""{"cwd":"/repo/sub","branch":"next","base":{"kind":"ref","ref":"topic"},"folder":{"kind":"parent","parent":"/trees"},"requestId":"intent-tree","shell":true}"""), Json.parseToJsonElement(created.body.readUtf8()))
+        server.enqueue(jsonResponse("""{"ok":true,"pane":{"paneId":"p","workspaceId":"w","workspaceLabel":"next","tabId":"t","cwd":"/default/next"}}"""))
+        api.createWorktreeAt(connection, Scope(), "/repo", "next", StartTarget(shell = true), "intent-default")
+        val defaultBody = server.takeRequest().body.readUtf8()
+        assertTrue(defaultBody.contains("\"base\":{\"kind\":\"default\"}"))
+        assertTrue(defaultBody.contains("\"folder\":{\"kind\":\"default\"}"))
+        assertEquals(3, server.requestCount)
     }
 
     private fun jsonResponse(body: String): MockResponse =

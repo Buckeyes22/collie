@@ -6,7 +6,7 @@ application in a WebView, Custom Tab, Trusted Web Activity, or Capacitor contain
 
 The Android package is `com.lateapex.collie`. The native client implements Collie's dashboard,
 Space/tab/pane navigation, semantic and raw pane views, safe terminal controls, history, launchers,
-worktrees, media/STT, Settings, devices, Pack, and Updates routes. See the
+worktrees, media/STT, Settings, devices, Crew, and Updates routes. See the
 [native implementation plan](../ANDROID_NATIVE_IMPLEMENTATION_PLAN.md)
 for the complete contract and [ADR 0036](../.adr/0036-the-android-app-is-a-native-rest-client.md)
 for the architecture decision. The former TWA [specification](../ANDROID_TWA_SPEC.md) and
@@ -86,14 +86,12 @@ allowing CI to resolve an unreviewed graph:
 
 ## Connect and pair
 
-On first launch, enter the root of a reachable Collie deployment, such as
+On first launch, enter the HTTPS URL of a reachable Collie deployment, such as
 `https://collie.example.com/`. The app rejects HTTP, credentials embedded in a URL, query strings,
-fragments, and non-root paths; it never disables platform certificate or hostname validation.
+fragments, and ambiguous paths. Safe mount paths such as `/tools/collie/` are supported; it never disables platform certificate or hostname validation.
 
 Generate a short-lived pairing code on the Collie host using the normal `collie pair` flow. Enter
-that code and a device label in the app. A read-only connection can inspect a deployment whose read
-policy permits it, but writes still require a valid paired bearer. An expired or rejected code does
-not weaken the connection policy.
+that code and a device label in the app. Collie 1.19.0 requires a valid paired bearer for reads and writes. A tokenless connection can inspect only older deployments that permit reads. An expired device must pair again; unrelated server failures keep the credential. An expired or rejected pairing code does not weaken the connection policy.
 
 Terminal writes are deliberately conservative. Tokenless connections disable and hard-block all
 write controls. A token alone is insufficient: a successful snapshot must also establish that device
@@ -136,7 +134,7 @@ server revocation action.
   audio recording requests microphone permission at runtime and sends a bounded clip to `/api/stt`;
   the resulting transcript returns to the draft for review.
 - Settings covers connection/reset, theme, terminal/draft sizing, notification
-  switches and snooze, paired-device revocation, connection state, Pack state, and Updates. Update start
+  switches and snooze, paired-device revocation, connection state, Crew state, and Updates. Update start
   requires preflight and device-write authorization; `/standby/update` retains the freshest visible
   run while the bridge restarts.
 - The dashboard banner and Server updates screen manage the connected Collie server through its
@@ -218,7 +216,7 @@ release requirements. The following device checks remain useful acceptance cover
    extras, saved state, screenshots, or the recent-app preview.
 5. Space/tab/pane switches, agent modes, and a harmless STT draft behave correctly without duplicate
    writes when the live bridge advertises STT.
-6. Device revocation, notification preferences, Pack, and Updates reflect the live server; an
+6. Device revocation, notification preferences, Crew, and Updates reflect the live server; an
    update test preserves progress through the bridge restart via the standby route.
 7. Insets work in both gesture and three-button navigation, and TalkBack/font scaling retain usable
    44 dp controls.

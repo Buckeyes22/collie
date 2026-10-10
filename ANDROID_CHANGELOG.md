@@ -6,6 +6,10 @@ the first Android release from this fork.
 
 ## Unreleased
 
+- Sync the server foundation to upstream Collie 1.19.0 and adapt Crew, scoped configuration, paired reads, device expiry, mounted HTTPS origins, launcher and worktree contracts, upload capabilities, notification fields, and update progress.
+- Recover the requested session on narrow snapshots and resolve the local lead identity before pane write checks.
+- Read live chat with generation/revision cursors, replace updated turns, show queued messages, and discard abandoned turns and stale generations; older servers retain the history fallback.
+- Require an explicit native confirmation for launchers marked as skipping permission prompts.
 - Recognize current Codex composers and verify typed replies and submission before clearing the phone draft.
 
 ## 1.5.2 - 2026-10-08

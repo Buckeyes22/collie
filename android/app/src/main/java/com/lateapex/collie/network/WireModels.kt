@@ -1,8 +1,11 @@
+@file:OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+
 package com.lateapex.collie.network
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonNames
 
 @Serializable
 data class HealthResponse(
@@ -19,6 +22,8 @@ data class BridgeConfigResponse(
     val operatorKeys: List<OperatorKeyRow> = emptyList(),
     val operatorQuickReplies: List<OperatorQuickReplyRow> = emptyList(),
     val stt: SttCapability? = null,
+    val upload: UploadCapability? = null,
+    val redact: Boolean? = null,
 )
 
 @Serializable
@@ -92,11 +97,17 @@ data class PaneSummary(
     val hasSession: Boolean? = null,
     val readableLines: Int? = null,
     val tabLabel: String? = null,
+    val soleTabName: String? = null,
+    val tabPosition: Int? = null,
     val terminalTitle: String? = null,
     val terminalTitleStale: Boolean? = null,
     val hint: String? = null,
     val lastActiveAt: Long? = null,
     val lastSeenAt: Long? = null,
+    val gitHead: JsonObject? = null,
+    val cache: JsonObject? = null,
+    val model: String? = null,
+    val hidden: Boolean = false,
     val host: String? = null,
     val session: String? = null,
 )
@@ -111,6 +122,7 @@ data class WorkspaceSummary(
     val tabCount: Int,
     val paneCount: Int,
     val repoRoot: String? = null,
+    val folder: String? = null,
     val isWorktree: Boolean? = null,
     val host: String? = null,
 )
@@ -171,7 +183,7 @@ data class SnapshotResponse(
 )
 
 @Serializable
-data class NotificationState(val snoozedUntil: Long?)
+data class NotificationState(val snoozedUntil: Long?, val preferences: NotifyPreferences? = null)
 
 @Serializable
 data class PaneReadResponse(
@@ -179,6 +191,7 @@ data class PaneReadResponse(
     val text: String,
     val truncated: Boolean,
     val revision: Long,
+    val linkText: String? = null,
 )
 
 @Serializable
@@ -188,6 +201,7 @@ data class ActionResponse(
     val textDelivered: Boolean = false,
     val code: String? = null,
     val detail: JsonObject? = null,
+    val reason: String? = null,
 )
 
 @Serializable
@@ -196,6 +210,8 @@ data class DeviceRecord(
     val createdAt: Long,
     val lastSeenAt: Long,
     val current: Boolean,
+    val expiresAt: Long? = null,
+    val expired: Boolean = false,
 )
 
 @Serializable
@@ -203,6 +219,7 @@ data class DevicesResponse(
     val enforced: Boolean,
     val current: String? = null,
     val devices: List<DeviceRecord>,
+    val currentExpired: Boolean = false,
 )
 
 @Serializable
@@ -210,6 +227,8 @@ data class TranscriptResult(
     val text: String,
     val truncated: Boolean = false,
     val isError: Boolean = false,
+    val denied: Boolean = false,
+    val imageUrl: String? = null,
 )
 
 /** One transcript part. Fields not used by its `kind` remain absent on the wire. */
@@ -221,6 +240,10 @@ data class TranscriptPart(
     val name: String? = null,
     val summary: String? = null,
     val result: TranscriptResult? = null,
+    val id: String? = null,
+    val call: JsonObject? = null,
+    val url: String? = null,
+    val mimeType: String? = null,
 )
 
 @Serializable
@@ -229,6 +252,8 @@ data class TranscriptEntry(
     val ts: String,
     val role: String,
     val parts: List<TranscriptPart>,
+    val seq: Long? = null,
+    val abandoned: Boolean = false,
 )
 
 @Serializable
@@ -324,12 +349,18 @@ data class Launcher(
     val command: String,
     val label: String,
     val cwd: String? = null,
+    val harness: String? = null,
+    val noPrompts: Boolean = false,
 )
 
 @Serializable
 data class LaunchersResponse(
     val launchers: List<Launcher>,
     val home: String,
+    val harnesses: List<HarnessInfo>? = null,
+    val items: List<LauncherItem>? = null,
+    val adding: JsonObject? = null,
+    val recentRuns: List<RecentRun>? = null,
 )
 
 @Serializable
@@ -345,6 +376,7 @@ data class Worktree(
 data class WorktreeListResponse(
     val ok: Boolean,
     val worktrees: List<Worktree> = emptyList(),
+    val defaultBranch: String? = null,
     val error: String? = null,
     val code: String? = null,
     val detail: JsonObject? = null,
@@ -355,6 +387,9 @@ data class WorktreeOpenResponse(
     val ok: Boolean,
     val pane: CreatedPane? = null,
     val alreadyOpen: Boolean = false,
+    val launcherStarted: Boolean = false,
+    val launcherError: String? = null,
+    val replayed: Boolean = false,
     val error: String? = null,
     val code: String? = null,
     val detail: JsonObject? = null,
@@ -365,6 +400,8 @@ data class NotifyPreferences(
     val blocked: Boolean,
     val done: Boolean,
     val updates: Boolean,
+    val cache: Boolean = false,
+    val machines: Boolean = true,
 )
 
 @Serializable
@@ -372,6 +409,8 @@ data class NotifyPreferencesPatch(
     val blocked: Boolean? = null,
     val done: Boolean? = null,
     val updates: Boolean? = null,
+    val cache: Boolean? = null,
+    val machines: Boolean? = null,
 )
 
 @Serializable
@@ -398,6 +437,7 @@ data class UpdateRun(
     val recovery: String? = null,
     val runId: String? = null,
     val peers: List<UpdatePeerLeg>? = null,
+    val settledAt: Long? = null,
 )
 
 /** `/standby/update` also answers `{ "state": "idle" }` before any run exists. */
@@ -446,6 +486,14 @@ data class UpdateInfo(
     val majorAvailable: String?,
     val majorUrl: String?,
     val installKind: String? = null,
+    val packageCommand: String? = null,
+    val restartNeeded: Boolean = false,
+    val restartCommand: String? = null,
+    val linkChange: JsonObject? = null,
+    val urgent: JsonObject? = null,
+    val peers: List<UpdatePeerLeg>? = null,
+    val peersTo: String? = null,
+    val settledAt: Long? = null,
     val bridgeStale: Boolean,
     val checkedAt: Long?,
     val newerVersions: List<String>? = null,
@@ -468,12 +516,14 @@ data class PreflightReport(
 )
 
 @Serializable
-data class UpdatePackMember(
+data class UpdateCrewMember(
     val name: String,
     val version: String?,
     val verdict: String,
     val reasons: List<String>,
     val asOf: Long?,
+    val health: String? = null,
+    val installKind: String? = null,
 )
 
 @Serializable
@@ -485,12 +535,20 @@ data class UpdateCheckResponse(
     val majorAvailable: String?,
     val majorUrl: String?,
     val installKind: String? = null,
+    val packageCommand: String? = null,
+    val restartNeeded: Boolean = false,
+    val restartCommand: String? = null,
+    val linkChange: JsonObject? = null,
+    val urgent: JsonObject? = null,
+    val peers: List<UpdatePeerLeg>? = null,
+    val peersTo: String? = null,
+    val settledAt: Long? = null,
     val bridgeStale: Boolean,
     val checkedAt: Long?,
     val newerVersions: List<String>? = null,
     val run: UpdateRun? = null,
     val preflight: PreflightReport? = null,
-    val pack: List<UpdatePackMember>? = null,
+    @JsonNames("pack") val crew: List<UpdateCrewMember>? = null,
 )
 
 @Serializable
@@ -502,7 +560,7 @@ data class UpdateStartResponse(
 )
 
 @Serializable
-data class PackIdentity(
+data class CrewIdentity(
     val id: String,
     val name: String,
     val secretGeneration: Int,
@@ -510,26 +568,26 @@ data class PackIdentity(
 )
 
 @Serializable
-data class PackSelf(
+data class CrewSelf(
     val id: String,
     val name: String,
     val version: String,
 )
 
 @Serializable
-data class PackDeputy(
+data class CrewDeputy(
     val id: String,
     val warrantGeneration: Int? = null,
 )
 
 @Serializable
-data class PackConflict(
+data class CrewConflict(
     val leadMemberId: String,
     val warrantGeneration: Int? = null,
 )
 
 @Serializable
-data class PackMember(
+data class CrewMember(
     val id: String,
     val name: String,
     val isLead: Boolean,
@@ -541,15 +599,16 @@ data class PackMember(
     val version: String? = null,
     val secretBehind: Boolean,
     val provisional: Boolean,
-    val conflict: PackConflict? = null,
+    val linkState: String? = null,
+    val conflict: CrewConflict? = null,
 )
 
 @Serializable
-data class PackStatusResponse(
-    val pack: PackIdentity,
-    val self: PackSelf,
-    val deputy: PackDeputy?,
-    val members: List<PackMember>,
+data class CrewStatusResponse(
+    @JsonNames("pack") val crew: CrewIdentity,
+    val self: CrewSelf,
+    val deputy: CrewDeputy?,
+    val members: List<CrewMember>,
     val ts: Long,
 )
 
@@ -605,10 +664,11 @@ internal data class CreateWorkspaceRequest(
 internal data class LaunchRequest(
     val command: String,
     val paneId: String? = null,
+    val requestId: String = java.util.UUID.randomUUID().toString(),
 )
 
 @Serializable
-internal data class BranchRequest(val branch: String)
+internal data class BranchRequest(val branch: String, val requestId: String = java.util.UUID.randomUUID().toString())
 
 @Serializable
 internal data class WorktreePathRequest(val path: String)

@@ -1,0 +1,28 @@
+[0m[38;2;215;119;87m ▝▝   ▝▝   [0m[38;2;153;153;153m/tmp/claude-lab/project[0m
+
+
+[0m[38;2;153;153;153m[48;2;55;55;55m❯ [0m[38;2;255;255;255m[48;2;55;55;55mread README.md and reply with one short sentence[0m[48;2;55;55;55m                                [0m
+
+  [0m[38;2;153;153;153mRead [0m[1m[38;2;153;153;153m1[0m[38;2;153;153;153m file (ctrl+o to expand)[0m
+
+[0m[38;2;255;255;255m● [0mThe README says this is a throwaway lab project used for screen captures.
+
+[0m[38;2;153;153;153m✻ Worked for 3s · done 7:06 PM[0m
+
+[0m[38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────[0m
+❯ /
+[0m[38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────[0m
+  [0m[38;2;177;185;249m❯ /lab-notes                      Keep short notes about the lab project[0m
+                                    [0m[38;2;177;185;249m(project)[0m
+  [0m[38;2;153;153;153m  /add-dir                        Add a new working directory[0m
+  [0m[38;2;153;153;153m  /advisor                        Let Claude consult a stronger model at key[0m
+                                    [0m[38;2;153;153;153mmoments[0m
+  [0m[38;2;153;153;153m  /artifacts                      Browse your published and shared artifacts[0m
+  [0m[38;2;153;153;153m  /auto-mode-setup                Teach auto mode about your environment, plus[0m
+                                    [0m[38;2;153;153;153moptional rule tweaks[0m
+  [0m[38;2;153;153;153m  /autocompact                    Set how full the context gets before[0m
+                                    [0m[38;2;153;153;153mauto-summarizing[0m
+  [0m[38;2;153;153;153m  /autofix-pr                     Monitor and autofix any issues with the[0m
+                                    [0m[38;2;153;153;153mcurrent PR[0m
+  [0m[38;2;153;153;153m  /background                     Send this session to the background and free[0m
+                                    [0m[38;2;153;153;153mthe terminal[0m

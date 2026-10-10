@@ -2,12 +2,32 @@ import { chmodSync, existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { DEFAULT_PORT, defaultSocketPath, resolveStateDir } from "../bridge/config.ts";
+import { DEFAULT_PORT, defaultSocketPath, normaliseBasePath, resolveStateDir } from "../bridge/config.ts";
+import { HOST } from "../bridge/host.ts";
+import {
+  configFilePaths,
+  hostFilePerms,
+  overlayConfig,
+  readConfigFilesSync,
+  tightenPrivateFile,
+  type ConfigFileLayer,
+  type ConfigFileReader,
+} from "../bridge/config-source.ts";
 import { pluginRoot } from "../bridge/root.ts";
-import { instanceSuffixOf, managedHandlerPath, type ServeMode } from "../bridge/front-door.ts";
+import { secretFileVerdict } from "../bridge/owner-only.ts";
+import {
+  herdrActionCommand,
+  instanceSuffixOf,
+  managedHandlerPath,
+  PLUGIN_ID,
+  pluginIdFor,
+  type ServeMode,
+} from "../bridge/front-door.ts";
 import { findTool } from "./tools.ts";
 
-export const PLUGIN_ID = "herdr.collie";
+// The plugin id and the two spellings built from it live in `bridge/front-door.ts`, beside the
+// instance suffix they share — the bridge prints them too. Re-exported here, where every verb reads.
+export { herdrActionCommand, PLUGIN_ID, pluginIdFor };
 
 /**
  * Everything a verb needs about *where things are*, resolved exactly once and passed down. No verb
@@ -30,6 +50,13 @@ export interface CliContext {
   home: string;
   /** `.env`-merged environment. The one env any verb should consult. */
   env: Environment;
+  /**
+   * The two `config.toml` files this process read, what they set and what was wrong with them
+   * (ADR 0040). {@link CliContext.env} already has the layer spread UNDER it, so a verb reads values
+   * from `env` as it always has; this field is for the three `config` verbs and `doctor`, which
+   * report where a value came from rather than consume it.
+   */
+  configLayer: ConfigFileLayer;
   port: number;
   serveMode: ServeMode;
   /**
@@ -41,12 +68,18 @@ export interface CliContext {
    * value it cannot trust. One parser, two policies — see {@link parseServePort}.
    */
   servePort: number;
+  /**
+   * The path this collie is mounted under (`COLLIE_BASE_PATH`, ADR 0052): `/` for the root,
+   * `/collie/` behind a proxy that gives it a path. Read by the same function the bridge reads it
+   * with, so the door `collie serve` publishes and the document the bridge serves name one mount.
+   */
+  basePath: string;
   socket: string;
   /** The single managed `tailscale serve` mapping's ownership record. */
   handlerFile: string;
   /**
    * Runtime state — the same directory the bridge resolves (`bridge/config.ts`'s `resolveStateDir`),
-   * so the pack trust store a verb writes is the one the running service reads.
+   * so the crew trust store a verb writes is the one the running service reads.
    */
   stateDir: string;
 }
@@ -88,9 +121,6 @@ export interface EnvFilePerms {
   tighten(path: string): boolean;
 }
 
-/** The modes a `.env` may already carry without anyone touching it: owner-only, read or read/write. */
-const PRIVATE_ENV_MODES = new Set([0o600, 0o400]);
-
 /**
  * Hold `.env` to owner-only, tightening it in place when it is not — and say so either way.
  *
@@ -104,13 +134,11 @@ const PRIVATE_ENV_MODES = new Set([0o600, 0o400]);
  *
  * Returns the line for stderr, or `null` when there was nothing to say.
  */
-export function tightenEnvFile(path: string, perms: EnvFilePerms): string | null {
-  const mode = perms.mode(path);
-  if (mode === null || PRIVATE_ENV_MODES.has(mode)) return null;
-  const shown = mode.toString(8).padStart(3, "0");
-  return perms.tighten(path)
-    ? `warn: ${path} was mode ${shown} (expected 600); tightened it to 600.`
-    : `warn: ${path} is mode ${shown} (expected 600) and could not be tightened; it may be readable by other users.`;
+export function tightenEnvFile(path: string, perms: EnvFilePerms, repairAcl = false): string | null {
+  // One rule, two files. `bridge/config-source.ts` owns it because a `config.toml` holding
+  // `[push] vapid_private` raises exactly this question, and a second implementation would be a
+  // second posture (ADR 0040). `repairAcl` matters on Windows only: see `loadContext`.
+  return tightenPrivateFile(path, perms, repairAcl).warning;
 }
 
 /**
@@ -272,13 +300,17 @@ export function resolveConfigDir(deps: ConfigDirDeps): ConfigDirResult {
 // ── Version ──────────────────────────────────────────────────────────────────
 
 // Re-exported, not defined here. The resolver moved to `bridge/version.ts` when `hello` had to
-// answer with this machine's version (PACK_PROTOCOL.md §7.1): the bridge cannot import from `cli/`,
+// answer with this machine's version (CREW_PROTOCOL.md §7.1): the bridge cannot import from `cli/`,
 // and two implementations that agree today are not the guarantee the spec asks for. Every existing
 // caller keeps importing it from here.
 export { collieVersion, collieVersionBare, collieVersionFrom } from "../bridge/version.ts";
 
-/** {@link EnvFilePerms} against the real filesystem. */
-const diskEnvPerms: EnvFilePerms = {
+/**
+ * {@link EnvFilePerms} against the real filesystem. On Windows the access list decides instead of
+ * the mode, which ended the false `.env was mode 666; tightened it to 600` on every command
+ * ({@link hostFilePerms}, `bridge/owner-only.ts`).
+ */
+const diskEnvPerms: EnvFilePerms = hostFilePerms(HOST, {
   mode(path) {
     try {
       return statSync(path).mode & 0o777;
@@ -294,7 +326,7 @@ const diskEnvPerms: EnvFilePerms = {
       return false;
     }
   },
-};
+}, (path, repair) => secretFileVerdict(path, { repair }));
 
 /** File contents, or `null` when missing/unreadable. */
 function readIfPresent(p: string): string | null {
@@ -304,6 +336,21 @@ function readIfPresent(p: string): string | null {
     return null;
   }
 }
+
+/**
+ * {@link ConfigFileReader} against the real filesystem. An absent file is not an error, which is the
+ * ordinary case; a file that exists and will not open is, and says which.
+ */
+const diskConfigReader: ConfigFileReader = {
+  read(path) {
+    if (!existsSync(path)) return { text: null, error: null };
+    try {
+      return { text: readFileSync(path, "utf8"), error: null };
+    } catch (err) {
+      return { text: null, error: String(err) };
+    }
+  },
+};
 
 // ── Derived settings ─────────────────────────────────────────────────────────
 
@@ -318,7 +365,7 @@ function readIfPresent(p: string): string | null {
 export function deriveSettings(
   env: Environment,
   home: string,
-): Pick<CliContext, "port" | "serveMode" | "servePort" | "socket"> {
+): Pick<CliContext, "port" | "serveMode" | "servePort" | "basePath" | "socket"> {
   const rawPort = env.COLLIE_PORT?.trim();
   const port = rawPort && /^\d+$/.test(rawPort) ? Number(rawPort) : DEFAULT_PORT;
   const mode = env.COLLIE_SERVE_MODE?.trim();
@@ -326,7 +373,8 @@ export function deriveSettings(
     port,
     serveMode: mode === "http" ? "http" : "https",
     servePort: effectiveServePort(env),
-    socket: env.HERDR_SOCKET_PATH?.trim() || defaultSocketPath(process.platform, env, home),
+    basePath: normaliseBasePath(env.COLLIE_BASE_PATH),
+    socket: env.HERDR_SOCKET_PATH?.trim() || defaultSocketPath(HOST, env, home),
   };
 }
 
@@ -382,8 +430,8 @@ export function effectiveServePort(env: Environment): number {
 // instance, `resolveConfigDir` looks for `<conventional>/herdr.collie-<instance>/.env` — a directory
 // the operator created — and, finding none, refuses the run instead of resolving anywhere else. It
 // never asks herdr (herdr only knows the unsuffixed plugin's dir) and never falls back to the
-// unsuffixed or legacy dir. The incident: `COLLIE_INSTANCE=v1 collie pack add` without an injected
-// HERDR_PLUGIN_CONFIG_DIR resolved the DEFAULT instance's config and state dirs, so a pack verb read
+// unsuffixed or legacy dir. The incident: `COLLIE_INSTANCE=v1 collie crew add` without an injected
+// HERDR_PLUGIN_CONFIG_DIR resolved the DEFAULT instance's config and state dirs, so a crew verb read
 // the wrong trust store and then minted a fresh self identity into the live stable instance's.
 
 /** The accepted shape of `COLLIE_INSTANCE`: it becomes a unit name, a filename and a launchd label. */
@@ -474,26 +522,52 @@ export function shadowNotes(ambient: Environment, fromFile: EnvVars): string[] {
  * Resolve the context once. `warn` receives diagnostics destined for stderr (the caller owns the
  * stream, so this stays testable).
  */
-export function loadContext(warn: (line: string) => void = (l) => console.error(l)): CliContext {
+export function loadContext(
+  warn: (line: string) => void = (l) => console.error(l),
+  opts: {
+    /**
+     * Whether a loose secret file's access list may be changed (Windows only, M43 spec 04). Only the
+     * bridge process (`_exec-bridge`) passes `true`; every other command verifies and warns.
+     */
+    readonly repairAcl?: boolean;
+    /**
+     * The environment to resolve from, in place of this process's own. The Windows launcher passes
+     * the bridge's (`cli/task-scheduler.ts`), whose paths arrive on its command line, not in its env.
+     */
+    readonly ambient?: Environment;
+  } = {},
+): CliContext {
+  const repairAcl = opts.repairAcl === true;
+  const ambient = opts.ambient ?? process.env;
   const root = pluginRoot();
-  const home = resolveHome(process.env);
+  const home = resolveHome(ambient);
   const { dir: configDir, note } = resolveConfigDir({
-    env: process.env,
+    env: ambient,
     home,
     fileExists: existsSync,
-    askHerdr: () => askHerdrConfigDir(process.env, home),
+    askHerdr: () => askHerdrConfigDir(ambient, home),
   });
   if (note !== null) warn(note);
 
+  // The config files sit UNDER the ambient environment (ADR 0040): default < ~/.collie/config.toml <
+  // <configDir>/config.toml < process env < `.env`. `COLLIE_CONFIG` is read from the PROCESS env
+  // alone, because it decides which file is read and a file cannot name itself.
+  const configLayer = readConfigFilesSync(
+    diskConfigReader,
+    configFilePaths(ambient, home, configDir),
+    warn,
+    { home, perms: diskEnvPerms, repairAcl },
+  );
+
   // `.env` overrides the ambient environment, exactly as `set -a; . .env` did.
-  const env: Environment = { ...process.env };
+  const env: Environment = overlayConfig(ambient, configLayer);
   const envPath = join(configDir, ".env");
   const dotenv = readIfPresent(envPath);
   if (dotenv !== null) {
-    const tightened = tightenEnvFile(envPath, diskEnvPerms);
+    const tightened = tightenEnvFile(envPath, diskEnvPerms, repairAcl);
     if (tightened !== null) warn(tightened);
     const fromFile = parseEnvFile(dotenv);
-    for (const line of shadowNotes(process.env, fromFile)) warn(line);
+    for (const line of shadowNotes(ambient, fromFile)) warn(line);
     Object.assign(env, fromFile);
   }
 
@@ -508,6 +582,7 @@ export function loadContext(warn: (line: string) => void = (l) => console.error(
     configDir,
     home,
     env,
+    configLayer,
     // Suffixed, so a second instance can never tear down the first's `tailscale serve` mapping —
     // even if the operator points both at one config dir (ADR 0001: we touch only what we recorded).
     handlerFile: managedHandlerPath(configDir, instanceSuffix(instance)),

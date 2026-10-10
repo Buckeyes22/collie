@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
-import { leadStore, member, peerStore } from "../bridge/pack/fixtures.ts";
-import { serializeTrustStore } from "../bridge/pack/trust-store.ts";
+import { leadStore, member, peerStore } from "../bridge/crew/fixtures.ts";
+import { serializeTrustStore } from "../bridge/crew/trust-store.ts";
 import {
   capture,
   CONFIG,
@@ -38,6 +38,12 @@ import {
 
 const OURS = "http://127.0.0.1:8787";
 
+/** A tailnet with a name AND certificates — the shape every publish test assumes (#172). */
+const STATUS_HTTPS_ON = JSON.stringify({
+  Self: { DNSName: "host.example." },
+  CertDomains: ["host.example"],
+});
+
 const status = (json: string): ServeStatus => parseServeStatus(json);
 
 const web = (hostPort: string, path: string, proxy: string): string =>
@@ -55,6 +61,7 @@ describe("the ownership record", () => {
       port: 443,
       hostPort: "host.ts.net:443",
       proxy: OURS,
+      path: "/",
     });
     expect(formatRecord(record)).toBe(`${line}\n`);
     // The http shape, whose listener is the bridge port rather than 443.
@@ -63,6 +70,7 @@ describe("the ownership record", () => {
       port: 8787,
       hostPort: "host.ts.net:8787",
       proxy: OURS,
+      path: "/",
     });
   });
 
@@ -76,6 +84,7 @@ describe("the ownership record", () => {
       port: 8443,
       hostPort: "host.ts.net:8443",
       proxy: OURS,
+      path: "/",
     });
     expect(formatRecord(record)).toBe(`${line}\n`);
   });
@@ -211,7 +220,7 @@ function harness(
   // defaults below it.
   const answers: Scripted["answers"] = [
     ...(over.answers ?? []),
-    ["tailscale status --json", { stdout: '{"Self":{"DNSName":"host.example."}}' }],
+    ["tailscale status --json", { stdout: STATUS_HTTPS_ON }],
     ["tailscale serve status --json", { stdout: over.serveStatus ?? "{}" }],
   ];
   const exec = fakeExec({ ...over, answers });
@@ -296,15 +305,61 @@ describe("serve — publishing", () => {
     expect(cmdServe(h.deps)).toBe(EXIT.FAIL);
     expect(h.files.exists(HANDLER_FILE)).toBe(false);
     expect(h.io.stdout.join("\n")).toContain("sudo tailscale set --operator=$USER");
-    expect(h.io.stdout.join("\n")).toContain("access denied");
-    // The captured output stays on disk where the shell left it.
-    expect(h.files.read(`${CONFIG}/serve.out`)).toContain("access denied");
+    // Tailscale's own words are not re-printed here: the publish runs on OUR stdio, so "access
+    // denied" reached the terminal as tailscale said it, and nothing is captured to echo back (#172).
+    expect(h.io.stdout.join("\n")).not.toContain("access denied");
+    expect(h.files.exists(`${CONFIG}/serve.out`)).toBe(false);
   });
 
   test("the https failure hint names the Headscale escape hatch", () => {
     const h = harness({ answers: [["tailscale serve --bg", { code: 1 }]] });
     expect(cmdServe(h.deps)).toBe(EXIT.FAIL);
     expect(h.io.stdout.join("\n")).toContain("COLLIE_SERVE_MODE=http");
+  });
+
+  test("a tailnet with no certificates is SAID, not waited on (#172)", () => {
+    // `tailscale serve` answers this case with a question at a terminal a service has not got, so
+    // the operator saw a hung command and no reason. Nothing may be published on the way to saying so.
+    const h = harness({
+      answers: [["tailscale status --json", { stdout: '{"Self":{"DNSName":"host.example."}}' }]],
+    });
+    expect(cmdServe(h.deps)).toBe(EXIT.FAIL);
+    expect(h.io.stderr.join("\n")).toContain("HTTPS certificates are not enabled on this tailnet");
+    expect(h.io.stderr.join("\n")).toContain("https://login.tailscale.com/admin/dns");
+    expect(h.exec.calls.some((c) => c.includes("--bg"))).toBe(false);
+    expect(h.files.exists(HANDLER_FILE)).toBe(false);
+  });
+
+  test("an unreadable HTTPS status warns and publishes anyway", () => {
+    // Three answers, and `null` is the third: a status document this build cannot read says nothing
+    // about certificates, so refusing would break a publish that works. It publishes and says so,
+    // because the hang the check exists to prevent is the one thing it could not rule out.
+    const h = harness({
+      answers: [
+        [
+          "tailscale status --json",
+          { stdout: '{"Self":{"DNSName":"host.example."},"CertDomains":"host.example"}' },
+        ],
+      ],
+    });
+    expect(cmdServe(h.deps)).toBe(EXIT.OK);
+    expect(h.io.stderr.join("\n")).toContain("could not read this tailnet's HTTPS status");
+    expect(h.io.stderr.join("\n")).not.toContain("error:");
+    expect(h.exec.calls).toContain("tailscale serve --bg --set-path=/ 8787");
+  });
+
+  test("certificates present publish as they always did; http mode never asks", () => {
+    const https = harness();
+    expect(cmdServe(https.deps)).toBe(EXIT.OK);
+    expect(https.exec.calls).toContain("tailscale serve --bg --set-path=/ 8787");
+
+    // An http front door needs no certificate, so an https-less tailnet must not refuse it.
+    const plain = harness({
+      serveMode: "http",
+      answers: [["tailscale status --json", { stdout: '{"Self":{"DNSName":"host.example."}}' }]],
+    });
+    expect(cmdServe(plain.deps)).toBe(EXIT.OK);
+    expect(plain.exec.calls).toContain("tailscale serve --bg --http=8787 --set-path=/ 8787");
   });
 
   test("a mapping we can't name is one we can't prove we own: no tailscale, no hostname", () => {
@@ -392,7 +447,7 @@ describe("serve — COLLIE_SERVE_PORT (one tailnet name, a listener port per dev
 });
 
 describe("serve — a peer publishes no front door (ADR 0013, §3)", () => {
-  const PEER_STORE = `${STATE}/pack-trust.json`;
+  const PEER_STORE = `${STATE}/crew-trust.json`;
   const peerOnDisk = () => ({ [PEER_STORE]: serializeTrustStore(peerStore()) });
 
   test("publishes nothing on a machine whose trust store says peer", () => {
@@ -596,5 +651,64 @@ describe("unserve — teardown", () => {
     expect(absent.io.stderr.join("\n")).toContain(
       "root is absent but ownership state could not be removed",
     );
+  });
+});
+
+// ADR 0052: the bridge can be mounted under a path, and the door is published where the app is.
+describe("serve — under a mount (COLLIE_BASE_PATH)", () => {
+  const MOUNTED = { COLLIE_BASE_PATH: "/collie" };
+
+  test("publishes at the mount, and the record carries the path as a fourth field", () => {
+    const h = harness({ serveMode: "http", env: MOUNTED });
+    expect(cmdServe(h.deps)).toBe(EXIT.OK);
+    expect(h.exec.calls).toContain("tailscale serve --bg --http=8787 --set-path=/collie/ 8787");
+    expect(h.files.read(HANDLER_FILE)).toBe("http:8787|host.example:8787|http://127.0.0.1:8787|/collie/\n");
+    expect(h.io.stdout.join("\n")).toContain("tailnet :8787 /collie/ ->");
+  });
+
+  test("a foreign root is no concern of a mount: the other app keeps `/`, Collie takes its path", () => {
+    const h = harness({
+      serveMode: "http",
+      env: MOUNTED,
+      serveStatus: `{${tcp(8787, "HTTP")},${web("host:8787", "/", "http://127.0.0.1:7000")}}`,
+    });
+    expect(cmdServe(h.deps)).toBe(EXIT.OK);
+    expect(h.exec.calls).toContain("tailscale serve --bg --http=8787 --set-path=/collie/ 8787");
+  });
+
+  test("a foreign handler AT the mount refuses, exactly as a foreign root does", () => {
+    const h = harness({
+      serveMode: "http",
+      env: MOUNTED,
+      serveStatus: `{${tcp(8787, "HTTP")},${web("host:8787", "/collie/", "http://127.0.0.1:7000")}}`,
+    });
+    expect(cmdServe(h.deps)).toBe(EXIT.FAIL);
+    expect(h.io.stderr.join("\n")).toContain("unowned mount at /collie/");
+    expect(h.exec.calls.some((c) => c.includes("--bg"))).toBe(false);
+  });
+
+  test("the record round-trips with its path, and refuses a path a mount cannot be", () => {
+    const line = "https:443|host.ts.net:443|http://127.0.0.1:8787|/collie/";
+    const record = parseRecord(`${line}\n`);
+    expect(record.path).toBe("/collie/");
+    expect(formatRecord(record)).toBe(`${line}\n`);
+    expect(() => parseRecord("https:443|host.ts.net:443|http://127.0.0.1:8787|collie")).toThrow(/mount path/);
+    expect(() => parseRecord("https:443|host.ts.net:443|http://127.0.0.1:8787|/collie/|x")).toThrow(/handler state/);
+  });
+
+  test("teardown removes the handler at the recorded mount and nothing else", () => {
+    const record = "http:8787|host.example:8787|http://127.0.0.1:8787|/collie/\n";
+    const owned = `{${tcp(8787, "HTTP")},${web("host.example:8787", "/collie/", OURS)}}`;
+    const h = harness({ serveMode: "http", env: MOUNTED, serveStatus: owned, files: { [HANDLER_FILE]: record } });
+    expect(cmdUnserve(h.deps)).toBe(EXIT.OK);
+    expect(h.exec.calls).toContain("tailscale serve --http=8787 --set-path=/collie/ off");
+    expect(h.files.exists(HANDLER_FILE)).toBe(false);
+  });
+
+  test("rootAvailability judges the mount it is asked about", () => {
+    const both = status(`{${tcp(8787, "HTTP")},"Web":{"host:8787":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:7000"},"/collie/":{"Proxy":"${OURS}"}}}}}`);
+    expect(rootAvailability(both, 8787, "http", OURS)).toBe("occupied");
+    expect(rootAvailability(both, 8787, "http", OURS, "/collie/")).toBe("adoptable");
+    expect(rootAvailability(both, 8787, "http", OURS, "/other/")).toBe("free");
   });
 });

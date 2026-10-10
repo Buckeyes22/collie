@@ -332,7 +332,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 is ApiResult.Failure -> {
                     pollingBackoff.failed()
                     val pairingRequired = result.error is ApiFailure.Http &&
-                        result.error.message == "device not paired"
+                        result.error.message in setOf("device not paired", "device expired")
                     if (pairingRequired) repository.demoteToReadOnly()
                     val authError = result.error is ApiFailure.Redirect ||
                         result.error is ApiFailure.Http && result.error.status in setOf(401, 403)
@@ -407,7 +407,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         fun describe(resources: Resources, failure: ApiFailure): String = when (failure) {
             is ApiFailure.Redirect -> resources.getString(R.string.error_proxy_sign_in, failure.status)
             is ApiFailure.Http -> when {
-                failure.message == "device not paired" -> resources.getString(R.string.error_device_not_paired)
+                failure.message in setOf("device not paired", "device expired") -> resources.getString(R.string.error_device_not_paired)
                 failure.message == "device not authorised" -> resources.getString(R.string.error_device_unauthorised)
                 else -> failure.message ?: resources.getString(R.string.error_http, failure.status)
             }

@@ -2,12 +2,13 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { http, HttpResponse } from "msw";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { server } from "@/test/setup";
 import { withHeaderHost } from "@/test/header-host";
 import { ROOT_ROUTE_ID, type HomeData } from "@/lib/loaders";
-import type { PreflightReport, UpdateInfo, UpdatePackMember } from "@/lib/types";
+import type { PreflightReport, UpdateInfo, UpdateCrewMember } from "@/lib/types";
+import { __resetUpdateRunStore } from "@/lib/update-run-store";
 import { UpdatesRoute } from "./updates";
 
 // ── THE UPDATES PAGE ────────────────────────────────────────────────────────────────────────────
@@ -37,7 +38,7 @@ function info(over: Partial<UpdateInfo> = {}): UpdateInfo {
   };
 }
 
-const PACK: UpdatePackMember[] = [
+const CREW: UpdateCrewMember[] = [
   {
     name: "attic",
     version: "1.3.0",
@@ -92,19 +93,26 @@ function renderUpdates(update: UpdateInfo | undefined, servers: HomeData["server
   return router;
 }
 
-function serveCheck(update: UpdateInfo, pack?: UpdatePackMember[]) {
+function serveCheck(update: UpdateInfo, crew?: UpdateCrewMember[]) {
   server.use(
     http.get("/api/update/check", () =>
       HttpResponse.json(
-        pack === undefined ? { ...update, preflight: GREEN } : { ...update, preflight: GREEN, pack },
+        crew === undefined ? { ...update, preflight: GREEN } : { ...update, preflight: GREEN, crew },
       ),
     ),
   );
 }
 
 beforeEach(() => {
+  // The update poll is a module-scoped store now (M28/01): without this, one case's census is the
+  // next case's opening state.
+  __resetUpdateRunStore();
   serveCheck(info());
   server.use(http.post("/api/update/snooze", () => HttpResponse.json(info())));
+});
+
+afterEach(() => {
+  __resetUpdateRunStore();
 });
 
 describe("updates page", () => {
@@ -133,9 +141,9 @@ describe("updates page", () => {
   });
 
   it("puts the peer rows in the card, with no table beside it", async () => {
-    serveCheck(info(), PACK);
+    serveCheck(info(), CREW);
     renderUpdates(info(), LEAD_ROSTER);
-    const list = await screen.findByRole("list", { name: "Pack members" });
+    const list = await screen.findByRole("list", { name: "Crew members" });
     // The list is INSIDE the card that carries the button — the thing that blocks the confirm has
     // to be readable without moving your eyes to a second surface.
     const card = screen.getByText("Update Collie").closest("[data-slot='card']");
@@ -144,11 +152,28 @@ describe("updates page", () => {
     expect(within(list).queryAllByRole("button")).toHaveLength(0);
   });
 
+  it("says a packaged peer waits for its package manager, and counts it behind nothing", async () => {
+    const crew: UpdateCrewMember[] = [
+      { name: "minibuch", version: "1.3.0", verdict: "green", reasons: [], asOf: 1_700_000_000_000, installKind: "packaged" },
+    ];
+    // This lead is already on the newest release, so the only thing that could give it an action is
+    // a peer counted behind. The packaged one is not counted, so the page has nothing to offer.
+    const current = info({ current: "1.4.0", releaseAvailable: false, newerVersions: [] });
+    serveCheck(current, crew);
+    renderUpdates(current, LEAD_ROSTER);
+    const list = await screen.findByRole("list", { name: "Crew members" });
+    expect(within(list).getByText(/waits for the package manager/)).toBeInTheDocument();
+    // Neutral weight: no red, and no reason line under the row.
+    expect(list.querySelector(".text-status-blocked")).toBeNull();
+    await waitFor(() => expect(screen.getByText("Up to date. Nothing to do.")).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: /^(Retry crew update|Try \S+ again)$/ })).not.toBeInTheDocument();
+  });
+
   it("offers exactly one action button on the page", async () => {
-    serveCheck(info(), PACK);
+    serveCheck(info(), CREW);
     renderUpdates(info(), LEAD_ROSTER);
-    expect(await screen.findByRole("button", { name: "Update pack to 1.4.0" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Update all machines to 1.4.0" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^Update to/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Retry pack update" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^(Retry crew update|Try \S+ again)$/ })).not.toBeInTheDocument();
   });
 });

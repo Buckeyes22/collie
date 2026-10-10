@@ -1,16 +1,21 @@
 import { describe, expect, test } from "bun:test";
 
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import {
   firstRed,
   FreshPreflightGate,
+  launchUpdateRunner,
+  openRunnerLog,
+  updateRunnerLogPath,
   mergedUpdateVerdict,
-  PACK_PREFLIGHT_MAX_CHECKS,
-  PACK_PREFLIGHT_TRUNCATED_ID,
-  packPreflightChecks,
-  packUpdateRows,
+  CREW_PREFLIGHT_MAX_CHECKS,
+  CREW_PREFLIGHT_TRUNCATED_ID,
+  crewPreflightChecks,
+  crewUpdateRows,
+  parseCrewRows,
   parsePeerPreflight,
   parsePreflightReport,
   parseUpdateStartRequest,
@@ -20,7 +25,10 @@ import {
   PREFLIGHT_TTL_MS,
   updateCadenceTick,
   updateStartCommand,
+  type UpdateRunnerSpawn,
+  type UpdateRunnerSpawnOptions,
   updateStartVerdict,
+  type CrewUpdateRow,
   type PreflightCheck,
   type PreflightReport,
   type UpdateStartRequest,
@@ -105,7 +113,7 @@ describe("the update preflight report, as the bridge reads it", () => {
     expect(parsePreflightReport("[]")).toBeNull();
   });
 
-  test("a report carrying `pack` loses the members AND their contribution to the verdict", () => {
+  test("a report carrying `crew` loses the members AND their contribution to the verdict", () => {
     const text = JSON.stringify({
       schema: 1,
       // Red because of a peer this lead cannot ssh to, which is not a reason to refuse the lead's
@@ -115,15 +123,15 @@ describe("the update preflight report, as the bridge reads it", () => {
         { id: "disk", verdict: "green", reason: "4.2 GB free" },
         { id: "bun", verdict: "amber", reason: "Bun 1.1.0 is older than measured" },
       ],
-      pack: [{ memberId: "nas", host: "nas.local", verdict: "red", checks: [] }],
+      crew: [{ memberId: "nas", host: "nas.local", verdict: "red", checks: [] }],
     });
     const report = parsePreflightReport(text);
     expect(report?.verdict).toBe("amber");
     expect(report?.checks.map((c) => c.id)).toEqual(["disk", "bun"]);
-    expect("pack" in (report ?? {})).toBe(false);
+    expect("crew" in (report ?? {})).toBe(false);
   });
 
-  test("without `pack` the top-level verdict is taken as printed", () => {
+  test("without `crew` the top-level verdict is taken as printed", () => {
     const text = JSON.stringify({
       schema: 1,
       verdict: "red",
@@ -236,6 +244,24 @@ describe("POST api/update — the update write gate's verdict", () => {
     expect(v).toMatchObject({ kind: "refuse", status: 409, body: { code: "update.in_progress" } });
   });
 
+  test("a second confirm while the crew run is still open is refused, full or peers-only (A5)", () => {
+    // The lead is done, a member is still waiting out its own hourly limit, and the operator taps
+    // again. Accepting would replace the run's legs while that member may be building under the
+    // first run's id, so it is refused with the code and sentence every phone already renders.
+    const refused = {
+      kind: "refuse",
+      status: 409,
+      body: {
+        error: "an update is already running (levelling the crew); nothing was started",
+        code: "update.in_progress",
+        detail: { state: "levelling the crew" },
+      },
+    } as const;
+    expect(updateStartVerdict(ask(), state({ run: runAt("done"), crewRunOpen: true }))).toEqual(refused);
+    expect(updateStartVerdict(ask({ peersOnly: true }), state({ current: "1.4.0", crewRunOpen: true }))).toEqual(refused);
+    expect(updateStartVerdict(ask(), state({ run: runAt("done"), crewRunOpen: false })).kind).toBe("start");
+  });
+
   test("a finished run does not block the next one", () => {
     expect(updateStartVerdict(ask(), state({ run: runAt("done") })).kind).toBe("start");
     expect(updateStartVerdict(ask(), state({ run: runAt("rolled-back") })).kind).toBe("start");
@@ -327,36 +353,178 @@ describe("POST api/update — the update write gate's verdict", () => {
 describe("update hands off — the command that leaves this process's cgroup", () => {
   const base = { platform: "linux", binary: "/opt/collie/bin/collie", stamp: "42" };
 
-  test("systemd-run --user --collect on a Linux host that has it", () => {
-    expect(updateStartCommand({ ...base, major: false, hasSystemdRun: true, hasSetsid: true })).toEqual([
-      "systemd-run",
-      "--user",
-      "--collect",
-      "--unit",
-      "collie-api-update-42",
-      "/opt/collie/bin/collie",
-      "update",
-    ]);
+  test("systemd-run --user --collect on a Linux host that has it, and the spawn stays attached", () => {
+    expect(updateStartCommand({ ...base, major: false, hasSystemdRun: true, hasSetsid: true })).toEqual({
+      command: ["systemd-run", "--user", "--collect", "--unit", "collie-api-update-42", "/opt/collie/bin/collie", "update"],
+      detach: false,
+    });
+  });
+
+  test("a rehearsal mirror reaches the transient unit's bare environment; the other tiers inherit it", () => {
+    // The transient unit starts `collie update` with a bare environment. Without this the CLI there
+    // would not see a mirror the bridge was started with and would ask GitHub instead.
+    for (const value of ["http://127.0.0.1:47321", "http://10.0.0.5:1"]) {
+      expect(updateStartCommand({ ...base, major: false, hasSystemdRun: true, hasSetsid: true, mirror: value }).command).toEqual([
+        "systemd-run", "--user", "--collect", "--unit", "collie-api-update-42",
+        `--setenv=COLLIE_UPDATE_MIRROR=${value}`, "/opt/collie/bin/collie", "update",
+      ]);
+    }
+    // No mirror: the command is the one it always was. Other tiers: the child inherits the variable.
+    expect(updateStartCommand({ ...base, major: false, hasSystemdRun: true, hasSetsid: true, mirror: null }).command).not.toContain(
+      "--setenv=COLLIE_UPDATE_MIRROR=",
+    );
+    expect(updateStartCommand({ ...base, platform: "win32", major: false, hasSystemdRun: false, hasSetsid: false, mirror: "http://127.0.0.1:1" })).toEqual({
+      command: ["/opt/collie/bin/collie", "update"],
+      detach: true,
+    });
   });
 
   test("a major crossing hands the CLI its own consent flag (ADR 0020)", () => {
-    const cmd = updateStartCommand({ ...base, major: true, hasSystemdRun: true, hasSetsid: true });
-    expect(cmd.slice(-2)).toEqual(["update", "--major"]);
+    const plan = updateStartCommand({ ...base, major: true, hasSystemdRun: true, hasSetsid: true });
+    expect(plan.command.slice(-2)).toEqual(["update", "--major"]);
   });
 
-  test("setsid where there is no user manager, and a bare spawn where there is neither", () => {
-    expect(updateStartCommand({ ...base, platform: "darwin", major: false, hasSystemdRun: false, hasSetsid: true })).toEqual(
-      ["setsid", "/opt/collie/bin/collie", "update"],
-    );
-    expect(updateStartCommand({ ...base, major: false, hasSystemdRun: false, hasSetsid: false })).toEqual([
-      "/opt/collie/bin/collie",
-      "update",
-    ]);
+  test("setsid where there is no user manager, and a bare spawn where there is neither, both detached", () => {
+    expect(updateStartCommand({ ...base, platform: "darwin", major: false, hasSystemdRun: false, hasSetsid: true })).toEqual({
+      command: ["setsid", "/opt/collie/bin/collie", "update"],
+      detach: true,
+    });
+    expect(updateStartCommand({ ...base, major: false, hasSystemdRun: false, hasSetsid: false })).toEqual({
+      command: ["/opt/collie/bin/collie", "update"],
+      detach: true,
+    });
+  });
+
+  test("a systemd-run binary on a non-Linux platform is not the systemd tier", () => {
+    expect(updateStartCommand({ ...base, platform: "darwin", major: false, hasSystemdRun: true, hasSetsid: false }).detach).toBe(true);
   });
 
   test("it is `collie update` and nothing else — the operator's own verb, not a second recipe", () => {
-    const cmd = updateStartCommand({ ...base, major: false, hasSystemdRun: false, hasSetsid: false });
-    expect(cmd).toEqual(["/opt/collie/bin/collie", "update"]);
+    const plan = updateStartCommand({ ...base, major: false, hasSystemdRun: false, hasSetsid: false });
+    expect(plan.command).toEqual(["/opt/collie/bin/collie", "update"]);
+  });
+});
+
+describe("the runner leaves the service's process group (#213)", () => {
+  const recorder = () => {
+    const calls: { command: string[]; options: UpdateRunnerSpawnOptions }[] = [];
+    let unrefs = 0;
+    const spawn: UpdateRunnerSpawn = (command, options) => {
+      calls.push({ command, options });
+      return { unref: () => void unrefs++ };
+    };
+    return { calls, spawn, unrefs: () => unrefs };
+  };
+
+  test("a macOS checkout with no systemd-run and no setsid binary spawns detached, streams ignored, unref'd", () => {
+    // The reporter's shape: a Herdr checkout under launchd. Nothing on the ladder leaves the job's
+    // process group, so the spawn's own setsid() is the only thing that does.
+    const plan = updateStartCommand({
+      platform: "darwin",
+      binary: "/Users/p/.config/herdr/plugins/herdr.collie/bin/collie",
+      major: false,
+      stamp: "42",
+      hasSystemdRun: false,
+      hasSetsid: false,
+      runId: "run-1",
+    });
+    const r = recorder();
+    expect(launchUpdateRunner(plan, { cwd: "/Users/p/.config/herdr/plugins/herdr.collie", spawn: r.spawn })).toEqual({ ok: true });
+    expect(r.calls).toHaveLength(1);
+    expect(r.calls[0]?.command).toEqual(["/Users/p/.config/herdr/plugins/herdr.collie/bin/collie", "update", "--run-id", "run-1"]);
+    expect(r.calls[0]?.options).toEqual({
+      cwd: "/Users/p/.config/herdr/plugins/herdr.collie",
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+      detached: true,
+    });
+    expect(r.unrefs()).toBe(1);
+  });
+
+  test("the systemd-run tier spawns attached, exactly the command it always ran", () => {
+    const plan = updateStartCommand({ platform: "linux", binary: "/opt/collie/bin/collie", major: false, stamp: "42", hasSystemdRun: true, hasSetsid: true });
+    const r = recorder();
+    launchUpdateRunner(plan, { cwd: "/opt/collie", spawn: r.spawn });
+    expect(r.calls[0]?.command[0]).toBe("systemd-run");
+    expect(r.calls[0]?.options.detached).toBe(false);
+  });
+
+  test("a spawn that throws is a refusal with its reason, not a crash", () => {
+    const plan = updateStartCommand({ platform: "darwin", binary: "/x/collie", major: false, stamp: "1", hasSystemdRun: false, hasSetsid: false });
+    const spawn: UpdateRunnerSpawn = () => {
+      throw new Error("ENOENT");
+    };
+    expect(launchUpdateRunner(plan, { cwd: "/x", spawn })).toEqual({ ok: false, reason: "ENOENT" });
+  });
+});
+
+describe("the runner's own output is kept (#283)", () => {
+  const plan = () =>
+    updateStartCommand({ platform: "darwin", binary: "/x/collie", major: false, stamp: "1", hasSystemdRun: false, hasSetsid: false });
+
+  test("both streams go to the log's descriptor, and the bridge's copy is closed after the spawn", () => {
+    const seen: UpdateRunnerSpawnOptions[] = [];
+    let closed = 0;
+    const r = launchUpdateRunner(plan(), {
+      cwd: "/x",
+      spawn: (_command, options) => {
+        seen.push(options);
+        expect(closed).toBe(0);
+        return { unref: () => {} };
+      },
+      log: { fd: 42, close: () => void closed++ },
+    });
+    expect(r).toEqual({ ok: true });
+    expect(seen[0]?.stdout).toBe(42);
+    expect(seen[0]?.stderr).toBe(42);
+    expect(seen[0]?.stdin).toBe("ignore");
+    expect(closed).toBe(1);
+  });
+
+  test("a spawn that throws still closes the log", () => {
+    let closed = 0;
+    const r = launchUpdateRunner(plan(), {
+      cwd: "/x",
+      spawn: () => {
+        throw new Error("ENOENT");
+      },
+      log: { fd: 42, close: () => void closed++ },
+    });
+    expect(r).toEqual({ ok: false, reason: "ENOENT" });
+    expect(closed).toBe(1);
+  });
+
+  test("each launch starts the file empty with a header, and keeps the previous run as .1", () => {
+    const dir = mkdtempSync(join(tmpdir(), "collie-runner-log-"));
+    try {
+      const path = updateRunnerLogPath(dir);
+      expect(path).toBe(join(dir, "update-runner.log"));
+      writeFileSync(path, "the previous run\n");
+      const log = openRunnerLog(dir, "2026-09-24T00:00:00.000Z setsid /x/collie update");
+      expect(log).not.toBeNull();
+      log!.close();
+      expect(readFileSync(path, "utf8")).toBe("2026-09-24T00:00:00.000Z setsid /x/collie update\n");
+      expect(readFileSync(`${path}.1`, "utf8")).toBe("the previous run\n");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a log that cannot be opened is null, and the launch goes ahead with the streams ignored", () => {
+    const dir = mkdtempSync(join(tmpdir(), "collie-runner-log-"));
+    try {
+      // A state dir that is really a file: no log can be created under it, whatever the platform's
+      // permission model is (a read-only dir, `chmod 0o500`, stops nothing on NTFS and nothing as root).
+      const notADir = join(dir, "a-file");
+      writeFileSync(notADir, "");
+      expect(openRunnerLog(join(notADir, "state"), "header")).toBeNull();
+      const seen: UpdateRunnerSpawnOptions[] = [];
+      launchUpdateRunner(plan(), { cwd: "/x", spawn: (_c, o) => (seen.push(o), { unref: () => {} }), log: null });
+      expect(seen[0]?.stdout).toBe("ignore");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -372,7 +540,7 @@ describe("the preflight the phone runs", () => {
   });
 });
 
-// ── The pack's half (M16/03) ─────────────────────────────────────────────────
+// ── The crew's half (M16/03) ─────────────────────────────────────────────────
 // Every peer answers for ITSELF over the link the lead already polls, the lead banks the answer, and
 // the card reads the bank. Nothing below dials anything; that is the point of it being here.
 
@@ -420,7 +588,7 @@ describe("a member's own preflight, as it crosses the link", () => {
     ];
     for (const value of closed) expect(parsePeerPreflight(value)).toBeNull();
     // And the row it produces blocks by name rather than passing as green.
-    const rows = packUpdateRows([{ name: "attic", version: "1.4.0", preflight: null }]);
+    const rows = crewUpdateRows([{ name: "attic", version: "1.4.0", preflight: null }]);
     expect(rows).toEqual([
       { name: "attic", version: "1.4.0", verdict: "unknown", reasons: ["we could not check attic"], asOf: null },
     ]);
@@ -445,31 +613,42 @@ describe("a member's own preflight, as it crosses the link", () => {
     expect(peerPreflightWire(report, null)).toBeNull();
   });
 
+  test("the install kind rides as a field, and an unknown one reads as absent", () => {
+    expect(parsePeerPreflight(wire({ installKind: "packaged" }))?.installKind).toBe("packaged");
+    // Absent stays absent, and a kind this build does not know is the same as absent — never a kind.
+    expect(parsePeerPreflight(wire())).not.toHaveProperty("installKind");
+    expect(parsePeerPreflight(wire({ installKind: "flatpak" }))).not.toHaveProperty("installKind");
+    // And the emitting side: a report that named a kind publishes it, one that did not sends no key.
+    const report = REPORT("green", [CHECK("tree", "green", "working tree is clean")]);
+    expect(peerPreflightWire(report, 1)).not.toHaveProperty("installKind");
+    expect(peerPreflightWire({ ...report, installKind: "packaged" }, 1)?.installKind).toBe("packaged");
+  });
+
   test("the check list is capped at 16, truncation is stated, and it can never change a verdict", () => {
     const many = [
       CHECK("tree", "red", "working tree has tracked changes"),
       ...Array.from({ length: 30 }, (_, i) => CHECK(`c${i}`, "green", `check ${i} passed`)),
     ];
-    const capped = packPreflightChecks(many);
-    expect(capped).toHaveLength(PACK_PREFLIGHT_MAX_CHECKS);
+    const capped = crewPreflightChecks(many);
+    expect(capped).toHaveLength(CREW_PREFLIGHT_MAX_CHECKS);
     // Worst first, so the red that DECIDED the verdict is the last thing truncation would drop.
     expect(capped[0]!.id).toBe("tree");
     const last = capped.at(-1)!;
-    expect(last.id).toBe(PACK_PREFLIGHT_TRUNCATED_ID);
+    expect(last.id).toBe(CREW_PREFLIGHT_TRUNCATED_ID);
     expect(last.verdict).toBe("green");
     expect(last.reason).toContain("16 further checks");
     // The trailing check states a fact; it does not invent a finding.
     expect(worstVerdict(capped.map((c) => c.verdict))).toBe("red");
     // The lead caps what it READS too — a bound one side enforces is one the other can dodge.
     const long = wire({ verdict: "red", asOf: 5, checks: asJson(many) });
-    expect(parsePeerPreflight(long)!.checks).toHaveLength(PACK_PREFLIGHT_MAX_CHECKS);
+    expect(parsePeerPreflight(long)!.checks).toHaveLength(CREW_PREFLIGHT_MAX_CHECKS);
     expect(parsePeerPreflight(long)!.verdict).toBe("red");
   });
 });
 
-describe("pack rows — what GET /api/update/check answers with", () => {
-  test("pack rows carry name, version, verdict, non-green reasons worst first, and asOf", () => {
-    const rows = packUpdateRows([
+describe("crew rows — what GET /api/update/check answers with", () => {
+  test("crew rows carry name, version, verdict, non-green reasons worst first, and asOf", () => {
+    const rows = crewUpdateRows([
       {
         name: "minibuch",
         version: "1.4.1",
@@ -501,14 +680,43 @@ describe("pack rows — what GET /api/update/check answers with", () => {
     ]);
   });
 
-  test("pack rows are empty for an empty pack — the key is a fact, never an omission", () => {
-    expect(packUpdateRows([])).toEqual([]);
+  test("crew rows are empty for an empty crew — the key is a fact, never an omission", () => {
+    expect(crewUpdateRows([])).toEqual([]);
+  });
+
+  /** One row as it crosses the wire, and the same row as `parseCrewRows` answers it. */
+  const WIRE_ROW: JsonObject = {
+    name: "attic",
+    version: "1.4.0",
+    verdict: "amber",
+    reasons: ["no ssh record"],
+    asOf: null,
+  };
+  const PARSED_ROW: CrewUpdateRow = {
+    name: "attic",
+    version: "1.4.0",
+    verdict: "amber",
+    reasons: ["no ssh record"],
+    asOf: null,
+  };
+
+  test("`parseCrewRows` reads the `crew` key off the answer", () => {
+    expect(parseCrewRows({ crew: [WIRE_ROW] })).toEqual([PARSED_ROW]);
+    expect(parseCrewRows({ crew: "not an array" })).toEqual([]);
+    expect(parseCrewRows(null)).toEqual([]);
+  });
+
+  // 1.7.0's `pack` key is no longer read (1.9.0, ADR 0039). A document that names only it has no
+  // crew rows at all, which is the closed reading.
+  test("`parseCrewRows` reads only `crew`", () => {
+    expect(parseCrewRows({ pack: [WIRE_ROW] })).toEqual([]);
+    expect(parseCrewRows({ crew: [WIRE_ROW] })).toEqual([PARSED_ROW]);
   });
 });
 
 describe("the merged verdict — one function, three surfaces", () => {
   test("merged verdict names the member that produced it, and the reason it gave", () => {
-    const pack = packUpdateRows([
+    const crew = crewUpdateRows([
       {
         name: "attic",
         version: "1.4.0",
@@ -519,7 +727,7 @@ describe("the merged verdict — one function, three surfaces", () => {
         },
       },
     ]);
-    expect(mergedUpdateVerdict(GREEN, pack)).toEqual({
+    expect(mergedUpdateVerdict(GREEN, crew)).toEqual({
       verdict: "red",
       member: "attic",
       reason: "working tree has tracked changes: bridge/server.ts",
@@ -527,7 +735,7 @@ describe("the merged verdict — one function, three surfaces", () => {
     });
     // The lead's own red is named the same way, and it is read first.
     const leadRed = REPORT("red", [CHECK("lock", "red", "an update is already running here")]);
-    expect(mergedUpdateVerdict(leadRed, pack)).toEqual({
+    expect(mergedUpdateVerdict(leadRed, crew)).toEqual({
       verdict: "red",
       member: "this collie",
       reason: "an update is already running here",
@@ -535,15 +743,80 @@ describe("the merged verdict — one function, three surfaces", () => {
     });
   });
 
+  // ── ADR 0050 AT THE SECOND GATE ───────────────────────────────────────────
+  // Decision 1 stopped a sleeping laptop DISABLING the button. This is what stops it REFUSING the
+  // tap. The banked peer reports live in memory, so the lead's own update, which restarts it, leaves
+  // every member `unknown` — and without this the fix would last exactly one release.
+  describe("an unknown member that the lead knows is absent", () => {
+    const absent = crewUpdateRows([{ name: "attic", version: null, preflight: null, health: "unreachable" }]);
+    const silent = crewUpdateRows([{ name: "attic", version: null, preflight: null }]);
+
+    test("does not refuse the lead's own start", () => {
+      expect(mergedUpdateVerdict(GREEN, absent, undefined, { tolerateAbsent: true })).toEqual({
+        verdict: "unknown",
+        member: "attic",
+        reason: "we could not check attic",
+        blocks: false,
+      });
+    });
+
+    test("still refuses a peers-only run, where the members are the whole request", () => {
+      expect(mergedUpdateVerdict(GREEN, absent).blocks).toBe(true);
+    });
+
+    test("an unknown member with no health is uninspected, not absent, and still blocks", () => {
+      expect(mergedUpdateVerdict(GREEN, silent, undefined, { tolerateAbsent: true })).toEqual({
+        verdict: "unknown",
+        member: "attic",
+        reason: "we could not check attic",
+        blocks: true,
+      });
+    });
+
+    test("one absent member does not carry a second member that is merely unknown", () => {
+      const nas = crewUpdateRows([{ name: "nas", version: null, preflight: null }]);
+      const both = [...absent, ...nas];
+      const merged = mergedUpdateVerdict(GREEN, both, undefined, { tolerateAbsent: true });
+      expect(merged.blocks).toBe(true);
+      expect(merged.member).toBe("nas");
+    });
+
+    // The predicate is an exact match on ONE state. A later "simplify" to `health !== "reachable"`
+    // would swallow these three silently, and each of them is a member that ANSWERED: a protocol
+    // mismatch, a refusal with a reason, and a member following someone else's lead.
+    test("answers that are not absence keep refusing: incompatible, refused, conflicted", () => {
+      for (const health of ["incompatible", "refused", "conflicted"] as const) {
+        const rows = crewUpdateRows([{ name: "attic", version: null, preflight: null, health }]);
+        expect(mergedUpdateVerdict(GREEN, rows, undefined, { tolerateAbsent: true }).blocks, health).toBe(true);
+      }
+    });
+
+    test("a red member still refuses, absent or not — red is read before unknown", () => {
+      const red = crewUpdateRows([
+        {
+          name: "nas",
+          version: "1.4.1",
+          preflight: { verdict: "red", asOf: 5, checks: [CHECK("disk", "red", "no space left")] },
+        },
+      ]);
+      const merged = mergedUpdateVerdict(GREEN, [...absent, ...red], undefined, { tolerateAbsent: true });
+      expect(merged).toEqual({ verdict: "red", member: "nas", reason: "no space left", blocks: true });
+    });
+
+    test("the lead's own missing preflight still refuses: it carries no health and never will", () => {
+      expect(mergedUpdateVerdict(null, absent, undefined, { tolerateAbsent: true }).blocks).toBe(true);
+    });
+  });
+
   test("unknown beats amber and blocks; amber never blocks; all green names nobody", () => {
-    const amber = packUpdateRows([
+    const amber = crewUpdateRows([
       {
         name: "nas",
         version: "1.4.1",
         preflight: { verdict: "amber", asOf: 5, checks: [CHECK("ops", "amber", "no ssh record")] },
       },
     ]);
-    const unknown = packUpdateRows([{ name: "attic", version: null, preflight: null }]);
+    const unknown = crewUpdateRows([{ name: "attic", version: null, preflight: null }]);
     expect(mergedUpdateVerdict(GREEN, amber)).toEqual({
       verdict: "amber",
       member: "nas",
@@ -605,7 +878,7 @@ describe("the fresh-preflight request, across the link", () => {
     expect([...src.matchAll(/updateCadenceTick\(/g)]).toHaveLength(1);
   });
 
-  test("the pack read peeks; it never shells out mid-sweep", async () => {
+  test("the crew read peeks; it never shells out mid-sweep", async () => {
     let runs = 0;
     let now = 1_000;
     const cache = new PreflightCache({
@@ -621,8 +894,103 @@ describe("the fresh-preflight request, across the link", () => {
     await cache.get();
     expect(cache.peek()).toEqual({ report: GREEN, at: 1_000 });
     now = 99_000;
-    // A stale entry stays readable and stays HONEST about its age — never re-run on the pack path.
+    // A stale entry stays readable and stays HONEST about its age — never re-run on the crew path.
     expect(cache.peek()).toEqual({ report: GREEN, at: 1_000 });
     expect(runs).toBe(1);
+  });
+});
+
+// ── A packaged install (ADR 0035) ──────────────────────────────────────────
+// The gate that has to exist HERE, not only in the client. A packaged install's preflight is
+// green on purpose — nothing is wrong with it — so every other check on this path passes it through.
+// The route that calls this says of itself that "the client's disabled button is a courtesy and this
+// is the actual gate", and without this refusal a stale bundle, a second tab or a plain POST mints a
+// run id and spawns a `collie update` whose only possible outcome is its own refusal.
+
+describe("updateStartVerdict — a packaged install", () => {
+  test("refuses the start even though the preflight is entirely green", () => {
+    const v = updateStartVerdict(ask(), state({ installKind: "packaged" }));
+    expect(v.kind).toBe("refuse");
+    if (v.kind !== "refuse") throw new Error("unreachable");
+    expect(v.status).toBe(409);
+    expect(JSON.stringify(v.body)).toContain("update.packaged");
+  });
+
+  test("the very same state on any other kind still starts", () => {
+    // The control. Without it the case above would pass for a green report that refuses everything.
+    for (const kind of ["detached-checkout", "binary", "linked-clone", "unknown"] as const) {
+      expect(updateStartVerdict(ask(), state({ installKind: kind })).kind).not.toBe("refuse");
+    }
+    // And an absent kind — an older bridge — must not be refused either.
+    expect(updateStartVerdict(ask(), state()).kind).not.toBe("refuse");
+  });
+
+  test("a peers-only run is NOT refused: the lead cannot move itself, the peers are another act", () => {
+    // Placement, asserted. This refusal sits below the peers-only branch so that a packaged lead
+    // keeps the phone's only route to its peers. Moving it up would silently take that away.
+    const v = updateStartVerdict(
+      ask({ peersOnly: true }),
+      state({
+        installKind: "packaged",
+        latest: "1.3.0",
+        // `rolled-back` is one of the two states peersNeedLevelling recognises; "behind" is not a
+        // leg state, it is a crew row's version comparison.
+        peers: [{ name: "attic", state: "rolled-back" }],
+      }),
+    );
+    expect(v.kind).not.toBe("refuse");
+  });
+});
+
+// ── "IS THERE ANYTHING FOR A CREW RUN TO DO?" — THE ROUTE'S HALF OF THE ONE RULE ──
+// The phone offers "Update crew" / "Retry crew update" on the rule in `web/src/lib/crew-level.ts`;
+// this route accepts or refuses the peers-only start on its twin. Both halves are pinned against one
+// list of cases in `crew-level-contract.test.ts`; these cases pin what the route DOES with the answer.
+
+describe("updateStartVerdict — a peers-only start over a crew that may already be level", () => {
+  const lead = (over: Partial<UpdateStartState>) => state({ current: "1.5.0", latest: "1.5.0", ...over });
+  const row = (name: string, version: string | null): CrewUpdateRow => ({
+    name,
+    version,
+    verdict: "green",
+    reasons: [],
+    asOf: 1,
+  });
+
+  test("a member AHEAD of the lead is not behind it: nothing to start", () => {
+    const v = updateStartVerdict(ask({ peersOnly: true }), lead({ crew: [row("minibuch", "1.5.1")] }));
+    expect(v).toMatchObject({ kind: "refuse", status: 409 });
+    expect(JSON.stringify(v)).toContain("update.none_available");
+  });
+
+  test("a member on the lead's own version is not behind it either", () => {
+    const v = updateStartVerdict(ask({ peersOnly: true }), lead({ crew: [row("minibuch", "1.5.0")] }));
+    expect(v).toMatchObject({ kind: "refuse", status: 409 });
+  });
+
+  test("a STALE failed leg whose member has since levelled itself starts nothing", () => {
+    const v = updateStartVerdict(
+      ask({ peersOnly: true }),
+      lead({ crew: [row("minibuch", "1.5.0")], peers: [{ name: "minibuch", state: "rolled-back" }] }),
+    );
+    expect(v).toMatchObject({ kind: "refuse", status: 409 });
+  });
+
+  test("a packaged member left behind is named, not reported as nothing to take", () => {
+    const packaged: CrewUpdateRow = { ...row("minibuch", "1.4.0"), installKind: "packaged" };
+    const v = updateStartVerdict(ask({ peersOnly: true }), lead({ crew: [packaged] }));
+    expect(v).toMatchObject({
+      kind: "refuse",
+      status: 409,
+      body: { code: "update.peers_packaged", detail: { name: "minibuch" } },
+    });
+  });
+
+  test("a failed leg whose member's version nobody could learn still starts the retry", () => {
+    const v = updateStartVerdict(
+      ask({ peersOnly: true }),
+      lead({ crew: [row("minibuch", null)], peers: [{ name: "minibuch", state: "unreachable" }] }),
+    );
+    expect(v).toEqual({ kind: "peers", to: "1.5.0" });
   });
 });

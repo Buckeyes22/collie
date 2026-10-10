@@ -8,6 +8,15 @@ import org.junit.Test
 
 class PaneHeaderPresentationTest {
     @Test
+    fun soleTabNamesSurviveAgentTitlesButUserNamesKeepPriority() {
+        val tabNamed = pane().copy(soleTabName = "Release work", terminalTitle = "Working")
+        assertEquals("Release work", paneDisplayName(tabNamed))
+        assertEquals("Release work", PaneHeaderPresenter.present(tabNamed, 1).name)
+        assertEquals("My session", paneDisplayName(tabNamed.copy(sessionName = "My session")))
+        assertEquals("My pane", paneDisplayName(tabNamed.copy(paneLabel = "My pane")))
+    }
+
+    @Test
     fun fallbackNameGetsStablePaneDiscriminatorOnlyInMultiPaneTab() {
         val pane = pane(paneId = "w1:p3", tabLabel = "build")
 

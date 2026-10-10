@@ -159,6 +159,7 @@ internal object ShippedAgentCommands {
 /shake	Drop heavy tool results from context without a full compact	[images]	ac
 /model	Open the provider/model picker		-
 /settings	Open the settings panel		-
+/tree	Open the session tree picker to switch turns		-
 /resume	Open the session picker		-
         """),
         "agy" to catalog("""

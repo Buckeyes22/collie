@@ -3,7 +3,7 @@ package com.lateapex.collie.ui
 import com.lateapex.collie.network.PreflightCheck
 import com.lateapex.collie.network.PreflightReport
 import com.lateapex.collie.network.UpdateCheckResponse
-import com.lateapex.collie.network.UpdatePackMember
+import com.lateapex.collie.network.UpdateCrewMember
 import com.lateapex.collie.network.UpdatePeerLeg
 import com.lateapex.collie.network.UpdateRun
 import org.junit.Assert.assertEquals
@@ -16,7 +16,7 @@ class UpdateNativePresentationTest {
     @Test
     fun `peer legs override census and rows sort worst first`() {
         val value = state().copy(
-            pack = listOf(
+            crew = listOf(
                 member("healthy", "green", "1.6.0"),
                 member("unknown", "unknown", null, listOf("timed out")),
                 member("moving", "red", "1.5.0", listOf("old preflight")),
@@ -27,7 +27,7 @@ class UpdateNativePresentationTest {
             )),
         )
 
-        val rows = UpdateNativePresentation.peerRows(value.pack.orEmpty(), value.run?.peers.orEmpty())
+        val rows = UpdateNativePresentation.peerRows(value.crew.orEmpty(), value.run?.peers.orEmpty())
 
         assertEquals(listOf("failed", "unknown", "moving", "healthy"), rows.map { it.name })
         assertEquals("doctor failed", rows.first().reason)
@@ -38,10 +38,10 @@ class UpdateNativePresentationTest {
     @Test
     fun `action prioritizes release then peer recovery`() {
         val solo = state()
-        val pack = solo.copy(pack = listOf(member("peer", "green", "1.5.0")))
+        val pack = solo.copy(crew = listOf(member("peer", "green", "1.5.0")))
         val currentWithBehindPeer = pack.copy(releaseAvailable = false, latest = "1.6.0", current = "1.6.0")
         val currentWithFailedPeer = currentWithBehindPeer.copy(
-            pack = emptyList(),
+            crew = emptyList(),
             run = run("rolled-back").copy(peers = listOf(leg("peer", "interrupted", "1.5.0"))),
         )
 
@@ -55,7 +55,7 @@ class UpdateNativePresentationTest {
     @Test
     fun `preflight blocks ordinary and major actions but not peers-only retry`() {
         val red = state().copy(preflight = report("red"))
-        val retry = red.copy(releaseAvailable = false, current = "1.6.0", pack = listOf(member("peer", "red", "1.5.0")))
+        val retry = red.copy(releaseAvailable = false, current = "1.6.0", crew = listOf(member("peer", "red", "1.5.0")))
 
         assertFalse(UpdateNativePresentation.canStart(red, busy = false, writeAuthorized = true))
         assertFalse(UpdateNativePresentation.canStartMajor(red.copy(majorAvailable = "2.0.0"), false, true))
@@ -87,6 +87,26 @@ class UpdateNativePresentationTest {
         assertFalse(UpdateNativePresentation.isUpToDate(active))
     }
 
+    @Test
+    fun `peer-only progress blocks duplicate starts and false up-to-date state`() {
+        val value = state().copy(releaseAvailable = false, latest = "1.5.0", run = null, peers = listOf(leg("peer", "updating", "1.4.0")))
+        assertTrue(UpdateNativePresentation.hasActiveRun(value))
+        assertFalse(UpdateNativePresentation.canStart(value, false, true))
+        assertFalse(UpdateNativePresentation.isUpToDate(value))
+        assertEquals("updating", UpdateNativePresentation.peerLegs(value).single().state)
+    }
+
+    @Test
+    fun `packaged updates and pending restarts use their own instructions`() {
+        val packaged = state().copy(packageCommand = "brew upgrade collie", majorAvailable = "2.0.0")
+        assertFalse(UpdateNativePresentation.canStart(packaged, false, true))
+        assertFalse(UpdateNativePresentation.canStartMajor(packaged, false, true))
+        val pending = state().copy(releaseAvailable = false, latest = "1.5.0", restartNeeded = true)
+        assertFalse(UpdateNativePresentation.isUpToDate(pending))
+        val crew = pending.copy(crew = listOf(member("package-peer", "green", "1.4.0").copy(installKind = "packaged")))
+        assertEquals(0, UpdateNativePresentation.peersBehind(crew))
+    }
+
     private fun state() = UpdateCheckResponse(
         current = "1.5.0",
         latest = "1.6.0",
@@ -107,7 +127,7 @@ class UpdateNativePresentationTest {
     )
 
     private fun member(name: String, verdict: String, version: String?, reasons: List<String> = emptyList()) =
-        UpdatePackMember(name, version, verdict, reasons, 10)
+        UpdateCrewMember(name, version, verdict, reasons, 10)
 
     private fun leg(name: String, state: String, version: String?, reason: String? = null) =
         UpdatePeerLeg(name, state, version, reason, 20)

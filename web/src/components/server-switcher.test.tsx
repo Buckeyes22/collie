@@ -2,8 +2,9 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createMemoryRouter, MemoryRouter, RouterProvider } from "react-router";
 
-import { PackProvider } from "./pack-provider";
+import { CrewProvider } from "./crew-provider";
 
+import { currentHiddenMachines, setMachineHidden } from "@/lib/hidden-machines";
 import type { AgentView, ServerSummary } from "@/lib/types";
 import { ServerSwitcher } from "./server-switcher";
 
@@ -50,7 +51,7 @@ const skewed: ServerSummary = {
   isLead: false,
   reachable: false,
   protocol: "incompatible",
-  protocolDetail: "pack protocol 2 (this collie speaks 1)",
+  protocolDetail: "crew protocol 2 (this collie speaks 1)",
   lastSeenAt: 0,
 };
 
@@ -193,10 +194,10 @@ describe("ServerSwitcher — a down or skewed machine is listed, never hidden", 
     await userEvent.click(trigger()!);
     const el = row(/garage/i);
     expect(within(el).getByText("incompatible")).toBeInTheDocument();
-    expect(within(el).getByText("pack protocol 2 (this collie speaks 1)")).toBeInTheDocument();
+    expect(within(el).getByText("crew protocol 2 (this collie speaks 1)")).toBeInTheDocument();
   });
 
-  it("offers no pack administration — no reconnect, promote, leave or rotate", async () => {
+  it("offers no crew administration — no reconnect, promote, leave or rotate", async () => {
     renderSwitcher([lead, peer, down], undefined);
     await userEvent.click(trigger()!);
     for (const verb of [/reconnect/i, /promote/i, /leave/i, /rotate/i, /retry/i]) {
@@ -236,9 +237,9 @@ describe("ServerSwitcher — staleness on the rows", () => {
   function renderAt(ts: number) {
     render(
       <MemoryRouter>
-        <PackProvider servers={quiet} ts={ts} pollMs={1500}>
+        <CrewProvider servers={quiet} ts={ts} pollMs={1500}>
           <ServerSwitcher servers={quiet} scope={{ host: "workshop" }} />
-        </PackProvider>
+        </CrewProvider>
       </MemoryRouter>,
     );
   }
@@ -276,5 +277,72 @@ describe("ServerSwitcher — the per-host tint", () => {
     renderSwitcher([lead, peer], undefined);
     await userEvent.click(trigger()!);
     expect(row(/bluefin/).querySelector('[class*="bg-host-"]')).toBeNull();
+  });
+});
+
+// THE SHOW SWITCH (issue #288, M40/01 Option A1): each row carries a switch beside its button that
+// hides or shows the machine on the dashboard. A filter, not an address: it never navigates and never
+// closes the sheet, the row tap keeps its meaning, and the machine you are on cannot be hidden.
+describe("ServerSwitcher — the show switch", () => {
+  const showSwitch = (name: RegExp) =>
+    within(screen.getByRole("list")).getByRole("switch", { name: new RegExp(`^Show on the dashboard ${name.source}`) });
+
+  it("shows every machine by default, each switch named by the caption and its machine", async () => {
+    renderSwitcher([lead, peer, down], undefined);
+    await userEvent.click(trigger()!);
+    for (const name of [/bluefin/, /workshop/, /attic/]) {
+      expect(showSwitch(name)).toHaveAttribute("aria-checked", "true");
+    }
+    expect(screen.getByText("Show on the dashboard")).toBeInTheDocument();
+  });
+
+  it("hides a machine and shows it again, without navigating or closing the sheet", async () => {
+    const router = renderSwitcher([lead, peer, down], undefined);
+    await userEvent.click(trigger()!);
+    await userEvent.click(showSwitch(/workshop/));
+    expect(currentHiddenMachines()).toEqual(["workshop"]);
+    expect(showSwitch(/workshop/)).toHaveAttribute("aria-checked", "false");
+    // Focus stays on the switch the finger pressed, in a sheet that is still open.
+    expect(showSwitch(/workshop/)).toHaveFocus();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(location(router)).toBe("/");
+    expect(router.state.historyAction).toBe("POP");
+
+    await userEvent.click(showSwitch(/workshop/));
+    expect(currentHiddenMachines()).toEqual([]);
+    expect(showSwitch(/workshop/)).toHaveAttribute("aria-checked", "true");
+    expect(location(router)).toBe("/");
+  });
+
+  it("keeps the row tap's meaning with a switch beside it: the row still goes to the machine", async () => {
+    const router = renderSwitcher([lead, peer], undefined);
+    await userEvent.click(trigger()!);
+    await userEvent.click(row(/workshop/i));
+    expect(location(router)).toBe("/?h=workshop");
+    expect(currentHiddenMachines()).toEqual([]);
+  });
+
+  it("shows the addressed machine's switch on and disabled, with its reason", async () => {
+    // Stored hidden while the operator was elsewhere; on workshop itself it always shows.
+    setMachineHidden("workshop", true, [lead, peer]);
+    renderSwitcher([lead, peer], "workshop");
+    await userEvent.click(trigger()!);
+    const locked = showSwitch(/workshop/);
+    expect(locked).toBeDisabled();
+    expect(locked).toHaveAttribute("aria-checked", "true");
+    expect(locked).toHaveAccessibleDescription("The machine you are on is always shown");
+    expect(screen.getByText("The machine you are on is always shown")).toBeInTheDocument();
+    // Every other row's switch is free, and says nothing more.
+    expect(showSwitch(/bluefin/)).toBeEnabled();
+    expect(showSwitch(/bluefin/)).not.toHaveAttribute("aria-describedby");
+    await userEvent.click(locked);
+    expect(currentHiddenMachines()).toEqual(["workshop"]);
+  });
+
+  it("still counts a machine the dashboard does not show", async () => {
+    setMachineHidden("workshop", true, [lead, peer]);
+    renderSwitcher([lead, peer], undefined, [agentOn("workshop", "w1:p1", "blocked")]);
+    await userEvent.click(trigger()!);
+    expect(within(row(/workshop/i)).getByText("1 needs you")).toBeInTheDocument();
   });
 });

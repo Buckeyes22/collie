@@ -34,7 +34,7 @@ class OriginValidator {
             return OriginValidation.Invalid(OriginValidation.Reason.NOT_HTTPS)
         }
         if (lexical.rawUserInfo != null) return OriginValidation.Invalid(OriginValidation.Reason.USER_INFO)
-        if (lexical.rawPath !in listOf(null, "", "/")) {
+        if (!validMount(lexical.rawPath.orEmpty())) {
             return OriginValidation.Invalid(OriginValidation.Reason.NON_ROOT_PATH)
         }
         if (lexical.rawQuery != null) return OriginValidation.Invalid(OriginValidation.Reason.QUERY)
@@ -48,13 +48,23 @@ class OriginValidator {
         if (parsed.username.isNotEmpty() || parsed.password.isNotEmpty()) {
             return OriginValidation.Invalid(OriginValidation.Reason.USER_INFO)
         }
-        if (parsed.encodedPath != "/") {
+        if (!validMount(parsed.encodedPath)) {
             return OriginValidation.Invalid(OriginValidation.Reason.NON_ROOT_PATH)
         }
         if (parsed.query != null) return OriginValidation.Invalid(OriginValidation.Reason.QUERY)
         if (parsed.fragment != null) return OriginValidation.Invalid(OriginValidation.Reason.FRAGMENT)
 
-        return OriginValidation.Valid(CollieOrigin(parsed.toString()))
+        val normalized = parsed.newBuilder().encodedPath(parsed.encodedPath.trimEnd('/') + "/").build()
+        return OriginValidation.Valid(CollieOrigin(normalized.toString()))
+    }
+
+    /** Reject ambiguous or normalised-away segments before OkHttp resolves them. */
+    private fun validMount(path: String): Boolean {
+        if (path.isEmpty() || path == "/") return true
+        if (!path.startsWith('/') || "//" in path) return false
+        return path.trim('/').split('/').all { segment ->
+            segment.matches(Regex("[A-Za-z0-9_~-]+")) && segment != "." && segment != ".."
+        }
     }
 
     fun requireValid(raw: String): CollieOrigin = when (val result = validate(raw)) {

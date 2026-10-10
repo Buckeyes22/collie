@@ -22,7 +22,7 @@ class PromptBindingTest {
     @Test
     fun refusesBlankOrOversizedEvidence() {
         assertNull(PromptBinding.tailRegion(" \n\t\n"))
-        assertNull(PromptBinding.tailRegion("x".repeat(8_193)))
+        assertNull(PromptBinding.tailRegion("x".repeat(32_769)))
     }
 
     @Test

@@ -1,0 +1,25 @@
+[0m[38;2;215;119;87m ▐[0m[38;2;215;119;87m[48;2;0;0;0m▛███▛█   [0m[1mClaude Code [0m[38;2;153;153;153mv2.1.291[0m
+[0m[38;2;215;119;87m▝▜[0m[38;2;215;119;87m[48;2;0;0;0m█████[0m[38;2;215;119;87m█▀  [0m[38;2;153;153;153mSonnet 5.5 · Claude Max[0m
+[0m[38;2;215;119;87m ▝▝   ▝▝   [0m[38;2;153;153;153m/tmp/claude-lab/project[0m
+
+
+[0m[38;2;153;153;153m[48;2;55;55;55m❯ [0m[38;2;255;255;255m[48;2;55;55;55mread README.md and reply with one short sentence[0m[48;2;55;55;55m         [0m
+
+  [0m[38;2;153;153;153mRead [0m[1m[38;2;153;153;153m1[0m[38;2;153;153;153m file (ctrl+o to expand)[0m
+
+[0m[38;2;255;255;255m● [0mThe README says this is a throwaway lab project used for
+  screen captures.
+
+[0m[38;2;153;153;153m✻[0m [0m[38;2;153;153;153mCogitated for 2s · done 6:33 PM[0m
+
+[0m[38;2;136;136;136m───────────────────────────────────────────────────────────[0m
+❯ /refactor
+[0m[38;2;136;136;136m───────────────────────────────────────────────────────────[0m
+  [0m[38;2;177;185;249m❯ …or-module-boundaries  Move code between modules so[0m
+                           [0m[38;2;177;185;249meach module owns one concern …[0m
+  [0m[38;2;153;153;153m  …cies-across-packages  [0m[1mRefactor[0m[38;2;153;153;153m shared dependencies[0m
+                           [0m[38;2;153;153;153macross every package in the m…[0m
+  [0m[38;2;153;153;153m  …efactor-dependencies  [0m[1mRefactor[0m[38;2;153;153;153m the dependency graph[0m
+                           [0m[38;2;153;153;153mof one package (project)[0m
+  [0m[38;2;153;153;153m  /skill-creator         Create new skills, modify and[0m
+                           [0m[38;2;153;153;153mimprove existing skills, and …[0m

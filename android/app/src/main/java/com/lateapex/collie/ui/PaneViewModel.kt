@@ -72,6 +72,7 @@ data class PaneUiState(
     val transcriptAvailable: Boolean? = null,
     val transcriptReason: String? = null,
     val transcriptHasMore: Boolean = false,
+    val transcriptQueued: List<String> = emptyList(),
 )
 
 class PaneViewModel(
@@ -710,11 +711,51 @@ class PaneViewModel(
 
     /** The last poll page's ETag: an unchanged page then costs a bodiless 304, not ~36 KB. */
     private var transcriptEtag: String? = null
+    private var chatEtag: String? = null
+    private var legacyChat = false
+    private var transcriptConnection = repository.connection.value
+    private val chatWindow = LiveChatWindow()
 
     private suspend fun loadTranscript() {
+        if (transcriptConnection !== repository.connection.value) {
+            transcriptConnection = repository.connection.value
+            chatWindow.clear()
+            chatEtag = null
+            legacyChat = false
+            transcriptEtag = null
+            transcriptSkipPolls = 0
+            mutableState.value = mutableState.value.copy(transcript = emptyList(), transcriptQueued = emptyList(), transcriptHasMore = false, transcriptAvailable = null)
+        }
         if (transcriptSkipPolls > 0) {
             transcriptSkipPolls--
             return
+        }
+        if (!legacyChat) {
+            val chatConnection = repository.connection.value
+            val chatResult = repository.chat(address, limit = TRANSCRIPT_PAGE, after = chatWindow.after, etag = chatEtag)
+            if (repository.connection.value !== chatConnection) return
+            when (val result = chatResult) {
+                is ApiResult.Success -> {
+                    val page = result.value
+                    if (!page.available) {
+                        chatWindow.clear()
+                        chatEtag = null
+                        transcriptSkipPolls = TRANSCRIPT_RETRY_POLLS
+                        mutableState.value = mutableState.value.copy(transcriptAvailable = false, transcriptReason = page.reason, transcript = emptyList(), transcriptQueued = emptyList(), transcriptHasMore = false)
+                    } else if (chatWindow.merge(page)) {
+                        chatEtag = result.etag
+                        mutableState.value = mutableState.value.copy(transcript = chatWindow.entries, transcriptQueued = chatWindow.queued, transcriptAvailable = true, transcriptReason = null, transcriptHasMore = chatWindow.hasOlder)
+                    }
+                    return
+                }
+                is ApiResult.NotModified -> return
+                is ApiResult.Failure -> {
+                    val error = result.error
+                    if (error is ApiFailure.Http && error.status == 404 || error is ApiFailure.Protocol && error.message == "Live chat is unavailable") {
+                        legacyChat = true
+                    } else return
+                }
+            }
         }
         val firstLoad = mutableState.value.transcript.isEmpty()
         val limit = if (firstLoad) TRANSCRIPT_PAGE else TRANSCRIPT_POLL
@@ -748,6 +789,16 @@ class PaneViewModel(
     fun loadOlderTranscript() {
         val oldest = mutableState.value.transcript.firstOrNull()?.uuid ?: return
         viewModelScope.launch {
+            if (!legacyChat) {
+                val before = chatWindow.before ?: return@launch
+                val chatConnection = repository.connection.value
+                val result = repository.chat(address, limit = TRANSCRIPT_PAGE, before = before)
+                if (repository.connection.value !== chatConnection) return@launch
+                if (result is ApiResult.Success && chatWindow.merge(result.value)) {
+                    mutableState.value = mutableState.value.copy(transcript = chatWindow.entries, transcriptQueued = chatWindow.queued, transcriptHasMore = chatWindow.hasOlder)
+                }
+                return@launch
+            }
             val result = repository.history(address, limit = TRANSCRIPT_PAGE, before = oldest)
             if (result is ApiResult.Success && result.value.available) {
                 mutableState.value = mutableState.value.copy(
@@ -759,7 +810,7 @@ class PaneViewModel(
     }
 
     private suspend fun loadSupportingData() {
-        val config = repository.config()
+        val config = repository.config(address.scope)
         if (config is ApiResult.Success) {
             val isShell = agent.equals("shell", ignoreCase = true)
             mutableState.value = mutableState.value.copy(
@@ -776,7 +827,7 @@ class PaneViewModel(
             if (terminalWriteBlock() != null) failDirectQueue(directTypingGeneration)
         }
         val snapshotConnection = repository.connection.value
-        val snapshot = repository.snapshot(address.scope)
+        val snapshot = repository.paneSnapshot(address.scope)
         if (snapshot is ApiResult.Success && snapshotConnection == observedConnection &&
             repository.connection.value == snapshotConnection
         ) {
@@ -967,7 +1018,7 @@ class PaneViewModel(
     }
 
     private fun demoteIfRevoked(failure: ApiFailure) {
-        if (failure is ApiFailure.Http && failure.message == "device not paired") {
+        if (failure is ApiFailure.Http && failure.message in setOf("device not paired", "device expired")) {
             repository.demoteToReadOnly()
             connectionPaired = false
             applyWriteAccess()

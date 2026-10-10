@@ -7,6 +7,7 @@ import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.TextView
 import androidx.annotation.VisibleForTesting
 import androidx.core.content.ContextCompat
 import androidx.core.view.doOnPreDraw
@@ -91,6 +92,8 @@ class TranscriptBodyView @JvmOverloads constructor(
         isVisible = false
         setOnClickListener { onLoadOlder?.invoke() }
     }
+    private val queuedContainer = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
+    private var boundQueued: List<String> = emptyList()
     private val expandedTools = mutableSetOf<Pair<String, Int>>()
     private val turns = linkedMapOf<String, View>()
     private var renderer: HistoryTurnRenderer? = null
@@ -104,9 +107,10 @@ class TranscriptBodyView @JvmOverloads constructor(
             loadOlder,
             LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT),
         )
+        turnsContainer.addView(queuedContainer)
     }
 
-    fun bind(agent: String, entries: List<TranscriptEntry>, hasMore: Boolean) {
+    fun bind(agent: String, entries: List<TranscriptEntry>, hasMore: Boolean, queued: List<String> = emptyList()) {
         val atBottom = scroll.scrollY + scroll.height >= (scroll.getChildAt(0)?.height ?: 0) - dp(8)
         // The reader's place is the first turn on screen and its offset from the top. Restoring
         // that, rather than shifting by however much the list grew, keeps an append below from
@@ -118,22 +122,39 @@ class TranscriptBodyView @JvmOverloads constructor(
         val reset = turns.isNotEmpty() && turns.keys.any { key -> entries.none { it.uuid == key } }
         if (reset) {
             turns.clear()
-            turnsContainer.removeViews(1, turnsContainer.childCount - 1)
+            turnsContainer.removeViews(1, turnsContainer.childCount - 2)
         }
         if (agent != boundAgent || renderer == null) {
             boundAgent = agent
             renderer = HistoryTurnRenderer(context, agent, expandedTools, ::toggleTool)
         }
+        val oldViews = turns.toMap()
+        val previous = boundEntries.associateBy { it.uuid }
         boundEntries = entries
         val before = turns.size
         entries.forEachIndexed { index, entry ->
-            if (turns[entry.uuid] != null) return@forEachIndexed
+            val existing = turns[entry.uuid]
+            if (existing != null && previous[entry.uuid] == entry) return@forEachIndexed
             val turn = HistoryPresentation.turn(entry, agent, resources)
             val view = renderer!!.turnView(turn, showHeader = true).noRevealOnFocus()
             styleUserTurn(view, entry)
             turns[entry.uuid] = view
             // The "Load older" button is child 0; each turn sits at its entry's list position.
+            if (existing != null) turnsContainer.removeView(existing)
             turnsContainer.addView(view, index + 1)
+        }
+        if (queued != boundQueued) {
+            boundQueued = queued.toList()
+            queuedContainer.removeAllViews()
+            queued.forEach { text ->
+                queuedContainer.addView(TextView(context).apply {
+                    this.text = context.getString(R.string.pane_transcript_queued, text)
+                    setTextIsSelectable(true)
+                    setPadding(dp(12), dp(8), dp(12), dp(8))
+                    setTextColor(ContextCompat.getColor(context, R.color.collie_muted))
+                    noRevealOnFocus()
+                })
+            }
         }
         val added = turns.size - before
         val restore = {
@@ -141,8 +162,12 @@ class TranscriptBodyView @JvmOverloads constructor(
             placing = true
             if (reset || anchor == null) {
                 if (reset || atBottom) scroll.scrollTo(0, (turnsContainer.height - scroll.height).coerceAtLeast(0))
-            } else if (anchor.first.parent === turnsContainer) {
-                scroll.scrollTo(0, anchor.first.top - anchor.second)
+            } else {
+                val anchored = if (anchor.first.parent === turnsContainer) anchor.first else {
+                    val uuid = previous.keys.firstOrNull { oldViews[it] === anchor.first }
+                    uuid?.let { turns[it] }
+                }
+                anchored?.let { scroll.scrollTo(0, it.top - anchor.second) }
             }
             placing = false
             if (added > 0 || reset) {
@@ -204,7 +229,7 @@ class TranscriptBodyView @JvmOverloads constructor(
         val key = uuid to partIndex
         if (key in expandedTools) expandedTools -= key else expandedTools += key
         val entry = boundEntries.firstOrNull { it.uuid == uuid } ?: return
-        val index = turns.keys.indexOf(uuid) + 1
+        val index = turnsContainer.indexOfChild(turns[uuid])
         val rebuilt = renderer!!.turnView(HistoryPresentation.turn(entry, boundAgent.orEmpty(), resources), showHeader = true)
             .noRevealOnFocus()
         turns[uuid] = rebuilt

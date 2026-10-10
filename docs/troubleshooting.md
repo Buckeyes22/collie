@@ -4,8 +4,13 @@ Symptoms below, in order — search the page for yours. **`Os { NotFound }` from
 **`update` says "not currently on a branch"** · **`tailscale serve failed`** · **isn't answering
 (service won't start)** · **phone can't open the URL** · **page loads but stays empty (blank page,
 403)** · **a password prompt won't take your reply** · **no push notifications** · **gone after a
-reboot** · **Collie refuses to open a tmux window** · **`tmux list: output did not parse`** ·
-**`herdr plugin list` shows the old version** · **stale UI after a rebuild**.
+reboot** · **a pane is stuck narrow** · **Collie refuses to open a tmux window** ·
+**`tmux list: output did not parse`** · **`herdr plugin list` shows the old version** ·
+**stale UI after a rebuild** · **I saved a machine in Herdr and the phone does not show it** ·
+**an update started from the phone stays at staging** · **a phone update on macOS leaves Collie
+unloaded** · **on macOS, `collie status` says "loaded, not running"** · **a pane shows no prompt-cache chip** · **a pane has no Chat or History** · **a new Codex pane says it has no history
+yet** · **the phone says Collie cannot read a screen the agent is not showing** · **an agent is greyed
+out on the New page** · **Start says there is no folder, or says it could not confirm**.
 
 **`herdr plugin …` fails with `Error: Os { code: 2, kind: NotFound, message: "No such file or
 directory" }`** (plugin install fails, action invoke fails)**.** This is *not* a Collie problem — it
@@ -27,12 +32,17 @@ repairs, so it takes one reinstall to land:
 has the three commands.
 
 **`start` prints `note: tailscale serve failed`.** Collie itself is fine (still up on
-`127.0.0.1`) — only the tailnet ingress didn't come up, and Collie prints tailscale's own error
-right below the note. Usual causes: your user isn't the Tailscale operator
+`127.0.0.1`) — only the tailnet ingress didn't come up, and tailscale's own error is on the
+terminal above the note. Usual causes: your user isn't the Tailscale operator
 (`sudo tailscale set --operator=$USER`), the node is logged out (`tailscale up`), or — on
 Headscale / `.internal` tailnet domains — HTTPS certs aren't available, which is exactly what
 `COLLIE_SERVE_MODE=http` is for: set it in `.env`, then `bin/collie restart`. Verify with
 `tailscale serve status`.
+
+**`serve` says `HTTPS certificates are not enabled on this tailnet`.** Nothing was published, and
+nothing is waiting. Open the [admin console](https://login.tailscale.com/admin/dns), turn on
+"Enable HTTPS", then run `collie serve` again. On Headscale / `.internal` domains there are no
+certificates to enable; use `COLLIE_SERVE_MODE=http` instead.
 
 **Banner shows `⚠ Collie isn't answering on :8787 yet`** (service won't start, connection
 refused)**.** The service was started but the HTTP server isn't answering the probe. Check the unit
@@ -66,7 +76,7 @@ the fourth proxy requirement in
 [`docs/deployment.md`](deployment.md#variant-b--identity-aware-proxy--per-device-authorisation).
 
 **A `sudo` (or SSH passphrase, or `gpg`) prompt won't take your reply.** Use **Type** in the
-Controls row, not Send. Send *verifies* what it typed by reading it back off the screen before it
+actions row above the keyboard, not Send. Send *verifies* what it typed by reading it back off the screen before it
 presses Enter ([#34](https://github.com/AltanS/collie/issues/34)), and a password prompt turns echo
 off, so there is nothing to read back — **Type** sends your keystrokes straight to the pane, Enter
 included. Nothing you type in **Type** is stored, echoed into a draft, or restored later, and the
@@ -77,13 +87,29 @@ moment Collie recognises a password prompt it drops the stored draft too
 causes, in the order the command distinguishes them:
 push says it's disabled (the keys never reached the bridge — run `push-keys` and restart, see
 [Web Push](voice-and-push.md#web-push-optional)); it says there are no subscribed devices (this phone never enabled
-them in Settings → notifications); or it reports a send and nothing arrives (the phone is on a
+them in Settings → Alerts); or it reports a send and nothing arrives (the phone is on a
 plain-HTTP origin, which is not a secure context — Settings flags it `insecure`).
 
 **Collie is gone after a reboot.** On Linux this is almost always lingering, so run
 `loginctl enable-linger $USER` ([Surviving reboots](upgrading.md#surviving-reboots)). On macOS the launchd agent starts at
 **login**, so check you're actually logged in (not sitting at the login window) and that the agent is
 loaded: `launchctl print gui/$(id -u)/herdr.collie`.
+
+**A pane's terminal is stuck narrow, and a full-screen app inside it is squashed** (Copilot CLI,
+`top`, any TUI drawn into a strip while the rest of the mirror stays blank)**.** The pane's terminal
+is that narrow, and Collie mirrors it faithfully. A Herdr pane's width comes from its rectangle
+in the tab's split grid, so a pane sharing a tab gets a share of the columns. Herdr applies
+pane geometry **only while a desktop client is attached**
+([herdr#1709](https://github.com/herdrdev/herdr/issues/1709)): with nothing attached, closing a split
+leaves the survivor stuck at the old narrow width, and `pane.zoom` and `pane.resize` over
+the socket do not move it either. Collie cannot fix this from its side; it does not write
+pane geometry at all ([ADR 0031](../.adr/0031-freshness-is-a-declared-promise.md): the phone moves
+the operator's terminal only on the *Show in terminal* tap). Nothing about it is app-specific:
+`top` in a 54-column pane looks identical. To measure it, run `tput cols` in the pane. That is
+the real width, and it can disagree with what `herdr pane layout` reports. To fix it, attach a Herdr
+client, then zoom or resize the pane there (`herdr pane zoom <pane-id> --on` moves the terminal
+once something is attached), or close the pane and open a new one
+([#167](https://github.com/AltanS/collie/issues/167)).
 
 **Collie refuses to open a tmux window** (the phone's *new tab* comes back declining, naming
 `window-size`)**.** Not a fault in the request: on tmux below 3.7, spawning a window while the
@@ -97,8 +123,11 @@ affected: every other action on those panes keeps working
 tmux versions (3.4, not 3.6b) escape the separator this adapter reads on their way out of a `-F`
 listing. Collie reads both shapes now, so a listing that parses to zero rows is reported as a mux
 error instead of being stored as an empty herd — the error line names the tmux version and how many
-lines it saw. If you still hit this, note the `tmux -V` version and open an issue; the fix belongs in
-the adapter, not in your `.env`.
+lines it saw. A second cause was the locale: started with no UTF-8 locale (a minimal container, a
+systemd unit), tmux replaces that separator with `_` instead of escaping it. Collie now runs
+every tmux command with `-u`, so the listing no longer depends on `LANG` or `LC_ALL`. If you still
+hit this, note the `tmux -V` version and open an issue; the fix belongs in the adapter, not in your
+`.env`.
 
 **`herdr plugin list` shows the old version after an `update`.** Expected — Herdr caches the manifest
 it read at install or link time. The authority on what's running is the footer build stamp, or
@@ -113,6 +142,138 @@ mismatch, the footer offers **"new build — tap to update."** Otherwise reopen 
 (the SW auto-updates) or clear that origin's site data. Best practice: **pick one HTTPS origin and
 stick to it.** (Over plain HTTP the SW can't register — always fresh, but no PWA features.)
 
+
+**I saved a machine in Herdr and the phone does not show it.** Expected. Herdr's saved machines are
+its own client's list, and a crew is Collie's own; neither list feeds the other. To reach that
+machine from the phone, enrol it: `collie crew add <ssh-host>` on the lead, then `collie restart` on
+the lead and `collie crew status` to check the link. Adding or removing a machine in Herdr changes
+nothing in the crew ([Herdr machines and the crew](crew.md#herdr-machines-and-the-crew)).
+
+**A pane shows no prompt-cache chip.** One of three things, and `collie doctor` tells them apart. The
+pane's harness has no journal adapter, which its `integration-<agent>` and `journal-roots` lines name.
+The pane never reported a session, which its `agent-sessions` line lists by pane id. Or the agent has
+not taken a turn yet, which is not a fault: nothing is shown before it is measured, so the chip appears
+on the agent's first reply. A harness whose vendor publishes no cache lifetime shows nothing either,
+and `cache-claims` lists every rule this build does ship.
+
+**A pane shows the terminal where you expected Chat.** Chat is the default for an agent pane, so one
+of two things holds. This device chose the terminal earlier: open the pane's **⋮** menu and tap
+**Chat view**. Or the pane has no session or no log to read. A new pane shows Chat with "Send a
+message to start" and falls back to the terminal when its first turn ends with nothing to read, or
+when it asks a question first; the menu row says which part is missing, and the next entry has the
+steps.
+
+**A pane has no Chat or History, and the ⋮ menu says the pane named no session.** Chat and History read
+the agent's session log, and Collie finds the log only when the agent reports its session through the
+multiplexer. On Herdr that report comes from the agent's own integration, so a missing or old one hides
+both with no other symptom. `collie doctor` names the pane under `agent-sessions` and the fix under
+`integration-<agent>`.
+
+1. Run `herdr integration status`. If the agent is `not installed` or `outdated`, run
+   `herdr integration install <agent>`. Oh My Pi is `omp`, and pi is `pi`: each needs its own.
+2. Restart the agent in that pane. An agent loads its hook when it starts, so one that was running
+   during the install keeps reporting nothing.
+3. If the hook is current and a restarted pane still reports nothing, check whether the agent was
+   started from a shell that another agent opened. Oh My Pi's hook stays silent when `OMPCODE=1` is
+   inherited from the parent agent. Start it from a fresh terminal.
+
+On tmux, zellij and tern only Claude Code reports a session, through Collie's beacon hooks. Run
+`collie hooks install claude` ([Collie writes hooks into Claude's own
+settings](multiplexers.md#collie-writes-hooks-into-claudes-own-settings)). The other agents have no
+Chat or History there.
+
+**A new Codex pane says it has no history yet.** Expected until its first turn. Codex reports its
+session to Herdr only when the first prompt is sent, not when it starts, so a fresh pane has no
+session, and no History link, until then. `collie doctor` lists such a pane under `agent-sessions`
+as not reported yet, and does not count it as a fault. If the note is still there after Codex has
+replied, open `/hooks` in Codex. When its hooks change, Codex asks you to review them, and "Continue
+without trusting" turns the Herdr hook off while `herdr integration status` still says it is
+current. Trust the hook there, or run `herdr integration install codex` and start a new session.
+
+**The phone says Collie cannot read a dialog, or a send does not reach the input box, while the
+agent at the desk shows its normal prompt.** Collie misread the screen, usually because the agent
+changed how it draws it. Please open an issue with the screen's raw text, which shows what a
+screenshot cannot (the colours and dim text Collie reads). Find the pane id with `herdr pane list`,
+then run
+
+```sh
+herdr pane read <pane-id> --source recent --lines 200 --format ansi > pane.txt
+```
+
+while the phone still shows the problem, and attach `pane.txt` together with the agent's version
+(`claude --version`, `codex --version`, and so on). The file is the terminal's text, so read it
+first and remove anything private.
+
+**An update started from the phone stays at staging.** On Collie up to 1.6.0, an update tapped on
+the phone could stage the new version and then stop: the runner that performs the swap was never
+started, the service kept serving the old version, and the run record sat at `staging` with the lock
+held. The tell is three facts together: `collie update --status` reports `staging` (or, past ten
+minutes, `interrupted — the updater is gone`), the version directory for the new release exists under
+`versions/`, and the runner log at `~/.config/collie/collie.log` is 0 bytes. A `collie update` typed
+at a shell on the same machine always worked, which is the same defect seen from the other side. It
+is fixed from the next release on: the handoff now waits for the user manager to confirm the runner,
+and a handoff that was refused is reported as a failure with the manager's own reason.
+
+To clear a machine that is already stuck, do nothing for ten minutes: a run whose updater is gone
+stops blocking a retry ten minutes after its last transition, and the next tap proceeds. To clear it
+now, delete the record, the lock and the staging progress file, then check what `--status` says:
+
+```
+collie update --status            # note the pid it names
+ps -p <pid> -o command=           # empty output: the updater really is gone
+rm -f ~/.local/state/collie/update.json ~/.local/state/collie/update.lock
+rm -f ~/.local/state/collie/update-staging-*.log
+collie update --status            # "no update has run on this install yet"
+```
+
+There is no verb that clears a stale run, and these three files are the whole of the state a stalled
+staging leaves behind. A suffixed instance keeps them in `~/.local/state/collie-<name>/` instead.
+**Never** delete these while an update is actually running, and check the pid first: a live updater
+whose lock you removed will flip `current` with nothing guarding it. Leave `versions/` alone. The
+half-staged version directory is harmless, the retry builds into it again, and the retention sweep
+removes what it no longer needs.
+
+**A phone update on macOS leaves Collie unloaded.** Run this on the Mac:
+
+```
+collie restart
+```
+
+On Collie up to 1.8.x, an update tapped on the phone could stop the launchd agent and never load it
+again, so the phone lost the service and `launchctl print gui/$(id -u)/herdr.collie` found nothing.
+The runner shared the agent's process group, and restarting the agent killed it half way.
+`collie restart` writes the agent's plist again and loads it. From 1.9.0 on, the bridge
+starts the runner in a session of its own. If a phone update still unloads the agent after that, run
+the same command and add a note to [#213](https://github.com/AltanS/collie/issues/213).
+
+**On macOS, `collie start` finishes but `collie status` says "loaded, not running".** The launchd job is
+loaded and no process runs, so the log is empty. Start the job by hand:
+
+```
+launchctl kickstart gui/$(id -u)/herdr.collie
+collie status
+```
+
+A suffixed instance has its own label, for example `herdr.collie-next`. From 1.17.0 on, `collie start`
+and `collie restart` do this step for you and print a warning with this command when no process
+shows up. If the job stays "loaded, not running" after that, read the log with `collie logs`, then
+add a note to [#213](https://github.com/AltanS/collie/issues/213).
+
+**An agent is greyed out on the New page.** The reason follows its name in brackets. "not installed"
+means the machine did not find the agent's command on the `PATH` your login shell uses. In a
+login shell on that machine, run `bash -lc 'command -v claude'` (or the agent's own name). If it prints nothing,
+install the agent there, or fix the line in your shell's login file that adds it to the `PATH`, and
+reopen the page. On a crew, check the machine you picked: each member looks on its own disk.
+"this machine runs an older Collie" means update that member
+([Starting something on a machine](crew.md#starting-something-on-a-machine)). "needs Herdr" and
+"only on" a machine's name belong to the **New worktree** switch, not to an agent.
+
+**Start says "There is no folder … on this machine", or "could not confirm the start".** The first
+means the folder is not on the machine that runs the start, so nothing started. A name with no leading `/` or
+`~` is a folder under your home, so `projects` means `~/projects`. Create the folder, or pick one from
+Recent. The second means the phone lost the reply. Look at the dashboard first, because the pane may
+exist. **Try again** sends the same request and never opens a second pane
+([Start an agent or a shell from the phone](claude-code-on-your-phone.md#start-an-agent-or-a-shell-from-the-phone)).
 
 ---
 

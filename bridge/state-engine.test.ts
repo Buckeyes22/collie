@@ -1,14 +1,21 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { ActivityLedger } from "./activity.ts";
+import { trackActivity } from "./activity-tracking.ts";
 
 import {
   ATTENTION_WINDOW_MS,
+  HOT_POLLS,
   StateEngine,
   terminalTitleIsStale,
   type EngineSnapshot,
 } from "./state-engine.ts";
 import { HerdrMux } from "./mux/herdr/adapter.ts";
 import type { HerdrClient, PaneRead } from "./mux/herdr/client.ts";
-import type { MuxAdapter, MuxPane } from "./mux/types.ts";
+import { muxOk } from "./mux/types.ts";
+import type { MuxAdapter, MuxPane, MuxTab } from "./mux/types.ts";
 import { toPaneWire } from "./types.ts";
 import type { AgentStatus } from "./types.ts";
 
@@ -25,7 +32,8 @@ function asMux(fake: Partial<HerdrClient>): MuxAdapter {
   // listTabs, plus readPane for a claude pane's session-name scrape (whose failure the engine
   // already treats as "keep the cached name"). Nothing these tests drive reaches any other member,
   // so the missing ones are unobservable.
-  return new HerdrMux(fake as HerdrClient);
+  // A poll never asks for the session list, so an empty one is unobservable here.
+  return new HerdrMux(fake as HerdrClient, () => []);
 }
 
 // The state engine polls the multiplexer, shapes the snapshot, and fires status transitions (which
@@ -181,6 +189,100 @@ describe("StateEngine — transition detection", () => {
   });
 });
 
+describe("StateEngine — activity ledger binding", () => {
+  test("seeds idle agents, tracks completions, and resets unread activity on agent exit", async () => {
+    const { herdr, engine, poll } = makeEngine();
+    const dir = mkdtempSync(join(tmpdir(), "collie-activity-lifecycle-"));
+    let now = 100;
+    const activity = new ActivityLedger({ stateDir: dir }, () => now);
+    trackActivity(engine, activity, "default");
+    try {
+      herdr.panes = [pane("w1:p1", "w1", "idle", "pi")];
+      await poll();
+      expect(activity.get("default", "w1:p1")).toEqual({ activeAt: 100, seenAt: 100 });
+      now = 200;
+      herdr.panes = [pane("w1:p1", "w1", "working", "pi")];
+      await poll();
+      now = 300;
+      herdr.panes = [pane("w1:p1", "w1", "idle", "pi")];
+      await poll();
+      expect(activity.get("default", "w1:p1")).toEqual({ activeAt: 300, seenAt: 100 });
+      now = 400;
+      activity.noteSeen("default", "w1:p1");
+      expect(activity.get("default", "w1:p1")).toEqual({ activeAt: 300, seenAt: 400 });
+
+      now = 500;
+      herdr.panes = [pane("w1:p1", "w1", "working", "pi")];
+      await poll();
+      now = 600;
+      herdr.panes = [pane("w1:p1", "w1", "unknown", null)];
+      await poll();
+      expect(activity.get("default", "w1:p1")).toEqual({ activeAt: 600, seenAt: 600 });
+      now = 700;
+      herdr.panes = [pane("w1:p1", "w1", "idle", "pi")];
+      await poll();
+      expect(activity.get("default", "w1:p1")).toEqual({ activeAt: 600, seenAt: 600 });
+
+      herdr.panes = [];
+      await poll();
+      expect(activity.get("default", "w1:p1")).toBeUndefined();
+    } finally {
+      activity.stop();
+      engine.stop();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // A settled pane is only "new work" when a turn ended. Herdr's own TUI moves a pane from `done`
+  // to `idle` when the operator acknowledges it there, and flicker gives `unknown → idle`; neither
+  // may re-mark a pane Collie already showed as seen.
+  test("only a turn that ends bumps activity for a settled pane", async () => {
+    const { herdr, engine, poll } = makeEngine();
+    const dir = mkdtempSync(join(tmpdir(), "collie-activity-settled-"));
+    let now = 100;
+    const activity = new ActivityLedger({ stateDir: dir }, () => now);
+    trackActivity(engine, activity, "default");
+    const step = async (at: number, status: AgentStatus) => {
+      now = at;
+      herdr.panes = [pane("w1:p1", "w1", status, "pi")];
+      await poll();
+    };
+    try {
+      // (a) working → done bumps; the operator reads it; done → idle must not bump it back.
+      await step(100, "working");
+      await step(200, "done");
+      expect(activity.get("default", "w1:p1")).toEqual({ activeAt: 200, seenAt: 100 });
+      now = 300;
+      activity.noteSeen("default", "w1:p1");
+      await step(400, "idle");
+      expect(activity.get("default", "w1:p1")).toEqual({ activeAt: 200, seenAt: 300 });
+
+      // idle → idle is not a transition at all, so nothing moves.
+      await step(450, "idle");
+      expect(activity.get("default", "w1:p1")).toEqual({ activeAt: 200, seenAt: 300 });
+
+      // (b) idle → unknown bumps (a Working-side change), unknown → idle does not.
+      await step(500, "unknown");
+      expect(activity.get("default", "w1:p1")).toEqual({ activeAt: 500, seenAt: 300 });
+      await step(600, "idle");
+      expect(activity.get("default", "w1:p1")).toEqual({ activeAt: 500, seenAt: 300 });
+
+      // (c) working → idle is a turn ending, so it still bumps.
+      await step(700, "working");
+      await step(800, "idle");
+      expect(activity.get("default", "w1:p1")).toEqual({ activeAt: 800, seenAt: 300 });
+
+      // (d) idle → blocked still bumps: the row's "since" counts from this clock.
+      await step(900, "blocked");
+      expect(activity.get("default", "w1:p1")).toEqual({ activeAt: 900, seenAt: 300 });
+    } finally {
+      activity.stop();
+      engine.stop();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("StateEngine — removal events", () => {
   test("fires onRemove when a previously-seen agent pane vanishes", async () => {
     const { herdr, removed, poll } = makeEngine();
@@ -292,7 +394,10 @@ describe("StateEngine — snapshot shaping", () => {
     }
   });
 
-  test("sorts agents by urgency (blocked first), then workspace number", async () => {
+  test("sorts agents by workspace number, never by status (ADR 0063)", async () => {
+    // This used to assert urgency first (`w1:p1`, `w2:p2`, `w2:p1`). The blocked pane led only because
+    // it was blocked, so it would have moved the moment it resumed. Within w2 the listing's own order
+    // holds: the idle pane was listed first and stays first, though the working one outranks it.
     const { herdr, engine, poll } = makeEngine();
     herdr.panes = [
       pane("w2:p1", "w2", "idle", "claude"),
@@ -300,7 +405,7 @@ describe("StateEngine — snapshot shaping", () => {
       pane("w2:p2", "w2", "working", "claude"),
     ];
     await poll();
-    expect(engine.current().agents.map((a) => a.paneId)).toEqual(["w1:p1", "w2:p2", "w2:p1"]);
+    expect(engine.current().agents.map((a) => a.paneId)).toEqual(["w1:p1", "w2:p1", "w2:p2"]);
   });
 
   test("marks the bridge disconnected when a poll throws", async () => {
@@ -311,6 +416,123 @@ describe("StateEngine — snapshot shaping", () => {
     herdr.sessionSnapshot = () => Promise.reject(new Error("socket down"));
     await poll();
     expect(engine.current().bridge).toBe("disconnected");
+  });
+});
+
+// ── ONE STABLE ORDER, AND IT IS THE MULTIPLEXER'S ────────────────────────────
+// Space, then tab, then the pane's own position in that tab — each read off the arrangement the mux
+// reported. Nothing sorts by pane id any more: an id is opaque (identity rule 1), so alphabetical
+// order over ids put `%10` before `%2` and `pN` before `pC`, and two panes side by side on the desk
+// reached the phone in an order the desk never showed.
+describe("StateEngine — the order panes arrive in", () => {
+  function muxPane(fields: Partial<MuxPane> & { paneId: string }): MuxPane {
+    return {
+      spaceId: "w1",
+      spaceLabel: "collie",
+      spaceNumber: 1,
+      tabId: "w1:t1",
+      cwd: "/home/dev/collie",
+      focused: false,
+      alive: true,
+      agent: "claude",
+      status: "idle",
+      ...fields,
+    };
+  }
+  const muxTab = (tabId: string): MuxTab => ({
+    tabId,
+    spaceId: "w1",
+    number: 1,
+    label: "1",
+    focused: false,
+    paneCount: 2,
+  });
+
+  function engineOf(panes: readonly MuxPane[], tabs: readonly MuxTab[]): StateEngine {
+    // SAFETY: a poll over this herd reaches `snapshot()` and the session-name scrape's guard, and
+    // nothing else — every pane here is idle, so no read is issued. The members left off are
+    // unobservable in this test.
+    const stub: Partial<MuxAdapter> = {
+      reachable: () => Promise.resolve(true),
+      snapshot: () => Promise.resolve({ panes, spaces: [], tabs }),
+    };
+    // SAFETY: see above — every member this poll can reach is present on `stub`.
+    return new StateEngine(stub as MuxAdapter, 1500);
+  }
+
+  test("keeps each tab's panes in the mux's own order, not in pane-id order", async () => {
+    // `pN` sorts before `pC` alphabetically and after it positionally. The mux's array is the truth.
+    const engine = engineOf(
+      [muxPane({ paneId: "pC" }), muxPane({ paneId: "pN" }), muxPane({ paneId: "pA" })],
+      [muxTab("w1:t1")],
+    );
+    await engine["poll"]();
+    expect(engine.current().agents.map((a) => a.paneId)).toEqual(["pC", "pN", "pA"]);
+  });
+
+  test("orders tabs by their place in the mux's tab array, whatever their ids read like", async () => {
+    const engine = engineOf(
+      [
+        muxPane({ paneId: "p1", tabId: "w1:t9" }),
+        muxPane({ paneId: "p2", tabId: "w1:t2" }),
+      ],
+      [muxTab("w1:t9"), muxTab("w1:t2")],
+    );
+    await engine["poll"]();
+    expect(engine.current().agents.map((a) => a.paneId)).toEqual(["p1", "p2"]);
+  });
+
+  test("status never orders — a blocked pane keeps its place (ADR 0063)", async () => {
+    // The opposite of what this test asserted before: a blocked pane used to lead wherever it sat, so
+    // it jumped to the top when it blocked and back when it resumed, on every surface that kept the
+    // bridge's order. Urgency is a mark the phone paints, never a position.
+    const engine = engineOf(
+      [muxPane({ paneId: "p1" }), muxPane({ paneId: "p2", status: "blocked" })],
+      [muxTab("w1:t1")],
+    );
+    await engine["poll"]();
+    expect(engine.current().agents.map((a) => a.paneId)).toEqual(["p1", "p2"]);
+  });
+
+  test("a status flip between two polls leaves the order exactly as it was", async () => {
+    const panes: MuxPane[] = [
+      muxPane({ paneId: "p1", status: "idle" }),
+      muxPane({ paneId: "p2", tabId: "w1:t2", status: "done" }),
+      muxPane({ paneId: "p3", tabId: "w1:t2", status: "idle" }),
+      muxPane({ paneId: "p4", spaceId: "w2", spaceNumber: 2, tabId: "w2:t1", status: "idle" }),
+    ];
+    const engine = engineOf(panes, [muxTab("w1:t1"), muxTab("w1:t2"), muxTab("w2:t1")]);
+    await engine["poll"]();
+    const before = engine.current().agents.map((a) => [a.paneId, a.tabPosition]);
+    expect(before).toEqual([["p1", 0], ["p2", 0], ["p3", 1], ["p4", 0]]);
+
+    panes[3] = { ...panes[3]!, status: "blocked" };
+    panes[0] = { ...panes[0]!, status: "done" };
+    panes[2] = { ...panes[2]!, status: "blocked" };
+    await engine["poll"]();
+    expect(engine.current().agents.map((a) => [a.paneId, a.tabPosition])).toEqual(before);
+    expect(engine.current().agents.map((a) => a.status)).toEqual(["done", "done", "blocked", "blocked"]);
+  });
+
+  test("a pane whose tab the listing does not hold sorts LAST, never ahead of a placed one", async () => {
+    const engine = engineOf(
+      [muxPane({ paneId: "fresh", tabId: "w1:t-new" }), muxPane({ paneId: "placed" })],
+      [muxTab("w1:t1")],
+    );
+    await engine["poll"]();
+    expect(engine.current().agents.map((a) => a.paneId)).toEqual(["placed", "fresh"]);
+  });
+
+  test("bare shells take the same order", async () => {
+    const engine = engineOf(
+      [
+        muxPane({ paneId: "pC", agent: "shell", status: "unknown" }),
+        muxPane({ paneId: "pA", agent: "shell", status: "unknown" }),
+      ],
+      [muxTab("w1:t1")],
+    );
+    await engine["poll"]();
+    expect(engine.current().shellPanes.map((a) => a.paneId)).toEqual(["pC", "pA"]);
   });
 });
 
@@ -448,7 +670,20 @@ describe("StateEngine — session name enrichment", () => {
     await poll();
     // The count is not the safety-critical half — `visible` clamps to the viewport however large it
     // is — so it is pinned only to keep the whole call in one assertion. Change it freely, here too.
-    expect(herdr.reads).toEqual([["w1:p1", "visible", 40, "text"]]);
+    // `ansi`, because colour tells a name from a mode badge; it is also the format that never makes
+    // Herdr harvest scrollback (see readPane in server.ts).
+    expect(herdr.reads).toEqual([["w1:p1", "visible", 40, "ansi"]]);
+  });
+
+  test("forgets the name once the input box shows a plain rule again", async () => {
+    const { herdr, poll, agent } = makeNameEngine();
+    herdr.panes = [{ ...pane("w1:p1", "w1", "idle", "claude"), revision: 1 }];
+    herdr.texts.set("w1:p1", named("ultracode"));
+    await poll();
+    herdr.panes = [{ ...pane("w1:p1", "w1", "idle", "claude"), revision: 2 }];
+    herdr.texts.set("w1:p1", plainBox);
+    await poll();
+    expect(agent("w1:p1").sessionName).toBeUndefined();
   });
 
   test("leaves sessionName absent for an unnamed claude session (plain rule)", async () => {
@@ -492,6 +727,72 @@ describe("StateEngine — session name enrichment", () => {
     await poll();
     expect(agent("w1:p1").sessionName).toBe("safe"); // last-known kept
     expect(engine.current().bridge).toBe("connected"); // the poll itself still succeeded
+  });
+
+  // THE READ FOLLOWS THE REVISION (#189).
+  //
+  // The scrape costs one socket read per claude pane per poll, so a herd of idle agents pays for a
+  // screen nobody changed. Herdr stamps every pane with a content revision, and the engine reads
+  // again only when that number moves. The tests above all leave `revision` at 0, which is exactly
+  // the skip path — these three pin the whole rule, so neither half can rot unseen.
+  const atRevision = (p: FakePane, revision: number): FakePane => ({ ...p, revision });
+
+  test("re-reads a claude pane whose revision moved, and the new name lands on the view", async () => {
+    const { herdr, poll, agent } = makeNameEngine();
+    herdr.panes = [atRevision(pane("w1:p1", "w1", "idle", "claude"), 7)];
+    herdr.texts.set("w1:p1", named("first"));
+    await poll();
+    herdr.panes = [atRevision(pane("w1:p1", "w1", "idle", "claude"), 8)]; // the screen changed
+    herdr.texts.set("w1:p1", named("second"));
+    await poll();
+    expect(herdr.reads.length).toBe(2);
+    expect(agent("w1:p1").sessionName).toBe("second");
+  });
+
+  test("skips the read entirely while the revision stands still", async () => {
+    const { herdr, poll, agent } = makeNameEngine();
+    herdr.panes = [atRevision(pane("w1:p1", "w1", "idle", "claude"), 7)];
+    herdr.texts.set("w1:p1", named("first"));
+    await poll();
+    // A name the second poll would pick up — if it read at all. It must not.
+    herdr.texts.set("w1:p1", named("never-seen"));
+    await poll();
+    expect(herdr.reads.length).toBe(1);
+    expect(agent("w1:p1").sessionName).toBe("first");
+  });
+
+  // tmux and zellij hand over no per-pane revision, so their panes have nothing to compare and must
+  // keep the old behaviour: read every poll. This one goes through the mux port directly — the
+  // Herdr wire type always carries a revision, so a pane without one cannot come from that adapter.
+  test("reads a pane that carries no revision on every poll (tmux, zellij)", async () => {
+    const claudePane: MuxPane = {
+      paneId: "%1",
+      spaceId: "$0",
+      spaceLabel: "collie",
+      spaceNumber: 1,
+      tabId: "@0",
+      cwd: "/home/you/demo",
+      focused: false,
+      alive: true,
+      agent: "claude",
+      status: "idle",
+    };
+    let reads = 0;
+    // SAFETY: this poll reaches `snapshot()` and the session-name `readGrid`, and nothing else.
+    const stub: Partial<MuxAdapter> = {
+      reachable: () => Promise.resolve(true),
+      snapshot: () => Promise.resolve({ panes: [claudePane], spaces: [], tabs: [] }),
+      readGrid: (paneId: string) => {
+        reads++;
+        return Promise.resolve(muxOk({ paneId, text: named("unstamped"), truncated: false, revision: 0 }));
+      },
+    };
+    // SAFETY: see above — every member this poll can reach is present on `stub`.
+    const engine = new StateEngine(stub as MuxAdapter, 1500);
+    await engine["poll"]();
+    await engine["poll"]();
+    expect(reads).toBe(2);
+    expect(engine.current().agents[0]!.sessionName).toBe("unstamped");
   });
 });
 
@@ -603,7 +904,7 @@ describe("StateEngine — poke / cadence / onUpdate", () => {
   });
 });
 
-// onTick backs the pack's peer sweep (PACK_PROTOCOL.md §10.1: "the peer sweep is a part of the
+// onTick backs the crew's peer sweep (CREW_PROTOCOL.md §10.1: "the peer sweep is a part of the
 // existing poll, not a second timer"). Unlike onUpdate it must fire on BOTH outcomes — a lead whose
 // own Herdr socket is down must still sweep its peers, so a local outage can never mask a peer's.
 describe("StateEngine — onTick", () => {
@@ -943,5 +1244,170 @@ describe("StateEngine — an expired agent's pane", () => {
     expect(Object.hasOwn(wire, "agentSession")).toBe(false);
     expect(Object.hasOwn(wire, "sessionAgent")).toBe(false);
     expect(wire.hasSession).toBeUndefined();
+  });
+});
+
+// A one-pane tab the operator NAMED gives the pane its name (pane-name.ts § soleTabName); the bridge
+// decides, because only the adapter knows a chosen label (`MuxPane.tabNamed`) from a positional one.
+describe("soleTabName and tabPosition", () => {
+  test("a named tab holding one pane names it; a positional or shared tab does not", async () => {
+    const { herdr, engine, poll } = makeEngine();
+    herdr.panes = [
+      { ...pane("p1", "w1", "idle", "claude"), tab_id: "w1:t1" },
+      { ...pane("p2", "w1", "idle", "claude"), tab_id: "w1:t2" },
+      { ...pane("p3", "w1", "idle", "claude"), tab_id: "w1:t2" },
+      { ...pane("p4", "w1", "idle", "claude"), tab_id: "w1:t3" },
+    ];
+    herdr.tabs = [
+      { tab_id: "w1:t1", workspace_id: "w1", number: 1, label: "Ui fixes", focused: false, pane_count: 1, agent_status: "idle" },
+      { tab_id: "w1:t2", workspace_id: "w1", number: 2, label: "work", focused: false, pane_count: 2, agent_status: "idle" },
+      { tab_id: "w1:t3", workspace_id: "w1", number: 3, label: "3", focused: false, pane_count: 1, agent_status: "idle" },
+    ];
+    await poll();
+    const byId = new Map(engine.current().agents.map((a) => [a.paneId, a]));
+    expect(byId.get("p1")?.soleTabName).toBe("Ui fixes");
+    expect(byId.get("p2")?.soleTabName).toBeUndefined();
+    expect(byId.get("p4")?.soleTabName).toBeUndefined();
+    // Position inside the tab follows the listing, not the id.
+    expect(byId.get("p2")?.tabPosition).toBe(0);
+    expect(byId.get("p3")?.tabPosition).toBe(1);
+    expect(byId.get("p1")?.tabPosition).toBe(0);
+  });
+});
+
+// The hot intent (state-engine.ts § noteInput, § noteNewAgents). Herdr announces nothing when an
+// agent reports its session, so a bridge relaxed to its idle cadence saw a fresh pi or Claude session
+// only on the next 12 s tick. Two intents now tighten the ONE interval for a bounded count of polls:
+// an input written to a pane, and a pane that has just become an agent with no session yet.
+describe("StateEngine: the hot intent", () => {
+  const IDLE = 12_000;
+  const session = { source: "herdr:pi", agent: "pi", kind: "path", value: "/s/pi.jsonl" };
+
+  // A connected, started engine relaxed by a healthy watch, with no interval left running.
+  async function relaxedEngine(panes: FakePane[] = []) {
+    const made = makeEngine();
+    made.herdr.panes = panes;
+    made.engine["started"] = true;
+    await made.poll();
+    made.engine.setCadence(IDLE);
+    return { ...made, cadence: () => made.engine["cadenceMs"] };
+  }
+
+  test("an input tightens the cadence at once and relaxes after HOT_POLLS polls", async () => {
+    const { engine, poll, cadence } = await relaxedEngine([pane("w1:p1", "w1", "idle", "codex")]);
+    expect(cadence()).toBe(IDLE);
+    engine.noteInput();
+    expect(engine.hot()).toBe(true);
+    expect(cadence()).toBe(1500);
+    for (let i = 1; i < HOT_POLLS; i++) {
+      await poll();
+      expect(cadence()).toBe(1500);
+    }
+    await poll();
+    expect(engine.hot()).toBe(false);
+    expect(cadence()).toBe(IDLE);
+    engine.stop();
+  });
+
+  test("a second input restarts the spell rather than stacking it", async () => {
+    const { engine, poll } = await relaxedEngine();
+    engine.noteInput();
+    for (let i = 0; i < HOT_POLLS - 1; i++) await poll();
+    engine.noteInput();
+    for (let i = 0; i < HOT_POLLS - 1; i++) await poll();
+    expect(engine.hot()).toBe(true);
+    await poll();
+    expect(engine.hot()).toBe(false);
+    engine.stop();
+  });
+
+  test("an input on a stopped engine does nothing", () => {
+    const { engine } = makeEngine();
+    engine.noteInput();
+    expect(engine.hot()).toBe(false);
+    expect(engine["timer"]).toBeNull();
+  });
+
+  test("a hot spell never slows a watch that is down: the fast cadence stays the fast cadence", async () => {
+    const { engine, poll, cadence } = await relaxedEngine();
+    engine.setCadence(1500); // the watch went down
+    engine.noteInput();
+    expect(cadence()).toBe(1500);
+    for (let i = 0; i < HOT_POLLS; i++) await poll();
+    expect(cadence()).toBe(1500);
+    engine.stop();
+  });
+
+  test("a pane that turns into an agent with no session holds the engine hot until its session is seen", async () => {
+    const { herdr, engine, poll, cadence } = await relaxedEngine([pane("w1:p1", "w1", "idle", null)]);
+    herdr.panes = [pane("w1:p1", "w1", "unknown", "pi")]; // the shell became pi; no session yet
+    await poll();
+    expect(engine.hot()).toBe(true);
+    expect(cadence()).toBe(1500);
+    await poll(); // still no session: the hold stays
+    expect(engine.hot()).toBe(true);
+    herdr.panes = [{ ...pane("w1:p1", "w1", "idle", "pi"), agent_session: session }];
+    await poll(); // the EVENT: the session is seen, and the hold ends on it, not on a count
+    expect(engine.hot()).toBe(false);
+    expect(cadence()).toBe(IDLE);
+    engine.stop();
+  });
+
+  test("a session that never comes spends the hold to its end, and no further", async () => {
+    const { herdr, engine, poll, cadence } = await relaxedEngine();
+    herdr.panes = [pane("w1:p1", "w1", "unknown", "codex")]; // Codex names its session on the first prompt
+    await poll();
+    for (let i = 0; i < HOT_POLLS - 1; i++) {
+      await poll();
+      expect(engine.hot()).toBe(true);
+    }
+    await poll();
+    expect(engine.hot()).toBe(false);
+    expect(cadence()).toBe(IDLE);
+    engine.stop();
+  });
+
+  test("a pane closed while it waits ends its hold", async () => {
+    const { herdr, engine, poll } = await relaxedEngine();
+    herdr.panes = [pane("w1:p1", "w1", "unknown", "pi")];
+    await poll();
+    expect(engine.hot()).toBe(true);
+    herdr.panes = [];
+    await poll();
+    expect(engine.hot()).toBe(false);
+    engine.stop();
+  });
+
+  test("agents already there at the first poll, or that name a session at once, hold nothing", async () => {
+    const first = makeEngine();
+    first.herdr.panes = [pane("w1:p1", "w1", "idle", "pi"), pane("w1:p2", "w1", "idle", "codex")];
+    first.engine["started"] = true;
+    await first.poll(); // a bridge that just came up: these panes are not new
+    expect(first.engine.hot()).toBe(false);
+    first.engine.stop();
+
+    const { herdr, engine, poll } = await relaxedEngine();
+    herdr.panes = [
+      { ...pane("w1:p1", "w1", "idle", "claude"), agent_session: { source: "herdr:claude", agent: "claude", kind: "id", value: "c1" } },
+    ];
+    await poll();
+    expect(engine.hot()).toBe(false);
+    engine.stop();
+  });
+
+  test("a failed poll spends a poll of every hold but ends none of them on missing panes", async () => {
+    const { herdr, engine, poll } = await relaxedEngine();
+    herdr.panes = [pane("w1:p1", "w1", "unknown", "pi")];
+    await poll();
+    const ok = herdr.sessionSnapshot.bind(herdr);
+    herdr.sessionSnapshot = () => Promise.reject(new Error("down"));
+    await poll();
+    expect(engine.hot()).toBe(true); // a dead multiplexer proves nothing about the pane
+    herdr.sessionSnapshot = ok;
+    for (let i = 0; i < HOT_POLLS - 2; i++) await poll();
+    expect(engine.hot()).toBe(true);
+    await poll();
+    expect(engine.hot()).toBe(false); // ...but it still decays: the failed poll counted
+    engine.stop();
   });
 });

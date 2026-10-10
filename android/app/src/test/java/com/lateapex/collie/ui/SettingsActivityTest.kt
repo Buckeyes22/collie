@@ -179,7 +179,7 @@ class SettingsActivityTest {
         assertEquals("Settings", activity.findViewById<TextView>(R.id.settings_header_title).text)
         assertEquals("Back", activity.findViewById<View>(R.id.settings_back_button).contentDescription)
         assertEquals("Updates", activity.getString(R.string.updates_title))
-        assertEquals("Pack overview", activity.getString(R.string.settings_pack_title))
+        assertEquals("Crew overview", activity.getString(R.string.settings_pack_title))
         assertEquals("Diagnostics for this device.", activity.getString(R.string.settings_connection_description))
 
         listOf(

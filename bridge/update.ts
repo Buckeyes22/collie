@@ -3,7 +3,9 @@ import { mkdir, rename, writeFile } from "node:fs/promises";
 import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { Config } from "./config.ts";
-import type { UpdateStatus } from "./types.ts";
+import type { Environment } from "./config-source.ts";
+import { herdrActionCommand } from "./front-door.ts";
+import type { CrewMode, UpdateLinkChange, UpdateStatus } from "./types.ts";
 import type { UpdateRun } from "./update-run.ts";
 
 // Update-availability signal, surfaced on the (access-gated) /api/snapshot as `update`. Two
@@ -31,6 +33,10 @@ const SEMVER_TAG = /^v(\d+)\.(\d+)\.(\d+)$/;
 const PRERELEASE_SEMVER_TAG = /^v(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
 // The upstream tag check is bounded — a hung request must never wedge the monitor's timer.
 const TAGS_TIMEOUT_MS = 10_000;
+// The release reading (`collie-release.json`, M27/06) is bounded far tighter than the tag list,
+// because it is an EXTRA inside the same check budget: the tags are the answer, this is a footnote
+// on it. A release that does not answer in three seconds reads as one that says nothing.
+const RELEASE_READING_TIMEOUT_MS = 3_000;
 // bridgeStale is read on every snapshot poll; recompute the on-disk stamp at most this often so a
 // busy poll loop doesn't stat the source tree dozens of times a second (the value barely changes).
 const STALE_TTL_MS = 5_000;
@@ -42,6 +48,11 @@ const DIGEST_WINDOW_MS = 24 * 60 * 60 * 1000;
 // week. A minor or major keeps the daily cadence, because it is the kind of release worth reading
 // notes for; a patch train is not, until enough of it has piled up to be worth one interruption.
 const DIGEST_PATCH_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+// How many of the newest releases in the delta are asked whether they are urgent. A machine that has
+// been off for a year can be a hundred releases behind, and the check's budget is the tag list, not a
+// hundred small GETs. Ten is the newest ten: an urgent fix older than that has been superseded by
+// every release above it, and the operator is being nudged about the pile, not about that one.
+const URGENT_READING_CAP = 10;
 // The earliest HOST-LOCAL hour a digest may be pushed. A release published at 03:00 waits for morning;
 // the update banner is already showing it, so nothing is lost by not buzzing a phone at night.
 const DIGEST_EARLIEST_HOUR = 9;
@@ -289,6 +300,12 @@ export type NotifyVerdict = { send: false } | { send: true; versions: string[] }
  *     since the last push, not 24 h, so a patch train folds into a weekly digest. It is a wait, not a
  *     mute: with no push on record it goes out at once, and a minor or major arriving meanwhile carries
  *     the waiting patches with it. Releases held back this way are folded, never dropped;
+ *   • an URGENT release breaks the window once — `urgent` names a release in the delta that asked to
+ *     reach operators today (ADR 0046). While that version has NOT been announced yet, the window is
+ *     not consulted at all, so an urgent fix published after this morning's digest still goes out
+ *     this morning. The 09:00 floor still holds, so the worst case is the next 09:00 host-local after
+ *     the release. Once that version HAS been announced, the ordinary windows are back, and the
+ *     urgent marker then only keeps the delta on the daily one rather than the weekly patch one;
  *   • the payload is every version newer than what we last announced, so the operator can tell a patch
  *     train from a feature release without opening the app.
  */
@@ -299,6 +316,13 @@ export function shouldNotify(a: {
   lastNotified: string | null;
   lastPushedAt: string | null;
   now: Date;
+  /**
+   * The newest release in the delta that marked itself urgent in its own `collie-release.json`
+   * (ADR 0046), or absent when none did — which is every ordinary release and every read that
+   * failed. The RECORD, not a flag: the version is what tells a fix nobody has been told about yet
+   * from one this install already pushed, and it is the same object the snapshot shows.
+   */
+  urgent?: UpdateUrgentReading;
 }): NotifyVerdict {
   if (!a.latest) return { send: false };
   if (compareSemver(a.latest, a.current) <= 0) return { send: false };
@@ -307,11 +331,26 @@ export function shouldNotify(a: {
   const candidates = a.newerVersions.length > 0 ? [...a.newerVersions] : [a.latest];
   const patchOnly = candidates.every((v) => isPatchOnlyDelta(a.current, v));
 
+  // THE ONE CASE THAT SKIPS THE WINDOW (ADR 0046): an urgent release this install has not announced
+  // yet. A fix for data loss published at 11:00 must not wait for tomorrow because a digest went out
+  // at 09:00, and the window is the only thing that would make it wait. It is spent ONCE: after that
+  // version is announced, `lastNotified` is no longer below it and the ordinary windows are back.
+  const unannouncedUrgent =
+    a.urgent !== undefined &&
+    (a.lastNotified === null || compareSemver(a.lastNotified, a.urgent.version) < 0);
+
   const pushedAt = a.lastPushedAt === null ? Number.NaN : Date.parse(a.lastPushedAt);
   // An unreadable stamp reads as "no push yet" — the same fail-open a legacy record gets, and the one
   // that lets a first-ever patch digest go out instead of waiting a week for a push that never was.
-  const window = patchOnly ? DIGEST_PATCH_WINDOW_MS : DIGEST_WINDOW_MS;
-  if (!Number.isNaN(pushedAt) && a.now.getTime() - pushedAt < window) return { send: false };
+  // An urgent delta that has already been announced is a patch train on the DAILY window: the
+  // interruption was spent, and what is left is the ordinary cadence for the kind of release it is.
+  const window = patchOnly && a.urgent === undefined ? DIGEST_PATCH_WINDOW_MS : DIGEST_WINDOW_MS;
+  if (!unannouncedUrgent && !Number.isNaN(pushedAt) && a.now.getTime() - pushedAt < window) {
+    return { send: false };
+  }
+  // THE FLOOR IS NEVER SKIPPED, not even by an urgent release. "Today" is what urgent asks for, not
+  // "now", and a phone buzzing at 03:00 about a fix nobody can take until morning is the trade this
+  // whole mechanism exists to avoid making.
   if (a.now.getHours() < DIGEST_EARLIEST_HOUR) return { send: false };
 
   const announced = a.lastNotified;
@@ -321,11 +360,29 @@ export function shouldNotify(a: {
 }
 
 /** The push body for a digest: one version names itself, several name the count AND every version —
- *  a count alone can't tell a patch train from a feature release. */
-export function updateDigestBody(current: string, versions: readonly string[]): string {
+ *  a count alone can't tell a patch train from a feature release.
+ *
+ *  A release that moves the CREW WIRE adds one sentence (M27/06), and adds it here rather than in
+ *  the sender, so the push says what the band and the card say. Without a link change the body is
+ *  byte-identical to what it always was.
+ *
+ *  An URGENT release puts its own sentence FIRST (ADR 0046), because that sentence is why the phone
+ *  buzzed at all. It is the release's own English, quoted, never translated — the push has no locale
+ *  to read, which is the same reason {@link LINK_CHANGE_SENTENCE} is written here. The TITLE does not
+ *  move: the notification is still "Collie update available", and the urgency is in what it says. */
+export function updateDigestBody(
+  current: string,
+  versions: readonly string[],
+  linkChange: UpdateLinkChange | null = null,
+  urgent: UpdateUrgentReading | null = null,
+): string {
   const first = versions[0];
-  if (versions.length <= 1) return `Collie ${first ?? current} is available`;
-  return `${versions.length} updates since ${current}: ${versions.join(", ")}`;
+  const body =
+    versions.length <= 1
+      ? `Collie ${first ?? current} is available`
+      : `${versions.length} updates since ${current}: ${versions.join(", ")}`;
+  const withLink = linkChange === null ? body : `${body}. ${LINK_CHANGE_SENTENCE}`;
+  return urgent === null ? withLink : `${urgent.reason} ${withLink}`;
 }
 
 /** A stable, comparable stamp of source files by (path, mtime, size). Order-independent. Equality is
@@ -379,9 +436,166 @@ export interface ApiTag {
 }
 
 /** The endpoint the banner AND the binary updater read — never `releases/latest`, which hides
- *  prereleases and stalls a whole beta train (docs/upgrading.md). */
-export function githubTagsUrl(repo: string): string {
-  return `https://api.github.com/repos/${repo}/tags?per_page=100`;
+ *  prereleases and stalls a whole beta train (docs/upgrading.md). With a {@link UPDATE_MIRROR_ENV}
+ *  rehearsal mirror, the same path on that mirror. `page` 1 is the URL it always was; a later page
+ *  adds `&page=N` (GitHub's own paging). */
+export function githubTagsUrl(repo: string, mirror: string | null = null, page = 1): string {
+  return `${mirror ?? "https://api.github.com"}/repos/${repo}/tags?per_page=${TAG_PAGE_SIZE}${page > 1 ? `&page=${page}` : ""}`;
+}
+
+/** GitHub's largest page. A page that comes back shorter than this is the last one. */
+export const TAG_PAGE_SIZE = 100;
+/** The most pages read: a thousand tags, far past this repository's, and a bound on a mirror that never ends. */
+export const TAG_PAGES_MAX = 10;
+
+/** One page of `/tags` as a caller fetched it: the JSON, or the caller's own failure. */
+export type TagPage<F> = { readonly ok: true; readonly value: JsonValue } | { readonly ok: false; readonly failure: F };
+
+/**
+ * Every tag, page after page, until a page is shorter than {@link TAG_PAGE_SIZE} (or
+ * {@link TAG_PAGES_MAX} pages). One page held every tag until the repository passed 100; the next
+ * tag after that would have been missed wherever the API's order put it. The first failure fails
+ * the whole read: a partial list could name the wrong newest release. Which tag wins is still the
+ * caller's own semver choice, so a repository with one page picks exactly what it picked before.
+ */
+export async function readAllTags<F>(
+  repo: string,
+  mirror: string | null,
+  fetchPage: (url: string) => Promise<TagPage<F>>,
+): Promise<{ ok: true; tags: ApiTag[] } | { ok: false; failure: F }> {
+  const tags: ApiTag[] = [];
+  for (let page = 1; page <= TAG_PAGES_MAX; page++) {
+    const answer = await fetchPage(githubTagsUrl(repo, mirror, page));
+    if (!answer.ok) return answer;
+    tags.push(...parseTagsResponse(answer.value));
+    if (!Array.isArray(answer.value) || answer.value.length < TAG_PAGE_SIZE) break;
+  }
+  return { ok: true, tags };
+}
+
+// ── The rehearsal mirror (M43 spec 08) ───────────────────────────────────────
+// A TEST SEAM, not a way to update. A rehearsal of `collie update` on a test machine must not touch
+// a real release, so it serves its own releases from a local HTTP server, in the shape GitHub serves
+// them: `<mirror>/repos/<repo>/tags` for the tag list and `<mirror>/<repo>/releases/download/<tag>/
+// <file>` for every asset. `scripts/install.ps1` reads the same shape from its own mirror variable.
+//
+// Only this machine's loopback address is accepted, so the seam cannot point an install at another
+// host. A value that is set and not loopback is refused, never ignored: `collie update` stops, and
+// the bridge's release check keeps asking GitHub and says why. No token goes to a mirror, because a
+// token goes to `api.github.com` alone ({@link githubHeaders}). A loud line says the seam is set.
+
+/** The variable that names a rehearsal mirror. A test seam only; see the section above. */
+export const UPDATE_MIRROR_ENV = "COLLIE_UPDATE_MIRROR";
+
+/** `http://127.0.0.1` or `http://localhost`, an optional port and an optional plain path. Nothing else. */
+const LOOPBACK_MIRROR = /^http:\/\/(127\.0\.0\.1|localhost)(:[0-9]{1,5})?(\/[A-Za-z0-9._~/-]*)?$/;
+
+/**
+ * The mirror {@link UPDATE_MIRROR_ENV} names: `base` null when it is unset or blank, the base URL
+ * without a trailing slash when it is a loopback URL, and `ok: false` with the value for anything else.
+ */
+export function updateMirror(
+  env: Readonly<Record<string, string | undefined>>,
+): { ok: true; base: string | null } | { ok: false; value: string } {
+  const value = env[UPDATE_MIRROR_ENV]?.trim() ?? "";
+  if (value === "") return { ok: true, base: null };
+  const base = value.replace(/\/+$/, "");
+  // A `.` or `..` path segment is refused as well: the base is joined with more path, and a client
+  // or a proxy that folds `..` would leave the base the pattern checked.
+  const dotted = /\/\.{1,2}(\/|$)/.test(base.slice("http://".length));
+  return LOOPBACK_MIRROR.test(base) && !dotted ? { ok: true, base } : { ok: false, value };
+}
+
+/** What every request to a mirror carries: a loopback server may not send the client to another host. */
+export const MIRROR_FETCH = { redirect: "error" } as const;
+
+/** The line every surface prints while a mirror is in use. */
+export const mirrorWarning = (base: string): string =>
+  `WARNING: ${UPDATE_MIRROR_ENV} is set. This is a test seam: releases come from ${base}, not from GitHub.`;
+
+/** The line for a mirror value that is not loopback. */
+export const mirrorRefusal = (value: string): string =>
+  `${UPDATE_MIRROR_ENV}='${value}' is not an http://127.0.0.1 or http://localhost URL. It is a test seam for rehearsals, never a download source.`;
+
+/**
+ * The bridge's two release reads, with the mirror decided ONCE, here, from `env`. Unset: GitHub, as
+ * always. A loopback mirror: that mirror, and `warning` to log once. A value that is set and not
+ * loopback: REFUSED, never GitHub in its place, because an operator who set it meant not to ask
+ * GitHub. The release check then fails with the refusal, and the phone shows no new version.
+ */
+export interface ReleaseFetchers {
+  readonly fetchTags: () => Promise<ApiTag[]>;
+  readonly fetchReleaseReading: (version: string) => Promise<ReleaseReadingResult>;
+  /** The one line to log at boot, or null when there is nothing to say. */
+  readonly warning: string | null;
+}
+
+export function releaseFetchers(repo: string, env: Readonly<Record<string, string | undefined>>): ReleaseFetchers {
+  const mirror = updateMirror(env);
+  if (!mirror.ok) {
+    const said = mirrorRefusal(mirror.value);
+    return {
+      fetchTags: () => Promise.reject(new Error(said)),
+      fetchReleaseReading: () => Promise.resolve(null),
+      warning: `${said} The release check is off until it is fixed or unset.`,
+    };
+  }
+  return {
+    fetchTags: githubTagsFetcher(repo, githubCredential(env), mirror.base),
+    fetchReleaseReading: releaseReadingFetcher(repo, mirror.base),
+    warning: mirror.base === null ? null : mirrorWarning(mirror.base),
+  };
+}
+
+/** The raw mirror value to hand a child that starts with a bare environment, or null when unset. */
+export const mirrorValue = (env: Readonly<Record<string, string | undefined>>): string | null => {
+  const value = env[UPDATE_MIRROR_ENV]?.trim() ?? "";
+  return value === "" ? null : value;
+};
+
+// ── The GitHub credential (#254) ─────────────────────────────────────────────
+// GitHub allows an anonymous caller 60 API calls an hour, counted per network address, so every
+// machine behind one router shares a budget the release check can exhaust. A token makes the limit
+// the caller's own. Collie READS one and never asks for one: the tag list is public, so a token
+// with no scopes at all is enough. It is sent to `api.github.com` alone — a release asset lives on
+// github.com, which counts nothing, and redirects to a storage host that must never see it.
+
+/** The names read for a GitHub token, in the order they win. `GH_TOKEN` and `GITHUB_TOKEN` are the
+ *  two the `gh` CLI and Actions already set; the first is Collie's own, for a service's `.env`. */
+export const GITHUB_TOKEN_ENVS = ["COLLIE_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"] as const;
+
+/** A token and the NAME it was read from. A message names the variable and never the value. */
+export interface GithubCredential {
+  token: string;
+  source: (typeof GITHUB_TOKEN_ENVS)[number];
+}
+
+/** The first of {@link GITHUB_TOKEN_ENVS} with a non-blank value, or null: anonymous, as before. */
+export function githubCredential(env: Environment): GithubCredential | null {
+  for (const source of GITHUB_TOKEN_ENVS) {
+    const token = env[source]?.trim();
+    if (token !== undefined && token !== "") return { token, source };
+  }
+  return null;
+}
+
+/** Whether `url` is one the credential may go to: GitHub's API host, by exact host match. */
+export function isGithubApiUrl(url: string): boolean {
+  try {
+    return new URL(url).host === "api.github.com";
+  } catch {
+    return false;
+  }
+}
+
+/** `base`, plus the bearer header when there is a credential AND `url` is the API. */
+export function githubHeaders(
+  url: string,
+  credential: GithubCredential | null,
+  base: Record<string, string>,
+) {
+  if (credential === null || !isGithubApiUrl(url)) return base;
+  return { ...base, authorization: `Bearer ${credential.token}` };
 }
 
 /**
@@ -406,21 +620,178 @@ export function parseTagsResponse(data: JsonValue): ApiTag[] {
   });
 }
 
-/** Anonymous HTTPS fetch of a GitHub repo's tags. Throws on a non-OK response or timeout so the
- *  caller keeps its previous result and retries next tick. */
-export function githubTagsFetcher(repo: string): () => Promise<ApiTag[]> {
-  const url = githubTagsUrl(repo);
-  return async () => {
-    const res = await fetch(url, {
-      headers: { accept: "application/vnd.github+json", "user-agent": "collie-update-check" },
+/** HTTPS fetch of a GitHub repo's tags, with the credential when there is one. Throws on a non-OK
+ *  response or timeout so the caller keeps its previous result and retries next tick. A refused
+ *  token is said ONCE in the log, because the banner would otherwise stall in silence on it. */
+export function githubTagsFetcher(
+  repo: string,
+  credential: GithubCredential | null = null,
+  mirror: string | null = null,
+): () => Promise<ApiTag[]> {
+  let refusedSaid = false;
+  const fetchPage = async (url: string): Promise<TagPage<never>> => {
+    const init: RequestInit = {
+      headers: githubHeaders(url, credential, {
+        accept: "application/vnd.github+json",
+        "user-agent": "collie-update-check",
+      }),
       signal: AbortSignal.timeout(TAGS_TIMEOUT_MS),
-    });
+    };
+    if (mirror !== null) init.redirect = MIRROR_FETCH.redirect;
+    const res = await fetch(url, init);
+    // Once, not every tick: the check runs for the life of the process, and a line an hour is the
+    // sort of log nobody reads. The price is that a token revoked later is said once and then only
+    // shows as a banner that stops moving; `collie update --check` names it any time it is asked.
+    if (res.status === 401 && credential !== null && !refusedSaid) {
+      refusedSaid = true;
+      console.warn(
+        `[update] GitHub refused the token in ${credential.source} (HTTP 401); the release check fails until it is fixed or unset`,
+      );
+    }
     if (!res.ok) throw new Error(`github tags: HTTP ${res.status}`);
-    // SAFETY: `Response.json()` output IS a JsonValue by construction; every field below is checked
-    // before it is kept.
-    return parseTagsResponse((await res.json()) as JsonValue);
+    // SAFETY: `Response.json()` output IS a JsonValue by construction; `parseTagsResponse` checks
+    // every field before it is kept.
+    return { ok: true, value: (await res.json()) as JsonValue };
+  };
+  return async () => {
+    const all = await readAllTags(repo, mirror, fetchPage);
+    return all.ok ? all.tags : [];
   };
 }
+
+// ── The release reading (`collie-release.json`, M27/06) ──────────────────────
+// One tiny document per release, published beside the payloads by `.github/workflows/release.yml`:
+// the version, and the CREW WIRE VERSION that release speaks. It exists so an install can be told,
+// BEFORE it confirms, that the update changes the link its crew talks over — and be told generically,
+// off a number, rather than off a hard-coded release name that would have to be edited every time.
+//
+// It is a courtesy, never a gate. Absent, unreachable, truncated or foreign all read the same way:
+// no change. Every release before 1.8.0 published none at all.
+
+/** What a release says about itself. Unknown fields are ignored — additive is free. */
+export interface ReleaseReading {
+  version: string;
+  /** The crew wire version that release speaks — see `CREW_PROTOCOL_VERSION`. */
+  crewProtocol: number;
+  /**
+   * The release asked to reach operators today (ADR 0046). Present only when the person who cut it
+   * put an `**Urgent.**` line under the heading in `CHANGELOG.md`, and `reason` is that line's own
+   * sentence, in the release's English.
+   *
+   * ABSENT is the ordinary release, and absent is also what a malformed field reads as: urgency is a
+   * courtesy on the cadence, never a gate, so nothing here may turn a bad document into an error.
+   */
+  urgent?: { reason: string };
+}
+
+/** The newest urgent release in a delta, and why — the shape the snapshot carries. */
+export interface UpdateUrgentReading {
+  version: string;
+  reason: string;
+}
+
+/** Where the asset sits. Constructed from (repo, version), never taken from a document, for the
+ *  reason the manifest carries no URLs: a release must not be able to redirect a read to another
+ *  host. The trust boundary stays "which repo", which is what COLLIE_UPDATE_REPO names. */
+export function releaseReadingUrl(repo: string, version: string, mirror: string | null = null): string {
+  return `${mirror ?? "https://github.com"}/${repo}/releases/download/v${version}/collie-release.json`;
+}
+
+/** The asset, parsed. Null for anything that is not the document we asked for — a wrong shape, a
+ *  non-integer protocol, a GitHub 404 page served as JSON. */
+export function parseReleaseReading(data: JsonValue): ReleaseReading | null {
+  if (data === null || typeof data !== "object" || Array.isArray(data)) return null;
+  const { version, crewProtocol } = data;
+  if (typeof version !== "string" || version === "") return null;
+  if (typeof crewProtocol !== "number" || !Number.isInteger(crewProtocol)) return null;
+  const reading: ReleaseReading = { version, crewProtocol };
+  // The urgent marker is read LAST and can only add. Anything that is not an object with a non-empty
+  // `reason` string is dropped on the floor, and the reading is still the reading — a release that
+  // wrote the field badly is an ordinary release, never an unreadable one.
+  const urgent = data.urgent;
+  if (urgent !== null && typeof urgent === "object" && !Array.isArray(urgent)) {
+    const reason = urgent.reason;
+    if (typeof reason === "string" && reason.trim() !== "") reading.urgent = { reason: reason.trim() };
+  }
+  return reading;
+}
+
+/** The newest release in a delta that called itself urgent, or null when none did. `readings` is one
+ *  entry per version asked about, in any order; a version with no reading simply cannot be urgent. */
+export function newestUrgent(
+  readings: readonly { version: string; reading: ReleaseReading | null }[],
+): UpdateUrgentReading | null {
+  let found: UpdateUrgentReading | null = null;
+  for (const { version, reading } of readings) {
+    const urgent = reading?.urgent;
+    if (urgent === undefined) continue;
+    if (found !== null && compareSemver(version, found.version) <= 0) continue;
+    found = { version, reason: urgent.reason };
+  }
+  return found;
+}
+
+/**
+ * What one read of a release's sidecar came back with.
+ *
+ * THREE ANSWERS, NOT TWO, and the third is the one that can be remembered: a reading, a definite
+ * ABSENCE (the release published no such asset — GitHub says 404, which is every release before
+ * 1.8.0), and a failure (a timeout, a 5xx, a body that is not the document). An absence is a fact
+ * about a published release and never changes; a failure is a fact about this minute. The monitor
+ * caches the first two for its lifetime and asks again after the third.
+ */
+export type ReleaseReadingResult = ReleaseReading | "absent" | null;
+
+/** Fetch one release's reading. Never throws and never waits long: the caller is a check whose
+ *  answer is the tag list, and this is a footnote on it. */
+export function releaseReadingFetcher(
+  repo: string,
+  mirror: string | null = null,
+): (version: string) => Promise<ReleaseReadingResult> {
+  return async (version) => {
+    try {
+      const init: RequestInit = {
+        headers: { accept: "application/json", "user-agent": "collie-update-check" },
+        signal: AbortSignal.timeout(RELEASE_READING_TIMEOUT_MS),
+      };
+      if (mirror !== null) init.redirect = MIRROR_FETCH.redirect;
+      const res = await fetch(releaseReadingUrl(repo, version, mirror), init);
+      // 404 is the ordinary answer for every release before 1.8.0, and it is DEFINITE: that release
+      // is published and will never grow the asset. Every other bad status is this minute's problem.
+      if (res.status === 404) return "absent";
+      if (!res.ok) return null;
+      // SAFETY: `Response.json()` output IS a JsonValue by construction; the parser checks it.
+      const parsed = parseReleaseReading((await res.json()) as JsonValue);
+      // A body that is not the document is a FAILURE, not an absence: a proxy's error page and a
+      // truncated download both land here, and neither is a claim about the release.
+      return parsed;
+    } catch {
+      return null; // timeout, DNS, unparseable body — all of it reads as "ask again next time"
+    }
+  };
+}
+
+/**
+ * Does the newest release change the link, and from what to what?
+ *
+ * Three ways to be null, and they are all "nothing to say to this operator": no crew (a solo install
+ * has no link), no reading (the release published none, or it could not be read), and the same number
+ * on both ends (an update that changes nothing about the wire).
+ */
+export function linkChangeOf(a: {
+  mode: CrewMode;
+  own: number;
+  reading: ReleaseReading | null;
+}): UpdateLinkChange | null {
+  if (a.mode === "solo") return null;
+  if (a.reading === null) return null;
+  if (a.reading.crewProtocol === a.own) return null;
+  return { from: a.own, to: a.reading.crewProtocol };
+}
+
+/** The one sentence the notice adds, in the bridge's own English — the push has no locale to read
+ *  (the phone's surfaces take theirs from `updateRibbon.linkChange`). */
+export const LINK_CHANGE_SENTENCE = "Changes the crew link. Update the lead first, members follow.";
 
 // ── The per-release integrity manifest (M14/01 §2.1) ─────────────────────────
 // One document per release, attached to the GitHub Release and copied into every tarball as
@@ -492,6 +863,8 @@ export function parseReleaseManifest(data: JsonValue): ManifestVerdict {
 export class UpdateStateStore {
   private lastVersion: string | null = null;
   private pushedAt: string | null = null;
+  private dismissed: string | null = null;
+  private dismissedCrew: string | null = null;
   private readonly file: string;
 
   constructor(private readonly cfg: Config) {
@@ -506,7 +879,14 @@ export class UpdateStateStore {
       const rec = raw !== null && typeof raw === "object" && !Array.isArray(raw) ? raw : null;
       const last = rec === null ? undefined : rec.lastNotified;
       const pushed = rec === null ? undefined : rec.lastPushedAt;
+      const closed = rec === null ? undefined : rec.dismissedVersion;
+      const closedCrew = rec === null ? undefined : rec.dismissedCrewVersion;
       this.lastVersion = typeof last === "string" ? last : null;
+      // A record written before M17/08 carries neither dismissal. Both read as "nothing dismissed",
+      // which is the band's own default — an operator who closed the band on an older build simply
+      // sees it once more.
+      this.dismissed = typeof closed === "string" ? closed : null;
+      this.dismissedCrew = typeof closedCrew === "string" ? closedCrew : null;
       // A LEGACY record carries no timestamp. It reads as "no push yet" — the window opens at once
       // rather than crashing the monitor or pinning it shut for a day.
       this.pushedAt = typeof pushed === "string" ? pushed : null;
@@ -524,21 +904,98 @@ export class UpdateStateStore {
     return this.pushedAt;
   }
 
+  /** The release whose OFFER the operator closed, or null when none was. */
+  dismissedVersion(): string | null {
+    return this.dismissed;
+  }
+
+  /** The version whose quiet CREW notice the operator closed, or null. A different decision from
+   *  the one above, and so a different field — see {@link DismissScope}. */
+  dismissedCrewVersion(): string | null {
+    return this.dismissedCrew;
+  }
+
   async setLastNotified(version: string, pushedAt: string): Promise<void> {
     this.lastVersion = version;
     this.pushedAt = pushedAt;
+    await this.write();
+  }
+
+  /**
+   * Remember the version whose band the operator closed, in the scope they closed.
+   *
+   * It lives HERE, beside `lastNotified`, rather than in a browser: a dismissal is a decision about
+   * this machine's update, and a decision kept per browser leaves the band up on the phone after it
+   * was closed on the laptop (M17/08).
+   *
+   * `notified` folds the digest snooze into the SAME write. Two writes can be interrupted between
+   * them and leave half a decision on disk: a band closed with a push still armed for the version
+   * just declined, or the reverse.
+   */
+  async setDismissed(
+    scope: DismissScope,
+    version: string,
+    notified?: { version: string; pushedAt: string },
+  ): Promise<void> {
+    if (scope === "offer") this.dismissed = version;
+    else this.dismissedCrew = version;
+    if (notified !== undefined) {
+      this.lastVersion = notified.version;
+      this.pushedAt = notified.pushedAt;
+    }
+    await this.write();
+  }
+
+  /** One record, one atomic write (tmp + rename), matching Push/NotifyPrefs/Snooze — a crash
+   *  mid-write can't leave a corrupt file that would re-nag (or worse) on the next load. */
+  private async write(): Promise<void> {
     await mkdir(this.cfg.stateDir, { recursive: true, mode: 0o700 });
-    // Atomic write (tmp + rename), matching Push/NotifyPrefs/Snooze — a crash mid-write can't leave a
-    // corrupt file that would re-nag (or worse) on the next load.
+    const body = {
+      lastNotified: this.lastVersion,
+      lastPushedAt: this.pushedAt,
+      dismissedVersion: this.dismissed,
+      dismissedCrewVersion: this.dismissedCrew,
+    };
     const tmp = `${this.file}.tmp`;
-    await writeFile(tmp, JSON.stringify({ lastNotified: version, lastPushedAt: pushedAt }, null, 2), {
-      mode: 0o600,
-    });
+    await writeFile(tmp, JSON.stringify(body, null, 2), { mode: 0o600 });
     await rename(tmp, this.file);
   }
 }
 
+/**
+ * The command that restarts THIS Collie, spelled for the install kind — the one place it is spelled.
+ *
+ * TWO spellings, and the split is Herdr-managed against everything else (M14/01 §5.3):
+ *   • `detached-checkout` is Herdr-managed, and Herdr resolves the plugin's checkout, so its action
+ *     runs from any directory where `bin/collie` would not.
+ *   • Everything else — a linked clone, a binary install, an unknown layout and a PACKAGED install —
+ *     takes the `collie` verb, which drives the `systemd --user` unit and works anywhere the CLI is
+ *     on PATH.
+ *
+ * **A packaged install is not a system unit**, which is the mistake worth naming here because it is
+ * the obvious guess. Our package ships NO unit file: `collie start` writes the operator's own
+ * `~/.config/systemd/user` unit and drives it with `systemctl --user`
+ * (`packaging/aur/PKGBUILD`). So `sudo systemctl restart collie` names a unit that does not exist,
+ * and asks for a password to do it. Only UPDATING is someone else's on a packaged install (ADR
+ * 0035); restarting is still the operator's own, exactly as `update-banner.tsx` already had it.
+ *
+ * Pure and exported: the phone renders what the host answered, so this is the only derivation.
+ */
+export function restartCommandFor(kind: UpdateStatus["installKind"], instance: string | null): string {
+  return kind === "detached-checkout" ? herdrActionCommand("restart", instance) : "collie restart";
+}
+
 // ── The monitor ───────────────────────────────────────────────────────────────
+
+/**
+ * WHICH band was closed. Two decisions, never one key.
+ *
+ * `offer` is "a release is available on this machine". `crew` is "another machine is standing
+ * behind, and a package manager owns it". They are about different machines and they are put down
+ * separately: hiding a peer's quiet notice must not also hide this host's own offer, even when the
+ * two name the same version.
+ */
+export type DismissScope = "offer" | "crew";
 
 /** Persistence seam — just what the monitor needs from {@link UpdateStateStore}. */
 export interface UpdateStore {
@@ -546,6 +1003,17 @@ export interface UpdateStore {
   /** ISO-8601 stamp of the last push, or null — the digest window is measured from it. */
   lastPushedAt(): string | null;
   setLastNotified(version: string, pushedAt: string): Promise<void>;
+  /** The release whose OFFER was closed, or null. Reported on the snapshot, so the decision holds
+   *  on every screen rather than in the browser that made it. */
+  dismissedVersion(): string | null;
+  /** The version whose quiet CREW notice was closed, or null. */
+  dismissedCrewVersion(): string | null;
+  /** Record a dismissal, folding the digest snooze into the same write when one is asked for. */
+  setDismissed(
+    scope: DismissScope,
+    version: string,
+    notified?: { version: string; pushedAt: string },
+  ): Promise<void>;
 }
 
 export interface UpdateMonitorDeps {
@@ -565,13 +1033,68 @@ export interface UpdateMonitorDeps {
   /** How this Collie is installed, probed once at startup — it cannot change under a running process
    *  (an update restarts the service), so the monitor just reports it. */
   installKind: UpdateStatus["installKind"];
+  /** `COLLIE_INSTANCE`, or `null` for the host's first Collie — it names the plugin id the restart
+   *  command prints. Injected, not read here: the monitor resolves nothing from the environment. */
+  instance: string | null;
+  /**
+   * The version this process was running when it started, read the way `collie version` reads it.
+   *
+   * Captured ONCE, at boot, beside the install kind — for the same reason the kind is: it cannot
+   * change under a running process. `liveVersion` re-reads the same files, and a difference between
+   * the two is the whole of the restart-needed signal. No new state file and no new mechanism.
+   */
+  bootVersion: string;
+  /** The same reading, taken NOW. Throttled by the monitor, never called per request unthrottled. */
+  liveVersion: () => string;
+  /**
+   * Has the binary this process is EXECUTING been replaced on disk (`bridge/exe-replaced.ts`)?
+   *
+   * The half {@link liveVersion} cannot see. A package manager that rebuilds the SAME version — a
+   * new Arch pkgrel, say — replaces `bin/collie` under the live service and moves no version string
+   * at all, so the version comparison stays quiet while the process serves the old code. The
+   * executable is the only witness to that, and it is one readlink plus two `stat`s.
+   *
+   * Injected, and throttled by the monitor exactly as {@link liveVersion} is. Answering `false` is
+   * what an install this cannot be asked about looks like — the version comparison then decides
+   * alone, as it did before.
+   */
+  exeReplaced: () => boolean;
+  /** The package manager's upgrade command for this root, or null when there is none to name.
+   *  Resolved once at startup beside the kind, for the reason the kind is: it cannot change under a
+   *  running process, and the phone must never derive it. */
+  packageCommand: string | null;
   store: UpdateStore;
   now: () => number;
   /** Whether update pushes are enabled (the `updates` notify pref — the user's off-switch). */
   updatesEnabled: () => boolean;
   /** Fire the update-available push for the digest — every version folded into it, oldest first.
-   *  Never empty; the last element is the newest available version. */
-  notify: (versions: string[]) => void;
+   *  Never empty; the last element is the newest available version. The link change rides along so
+   *  the body can name it (M27/06), and so does the urgent record, whose sentence opens the body
+   *  (ADR 0046); null is the ordinary release for both. */
+  notify: (
+    versions: string[],
+    linkChange: UpdateLinkChange | null,
+    urgent: UpdateUrgentReading | null,
+  ) => void;
+  /** This build's own crew wire version (`CREW_PROTOCOL_VERSION`). Injected rather than imported so
+   *  the monitor resolves nothing for itself and a test can name both ends of a difference. */
+  crewProtocol: number;
+  /**
+   * This install's crew mode, read at each check. A `solo` install has no link, so it is never told
+   * that one changed — the mode is resolved at boot and cannot move under a running process, but it
+   * is a function so the monitor holds no copy of a fact it does not own.
+   */
+  crewMode: () => CrewMode;
+  /**
+   * Read one release's own `collie-release.json` (M27/06). Never throws, and answers one of three
+   * things — see {@link ReleaseReadingResult}: the reading, `"absent"` for a release that published
+   * none (every release before 1.8.0), and null for a read that failed.
+   *
+   * Called for the newest release, and for each of the newest few in the delta when the monitor asks
+   * whether any of them is urgent (ADR 0046). The monitor remembers a reading and an absence for its
+   * lifetime, so a published release is asked about once; a failure is asked again next check.
+   */
+  fetchReleaseReading: (version: string) => Promise<ReleaseReadingResult>;
   /**
    * The detached updater's run record, read from disk (M15/04). Injected rather than read here so
    * the monitor stays a pure poller over seams — and read PER CALL, never cached, because the file
@@ -589,8 +1112,28 @@ export class UpdateMonitor {
   private newerVersions: string[] = [];
   private majorAvailable: string | null = null;
   private checkedAt: number | null = null;
+  // CACHED WITH THE READING, never in a store of its own (M27/06): it is a fact about the release
+  // the last check found, so it lives and dies with `latest`.
+  private linkChange: UpdateLinkChange | null = null;
+  // THE NEWEST URGENT RELEASE IN THE DELTA, or null (ADR 0046). Cached beside `linkChange` and for
+  // the same reason: it is a fact about the releases the last check found.
+  private urgent: UpdateUrgentReading | null = null;
+  // One reading per version, for this process's lifetime. A published release's sidecar never
+  // changes, so a second read of the same version would spend a request to learn what we know. Only
+  // an ANSWER is kept: a failed or absent read stays out, so tomorrow's check asks again rather than
+  // remembering a timeout forever.
+  private readonly readings = new Map<string, ReleaseReading | "absent">();
+  // The answers of THIS check, failures included, cleared when the next one starts. The link-change
+  // read and the urgency sweep both ask about the newest release, and a failed read is not kept in
+  // the map above — without this, one check would spend two requests on one version to learn the
+  // same "could not read it" twice.
+  private checkReadings = new Map<string, ReleaseReading | null>();
   private staleAt = Number.NEGATIVE_INFINITY;
   private staleValue = false;
+  private swappedAt = Number.NEGATIVE_INFINITY;
+  private swappedValue = false;
+  private exeAt = Number.NEGATIVE_INFINITY;
+  private exeValue = false;
   private inFlight: Promise<void> | null = null;
 
   constructor(private readonly deps: UpdateMonitorDeps) {}
@@ -633,7 +1176,25 @@ export class UpdateMonitor {
     this.majorAvailable = major === null ? null : latestReleaseAboveMajor(tags, major);
     // The whole list, not just its top: a digest has to be able to NAME the releases it folded.
     this.newerVersions = updatesNewerThan(tags, this.deps.current);
+    // A fresh page of "what did this check learn", so a read that failed last time is tried again.
+    this.checkReadings = new Map();
     this.checkedAt = this.deps.now();
+    // ONE SMALL GET INSIDE THIS CHECK'S BUDGET (M27/06), and only when there is a release to ask
+    // about. It cannot fail the check: the fetcher answers null for everything that is not the
+    // document, and null reads as "no change".
+    this.linkChange =
+      this.latest === null
+        ? null
+        : linkChangeOf({
+            mode: this.deps.crewMode(),
+            own: this.deps.crewProtocol,
+            reading: await this.reading(this.latest),
+          });
+    // URGENCY IS A PROPERTY OF THE WHOLE DELTA, NOT OF ITS TOP (ADR 0046). An urgent 1.9.1 with a
+    // quiet 1.9.2 above it is still an urgent train, so every version in the delta is asked — the
+    // newest URGENT_READING_CAP of them, through the same cache, and all at once so the wait is one
+    // timeout rather than ten. It cannot fail the check: every read answers null or a reading.
+    this.urgent = await this.urgencyOf(this.newerVersions);
 
     const { current, store } = this.deps;
     // The snapshot above is already updated — suppressing a push must never suppress state.
@@ -645,10 +1206,39 @@ export class UpdateMonitor {
       lastNotified: store.lastNotified(),
       lastPushedAt: store.lastPushedAt(),
       now: new Date(this.deps.now()),
+      urgent: this.urgent ?? undefined,
     });
     if (!verdict.send) return;
     await store.setLastNotified(verdict.versions[verdict.versions.length - 1] ?? current, this.nowIso());
-    this.deps.notify(verdict.versions);
+    this.deps.notify(verdict.versions, this.linkChange, this.urgent);
+  }
+
+  /**
+   * One release's `collie-release.json`, memoised. Never throws. A reading and a definite absence are
+   * both kept; a FAILED read is kept out of the map, so a network blip is never remembered as "this
+   * release says nothing" and the next check asks again.
+   */
+  private async reading(version: string): Promise<ReleaseReading | null> {
+    const held = this.readings.get(version);
+    if (held !== undefined) return held === "absent" ? null : held;
+    const thisCheck = this.checkReadings.get(version);
+    if (thisCheck !== undefined) return thisCheck;
+    const fetched = await this.deps.fetchReleaseReading(version);
+    this.checkReadings.set(version, fetched === "absent" ? null : fetched);
+    // A reading and an ABSENCE are both facts about a published release, and a published release does
+    // not change. A failure is a fact about this minute, so it is not remembered.
+    if (fetched !== null) this.readings.set(version, fetched);
+    return fetched === "absent" ? null : fetched;
+  }
+
+  /** The newest urgent release among the newest {@link URGENT_READING_CAP} of `versions`, or null. */
+  private async urgencyOf(versions: readonly string[]): Promise<UpdateUrgentReading | null> {
+    const asked = versions.slice(-URGENT_READING_CAP);
+    if (asked.length === 0) return null;
+    const readings = await Promise.all(
+      asked.map(async (version) => ({ version, reading: await this.reading(version) })),
+    );
+    return newestUrgent(readings);
   }
 
   private nowIso(): string {
@@ -665,6 +1255,31 @@ export class UpdateMonitor {
     await this.deps.store.setLastNotified(this.latest, this.nowIso());
   }
 
+  /**
+   * The band was closed, for `version`, in the scope it was closed in.
+   *
+   * Closing the OFFER for the release this host is actually being offered also snoozes the digest,
+   * in the SAME write: being pushed tomorrow morning about a version just declined is the app
+   * arguing with a decision the operator already made. Two conditions gate that, and both matter:
+   *
+   *   • Scope. A quiet CREW notice is about another machine and the push is about this one, so
+   *     hiding it must never silence a release this host was never told about.
+   *   • The version. An offer for anything other than the release upstream currently names is not
+   *     the release the digest would push, and moving `lastNotified` there would either swallow the
+   *     current version or re-announce an old one.
+   *
+   * A NEWER release is a different version and raises the band again — this is not a mute, and it
+   * carries no clock of its own (the digest owns the clock).
+   */
+  async dismiss(version: string, scope: DismissScope = "offer"): Promise<void> {
+    const snoozes = scope === "offer" && this.latest !== null && version === this.latest;
+    await this.deps.store.setDismissed(
+      scope,
+      version,
+      snoozes ? { version, pushedAt: this.nowIso() } : undefined,
+    );
+  }
+
   /** Recompute (throttled) whether the running process is behind the on-disk bridge source. */
   private bridgeStale(): boolean {
     const now = this.deps.now();
@@ -672,6 +1287,35 @@ export class UpdateMonitor {
     this.staleValue = this.deps.bridgeStamp() !== this.deps.startupStamp;
     this.staleAt = now;
     return this.staleValue;
+  }
+
+  /**
+   * Have the files on disk stopped naming the version this process is running?
+   *
+   * Throttled exactly as {@link bridgeStale} is, and for the same reason: this is two small file
+   * reads and the snapshot is polled. Latching is deliberately NOT done — a package manager that
+   * rolls its change back leaves a process whose code matches disk again, and a latched flag would
+   * keep asking for a restart nobody needs.
+   */
+  private versionSwapped(): boolean {
+    const now = this.deps.now();
+    if (now - this.swappedAt < STALE_TTL_MS) return this.swappedValue;
+    this.swappedValue = this.deps.liveVersion() !== this.deps.bootVersion;
+    this.swappedAt = now;
+    return this.swappedValue;
+  }
+
+  /**
+   * Has the executable moved under this process? Throttled as {@link versionSwapped} is, and not
+   * latched for the same reason: a package manager that rolls its change back leaves a process
+   * running the file that is on disk again.
+   */
+  private exeSwapped(): boolean {
+    const now = this.deps.now();
+    if (now - this.exeAt < STALE_TTL_MS) return this.exeValue;
+    this.exeValue = this.deps.exeReplaced();
+    this.exeAt = now;
+    return this.exeValue;
   }
 
   /** The snapshot-facing status. Cheap: `latest` is cached from the last check, `bridgeStale` throttled. */
@@ -689,15 +1333,30 @@ export class UpdateMonitor {
           ? null
           : githubReleaseUrl(this.deps.repo, this.majorAvailable),
       installKind: this.deps.installKind,
+      dismissedVersion: this.deps.store.dismissedVersion(),
+      dismissedCrewVersion: this.deps.store.dismissedCrewVersion(),
       bridgeStale: this.bridgeStale(),
+      // Two witnesses to one fact, and either is enough: the version files stopped naming what this
+      // process runs, or the executable itself was replaced. The second catches the rebuild of an
+      // identical version, which the first cannot see.
+      restartNeeded: this.versionSwapped() || this.exeSwapped(),
       checkedAt: this.checkedAt,
       // The whole list, oldest first — the card names what a single update folds in (M15/05). Empty
       // until the first successful check, which reads as "nothing to name", the same as up to date.
       newerVersions: this.newerVersions,
     };
     // Assigned, never conditionally spread: an install that has never updated through the runner
-    // must carry NO `run` key rather than one whose value is `undefined`.
+    // must carry NO `run` key rather than one whose value is `undefined`. The same for the package
+    // command, which most installs have none of.
     if (run !== null) status.run = run;
+    // The link change (M27/06), on the same rule: absent when there is nothing to say, which is
+    // every solo install, every ordinary release and every check that has not run yet.
+    if (this.linkChange !== null) status.linkChange = this.linkChange;
+    // The urgent marker (ADR 0046), on the same rule: absent when no release in the delta asked for
+    // the daily cadence, which is every ordinary release and every check that has not run yet.
+    if (this.urgent !== null) status.urgent = this.urgent;
+    if (this.deps.packageCommand !== null) status.packageCommand = this.deps.packageCommand;
+    if (status.restartNeeded) status.restartCommand = restartCommandFor(this.deps.installKind, this.deps.instance);
     return status;
   }
 }

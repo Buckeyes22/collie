@@ -7,11 +7,13 @@ import {
   chooseSession,
   closeTabArgs,
   dumpScreenArgs,
+  newTabArgs,
   parsePaneList,
   parseSessionList,
   parseStreamEvent,
   parseTabList,
   renameTabArgs,
+  saysNoSession,
   sendKeysArgs,
   subscribeArgs,
   tabNumberOf,
@@ -77,7 +79,19 @@ describe("parsePaneList", () => {
       // The probe's own value: zellij reports `null` for a pane it did not start with an explicit
       // command, which reaches the port as "no foreground command" rather than as a name.
       command: "",
+      // The M10/05 probe's listing carried no `pane_cwd`, so this pane's folder is unknown.
+      cwd: "",
     });
+  });
+
+  // Probed 2026-10-08 on zellij 0.44.2: `--all` carries `pane_cwd` for a running terminal pane.
+  test("a pane_cwd is the pane's folder, and its absence is an unknown folder", () => {
+    const listing = JSON.stringify([
+      { id: 0, is_plugin: false, title: "Pane #1", exited: false, tab_id: 0, pane_command: "/bin/bash", pane_cwd: "/home/op/repo" },
+      { id: 1, is_plugin: false, title: "Pane #2", exited: true, tab_id: 0 },
+      { id: 2, is_plugin: false, title: "Pane #3", exited: false, tab_id: 0, pane_cwd: 7 },
+    ]);
+    expect(parsePaneList(listing)?.map((pane) => pane.cwd)).toEqual(["/home/op/repo", "", ""]);
   });
 
   test("a terminal_command is carried raw — a fact, never an identity", () => {
@@ -111,7 +125,7 @@ describe("parseTabList", () => {
   ]);
 
   test("counts tiled and floating panes together — both are places a shell runs", () => {
-    expect(parseTabList(probed)).toEqual([{ tabNumber: 0, position: 0, name: "Tab #1", active: true, paneCount: 2 }]);
+    expect(parseTabList(probed)).toEqual([{ tabNumber: 0, position: 0, name: "Tab #1", active: true }]);
   });
 });
 
@@ -281,3 +295,42 @@ describe("toZellijKey", () => {
     expect(toZellijKey("")).toEqual({ ok: false, reason: "unparsed" });
   });
 });
+
+describe("newTabArgs", () => {
+  test("a real cwd becomes `--cwd <path>`", () => {
+    expect(newTabArgs("work", "/home/op/repo")).toEqual(["action", "new-tab", "--name", "work", "--cwd", "/home/op/repo"]);
+  });
+
+  // The launch bug this closed: a zellij pane reports NO working directory, so the launch route
+  // handed the adapter `""` and `--cwd ` reached zellij with no value. zellij refused the whole
+  // call — *The argument '--cwd <CWD>' requires a value but none was supplied* — so a launcher row
+  // beside any zellij pane could not run at all (measured, M22/04 zellij leg).
+  test.each([
+    ["absent", undefined],
+    ["empty", ""],
+    ["blank", "  "],
+  ] as const)("a %s cwd is left off entirely, never sent as an empty value", (_name, cwd: string | undefined) => {
+    expect(newTabArgs(undefined, cwd)).toEqual(["action", "new-tab"]);
+  });
+});
+
+describe("saysNoSession", () => {
+  test.each([
+    ["a name zellij does not know", "Session 'work' not found. The following sessions are active:\nlab"],
+    ["a box with no sessions at all", "No active zellij sessions found."],
+    // The one a live run found: `action --session lab` after `zellij kill-session lab`, exit 1.
+    // Before this, the binding kept a name it could no longer use.
+    ["a session that has exited", "There is no active session!"],
+  ] as const)("%s is zellij saying the session is gone", (_name, text: string) => {
+    expect(saysNoSession(text)).toBe(true);
+  });
+
+  test.each([
+    ["an unparseable listing", "not JSON"],
+    ["a pane that is gone", "Pane terminal_9 not found in this session"],
+    ["a bad key", 'Invalid key at position 1: "Nonsense"'],
+  ] as const)("%s is not", (_name, text: string) => {
+    expect(saysNoSession(text)).toBe(false);
+  });
+});
+

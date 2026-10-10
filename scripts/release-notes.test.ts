@@ -1,0 +1,538 @@
+// Tests for scripts/release-notes.ts, the release page body read out of CHANGELOG.md.
+//
+// The body is what an operator sees on the GitHub Release page, and nothing else writes it, so
+// each case here pins one half of the contract: what a well-shaped section renders to, and which
+// mis-shaped section stops the release with a named reason instead of publishing a page that
+// lists nothing.
+//
+// The last block reads the REPOSITORY'S OWN CHANGELOG.md, so a bullet the page could not print
+// turns CI red on the commit that wrote it. The tag-time failure is the backstop, not the gate.
+
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+import { describe, expect, test } from "bun:test";
+
+import {
+	changelogAnchor,
+	checkUnreleased,
+	creditedHandles,
+	parseSection,
+	parseUrgent,
+	renderBody,
+} from "./release-notes.ts";
+
+const REPO = "AltanS/collie";
+
+// A section with all five groups, one bullet each.
+const FULL = `# Changelog
+
+## [Unreleased]
+
+## [2.1.0] - 2026-10-01
+
+### Added
+
+- **The crew levels itself.** Every member follows the lead's tag. Thanks @someone (#12). ([abc1234](https://github.com/AltanS/collie/commit/abc1234))
+
+### Changed
+
+- **The update band shows one release at a time.** It used to stack them. ([aaa0001](https://github.com/AltanS/collie/commit/aaa0001))
+
+### Fixed
+
+- **\`collie doctor\` names the unit it checked.** It used to name the first one on the host. ([def5678](https://github.com/AltanS/collie/commit/def5678))
+
+### Packaging
+
+- **The Arch package installs to \`/opt/collie\`.** That is the layout the repository expects. ([0000111](https://github.com/AltanS/collie/commit/0000111))
+
+### Docs
+
+- **The install page names the mise route.** It sits beside Arch and Nix. ([2222333](https://github.com/AltanS/collie/commit/2222333))
+
+## [2.0.0] - 2026-09-01
+
+### Added
+
+- **The first one.** ([9999999](https://github.com/AltanS/collie/commit/9999999))
+`;
+
+const SMALL = `# Changelog
+
+## [1.0.0] - 2026-01-01
+
+### Added
+
+- **Collie ships.** The first release. ([1111111](https://github.com/AltanS/collie/commit/1111111))
+`;
+
+describe("parseSection", () => {
+	test("reads the five groups in their fixed order", () => {
+		const section = parseSection(FULL, "2.1.0");
+		expect(section.date).toBe("2026-10-01");
+		expect(section.groups.map((g) => g.name)).toEqual([
+			"Added",
+			"Changed",
+			"Fixed",
+			"Packaging",
+			"Docs",
+		]);
+	});
+
+	test("a lead keeps its backticks and loses its asterisks", () => {
+		const section = parseSection(FULL, "2.1.0");
+		const fixed = section.groups.find((g) => g.name === "Fixed");
+		expect(fixed?.leads).toEqual(["`collie doctor` names the unit it checked."]);
+		for (const group of section.groups) {
+			for (const lead of group.leads) expect(lead).not.toContain("**");
+		}
+	});
+
+	test("a missing version heading fails", () => {
+		expect(() => parseSection(FULL, "3.0.0")).toThrow(/no '## \[3\.0\.0\]/);
+	});
+
+	test("a bullet with no bold lead fails", () => {
+		const bad = FULL.replace("- **The crew levels itself.**", "- The crew levels itself.");
+		expect(() => parseSection(bad, "2.1.0")).toThrow(/no bold lead sentence/);
+	});
+
+	test("a bold lead that is never closed fails", () => {
+		const bad = FULL.replace("- **The crew levels itself.**", "- **The crew levels itself.");
+		expect(() => parseSection(bad, "2.1.0")).toThrow(/never closed/);
+	});
+
+	test("a bullet above every group heading fails", () => {
+		const bad = FULL.replace(
+			"### Added\n\n- **The crew levels itself.**",
+			"- **A stray bullet.** No group owns it.\n\n### Added\n\n- **The crew levels itself.**",
+		);
+		expect(() => parseSection(bad, "2.1.0")).toThrow(/above every '### ' group heading/);
+	});
+
+	test("an unknown group heading fails", () => {
+		const bad = FULL.replace("### Packaging", "### Security");
+		expect(() => parseSection(bad, "2.1.0")).toThrow(/unknown group heading '### Security'/);
+	});
+
+	test("a CRLF file reads exactly like an LF one", () => {
+		const crlf = FULL.replace(/\n/g, "\r\n");
+		expect(parseSection(crlf, "2.1.0")).toEqual(parseSection(FULL, "2.1.0"));
+	});
+
+	test("a prerelease heading is found and dated", () => {
+		const beta = SMALL.replace("## [1.0.0] - 2026-01-01", "## [1.7.0-beta.1] - 2026-10-01");
+		const section = parseSection(beta, "1.7.0-beta.1");
+		expect(section.date).toBe("2026-10-01");
+		expect(section.groups[0]?.leads).toEqual(["Collie ships."]);
+	});
+});
+
+describe("checkUnreleased", () => {
+	test("an empty Unreleased section is well shaped", () => {
+		expect(checkUnreleased(FULL)).toEqual([]);
+	});
+
+	test("a well-shaped bullet under a group passes", () => {
+		const filled = FULL.replace(
+			"## [Unreleased]\n",
+			"## [Unreleased]\n\n### Fixed\n\n- **A thing is fixed.** The detail follows here. (#1)\n",
+		);
+		expect(checkUnreleased(filled)).toEqual([
+			{ name: "Fixed", leads: ["A thing is fixed."], credits: [[]] },
+		]);
+	});
+
+	test("a bullet with no bold lead fails, and the message names the section", () => {
+		const bad = FULL.replace(
+			"## [Unreleased]\n",
+			"## [Unreleased]\n\n### Fixed\n\n- a thing is fixed\n",
+		);
+		expect(() => checkUnreleased(bad)).toThrow(/\[Unreleased\].*no bold lead sentence/s);
+	});
+
+	test("a bullet above every group heading fails", () => {
+		const bad = FULL.replace(
+			"## [Unreleased]\n",
+			"## [Unreleased]\n\n- **A thing is fixed.** No group owns it.\n",
+		);
+		expect(() => checkUnreleased(bad)).toThrow(/above every '### ' group heading/);
+	});
+
+	test("an unknown group heading fails", () => {
+		const bad = FULL.replace("## [Unreleased]\n", "## [Unreleased]\n\n### Removed\n");
+		expect(() => checkUnreleased(bad)).toThrow(/unknown group heading '### Removed'/);
+	});
+});
+
+describe("changelogAnchor", () => {
+	// GitHub's slugger lowercases, drops every character that is not a letter, a digit, a space or
+	// a hyphen, then turns each remaining space into a hyphen. The heading text is
+	// `[x.y.z] - YYYY-MM-DD`, so the brackets and the dots go and the three spaces become three
+	// hyphens. A prerelease loses only its dot; the hyphen in `-beta.1` was already legal.
+	test("drops the dots and joins the date with three hyphens", () => {
+		expect(changelogAnchor("1.5.0", "2026-09-04")).toBe("150---2026-09-04");
+	});
+
+	test("a prerelease keeps its hyphen and loses its dots", () => {
+		expect(changelogAnchor("1.7.0-beta.1", "2026-10-01")).toBe("170-beta1---2026-10-01");
+	});
+});
+
+describe("renderBody", () => {
+	test("the whole body for a version with all five groups", () => {
+		expect(renderBody(FULL, "2.1.0", REPO, "v2.1.0", "v2.0.0")).toBe(`## Update
+
+**Already on 1.x?** One command, then the phone updates itself within a minute.
+
+\`\`\`
+collie update                                              # downloaded install (install.sh or a tarball below)
+herdr plugin action invoke update --plugin herdr.collie    # Herdr plugin install
+\`\`\`
+
+Check with \`collie version\` or \`herdr plugin action invoke version --plugin herdr.collie\`.
+
+## What changed
+
+**Added**
+
+- The crew levels itself. Thanks @someone.
+
+**Changed**
+
+- The update band shows one release at a time.
+
+**Fixed**
+
+- \`collie doctor\` names the unit it checked.
+
+**Packaging**
+
+- The Arch package installs to \`/opt/collie\`.
+
+**Docs**
+
+- The install page names the mise route.
+
+Full detail with commits: [2.1.0 in the changelog](https://github.com/AltanS/collie/blob/v2.1.0/CHANGELOG.md#210---2026-10-01)
+
+Compare: [v2.0.0...v2.1.0](https://github.com/AltanS/collie/compare/v2.0.0...v2.1.0)
+
+<details><summary>Verify a download by hand</summary>
+
+\`\`\`
+curl -fLO https://github.com/AltanS/collie/releases/download/v2.1.0/collie-2.1.0-linux-x64.tar.gz
+curl -fLO https://github.com/AltanS/collie/releases/download/v2.1.0/collie-2.1.0-linux-x64.tar.gz.sha256
+sha256sum -c collie-2.1.0-linux-x64.tar.gz.sha256   # macOS: shasum -a 256 -c
+\`\`\`
+
+A sha256 catches a corrupt or truncated download. It does not prove who built the file,
+HTTPS and the pinned github.com host carry that.
+
+</details>
+`);
+	});
+
+	test("no previous tag means no compare line", () => {
+		const body = renderBody(SMALL, "1.0.0", REPO, "v1.0.0");
+		expect(body).not.toContain("Compare:");
+		expect(body).toContain("Full detail with commits: [1.0.0 in the changelog]");
+	});
+
+	test("the update block is open, and first on the page", () => {
+		const body = renderBody(FULL, "2.1.0", REPO, "v2.1.0", "v2.0.0");
+		expect(body.startsWith("## Update\n")).toBe(true);
+		// The commands a phone came here to copy are visible without a tap: only the verify recipe
+		// is folded.
+		expect(body.indexOf("collie update  ")).toBeLessThan(body.indexOf("<details>"));
+		expect(body.match(/<details>/g)).toHaveLength(1);
+		expect(body.indexOf("## Update")).toBeLessThan(body.indexOf("## What changed"));
+	});
+
+	test("only the groups that have content are printed", () => {
+		const body = renderBody(SMALL, "1.0.0", REPO, "v1.0.0");
+		expect(body).toContain("**Added**");
+		expect(body).not.toContain("**Changed**");
+		expect(body).not.toContain("**Fixed**");
+		expect(body).not.toContain("**Packaging**");
+		expect(body).not.toContain("**Docs**");
+	});
+});
+
+// ── Credits ─────────────────────────────────────────────────────────────────────────────────────
+// GitHub draws a release's Contributors avatars only for users the body @mentions, so the page line
+// keeps the credit its bullet carries.
+
+const CREDITS = `# Changelog
+
+## [3.0.0] - 2026-11-01
+
+### Added
+
+- **A.** Detail. Thanks @alice (#1, fixes #2). ([aaaaaaa](https://github.com/AltanS/collie/commit/aaaaaaa))
+- **B.** Detail. Reported by @bob (#3). ([bbbbbbb](https://github.com/AltanS/collie/commit/bbbbbbb))
+- **C.** Detail. Thanks to @carol and @dave-x, and suggested by @Alice. (#4)
+- **D.** Contributed by [@erin](https://github.com/erin) (#5).
+
+### Fixed
+
+- **E.** The \`@effort\` token, \`Thanks @mallory\`, the @types/node scope, mail me@example.com and the @word in prose.
+- **F.** Thanks @AltanS for the review, and thanks @frank.
+- **G.** Built by @AltanS alone.
+`;
+
+describe("credits", () => {
+	test("each bullet keeps its own credit, phrase as written", () => {
+		const section = parseSection(CREDITS, "3.0.0");
+		const added = section.groups.find((g) => g.name === "Added");
+		expect(added?.credits).toEqual([
+			[{ phrase: "Thanks", handles: ["alice"] }],
+			[{ phrase: "Reported by", handles: ["bob"] }],
+			[
+				{ phrase: "Thanks to", handles: ["carol", "dave-x"] },
+				{ phrase: "Suggested by", handles: ["Alice"] },
+			],
+			[{ phrase: "Contributed by", handles: ["erin"] }],
+		]);
+	});
+
+	test("code spans, scopes, e-mail, bare @words and the maintainer do not count", () => {
+		const fixed = parseSection(CREDITS, "3.0.0").groups.find((g) => g.name === "Fixed");
+		expect(fixed?.credits).toEqual([[], [{ phrase: "Thanks", handles: ["frank"] }], []]);
+	});
+
+	test("the section's handles are deduped, first spelling wins", () => {
+		expect(creditedHandles(parseSection(CREDITS, "3.0.0"))).toEqual([
+			"alice",
+			"bob",
+			"carol",
+			"dave-x",
+			"erin",
+			"frank",
+		]);
+	});
+
+	test("the page line ends with the credit, as a bare @mention", () => {
+		const body = renderBody(CREDITS, "3.0.0", REPO, "v3.0.0");
+		expect(body).toContain("- A. Thanks @alice.\n");
+		expect(body).toContain("- B. Reported by @bob.\n");
+		expect(body).toContain("- C. Thanks to @carol and @dave-x. Suggested by @Alice.\n");
+		expect(body).toContain("- D. Contributed by @erin.\n");
+		expect(body).toContain("- E.\n");
+		expect(body).toContain("- F. Thanks @frank.\n");
+		expect(body).toContain("- G.\n");
+		expect(body).not.toContain("@AltanS");
+	});
+});
+
+// ── Wrapped bullets ─────────────────────────────────────────────────────────────────────────────
+// A bullet may wrap at ~100 columns onto two-space continuation lines (1.15.0 does). The credit and
+// the end of the bold lead can sit on a later line, and a blank line or a heading ends the bullet.
+
+const WRAPPED = `# Changelog
+
+## [4.0.0] - 2026-12-01
+
+### Added
+
+- **A wrapped bullet keeps its credit.** The detail runs past the column limit and
+  wraps onto a second line, then a third. Thanks @gina (#1, #2).
+- **A lead that wraps across
+  two lines is read whole.** Detail. Reported by @hank (#3).
+- **A single line.** Detail. Thanks @ivy (#4).
+
+### Fixed
+
+- **A bullet before a blank line and a heading.** It has no credit of its own.
+
+### Docs
+
+- **The heading was not swallowed.** Detail
+  continues here. Thanks @jo.
+`;
+
+describe("wrapped bullets", () => {
+	const section = parseSection(WRAPPED, "4.0.0");
+	const group = (name: string) => section.groups.find((g) => g.name === name);
+
+	test("a credit on a continuation line is read", () => {
+		expect(group("Added")?.credits[0]).toEqual([{ phrase: "Thanks", handles: ["gina"] }]);
+	});
+
+	test("a bold lead that wraps across two lines is read whole", () => {
+		expect(group("Added")?.leads[1]).toBe("A lead that wraps across two lines is read whole.");
+		expect(group("Added")?.credits[1]).toEqual([{ phrase: "Reported by", handles: ["hank"] }]);
+	});
+
+	test("a single-line bullet beside wrapped ones reads as before", () => {
+		expect(group("Added")?.leads).toHaveLength(3);
+		expect(group("Added")?.leads[2]).toBe("A single line.");
+		expect(group("Added")?.credits[2]).toEqual([{ phrase: "Thanks", handles: ["ivy"] }]);
+	});
+
+	test("a bullet followed by a blank line and a heading does not swallow the heading", () => {
+		expect(group("Fixed")?.leads).toEqual(["A bullet before a blank line and a heading."]);
+		expect(group("Fixed")?.credits).toEqual([[]]);
+		expect(section.groups.map((g) => g.name)).toEqual(["Added", "Fixed", "Docs"]);
+		expect(group("Docs")?.credits[0]).toEqual([{ phrase: "Thanks", handles: ["jo"] }]);
+	});
+
+	test("the page line carries the credit from the continuation line", () => {
+		const body = renderBody(WRAPPED, "4.0.0", REPO, "v4.0.0");
+		expect(body).toContain("- A wrapped bullet keeps its credit. Thanks @gina.\n");
+		expect(body).toContain("- A lead that wraps across two lines is read whole. Reported by @hank.\n");
+		expect(creditedHandles(section)).toEqual(["gina", "hank", "ivy", "jo"]);
+	});
+});
+
+// ── The urgent line (ADR 0046) ──────────────────────────────────────────────────────────────────
+
+const URGENT = `# Changelog
+
+## [1.9.1] - 2026-09-20
+
+**Urgent.** The cache reaper deletes live entries, take this today.
+
+### Fixed
+
+- **The cache reaper keeps live entries.** It read the window backwards. ([abc1234](https://github.com/AltanS/collie/commit/abc1234))
+`;
+
+describe("parseUrgent", () => {
+	test("reads the line directly under the heading", () => {
+		expect(parseUrgent(URGENT, "1.9.1")).toEqual({
+			reason: "The cache reaper deletes live entries, take this today.",
+		});
+	});
+
+	test("an ordinary release says nothing", () => {
+		expect(parseUrgent(FULL, "2.1.0")).toBeNull();
+		expect(parseUrgent(SMALL, "1.0.0")).toBeNull();
+	});
+
+	test("ONLY that position counts — a line inside a group is prose", () => {
+		const inside = URGENT.replace(
+			"**Urgent.** The cache reaper deletes live entries, take this today.\n\n",
+			"",
+		).replace(
+			"### Fixed\n",
+			"### Fixed\n\n**Urgent.** This one is below the first group heading.\n",
+		);
+		expect(parseUrgent(inside, "1.9.1")).toBeNull();
+	});
+
+	// A NEAR MISS STOPS THE RELEASE. Reading one of these as prose would publish a fix on the weekly
+	// window while its author believed they had put it on the daily one.
+	test("a near miss throws instead of reading as prose", () => {
+		const withLine = (line: string) =>
+			URGENT.replace("**Urgent.** The cache reaper deletes live entries, take this today.", line);
+		for (const line of [
+			"**Urgent.**",
+			"**urgent** The cache reaper deletes live entries.",
+			"**Urgent** The cache reaper deletes live entries.",
+			"**URGENT.** The cache reaper deletes live entries.",
+			"Urgent: the cache reaper deletes live entries.",
+			"Urgent. The cache reaper deletes live entries.",
+			"** Urgent.** The cache reaper deletes live entries.",
+		]) {
+			expect(() => parseUrgent(withLine(line), "1.9.1")).toThrow(/Expected exactly/);
+		}
+	});
+
+	test("the sentence is checked, and a bad one stops the release", () => {
+		const withReason = (reason: string) =>
+			URGENT.replace("The cache reaper deletes live entries, take this today.", reason);
+		// Too long: a reason nobody finishes reading is a reason nobody acts on.
+		expect(() => parseUrgent(withReason(`${"a".repeat(140)}.`), "1.9.1")).toThrow(/141 characters/);
+		// Exactly at the limit is fine.
+		expect(parseUrgent(withReason(`${"a".repeat(139)}.`), "1.9.1")).toEqual({
+			reason: `${"a".repeat(139)}.`,
+		});
+		// No markup: neither the push body nor the card renders any.
+		expect(() => parseUrgent(withReason("Run `collie update` today."), "1.9.1")).toThrow(/backtick/);
+		expect(() => parseUrgent(withReason("See [the notes](https://x.dev) today."), "1.9.1")).toThrow(
+			/markdown link/,
+		);
+		// One sentence, and a sentence ends.
+		expect(() => parseUrgent(withReason("The cache reaper deletes live entries"), "1.9.1")).toThrow(
+			/period/,
+		);
+	});
+
+	test("the release page keeps the line as it was written, at the top of the body", () => {
+		const body = renderBody(URGENT, "1.9.1", REPO, "v1.9.1");
+		expect(body.startsWith("**Urgent.** The cache reaper deletes live entries, take this today.\n")).toBe(true);
+		expect(body.indexOf("**Urgent.**")).toBeLessThan(body.indexOf("## Update"));
+		// The rest of the page is what it always was — the line adds, it replaces nothing.
+		expect(body).toContain("## What changed");
+		expect(body).toContain("**Fixed**");
+		// An ordinary release's page does not start with it.
+		expect(renderBody(FULL, "2.1.0", REPO, "v2.1.0")).not.toContain("**Urgent.**");
+	});
+
+	test("the section still parses with the line in it", () => {
+		const section = parseSection(URGENT, "1.9.1");
+		expect(section.groups).toHaveLength(1);
+		expect(section.groups[0]?.leads).toEqual(["The cache reaper keeps live entries."]);
+	});
+});
+
+// ── The repository's own CHANGELOG ──────────────────────────────────────────────────────────────
+// Not a fixture: the real file, so a badly shaped bullet is red in CI on the commit that wrote it
+// rather than at tag time, when the release is already being published.
+
+describe("the repository's CHANGELOG.md", () => {
+	const changelog = readFileSync(join(import.meta.dir, "..", "CHANGELOG.md"), "utf8");
+
+	test("the newest numbered version's section parses", () => {
+		const newest = /^## \[(\d[^\]]*)\]/m.exec(changelog)?.[1];
+		expect(newest).toBeTruthy();
+		const section = parseSection(changelog, newest ?? "");
+		expect(section.groups.length).toBeGreaterThan(0);
+		for (const group of section.groups) expect(group.leads.length).toBeGreaterThan(0);
+	});
+
+	test("1.15.0 credits every contributor its wrapped bullets name", () => {
+		const handles = creditedHandles(parseSection(changelog, "1.15.0"));
+		expect(handles.map((h) => h.toLowerCase()).toSorted()).toEqual(
+			[
+				"AndiWandHerd",
+				"CorrectRoadH",
+				"cryptiklemur",
+				"dmstjd1024",
+				"Gaurav-Gosain",
+				"jaehyun2yo",
+				"jpcarranza94",
+				"jyothyswaroop",
+				"mavam",
+			]
+				.map((h) => h.toLowerCase())
+				.toSorted(),
+		);
+	});
+
+	test("1.12.1 credits the contributor its changelog names", () => {
+		expect(creditedHandles(parseSection(changelog, "1.12.1"))).toEqual(["enieuwy"]);
+	});
+
+	test("1.12.0 credits every contributor its changelog names", () => {
+		expect(creditedHandles(parseSection(changelog, "1.12.0"))).toEqual([
+			"edwinhu",
+			"CorrectRoadH",
+			"fonnesbeck",
+			"waynehoover",
+			"jyothyswaroop",
+			"bendrucker",
+			"lighcen",
+			"dantebarba",
+			"jpcarranza94",
+			"ubuntudroid",
+			"Femoon",
+		]);
+	});
+
+	test("every bullet under Unreleased is grouped and has a bold lead", () => {
+		expect(() => checkUnreleased(changelog)).not.toThrow();
+	});
+});

@@ -53,7 +53,7 @@ class WireModelsTest {
     @Test
     fun packAndUpdateModelsDecodeCurrentBridgeContract() {
         val pack = json.decodeFromString(
-            PackStatusResponse.serializer(),
+            CrewStatusResponse.serializer(),
             """{"pack":{"id":"pack-1","name":"lab","secretGeneration":2,"rotatedAt":10},"self":{"id":"lead","name":"Lead","version":"1.5.0"},"deputy":null,"members":[{"id":"lead","name":"Lead","isLead":true,"health":"reachable","lastSeenAt":11,"secretBehind":false,"provisional":false}],"ts":12}""",
         )
         val update = json.decodeFromString(

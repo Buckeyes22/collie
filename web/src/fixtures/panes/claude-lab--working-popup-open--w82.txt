@@ -1,0 +1,32 @@
+[0m[38;2;215;119;87m ▐[0m[38;2;215;119;87m[48;2;0;0;0m▛███▛█   [0m[1mClaude Code [0m[38;2;153;153;153mv2.1.291[0m
+[0m[38;2;215;119;87m▝▜[0m[38;2;215;119;87m[48;2;0;0;0m█████[0m[38;2;215;119;87m█▀  [0m[38;2;153;153;153mSonnet 5.5 · Claude Max[0m
+[0m[38;2;215;119;87m ▝▝   ▝▝   [0m[38;2;153;153;153m/tmp/claude-lab/project[0m
+
+
+[0m[38;2;153;153;153m[48;2;55;55;55m❯ [0m[38;2;255;255;255m[48;2;55;55;55mread all twelve src files one at a time using twelve separate Read tool calls, [0m[48;2;55;55;55m [0m
+[0m[48;2;55;55;55m  [0m[38;2;255;255;255m[48;2;55;55;55mthen write one sentence about each file[0m[48;2;55;55;55m                                         [0m
+  
+[0m[38;2;153;153;153m●[0m Reading [0m[1m7[0m files, listing [0m[1m1[0m directory… [0m[38;2;153;153;153m(ctrl+o to expand)[0m
+[0m[38;2;153;153;153m  ⎿  src/module-6.ts[0m
+
+[0m[38;2;215;119;87m·[0m [0m[38;2;215;119;87mArchi[0m[38;2;235;159;127mtec[0m[38;2;215;119;87mting… [0m[38;2;153;153;153m(5s · ↓ 167 tokens)[0m
+
+[0m[38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────[0m
+[0m[38;2;153;153;153m❯ [0m/ref
+[0m[38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────[0m
+  [0m[38;2;177;185;249m❯ /[0m[1m[38;2;177;185;249mref[0m[38;2;177;185;249mactor-module-boundaries     Move code between modules so each module[0m
+                                    [0m[38;2;177;185;249mowns one concern (project)[0m
+  [0m[38;2;153;153;153m  …-dependencies-across-packages  [0m[1mRef[0m[38;2;153;153;153mactor shared dependencies across every[0m
+                                    [0m[38;2;153;153;153mpackage in the monorepo and update lockfile…[0m
+  [0m[38;2;153;153;153m  …es:deps:[0m[1mref[0m[38;2;153;153;153mactor-dependencies  [0m[1mRef[0m[38;2;153;153;153mactor the dependency graph of one package[0m
+                                    [0m[38;2;153;153;153m(project)[0m
+  [0m[38;2;153;153;153m  /claude-api                     [0m[1mRef[0m[38;2;153;153;153merence for the Claude API / Anthropic SDK[0m
+                                    [0m[38;2;153;153;153m— model ids, pricing, params, streaming, to…[0m
+  [0m[38;2;153;153;153m  /dataviz                        Use this skill whenever you are about to[0m
+                                    [0m[38;2;153;153;153mcreate ANY chart, graph, plot, dashboard, o…[0m
+  [0m[38;2;153;153;153m  /workflow-authoring             [0m[1mRef[0m[38;2;153;153;153merence for writing a Workflow tool script[0m
+                                    [0m[38;2;153;153;153m(script API and gotchas, resume, quality pa…[0m
+  [0m[38;2;153;153;153m  /pptx                           Use this skill any time a .pptx or .potx[0m
+                                    [0m[38;2;153;153;153mfile is involved in any way — as input, out…[0m
+  [0m[38;2;153;153;153m  /xlsx                           Use this skill any time a spreadsheet file[0m
+                                    [0m[38;2;153;153;153mis the primary input or output. This means …[0m

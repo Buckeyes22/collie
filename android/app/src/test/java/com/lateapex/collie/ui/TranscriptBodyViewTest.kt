@@ -9,6 +9,7 @@ import com.lateapex.collie.network.TranscriptEntry
 import com.lateapex.collie.network.TranscriptPart
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
+import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -47,7 +48,7 @@ class TranscriptBodyViewTest {
         view.bind("claude", listOf(a, b), hasMore = true)
 
         val container = (view.getChildAt(0) as ViewGroup).getChildAt(0) as ViewGroup
-        assertEquals(3, container.childCount)
+        assertEquals(4, container.childCount)
         assertEquals(R.id.transcript_load_older, container.getChildAt(0).id)
         assertSame(view.turnViewForTest("a"), container.getChildAt(1))
         assertSame(bView, container.getChildAt(2))
@@ -134,6 +135,30 @@ class TranscriptBodyViewTest {
         // first-layout pass wrote the offset back to 0 with no scroll callback. Place only once
         // it has been laid out.
         assertEquals(true, placements.first()["viewLaidOut"])
+    }
+
+    @Test
+    fun liveUpsertsRebuildChangedTurnsAndKeepUnchangedCards() {
+        val view = laidOutBody()
+        val first = entry(0)
+        val partial = entry(1)
+        view.bind("claude", listOf(first, partial), false)
+        val firstView = view.turnViewForTest(first.uuid)
+        val partialView = view.turnViewForTest(partial.uuid)
+        val finished = partial.copy(parts = listOf(TranscriptPart("text", text = "finished answer")))
+        view.bind("claude", listOf(first, finished), false, listOf("next message"))
+        assertSame(firstView, view.turnViewForTest(first.uuid))
+        assertNotSame(partialView, view.turnViewForTest(partial.uuid))
+        assertEquals(2, view.turnCountForTest())
+        assertTrue(texts(view).any { it.contains("finished answer") })
+        assertTrue(texts(view).any { it == "Queued: next message" })
+        view.bind("claude", listOf(first, finished), false, emptyList())
+        assertTrue(texts(view).none { it.contains("Queued:") })
+    }
+
+    private fun texts(view: View): List<String> = buildList {
+        if (view is android.widget.TextView) add(view.text.toString())
+        if (view is ViewGroup) for (index in 0 until view.childCount) addAll(texts(view.getChildAt(index)))
     }
 
     /** Hosted in a real window so posted work runs after layout, in the order a phone runs it. */

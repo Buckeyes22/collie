@@ -27,7 +27,7 @@
     <string name="dashboard_host_incompatible">incompatible</string>
     <string name="dashboard_needs_count">%1$d need you</string>
     <string name="dashboard_working_count">%1$d working</string>
-    <string name="dashboard_pack_details">Pack health and formation</string>
+    <string name="dashboard_pack_details">Crew health and formation</string>
     <string name="dashboard_pane_host_unreachable">%1$s · unreachable</string>
     <string name="dashboard_pane_host_incompatible">%1$s · incompatible</string>
     <string name="dashboard_pane_host_accessibility">Host: %1$s</string>

@@ -63,7 +63,7 @@ class UpdatesActivityParityTest {
     fun cancelLeavesTheUpdateUntouchedAndRestoresTheActionArea() {
         val activity = Robolectric.buildActivity(UpdatesActivity::class.java).create().get()
         var started = false
-        activity.showConfirmation("Retry the pack update?", "Only peers run.", "Yes, retry") {
+        activity.showConfirmation("Retry the crew update?", "Only peers run.", "Yes, retry") {
             started = true
         }
 
@@ -151,7 +151,7 @@ class UpdatesActivityParityTest {
 
         assertEquals("Back", resources.getString(R.string.updates_native_back))
         assertEquals("Update Collie", resources.getString(R.string.updates_native_card_title))
-        assertEquals("Update pack to 1.6.0", resources.getString(R.string.updates_native_action_pack, "1.6.0"))
+        assertEquals("Update crew to 1.6.0", resources.getString(R.string.updates_native_action_pack, "1.6.0"))
         assertEquals("Restarting. This is not an outage.", resources.getString(R.string.updates_native_state_restarting))
         assertEquals(
             "Keep this screen open. Your terminal session is untouched.",

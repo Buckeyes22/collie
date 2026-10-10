@@ -16,9 +16,9 @@ The app follows the agents already running on your server.
 - Browse spaces, tabs and panes across your configured hosts and sessions.
 - Read transcript history or the terminal mirror, and search older turns.
 - Answer supported agent prompts, send replies, attach images, and use terminal keys.
-- Pair the phone for write access and revoke devices through Settings.
+- Pair the phone for read and write access and revoke devices through Settings.
 - Use voice input when your server has speech-to-text configured.
-- Inspect Pack state and manage **server** updates.
+- Inspect Crew state and manage **server** updates.
 
 Background push notifications are not implemented in the native app. Server updates do not
 update the Android APK. Some agent interactions depend on the bridge's journal and multiplexer
@@ -31,9 +31,9 @@ You need a reachable Collie HTTPS server as well as an Android phone.
 | Requirement | Details |
 | --- | --- |
 | Android | Android 8.0 / API 26 or newer |
-| Server | A self-hosted Collie deployment; the current development baseline is server 1.5.1 |
+| Server | A self-hosted Collie deployment; the current development baseline is server 1.19.0 |
 | Network | Usually Tailscale on the host and phone, with access to the same tailnet |
-| Write access | A short-lived pairing code generated on the host with `collie pair` |
+| Device access | A short-lived pairing code generated on the host with `collie pair` |
 
 The app starts with an empty server field. It does not provide a hosted server or install agents
 on your machine. Start with the upstream [server installation guide](https://github.com/AltanS/collie/blob/main/docs/install.md)
@@ -69,8 +69,8 @@ Pairing gives the phone control of real terminal sessions with the host user's p
 
 Use a private tailnet or another authenticated ingress. The client requires HTTPS, verifies
 certificates, refuses API redirects, and stores its pairing credential encrypted through Android
-Keystore. The server's access policy remains essential: device pairing gates writes, while reads
-depend on the server's ingress and identity policy.
+Keystore. The server's access policy remains essential: server 1.19.0 requires pairing for reads and writes. The server's ingress and identity policy
+still applies. Mounted HTTPS URLs such as `https://collie.example/tools/collie/` are supported.
 
 Diagnostic capture is off by default for new installs. If enabled, it records terminal content
 and messages locally; review an export before sharing it. Pairing bodies and Authorization header
@@ -84,6 +84,7 @@ Start with the guide for your task.
 | --- | --- |
 | [Getting started](android/GETTING_STARTED.md) | Install, connect, pair and troubleshoot |
 | [Android developer guide](android/README.md) | Architecture, toolchain, testing and native capabilities |
+| [Upstream API compatibility](android/UPSTREAM_API_COMPATIBILITY.md) | Audited server contracts and native adaptations |
 | [Contributing](CONTRIBUTING.md) | Development setup, checks and PR expectations |
 | [Android releases](android/RELEASING.md) | Signing, versioning, acceptance and draft releases |
 | [Android changelog](ANDROID_CHANGELOG.md) | Changes for app releases |

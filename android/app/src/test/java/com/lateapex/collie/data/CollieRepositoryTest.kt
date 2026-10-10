@@ -15,6 +15,9 @@ import com.lateapex.collie.network.HealthResponse
 import com.lateapex.collie.network.NotificationState
 import com.lateapex.collie.network.OriginValidator
 import com.lateapex.collie.network.PairResult
+import com.lateapex.collie.network.PaneSummary
+import com.lateapex.collie.network.AgentStatus
+import com.lateapex.collie.network.ServerSummary
 import com.lateapex.collie.network.PaneReadResponse
 import com.lateapex.collie.network.SnapshotResponse
 import com.lateapex.collie.network.SttResponse
@@ -209,6 +212,48 @@ class CollieRepositoryTest {
         assertEquals(0, api.updateCalls)
     }
 
+    @Test
+    fun narrowSnapshotsRecoverOnlyTheRequestedSessionAndLocalLeadAlias() = runBlocking {
+        val local = PaneSummary("p1", "w1", "work", 1, "t1", "codex", AgentStatus.IDLE, "/repo", false, host = "lead")
+        val peer = local.copy(host = "peer", session = "other")
+        api.snapshotValue = SnapshotResponse("1.19.0", agents = listOf(local, peer), shellPanes = emptyList(), workspaces = emptyList(), tabs = emptyList(), servers = listOf(
+            ServerSummary("lead", "Local", true, true, "ok", lastSeenAt = 1),
+            ServerSummary("peer", "Peer", false, true, "ok", lastSeenAt = 1),
+        ), ts = 1)
+        val narrowed = (repository.paneSnapshot(Scope(session = "work")) as ApiResult.Success).value.agents
+        assertEquals("work", narrowed[0].session)
+        assertNull(narrowed[0].host)
+        assertEquals("other", narrowed[1].session)
+        assertEquals("peer", narrowed[1].host)
+        val explicit = (repository.paneSnapshot(Scope(host = "lead", session = "work")) as ApiResult.Success).value.agents
+        assertEquals("lead", explicit[0].host)
+        val wide = (repository.snapshot(Scope(viewAll = true)) as ApiResult.Success).value.agents
+        assertNull(wide[0].session)
+    }
+
+    @Test
+    fun expiredReadRevokesLocalWriteAuthorityAndDropsCachedScreens() = runBlocking {
+        authorizeWrites()
+        val address = PaneAddress(paneId = "p1")
+        repository.readPane(address)
+        api.paneFailure = ApiFailure.Http(403, "device expired", null)
+        assertTrue(repository.readPane(address) is ApiResult.Failure)
+        assertFalse(repository.connection.value!!.isPaired)
+        assertFalse(repository.writesAllowed())
+        api.paneFailure = null
+        repository.readPane(address)
+        assertNull(api.paneEtags.last())
+    }
+
+    @Test
+    fun unrelatedForbiddenReadDoesNotErasePairing() = runBlocking {
+        authorizeWrites()
+        api.paneFailure = ApiFailure.Http(403, "host not allowed", null)
+        repository.readPane(PaneAddress(paneId = "p1"))
+        assertTrue(repository.connection.value!!.isPaired)
+        assertTrue(repository.writesAllowed())
+    }
+
     private suspend fun authorizeWrites() {
         api.snapshotDevice = DeviceAuthorization(enforced = true, device = "phone", authorized = true)
         repository.snapshot()
@@ -243,6 +288,8 @@ class CollieRepositoryTest {
         var replyResult: ApiResult<ActionResponse> = ApiResult.Success(ActionResponse(true), 200)
         var snapshotDevice: DeviceAuthorization? = null
         var snapshotFailure = false
+        var snapshotValue: SnapshotResponse? = null
+        var paneFailure: ApiFailure? = null
 
         override suspend fun pane(
             connection: Connection,
@@ -253,6 +300,7 @@ class CollieRepositoryTest {
         ): ApiResult<PaneReadResponse> {
             paneLines += lines
             paneEtags += etag
+            paneFailure?.let { return ApiResult.Failure(it) }
             if (etag != null) return ApiResult.NotModified(etag)
             val host = address.scope.host ?: "local"
             return ApiResult.Success(
@@ -277,6 +325,7 @@ class CollieRepositoryTest {
         override suspend fun health(connection: Connection): ApiResult<HealthResponse> = error("unused")
         override suspend fun snapshot(connection: Connection, scope: Scope): ApiResult<SnapshotResponse> {
             if (snapshotFailure) return ApiResult.Failure(ApiFailure.Network("offline"))
+            snapshotValue?.let { return ApiResult.Success(it, 200) }
             return ApiResult.Success(
                 SnapshotResponse(
                     bridge = "1.5.0",

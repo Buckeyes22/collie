@@ -16,6 +16,8 @@
 //    hands back a path the operator pastes; the multiplexer is not involved, so it cannot decline it.
 //    It is host-local for every adapter because a mux adapter is host-local by rule (ADR 0011).
 
+import { formatMuxKey, parseMuxKey } from "./keys.ts";
+
 /**
  * Every capability an adapter may declare, in Collie's words.
  *
@@ -42,6 +44,7 @@ export const MUX_CAPABILITIES = [
   "openWorktree",
   "pushTopologyEvents",
   "pushPaneEvents",
+  "listSessions",
 ] as const;
 
 /** One declarable capability. */
@@ -80,7 +83,7 @@ export const MUX_CAPABILITY_ROUTES = {
   gridScrollback:
     "GET /api/pane/:id?lines=N — a read that reaches behind the viewport, which is what makes the mirror's 'Load older' meaningful (see MuxPane.readableLines).",
   agentDetection:
-    "GET /api/snapshot — the split into `agents` and `shellPanes` and the triage sort (STATUS_RANK) both need the mux to say which agent a pane holds and how it is doing.",
+    "GET /api/snapshot — the split into `agents` and `shellPanes` and every status mark (needs you, working) both need the mux to say which agent a pane holds and how it is doing.",
   agentSessionRef:
     "GET /api/pane/:id/history — the journal keys an on-disk log off the session an agent named. Without this, history is absent, not empty (bridge/journal/registry.ts).",
   typeText: "POST /api/pane/:id/reply — step one, the literal text.",
@@ -103,6 +106,8 @@ export const MUX_CAPABILITY_ROUTES = {
     "bridge/event-poker.ts — panes/tabs/spaces appearing, closing or being renamed arrive as a push, so the snapshot poll can idle. Absent ⇒ the adapter polls to keep the same promise, and the poker learns nothing.",
   pushPaneEvents:
     "bridge/event-poker.ts — one pane's content or status changing arrives as a push. Same fallback, same promise.",
+  listSessions:
+    "bridge/sessions.ts `SessionRegistry.refresh()`, the OTHER instances of this multiplexer on this machine, each with the endpoint to dial it, so one bridge can front them all. It fills the snapshot's `sessions` list and what `?session=<name>` can select. ABSENT IS THE DEFAULT AND IT IS THE HARMLESS DIRECTION: the registry pins to the primary, the phone sees the one session it saw before this capability existed, and nothing scans anything. Stated here rather than left implicit, because the absence of this key decides whether a filesystem or a process listing is walked at all (M22 counsel).",
 } satisfies Record<MuxCapability, string>;
 
 /**
@@ -208,6 +213,7 @@ export function declareCapabilities(input: MuxCapabilityInput): MuxCapabilityDec
     openWorktree: claimed.has("openWorktree"),
     pushTopologyEvents: claimed.has("pushTopologyEvents"),
     pushPaneEvents: claimed.has("pushPaneEvents"),
+    listSessions: claimed.has("listSessions"),
   } satisfies Record<MuxCapability, boolean>;
   return {
     supports,
@@ -224,6 +230,30 @@ export function supportsCapability(
   capability: MuxCapability,
 ): boolean {
   return declaration.supports[capability];
+}
+
+/**
+ * Whether this multiplexer can deliver EVERY key of a sequence, as the keys it names.
+ *
+ * False when `sendKeys` is not declared at all, when a key is not a neutral spelling, or when a key
+ * is declared unsupported — as the whole chord (`ctrl+Enter`) or as its base key (Herdr's `PageUp`
+ * refuses `shift+PageUp` too, keys.ts there). One undeliverable key makes the whole sequence
+ * undeliverable: the keys of a sequence mean something together, and its front half alone is a
+ * different action.
+ *
+ * This is how a surface that offers a key as a button (the chat answer's `sendQueuedNow`) asks the
+ * pane's multiplexer, as a capability fact rather than by its name.
+ */
+export function keysDeliverable(
+  declaration: Pick<MuxCapabilityDeclaration, "supports" | "unsupportedKeys">,
+  keys: readonly string[],
+): boolean {
+  if (!declaration.supports.sendKeys) return false;
+  const refused = new Set(declaration.unsupportedKeys);
+  return keys.every((spelling) => {
+    const parsed = parseMuxKey(spelling);
+    return parsed !== null && !refused.has(formatMuxKey(parsed)) && !refused.has(parsed.key);
+  });
 }
 
 /** The declared capabilities, sorted — for the config surface (M10/06), the matrix and tests. */

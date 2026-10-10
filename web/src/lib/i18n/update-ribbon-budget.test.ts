@@ -27,6 +27,8 @@ const BAND_PREFIX = "updateRibbon.";
 
 /** One representative value per slot. See the header for why `reason` is empty. */
 const SAMPLE = {
+  elapsed: "2 min",
+  manager: "nix",
   version: "1.5.0",
   count: "1",
   name: "minibuch",

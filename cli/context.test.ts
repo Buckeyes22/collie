@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 
 // The version resolver itself lives in `bridge/version.ts` (the bridge answers `hello` with it and
 // cannot import from `cli/`); `collieVersion*` are re-exported from here, so these cases exercise
@@ -129,8 +129,8 @@ describe("the legacy .env note", () => {
 });
 
 // A named instance may only ever land on a dir the operator made for it. The alternative is the
-// 2026-08-12 incident: `COLLIE_INSTANCE=v1 collie pack add` resolved the DEFAULT instance's config
-// dir, and a pack verb read and then MUTATED the live stable instance's trust store.
+// 2026-08-12 incident: `COLLIE_INSTANCE=v1 collie crew add` resolved the DEFAULT instance's config
+// dir, and a crew verb read and then MUTATED the live stable instance's trust store.
 describe("config dir for a named instance", () => {
   const V1 = join(HOME, ".config", "herdr", "plugins", "config", `${PLUGIN_ID}-v1`);
 
@@ -410,7 +410,12 @@ describe("derived settings", () => {
       port: 8787,
       serveMode: "https",
       servePort: 443,
-      socket: join(HOME, ".config", "herdr", "herdr.sock"),
+      basePath: "/",
+      // herdr keeps its socket under %APPDATA% on Windows (bridge/config.ts), `~/.config` elsewhere.
+      socket:
+        process.platform === "win32"
+          ? join(HOME, "AppData", "Roaming", "herdr", "herdr.sock")
+          : join(HOME, ".config", "herdr", "herdr.sock"),
     });
   });
 
@@ -425,7 +430,7 @@ describe("derived settings", () => {
         },
         HOME,
       ),
-    ).toEqual({ port: 9000, serveMode: "http", servePort: 8443, socket: "/run/h.sock" });
+    ).toEqual({ port: 9000, serveMode: "http", servePort: 8443, basePath: "/", socket: "/run/h.sock" });
   });
 
   test("a non-numeric port falls back rather than becoming NaN", () => {
@@ -479,7 +484,8 @@ describe("resolveHome", () => {
   test("falls back to the passwd entry when there is no environment at all", () => {
     // `env -i` is the primary contract: no HOME, and every ~-derived path still has to resolve.
     const h = resolveHome({});
-    expect(h.startsWith("/")).toBe(true);
+    // Absolute on this platform: `/home/x` on POSIX, `C:\Users\x` on Windows.
+    expect(isAbsolute(h)).toBe(true);
     expect(h).not.toBe("");
   });
 });
@@ -524,5 +530,14 @@ describe("instanceSuffix", () => {
   test("the solo instance contributes NOTHING to a name", () => {
     expect(instanceSuffix(null)).toBe("");
     expect(instanceSuffix("v1")).toBe("-v1");
+  });
+});
+
+// ADR 0052: the CLI reads the mount with the bridge's own normaliser, so the two cannot disagree.
+describe("deriveSettings — COLLIE_BASE_PATH", () => {
+  test("the root when unset, the slash-wrapped path when set", () => {
+    expect(deriveSettings({}, HOME).basePath).toBe("/");
+    expect(deriveSettings({ COLLIE_BASE_PATH: "collie" }, HOME).basePath).toBe("/collie/");
+    expect(deriveSettings({ COLLIE_BASE_PATH: "/apps/collie/" }, HOME).basePath).toBe("/apps/collie/");
   });
 });

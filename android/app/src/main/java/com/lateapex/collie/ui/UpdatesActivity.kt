@@ -340,7 +340,8 @@ class UpdatesActivity : AppCompatActivity() {
             if (newer.isNotEmpty()) {
                 append('\n').append(resources.getQuantityString(R.plurals.updates_native_behind, newer.size, newer.size))
             }
-            if (value.bridgeStale) append('\n').append(getString(R.string.updates_native_restart_required))
+            if (value.bridgeStale || value.restartNeeded) append('\n').append(value.restartCommand ?: getString(R.string.updates_native_restart_required))
+            value.packageCommand?.let { append('\n').append(it) }
         }
         renderRun(UpdateNativePresentation.visibleRun(value))
         renderPeers(value)
@@ -372,8 +373,8 @@ class UpdatesActivity : AppCompatActivity() {
     private fun renderPeers(value: UpdateCheckResponse) {
         peers.removeAllViews()
         val rows = UpdateNativePresentation.peerRows(
-            value.pack.orEmpty(),
-            UpdateNativePresentation.visibleRun(value)?.peers.orEmpty(),
+            value.crew.orEmpty(),
+            UpdateNativePresentation.peerLegs(value),
         )
         peers.visibility = if (rows.isEmpty()) View.GONE else View.VISIBLE
         rows.forEach { row ->

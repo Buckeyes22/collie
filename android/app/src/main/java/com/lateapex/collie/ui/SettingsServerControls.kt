@@ -30,7 +30,7 @@ import com.lateapex.collie.network.DeviceRecord
 import com.lateapex.collie.network.DevicesResponse
 import com.lateapex.collie.network.NotifyPreferences
 import com.lateapex.collie.network.NotifyPreferencesPatch
-import com.lateapex.collie.network.PackStatusResponse
+import com.lateapex.collie.network.CrewStatusResponse
 import com.lateapex.collie.network.PairResult
 import com.lateapex.collie.network.UpdateCheckResponse
 import java.text.DateFormat
@@ -245,7 +245,7 @@ internal class SettingsServerControls(
                 val prefs = async { repository.notificationPreferences() }
                 val snapshot = async { repository.snapshot() }
                 val update = async { repository.updateState() }
-                val pack = async { repository.pack() }
+                val pack = async { repository.crew() }
                 val config = async { repository.config() }
                 val connection = repository.connection.value
                 val health = async { connection?.let { repository.probe(it.origin.value, it.label) } }
@@ -615,10 +615,10 @@ internal class SettingsServerControls(
         }
     }
 
-    private fun renderPack(result: ApiResult<PackStatusResponse>) {
+    private fun renderPack(result: ApiResult<CrewStatusResponse>) {
         packCard.isVisible = result is ApiResult.Success
         packSummary.text = when (result) {
-            is ApiResult.Success -> text(R.string.settings_pack_machines, result.value.pack.name, result.value.members.size)
+            is ApiResult.Success -> text(R.string.settings_pack_machines, result.value.crew.name, result.value.members.size)
             is ApiResult.Failure -> if (result.error is ApiFailure.Http && result.error.status == 404) {
                 text(R.string.settings_pack_solo)
             } else {

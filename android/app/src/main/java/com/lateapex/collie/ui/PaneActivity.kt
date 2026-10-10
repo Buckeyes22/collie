@@ -2480,7 +2480,7 @@ class PaneActivity : AppCompatActivity() {
         paneScroll.isVisible = model.panes.size > 1
         paneItems.removeAllViews()
         model.panes.forEach { item ->
-            val name = displayAgentTitle(item.pane.agent, item.pane.paneLabel ?: item.pane.sessionName)
+            val name = displayAgentTitle(item.pane.agent, item.pane.paneLabel ?: item.pane.sessionName ?: item.pane.soleTabName)
                 ?: item.pane.agent.ifBlank { item.pane.paneId }
             val tag = item.pane.paneId.substringAfterLast(':')
             val label = "$name  $tag"
@@ -2573,7 +2573,7 @@ class PaneActivity : AppCompatActivity() {
         val target = item.pane.address()
         val rename = structuralGate("renamePane", target)
         val close = structuralGate("closePane", target)
-        val title = displayAgentTitle(item.pane.agent, item.pane.paneLabel ?: item.pane.sessionName)
+        val title = displayAgentTitle(item.pane.agent, item.pane.paneLabel ?: item.pane.sessionName ?: item.pane.soleTabName)
             ?: item.pane.agent.ifBlank { item.pane.paneId }
         if (!rename.visibleAndEnabled && !close.visibleAndEnabled) {
             showUnavailableStructuralActions(title, listOf(rename, close), R.string.pane_changes_unsupported)
@@ -2850,8 +2850,11 @@ class PaneActivity : AppCompatActivity() {
                                 setOnClickListener {
                                     if (!launchDuplicateLock.tryStart(launcher.command)) return@setOnClickListener
                                     rebuild()
+                                    val launchConnection = repository.connection.value
                                     lifecycleScope.launch {
                                         try {
+                                            if (!confirmLauncher(this@PaneActivity, launcher, address.scope.host ?: launchConnection?.origin?.value.orEmpty())) return@launch
+                                            if (repository.connection.value !== launchConnection) return@launch
                                             when (val result = repository.launch(launcher.command, address.scope, address.paneId)) {
                                                 is ApiResult.Success -> if (result.value.ok) {
                                                     result.value.pane?.let {
@@ -2956,7 +2959,7 @@ class PaneActivity : AppCompatActivity() {
     }
 
     private fun switcherPaneLabel(row: SwitcherPaneRow): String {
-        val title = displayAgentTitle(row.pane.agent, row.pane.paneLabel ?: row.pane.sessionName)
+        val title = displayAgentTitle(row.pane.agent, row.pane.paneLabel ?: row.pane.sessionName ?: row.pane.soleTabName)
             ?: row.pane.agent.ifBlank { row.pane.paneId }
         val secondary = displayAgentTitle(row.pane.agent, row.secondary)
         return buildString {
@@ -3143,7 +3146,7 @@ class PaneActivity : AppCompatActivity() {
     private fun openPane(pane: PaneSummary) {
         if (!showDrawer(ComposerDrawer.NONE)) return
         val fallback = listOf(pane.workspaceLabel, pane.tabLabel).filterNotNull().filter(String::isNotBlank).joinToString(" › ")
-        val title = displayAgentTitle(pane.agent, pane.paneLabel ?: pane.sessionName) ?: fallback.ifBlank { pane.paneId }
+        val title = displayAgentTitle(pane.agent, pane.paneLabel ?: pane.sessionName ?: pane.soleTabName) ?: fallback.ifBlank { pane.paneId }
         startActivity(Intent(this, PaneActivity::class.java).apply {
             putExtra(EXTRA_PANE_ID, pane.paneId)
             putExtra(EXTRA_HOST, pane.host)
@@ -3421,7 +3424,7 @@ class PaneActivity : AppCompatActivity() {
         terminalStatusline.isVisible = body == PaneBody.MIRROR &&
             renderedStatusRows.isNotEmpty() && !displayPreferences.getBoolean(PREF_RAW, false)
         if (showingTranscriptBody) {
-            transcriptBody.bind(agentName, state.transcript, state.transcriptHasMore)
+            transcriptBody.bind(agentName, state.transcript, state.transcriptHasMore, state.transcriptQueued)
             terminalScroll.updatePadding(bottom = 0)
         } else {
             // The pinned statusline overlaps the mirror's last row unless the scroller reserves
@@ -3810,7 +3813,7 @@ class PaneActivity : AppCompatActivity() {
                 }
                 is ApiResult.NotModified -> showTransientMessage(getString(R.string.pane_action_failed))
                 is ApiResult.Failure -> {
-                    if (result.error is ApiFailure.Http && result.error.message == "device not paired") {
+                    if (result.error is ApiFailure.Http && result.error.message in setOf("device not paired", "device expired")) {
                         repository.demoteToReadOnly()
                     }
                     val uncertain = result.error is ApiFailure.Timeout || result.error is ApiFailure.Network ||

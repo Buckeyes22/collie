@@ -6,7 +6,7 @@ import android.graphics.Paint
 import android.text.TextPaint
 import android.view.View
 import androidx.test.core.app.ApplicationProvider
-import com.lateapex.collie.network.PackMember
+import com.lateapex.collie.network.CrewMember
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -29,7 +29,7 @@ class PackFormationTextLayoutTest {
         val namePaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply { this.textSize = textSize }
         val nameHeight = PackFormationTextLayout.textHeight(namePaint, verticalPadding = 0f)
         val members = listOf(
-            PackMember(
+            CrewMember(
                 id = "lead",
                 name = "A very long server name",
                 isLead = true,
@@ -154,7 +154,7 @@ class PackFormationTextLayoutTest {
         assertTrue("empty formation should not reserve label inset height", view.measuredHeight == 0)
     }
 
-    private fun member(id: String, lead: Boolean = false) = PackMember(
+    private fun member(id: String, lead: Boolean = false) = CrewMember(
         id = id,
         name = "A long $id node label",
         isLead = lead,

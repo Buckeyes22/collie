@@ -1,6 +1,6 @@
 package com.lateapex.collie.domain
 
-/** A validated Collie origin. The value is always HTTPS and always ends in '/'. */
+/** A validated HTTPS Collie base URL, including an optional mount. The value is always HTTPS and always ends in '/'. */
 @JvmInline
 value class CollieOrigin(val value: String) {
     init {
@@ -8,7 +8,7 @@ value class CollieOrigin(val value: String) {
     }
 
     /** RFC 6454 serialization used by Collie's write gate (no trailing slash). */
-    val headerValue: String get() = value.dropLast(1)
+    val headerValue: String get() = java.net.URI(value).let { "${it.scheme}://${it.rawAuthority}" }
 }
 
 /**

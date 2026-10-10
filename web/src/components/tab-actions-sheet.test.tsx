@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 
@@ -234,5 +234,45 @@ describe("TabActionsSheet — read-only", () => {
     expect(screen.queryByPlaceholderText("name this tab")).toBeNull();
     expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Close tab" })).toBeNull();
+  });
+});
+
+describe("TabActionsSheet — locale", () => {
+  it("translates its action labels once the German bundle lands", async () => {
+    // Same recipe as pane-actions-sheet.test.tsx: `vi.resetModules()` gives this test its own copy
+    // of `@/lib/i18n`, so the locale store driven here is the same one the freshly re-imported
+    // component reads from.
+    vi.resetModules();
+    const [{ TabActionsSheet: FreshSheet }, { __resetLocale, setLocale, whenLocaleReady }] =
+      await Promise.all([import("./tab-actions-sheet"), import("@/lib/i18n")]);
+    __resetLocale();
+
+    render(<FreshSheet open={true} onClose={vi.fn()} tab={tab} onRenamed={vi.fn()} onClosed={vi.fn()} />);
+
+    await act(async () => {
+      setLocale("en");
+      await whenLocaleReady("en");
+    });
+
+    expect(screen.getByRole("button", { name: "Rename" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Close tab" })).toBeInTheDocument();
+  });
+});
+
+describe("TabActionsSheet — a saved copy", () => {
+  it("replaces Rename and Close tab with a note and sends nothing", async () => {
+    const calls: string[] = [];
+    server.use(
+      http.all(/\/api\/tab\/.*/, ({ request }) => {
+        calls.push(request.url);
+        return HttpResponse.json({ ok: true });
+      }),
+    );
+    renderSheet({ savedCopy: true });
+    expect(screen.getByText("Saved copy. Reconnect to make changes.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Rename" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Close tab" })).toBeNull();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(calls).toEqual([]);
   });
 });

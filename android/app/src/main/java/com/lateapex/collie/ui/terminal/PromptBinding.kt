@@ -6,7 +6,7 @@ package com.lateapex.collie.ui.terminal
  */
 object PromptBinding {
     private const val MAX_LINES = 3
-    private const val MAX_CHARS = 8_192
+    private const val MAX_CHARS = 32_768
     private const val MAX_DRAFT_LINES = 100
     private val sgr = Regex("(?:\u001B\\[|\u009B)[0-?]*[ -/]*m")
 

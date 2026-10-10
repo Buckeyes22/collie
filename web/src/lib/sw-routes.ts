@@ -24,8 +24,8 @@ export const PROXY_AUTH_PATH = "/auth/";
 /**
  * Navigation paths the SW passes straight to the network. `/api/` was always here (the API must
  * never be answered from a cache); `/auth` joins it, with or without the trailing slash, so a proxy
- * can serve its page at either; `/pack/v1/` joins it because a browser must never be able to cache
- * a collie-to-collie response (PACK_PROTOCOL.md §5).
+ * can serve its page at either; `/crew/v1/` joins it because a browser must never be able to cache
+ * a collie-to-collie response (CREW_PROTOCOL.md §5).
  *
  * This list is the SW's *only* caching decision that isn't the precache: sw.ts registers no runtime
  * caching route, so denying a path here is denying it from the SW entirely.
@@ -51,16 +51,16 @@ export const NAVIGATION_NETWORK_ONLY = [
   // Proxies whose prefix IS movable (oauth2-proxy's `--proxy-prefix`, Authelia) are documented in
   // the README instead of listed here — this list stays for paths nobody can move.
   /^\/cdn-cgi\//,
-  // The pack surface (PACK_PROTOCOL.md §5). A browser NEVER issues a `/pack/v1/*` request — it is
-  // collie-to-collie, admitted only by the two pack factors — so a browser must never be able to
+  // The crew surface (CREW_PROTOCOL.md §5). A browser NEVER issues a `/crew/v1/*` request — it is
+  // collie-to-collie, admitted only by the two crew factors — so a browser must never be able to
   // cache one either. Denylisted for the same reason `/api/` is, and then some: these responses
   // carry another machine's panes, and the precached app shell is not a plausible answer to any of
   // them. Query-tolerant (`[/?]`) like `/auth` because workbox matches pathname+search.
   //
-  // Scoped to `v1` rather than all of `/pack/`: the protocol reserves the versioned prefix, and a
-  // future `/pack/v2/` arrives with a bridge that can add its own line here.
-  /^\/pack\/v1(?:[/?]|$)/,
-  // The standby door (PACK_PROTOCOL.md §18.15, RFC §6.2). In the same-origin failover deployment the
+  // Scoped to `v1` rather than all of `/crew/`: the protocol reserves the versioned prefix, and a
+  // future `/crew/v2/` arrives with a bridge that can add its own line here.
+  /^\/crew\/v1(?:[/?]|$)/,
+  // The standby door (CREW_PROTOCOL.md §18.15, RFC §6.2). In the same-origin failover deployment the
   // phone's FIRST hit on the bad day is an installed service worker minted from the LEAD's origin —
   // so without this line the takeover page is answered from the precache with the app shell of the
   // very collie that just died, and the door is unreachable by the one device that needs it. This is
@@ -113,11 +113,37 @@ export const DEFAULT_UI_FONT_URL = "/fonts/ui-aldrich-1.002-latin.woff2";
  */
 export const UI_FONT_URLS = ["/fonts/ui-space-grotesk-2.000-latin.woff2", DEFAULT_UI_FONT_URL] as const;
 
+/**
+ * Faces that ride under a shipped UI face's family name and cover what it cannot draw. Today one:
+ * Play 400, Cyrillic only, declared in index.css as a second "Aldrich" @font-face behind a
+ * `unicode-range` (Aldrich has no Cyrillic). It is LAZY exactly like the Nerd Font symbols: a
+ * browser fetches it only when Cyrillic text is rendered, so it is not preloaded, not in
+ * `UI_FONT_URLS` (there is no Typeface choice for it and no metric twin of its own), and not in
+ * the precache. It IS in `FONT_URLS`, because that is the set the activate sweep keeps: left out,
+ * a cached copy would be deleted on every activate and fetched again on the next Russian load.
+ */
+export const UI_COMPANION_FONT_URLS = ["/fonts/ui-play-2.101-cyrillic.woff2"] as const;
+
 export const FONT_URLS = [
   "/fonts/nerd-symbols-3.5.0-pua.woff2",
   "/fonts/nerd-symbols-3.5.0-spua.woff2",
   ...UI_FONT_URLS,
+  ...UI_COMPANION_FONT_URLS,
 ] as const;
+
+/**
+ * The same denylist under a mount (ADR 0052). Every rule above is anchored at the origin root
+ * because that is where a root deployment's `/api/`, `/auth`, `/crew/v1` and `/standby` are; a
+ * worker registered under `/collie/` sees them as `/collie/api/` and so on, so each anchor moves to
+ * the mount. The two proxy namespaces move with them: under a mount they are outside the worker's
+ * scope anyway, so a moved rule matches nothing rather than something wrong. At the root this is
+ * the list itself.
+ */
+export function navigationNetworkOnlyUnder(mount: string): RegExp[] {
+  if (mount === "/") return [...NAVIGATION_NETWORK_ONLY];
+  const prefix = mount.slice(0, -1).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return NAVIGATION_NETWORK_ONLY.map((re) => new RegExp(`^${prefix}${re.source.slice(1)}`, re.flags));
+}
 
 /**
  * True when the SW must not answer this navigation from the precache. Takes `pathname + search`,

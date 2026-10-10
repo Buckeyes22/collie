@@ -50,8 +50,8 @@ For a Herdr-managed server, use its plugin action:
 herdr plugin action invoke url --plugin herdr.collie
 ```
 
-Use the root origin, such as `https://collie.example.com/`, without a path, query, fragment or
-embedded credentials. The app rejects plain HTTP and invalid certificates.
+Use the HTTPS deployment URL, such as `https://collie.example.com/` or
+`https://collie.example.com/tools/collie/`, without a query, fragment or embedded credentials. The app rejects plain HTTP and invalid certificates.
 
 1. Enter the server URL in Collie.
 2. Choose a device label you can recognize later.
@@ -72,8 +72,9 @@ Android App Links.
 The dashboard should load after pairing. A harmless reply in a disposable test pane confirms
 write access. Reads alone do not prove that writes are authorized.
 
-**Connect read-only** lets you inspect a server whose read policy permits it. Terminal actions
-stay disabled until pairing and a fresh server snapshot establish write access.
+**Connect read-only** is available for older servers that permit tokenless reads. Collie 1.19.0
+requires pairing for reads as well as writes. Terminal actions stay disabled until pairing and a
+fresh server snapshot establish write access. Expired devices need a new pairing code.
 
 ## Daily use
 
@@ -97,7 +98,7 @@ Use these checks before filing an issue.
 | Symptom | Check |
 | --- | --- |
 | Cannot connect | Confirm Tailscale is active, the HTTPS URL is reachable, and the server is running. |
-| Invalid origin | Enter only the HTTPS root origin; remove paths, queries and fragments. |
+| Invalid origin | Enter the HTTPS deployment URL; remove queries, fragments and ambiguous path segments. |
 | Certificate failure | Repair the server certificate or hostname; the app has no TLS bypass. |
 | Pairing refused | Generate a fresh code and check the server's identity and ingress policy. |
 | Read-only after pairing | Refresh and inspect device authorization; a revoked or unverified device cannot write. |

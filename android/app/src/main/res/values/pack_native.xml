@@ -2,17 +2,17 @@
 <resources>
     <item name="pack_formation" type="id" />
     <plurals name="pack_formation_accessibility">
-        <item quantity="one">Pack formation with %d machine</item>
-        <item quantity="other">Pack formation with %d machines</item>
+        <item quantity="one">Crew formation with %d machine</item>
+        <item quantity="other">Crew formation with %d machines</item>
     </plurals>
     <plurals name="pack_machines">
         <item quantity="one">%d machine</item>
         <item quantity="other">%d machines</item>
     </plurals>
     <string name="pack_formation_summary">%1$s · %2$s · %3$d reachable</string>
-    <string name="pack_solo_title">This collie is not leading a pack</string>
-    <string name="pack_solo_description">A pack is created and changed from the command line.</string>
-    <string name="pack_error_title">Could not load pack status</string>
+    <string name="pack_solo_title">This collie is not leading a crew</string>
+    <string name="pack_solo_description">A crew is created and changed from the command line.</string>
+    <string name="pack_error_title">Could not load crew status</string>
     <string name="pack_error_description">The bridge did not answer. Collie tries again on the next poll.</string>
     <string name="pack_role_lead">LEAD</string>
     <string name="pack_role_deputy">DEPUTY</string>

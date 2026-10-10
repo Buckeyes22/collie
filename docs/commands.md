@@ -18,26 +18,29 @@ If the host runs multiple instances, prepend `COLLIE_INSTANCE=<name>` to every v
 | **URL** | `collie url` | Print the tailnet URL |
 | **QR** | `collie qr` | The same URL as a scannable code |
 | **Version** | `collie version` | The running version (`0.x.y+sha`) |
+| **Skill** | `collie skill` | The agent-facing brief on Collie, for an AI coding agent working in your terminal (also `collie --skill`) |
+| **Docs** | `collie docs` · `collie docs <name>` · `collie docs --all` | These pages, printed out of the binary itself |
 | **Update** | `collie update` | Stage the newest release of your major, flip to it, restart and verify (`--check` preflights, `--status` reports, `--major` crosses one) |
 | **Rollback** | `collie update --rollback` | Put the previous version back (not on a Herdr-managed checkout, which has none staged) |
 | **Uninstall** | `collie uninstall` | Remove the service; keep `.env` and the install |
-| **Pair** | `collie pair` | Print an 8-character code and a QR code, good for 10 minutes; scan the QR code to open Settings → Paired devices with the code filled in, or enter the code manually to get it [paired](security.md#pair-a-device--the-write-credential) |
-| **Devices** | `collie devices list` · `collie devices revoke <label>` | List / revoke paired devices |
+| **Pair** | `collie pair` · `collie pair --expires <duration>` | Print an 8-character code and a QR code, good for 10 minutes; scan the QR code to open Settings → System → Paired devices with the code filled in, or enter the code manually to get it [paired](security.md#pair-a-device--the-write-credential). Without `--expires` the token never expires and the command says so; with it (`12h`, `30d`, `2w`) the command prints the date the token stops working once claimed. A script claims the code with a label of its own, for example `script`, and pairs once ([Give a device an expiry](security.md#give-a-device-an-expiry)) |
+| **Devices** | `collie devices list` · `collie devices revoke <label>` · `collie devices set-expiry <label> <duration>` · `collie devices clear-expiry <label>` | List / revoke paired devices, or change when one [expires](security.md#give-a-device-an-expiry). `list` shows each device's expiry as `no expiry`, `expires <date>` or `EXPIRED <date>`. `set-expiry` counts a new lifetime from now; `clear-expiry` removes it. A label matches exactly, or without case when only one device fits |
 | **Link** | `collie link` · `collie unlink` | Put `collie` on your PATH ([below](#put-collie-on-your-path)) |
-| **Logs** | `collie logs` | Tail the journal / log file |
+| **Logs** | `collie logs` | Tail the service log |
+| **Config** | `collie config show` · `collie config check` · `collie config init` | Print every setting with its source, validate the file, or write a commented `config.toml` ([the config file](configure.md#the-config-file)) |
 | **Voice** | `collie stt setup` · `stt test` · `stt status` · `stt off` | Configure / check / disable [voice input](voice-and-push.md#voice-input-optional) |
 | **Push keys** | `collie push-keys` | Generate the VAPID keypair into your `.env` |
 | **Push test** | `collie push-test` | Send one notification to prove it works |
 
-The CLI also includes `build`, `serve`, `unserve`, `doctor`, and `pack …` for less frequent tasks.
+The CLI also includes `build`, `serve`, `unserve`, `doctor`, and `crew …` for less frequent tasks.
 
 Both `start` and `status` output the **Collie is running** banner: a health mark and the version,
 then a `service`, a `local` and a `tailnet` line.
-[First run](install.md#first-run--what-youll-see) shows it in full, including what a failed health
+[First run](install.md#first-run-what-youll-see) shows it in full, including what a failed health
 check prints instead. The reported version reads from the served bundle stamp, reflecting the active
 build.
 
-**Ink or plain text.** The `start`, `status`, `doctor`, `pack add`, and `pack status` commands
+**Ink or plain text.** The `start`, `status`, `doctor`, `crew add`, and `crew status` commands
 render an interactive terminal UI when stdout is a TTY. Passing `--plain`, or redirecting output to
 a pipe, file, systemd journal, or CI runner, falls back to raw line output.
 
@@ -66,7 +69,7 @@ command resolves to.
 ## Herdr actions
 
 **Applies only to a Herdr-managed install** created with `herdr plugin install AltanS/collie` or
-`herdr plugin link`. Herdr is one of three multiplexers Collie supports. These actions map directly
+`herdr plugin link`. Herdr is one of five multiplexers Collie supports. These actions map directly
 to the adapter: each action forwards the verb to the same `collie` binary documented in the table
 above. On binary installs created via `scripts/install.sh`, plugin actions do not exist, and
 `collie <verb>` is the only syntax.
@@ -88,8 +91,8 @@ Collie registers these actions in `herdr-plugin.toml`. Invoke them with
 | `push-keys` | `collie push-keys` | Write a VAPID keypair into the `.env` the service reads |
 | `push-test` | `collie push-test` | Push one notification to every subscribed device |
 
-`qr`, `pair`, `devices`, `link`, `logs`, and `stt` have no corresponding plugin action because they
-require a terminal, positional arguments, or both. Run them as `collie <verb>`.
+`qr`, `pair`, `devices`, `link`, `logs`, `stt`, and `config` have no corresponding plugin action
+because they require a terminal, positional arguments, or both. Run them as `collie <verb>`.
 
 **Herdr actions return Herdr's JSON envelope instead of the terminal banner.** View the action's
 captured stdout with `herdr plugin log list --plugin herdr.collie`, or run `collie <verb>` directly
@@ -108,4 +111,4 @@ disk on each invocation.
 
 ---
 
-[← back to the server README](../UPSTREAM_README.md)
+[← back to the README](../README.md)

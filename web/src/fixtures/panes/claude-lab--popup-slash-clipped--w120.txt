@@ -1,0 +1,23 @@
+[0m[38;2;215;119;87m ▐[0m[38;2;215;119;87m[48;2;0;0;0m▛███▛█   [0m[1mClaude Code [0m[38;2;153;153;153mv2.1.291[0m
+[0m[38;2;215;119;87m▝▜[0m[38;2;215;119;87m[48;2;0;0;0m█████[0m[38;2;215;119;87m█▀  [0m[38;2;153;153;153mSonnet 5.5 · Claude Max[0m
+[0m[38;2;215;119;87m ▝▝   ▝▝   [0m[38;2;153;153;153m/tmp/claude-lab/project[0m
+
+
+[0m[38;2;153;153;153m[48;2;55;55;55m❯ [0m[38;2;255;255;255m[48;2;55;55;55mread README.md and reply with one short sentence[0m[48;2;55;55;55m                                                                     [0m
+
+  [0m[38;2;153;153;153mRead [0m[1m[38;2;153;153;153m1[0m[38;2;153;153;153m file (ctrl+o to expand)[0m
+
+[0m[38;2;255;255;255m● [0mThe README says this is a throwaway lab project used for screen captures.
+
+[0m[38;2;153;153;153m✻ Sautéed for 2s · done 6:33 PM[0m
+
+[0m[38;2;136;136;136m───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+❯ /refactor
+[0m[38;2;136;136;136m───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+  [0m[38;2;177;185;249m❯ /[0m[1m[38;2;177;185;249mrefactor[0m[38;2;177;185;249m-module-boundaries                    Move code between modules so each module owns one concern[0m
+                                                   [0m[38;2;177;185;249m(project)[0m
+  [0m[38;2;153;153;153m  …ckages:[0m[1mrefactor[0m[38;2;153;153;153m-dependencies-across-packages  [0m[1mRefactor[0m[38;2;153;153;153m shared dependencies across every package in the monorepo[0m
+                                                   [0m[38;2;153;153;153mand update lockfiles after each change (project)[0m
+  [0m[38;2;153;153;153m  /packages:deps:[0m[1mrefactor[0m[38;2;153;153;153m-dependencies           [0m[1mRefactor[0m[38;2;153;153;153m the dependency graph of one package (project)[0m
+  [0m[38;2;153;153;153m  /skill-creator                                 Create new skills, modify and improve existing skills, and measure[0m
+                                                   [0m[38;2;153;153;153mskill performance. Use when users want to create a skill from scr…[0m

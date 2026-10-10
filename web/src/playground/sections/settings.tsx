@@ -1,0 +1,285 @@
+// Settings section of the states playground. Split out of app.tsx; see that file's header comment
+// for the whole page's rules.
+
+import { useState } from "react";
+
+import { LauncherHowSheet } from "@/components/launcher-how-sheet";
+import { CommandPicker } from "@/components/new-command-picker";
+import { NoPromptsSheet } from "@/components/no-prompts-sheet";
+import { NotifyPrefsCard } from "@/components/notify-prefs-control";
+import { SpaceOverview } from "@/components/space-overview";
+import { commandChoice, commandKey, commandOptions, offerFor, pickOfKey } from "@/lib/new-page";
+import type { LauncherItem, RecentRun } from "@/lib/types";
+import {
+  devicesPaired,
+  devicesUnpaired,
+  homeCrew,
+  homeSolo,
+  spacesWithWorktrees,
+  watchedPanes,
+} from "../fixtures";
+import { NewRouter, SettingsRouter } from "../harness";
+import { Card, Group, Section, Stage, type SectionDef } from "../layout";
+import { PhoneFrameCard } from "./shared";
+
+export const DEF: SectionDef = {
+  id: "settings",
+  title: "Settings",
+  intent:
+    "The whole settings route, mounted twice: once on a solo collie with nothing paired, once on a lead with three paired devices and a crew card to show for it. Then the Updates page it links to, which is where the check, the card, the peers and the one button now live.",
+};
+
+// ── The Shell half of the New page, with one-off commands (ADR 0095) ───────────────────────────────
+
+/** What a 1.19.0 bridge lists under Shell: the shell and one operator row. */
+const RUN_ITEMS: LauncherItem[] = [
+  { key: "shell", start: { shell: true }, group: "commands", label: "Shell", source: "builtin", noPrompts: false, branch: true, available: true },
+  {
+    key: "row:make test",
+    start: { command: "make test" },
+    group: "commands",
+    label: "make test",
+    command: "make test",
+    source: "operator",
+    noPrompts: false,
+    branch: false,
+    available: true,
+  },
+];
+
+/** The machine's history: a plain line, a line that skips prompts, and a line too long for its option. */
+const RUN_RECENT: RecentRun[] = [
+  { line: "make deploy --env staging", cwd: "/home/op/app", at: 3, noPrompts: false, available: true },
+  { line: "codex --dangerously-bypass-approvals-and-sandbox", cwd: null, at: 2, noPrompts: true, available: true },
+  { line: "journalctl --user -u collie.service --since today --no-pager", cwd: null, at: 1, noPrompts: false, available: true },
+];
+
+/** A history entry as a bridge lists it while `[phone] run` is off. */
+function runOff(entry: RecentRun): RecentRun {
+  return { line: entry.line, cwd: entry.cwd, at: entry.at, noPrompts: entry.noPrompts, available: false, reason: "run_off" };
+}
+
+/**
+ * The real Command select and what hangs off it, fed by the real rules (`offerFor`, `commandOptions`),
+ * with the choice and the typed line held here. The page's Start, the check and the history writes are
+ * not wired: a card writes nothing.
+ */
+function CommandPickerDemo({ run, pick, line = "" }: { run: boolean; pick: string; line?: string }) {
+  const [key, setKey] = useState(pick);
+  const [typed, setTyped] = useState(line);
+  const recentRuns = RUN_RECENT.map((e) => (run ? e : runOff(e)));
+  const offer = offerFor({ harnesses: [], items: RUN_ITEMS, loaded: true, rows: [], canWorktree: true, run, recentRuns });
+  const command = commandChoice(offer, pickOfKey(offer, key), null);
+  return (
+    <div className="p-4">
+      <CommandPicker
+        options={commandOptions(offer, "Just a shell")}
+        value={commandKey(command)}
+        onChoose={setKey}
+        typed={command.kind === "typed" ? { line: typed, onLine: setTyped, onGo: () => {} } : null}
+        recent={command.kind === "run" ? { busy: false, onRemove: () => {}, onClear: () => {} } : null}
+      />
+    </div>
+  );
+}
+
+export function SettingsSection() {
+  return (
+    <Section def={DEF}>
+      <Group title="Settings">
+        <Card
+          state="settings-solo-unpaired"
+          label="settings, solo collie, nothing paired"
+          reach="tap the gear from the dashboard. With no device paired, the bridge answers no read and no write, and the Paired devices card offers the pairing verb instead of a list."
+          note="The whole real route. Two things on it still reach the network on purpose — /api/config for the diagnostics build, and the browser's own push subscription — and both fail soft, so the page renders whole with no bridge."
+          span={2}
+        >
+          <PhoneFrameCard height={760}>
+            <SettingsRouter home={homeSolo} devices={devicesUnpaired} />
+          </PhoneFrameCard>
+        </Card>
+
+        <Card
+          state="settings-lead-paired"
+          label="settings, lead of a crew, three devices paired"
+          reach="pair a phone with `collie pair`, then open Settings on the lead. The Crew card appears only on a multi-machine roster; the device list names which row is the phone you are holding."
+          note="One Updates row, where three update cards used to stand. Its status line follows the footer chip's old precedence and its chevron says it opens a page."
+          span={2}
+        >
+          <PhoneFrameCard height={760}>
+            <SettingsRouter home={homeCrew} devices={devicesPaired} />
+          </PhoneFrameCard>
+        </Card>
+      </Group>
+
+      <Group title="Notify when">
+        <Card
+          state="settings-notify-cache-row"
+          label="notify card, the fourth switch and the panes watched one by one"
+          reach="scroll to Notify when in Settings. The fifth row is the cache warning, off by default,
+            and the section under it names the panes switched on one at a time from their own sheets —
+            which is what makes the global-OR-per-pane rule visible instead of implicit."
+          note="The real card with a fixture: the playground answers no API, so the controller's two
+            fetches are replaced by handed-in values rather than stubbed."
+        >
+          <Stage height={420}>
+            <div className="p-4">
+              <NotifyPrefsCard
+                prefs={{ blocked: true, done: false, updates: true, cache: false, machines: true }}
+                busy={false}
+                onToggle={() => {}}
+                entries={watchedPanes}
+                entriesBusy={false}
+                onForget={() => {}}
+              />
+            </div>
+          </Stage>
+        </Card>
+      </Group>
+
+      <Group title="Updates">
+        <Card
+          state="updates-page"
+          label="updates, the page the Settings row opens"
+          reach="tap the Updates row in Settings. The check control on top, then one card carrying the version, the preflight, the run progress, a read-only line per peer, and the single action button."
+          note="No bridge here, so the card's own read of /api/update/check never lands: the versions come from the snapshot and the peer lines stay empty. Against a live lead the same card grows one line per member, worst first."
+          span={2}
+        >
+          <PhoneFrameCard height={760}>
+            <SettingsRouter home={homeCrew} devices={devicesPaired} start="/settings/updates" />
+          </PhoneFrameCard>
+        </Card>
+      </Group>
+
+      <Group title="Spaces">
+        <Card
+          state="spaces-repo-worktrees"
+          label="spaces, a repo and its worktrees"
+          reach="open a worktree of a repo you already have open as a space. Herdr reports the repo on both, so the list nests the worktree under the checkout showing that repo — no extra call, and nothing to switch on."
+          note="`blog` sits outside any repo and stays flat, which is the same row it always was. A worktree whose repo is NOT open would also stay flat: there would be nothing to indent under."
+          span={2}
+        >
+          <PhoneFrameCard height={430}>
+            <SpaceOverview
+              workspaces={spacesWithWorktrees}
+              // No agents: this card is about SHAPE. With a herd attached every row also carries its
+              // triage tint, and a wall of "needs you" red says nothing about nesting.
+              agents={[]}
+              onOpen={() => {}}
+              onNewSpace={() => {}}
+              open
+              onOpenChange={() => {}}
+            />
+          </PhoneFrameCard>
+        </Card>
+
+        <Card
+          state="new-page"
+          label="the New page"
+          reach="tap + New on the dashboard, the folder button on the Spaces list, or the empty dashboard's first-agent card. A pane's ⋯ New agent in a worktree opens it with the worktree switch on."
+          note="The agents and the commands are the chosen machine's own answer (GET /api/launchers), so this card shows what the bridge behind the playground reports. What cannot run there stays in its list, disabled, with its reason in brackets. Start is pinned to the foot."
+          span={2}
+        >
+          <PhoneFrameCard height={640}>
+            <NewRouter home={homeSolo} />
+          </PhoneFrameCard>
+        </Card>
+
+        <Card
+          state="new-page-pick-host"
+          label="New page, crew, pick a machine"
+          reach="open the New page on a lead with peers. On a solo collie the machine select is not rendered at all."
+          note="The select is on the machine the start lands on: the one the list was already showing (?machine=workshop here), or the lead. A machine that cannot take writes stays in the list, disabled, with a word for why in brackets."
+          span={2}
+        >
+          <PhoneFrameCard height={640}>
+            <NewRouter home={homeCrew} start="/new?machine=workshop" />
+          </PhoneFrameCard>
+        </Card>
+
+        <Card
+          state="new-page-run-typed"
+          label="New page, Shell, Type a command"
+          reach="on the New page, switch to Shell and pick Type a command… in the Command select. It shows when the machine's launchers.toml leaves [phone] run on, which is the default."
+          note="One monospace field right under the select, with the corrections of the keyboard turned off and Go on the return key. The row is reserved only while the option is chosen, so picking it is a choice and typing moves nothing. On the real page the summary above Start reads Runs `htop` in ~/projects on bluefin, and Start checks the line first, so a line that skips permission prompts asks before its first run."
+        >
+          <Stage height={240}>
+            <CommandPickerDemo run pick="typed" line="htop" />
+          </Stage>
+        </Card>
+
+        <Card
+          state="new-page-run-recent"
+          label="New page, Shell, a Recent entry chosen"
+          reach="on the New page, switch to Shell and pick a line from the Recent group, which lists the one-off lines run on that machine, newest first. Starting it runs that line again."
+          note="The option shows the line, cut when long, with (No prompts) where it applies. A small Remove from history and Clear history sit under the select while an entry is chosen; Clear history asks first, in a sheet. Picking an entry fills the folder with the one it last ran in, unless you changed the folder on this visit. The card writes nothing."
+        >
+          <Stage height={380}>
+            <CommandPickerDemo run pick="run:make deploy --env staging" />
+          </Stage>
+        </Card>
+
+        <Card
+          state="new-page-run-off"
+          label="New page, Shell, one-off commands turned off"
+          reach="on the New page, switch to Shell on a machine whose launchers.toml sets [phone] run = false."
+          note="The history stays in the list, each line disabled with its reason in brackets, and Type a command… is gone."
+        >
+          <Stage height={120}>
+            <CommandPickerDemo run={false} pick="shell" />
+          </Stage>
+        </Card>
+
+        <Card
+          state="new-page-add"
+          label="Add your own, Agent, a recipe"
+          reach="on the New page, tap Add your own under the Agent select. It shows when the machine's launchers.toml lets a phone add."
+          note="Pick the harness, tap the option chips (one per group), read the line Collie will type, and tap Add. The list below is every row a phone added on that machine, with Rename and Remove, and the operator's own rows locked. The recipes and rows are the chosen machine's own answer, so this card shows what the bridge behind the playground reports."
+          span={2}
+        >
+          <PhoneFrameCard height={760}>
+            <NewRouter home={homeSolo} start="/new/add?kind=agent" />
+          </PhoneFrameCard>
+        </Card>
+
+        <Card
+          state="new-page-add-command"
+          label="Add your own, Command, a typed line"
+          reach="on the New page, switch to Shell and tap Add your own under the Command select. Agent has the same way under Write a command."
+          note="A typed line is off until the operator sets [phone] free_text = true; then the card shows one disabled row saying so. Check the line shows every hidden character as its code before Add turns on."
+          span={2}
+        >
+          <PhoneFrameCard height={760}>
+            <NewRouter home={homeSolo} start="/new/add?kind=command" />
+          </PhoneFrameCard>
+        </Card>
+
+        <Card
+          state="new-page-add-how"
+          label="How adding works, the explainer sheet"
+          reach="on the Add your own page, tap How adding works."
+          note="The recipe, Write a command and how the operator turns it on, this machine's launchers.toml path with one example row and a Copy button, where phone rows live, and the docs link."
+        >
+          <Stage height={640}>
+            <LauncherHowSheet open onClose={() => {}} file="/home/op/.config/collie/launchers.toml" />
+          </Stage>
+        </Card>
+
+        <Card
+          state="new-page-no-prompts-confirm"
+          label="Start without prompts?, the confirm sheet"
+          reach="on the New page, tap Start on a launcher with the No prompts badge for the first time on this phone and machine. The dashboard's Launch strip and the switcher's Launch section ask the same question."
+          note="Asked once per phone, machine and line. Cancel does nothing; Start remembers the answer and goes on."
+        >
+          <Stage height={520}>
+            <NoPromptsSheet
+              ask={{ command: "claude --dangerously-skip-permissions", folder: "~/projects/collie", machine: "workshop" }}
+              onStart={() => {}}
+              onCancel={() => {}}
+            />
+          </Stage>
+        </Card>
+      </Group>
+    </Section>
+  );
+}

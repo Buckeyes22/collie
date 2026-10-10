@@ -60,6 +60,7 @@ interface CollieApi {
     suspend fun health(connection: Connection): ApiResult<HealthResponse>
     suspend fun config(connection: Connection): ApiResult<BridgeConfigResponse> =
         ApiResult.Failure(ApiFailure.Protocol("Config is unavailable"))
+    suspend fun config(connection: Connection, scope: Scope): ApiResult<BridgeConfigResponse> = config(connection)
     suspend fun snapshot(connection: Connection, scope: Scope = Scope()): ApiResult<SnapshotResponse>
     suspend fun pane(
         connection: Connection,
@@ -72,7 +73,7 @@ interface CollieApi {
     suspend fun pair(origin: CollieOrigin, code: String, label: String): ApiResult<PairResult>
     suspend fun devices(connection: Connection): ApiResult<DevicesResponse>
     suspend fun revokeDevice(connection: Connection, label: String): ApiResult<DevicesResponse> = unavailable("Device revoke")
-    suspend fun pack(connection: Connection): ApiResult<PackStatusResponse> = unavailable("Pack status")
+    suspend fun crew(connection: Connection): ApiResult<CrewStatusResponse> = unavailable("Crew status")
     /** [etag] from the last answer to the same read: an unchanged page comes back as NotModified. */
     suspend fun history(
         connection: Connection,
@@ -81,6 +82,17 @@ interface CollieApi {
         before: String? = null,
         etag: String? = null,
     ): ApiResult<PaneHistoryResponse> = unavailable("Pane history")
+    suspend fun chat(
+        connection: Connection,
+        address: PaneAddress,
+        limit: Int = 200,
+        after: ChatAfter? = null,
+        before: ChatBefore? = null,
+        etag: String? = null,
+    ): ApiResult<PaneChatResponse> = unavailable("Live chat")
+    suspend fun startLaunch(connection: Connection, scope: Scope, target: StartTarget, requestId: String, cwd: String? = null): ApiResult<CreateResponse> = unavailable("Launch by id")
+    suspend fun planWorktree(connection: Connection, scope: Scope, cwd: String, branch: String? = null, parent: String? = null): ApiResult<WorktreePlanResponse> = unavailable("Worktree plan")
+    suspend fun createWorktreeAt(connection: Connection, scope: Scope, cwd: String, branch: String, target: StartTarget, requestId: String, base: WorktreeBase = WorktreeBase(), folder: WorktreeFolder = WorktreeFolder()): ApiResult<WorktreeOpenResponse> = unavailable("Worktree from folder")
     suspend fun closePane(connection: Connection, address: PaneAddress): ApiResult<ActionResponse> = unavailable("Pane close")
     suspend fun focusPane(connection: Connection, address: PaneAddress): ApiResult<ActionResponse> = unavailable("Pane focus")
     suspend fun renamePane(
@@ -186,6 +198,9 @@ class CollieApiClient(
     override suspend fun config(connection: Connection): ApiResult<BridgeConfigResponse> =
         executeJson(request(connection, path("config")), BridgeConfigResponse.serializer(), READ_TIMEOUT_SECONDS)
 
+    override suspend fun config(connection: Connection, scope: Scope): ApiResult<BridgeConfigResponse> =
+        executeJson(request(connection, scopedUrl(connection.origin, path("config"), scope)), BridgeConfigResponse.serializer(), READ_TIMEOUT_SECONDS)
+
     override suspend fun snapshot(connection: Connection, scope: Scope): ApiResult<SnapshotResponse> {
         val url = scopedUrl(
             connection.origin,
@@ -269,12 +284,18 @@ class CollieApiClient(
         )
     }
 
-    override suspend fun pack(connection: Connection): ApiResult<PackStatusResponse> =
-        executeJson(
-            request(connection, url(connection.origin, path("pack"))),
-            PackStatusResponse.serializer(),
+    override suspend fun crew(connection: Connection): ApiResult<CrewStatusResponse> {
+        val result = executeJson(
+            request(connection, url(connection.origin, path("crew"))),
+            CrewStatusResponse.serializer(),
             READ_TIMEOUT_SECONDS,
         )
+        // A single legacy read fallback; a crew-role refusal must keep its meaning.
+        if (result is ApiResult.Failure && result.error is ApiFailure.Http &&
+            result.error.status == 404 && result.error.code != "crew.not_lead"
+        ) return executeJson(request(connection, url(connection.origin, path("pack"))), CrewStatusResponse.serializer(), READ_TIMEOUT_SECONDS)
+        return result
+    }
 
     override suspend fun history(
         connection: Connection,
@@ -303,6 +324,44 @@ class CollieApiClient(
         ) { response ->
             if (response.available) response.reason == null else !response.reason.isNullOrBlank()
         }
+    }
+
+    override suspend fun chat(connection: Connection, address: PaneAddress, limit: Int, after: ChatAfter?, before: ChatBefore?, etag: String?): ApiResult<PaneChatResponse> {
+        require(limit in 1..MAX_HISTORY_LIMIT && (after == null || before == null))
+        val query = buildList {
+            add("limit" to limit.toString())
+            after?.let { add("after" to "${it.gen}:${it.rev}") }
+            before?.let { require(it.uuid.isNotBlank()); add("before" to "${it.seq}:${it.uuid}") }
+        }
+        val url = scopedUrl(connection.origin, path("pane", address.paneId, "chat"), address.scope, query)
+        val builder = requestBuilder(connection, url).header("X-Collie-Seen", "1")
+        if (before == null && after != null && etag != null) builder.header("If-None-Match", etag)
+        return requireContract(
+            executeJson(builder.get().build(), PaneChatResponse.serializer(), READ_TIMEOUT_SECONDS, allowNotModified = before == null && after != null),
+            "Malformed live chat response",
+        ) { page ->
+            if (!page.available) !page.reason.isNullOrBlank()
+            else page.gen != null && page.upserts.all { it.seq != null } &&
+                if (before != null) page.page == "older" else page.page == "live" && page.rev != null && page.head != null && page.oldest != null
+        }
+    }
+
+    override suspend fun startLaunch(connection: Connection, scope: Scope, target: StartTarget, requestId: String, cwd: String?): ApiResult<CreateResponse> {
+        require(requestId.isNotBlank())
+        val body = StartLaunchRequest(requestId, cwd, target.harness, target.command, target.shell)
+        return executeCreate(post(connection, scopedUrl(connection.origin, path("launch"), scope), json.encodeToString(body)))
+    }
+
+    override suspend fun planWorktree(connection: Connection, scope: Scope, cwd: String, branch: String?, parent: String?): ApiResult<WorktreePlanResponse> {
+        require(cwd.isNotBlank())
+        val query = buildList { add("cwd" to cwd); branch?.let { add("branch" to it) }; parent?.let { add("parent" to it) } }
+        return executeJson(request(connection, scopedUrl(connection.origin, path("worktree", "plan"), scope, query)), WorktreePlanResponse.serializer(), READ_TIMEOUT_SECONDS)
+    }
+
+    override suspend fun createWorktreeAt(connection: Connection, scope: Scope, cwd: String, branch: String, target: StartTarget, requestId: String, base: WorktreeBase, folder: WorktreeFolder): ApiResult<WorktreeOpenResponse> {
+        require(cwd.isNotBlank() && branch.isNotBlank() && requestId.isNotBlank())
+        val body = WorktreeAtRequest(cwd, branch, base, folder, requestId, target.harness, target.command, target.shell)
+        return executeWorktreeOpen(post(connection, scopedUrl(connection.origin, path("worktree"), scope), json.encodeToString(body)))
     }
 
     override suspend fun closePane(connection: Connection, address: PaneAddress): ApiResult<ActionResponse> =
@@ -591,7 +650,7 @@ class CollieApiClient(
     }
 
     private suspend fun executeWorktreeOpen(request: Request): ApiResult<WorktreeOpenResponse> = requireContract(
-        executeJson(request, WorktreeOpenResponse.serializer(), MUTATION_TIMEOUT_SECONDS),
+        executeJson(request, WorktreeOpenResponse.serializer(), WORKTREE_TIMEOUT_SECONDS),
         "Malformed worktree response",
     ) { response ->
         if (response.ok) response.pane != null else !response.error.isNullOrBlank()
@@ -731,6 +790,7 @@ class CollieApiClient(
         private const val BUILD_HEADER = "X-Collie-Build"
         private const val READ_TIMEOUT_SECONDS = 10L
         private const val MUTATION_TIMEOUT_SECONDS = 20L
+        private const val WORKTREE_TIMEOUT_SECONDS = 100L
         private const val UPLOAD_TIMEOUT_SECONDS = 60L
         private const val STT_PROVIDER_AND_OVERHEAD_SECONDS = 80L
         private const val STT_UPLINK_BITS_PER_SECOND = 256_000L

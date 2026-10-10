@@ -176,8 +176,8 @@
     <string name="pane_strip_description">%1$s pane</string>
     <string name="pane_strip_current_description">%1$s pane, current</string>
     <string name="pane_created_shell_meta">shell · %1$s</string>
-    <string name="pane_host_incompatible">%1$s uses an incompatible pack protocol</string>
-    <string name="pane_host_incompatible_detail">%1$s uses an incompatible pack protocol — %2$s</string>
+    <string name="pane_host_incompatible">%1$s uses an incompatible crew protocol</string>
+    <string name="pane_host_incompatible_detail">%1$s uses an incompatible crew protocol — %2$s</string>
     <string name="pane_host_unreachable">%1$s is unreachable; writes are disabled.</string>
     <string name="pane_add_symbol" translatable="false">＋</string>
     <string name="pane_hide_symbol" translatable="false">⌃</string>

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 
-import { decidePush, hostSlot, notificationPath, tagFor } from "@/lib/push-decision";
+import { decidePush, hostSlot, localisedTitle, notificationPath, tagFor } from "@/lib/push-decision";
 import { scopeSearch } from "@/lib/scope";
 
 describe("decidePush", () => {
@@ -14,6 +14,34 @@ describe("decidePush", () => {
     expect(decidePush({ title: "claude needs you", tag: "collie:herd" }, true)).toEqual({
       kind: "suppress",
     });
+  });
+
+  // A machine's sustained load is the one push no visible tab stands in for: the in-app status speaks
+  // for panes, not machines. It shows whether or not a Collie tab is open, and carries the machine.
+  test("a machine alert is shown even while a Collie tab is visible", () => {
+    const payload = {
+      type: "machine" as const,
+      title: "laptop: CPU high",
+      body: "94% for 5 min",
+      tag: "collie:machine@laptop",
+      renotify: true,
+      data: { target: "machine", machine: "laptop" },
+    };
+    const shown = {
+      kind: "show",
+      title: "laptop: CPU high",
+      body: "94% for 5 min",
+      tag: "collie:machine@laptop",
+      target: "machine",
+      machine: "laptop",
+      renotify: true,
+    };
+    expect(decidePush(payload, true)).toMatchObject(shown);
+    expect(decidePush(payload, false)).toMatchObject(shown);
+  });
+
+  test("other typed pushes are still suppressed by a visible tab", () => {
+    expect(decidePush({ type: "update", title: "update", tag: "collie:update" }, true)).toEqual({ kind: "suppress" });
   });
 
   test("shows with the bridge-provided tag, renotify, and deep-link paneId", () => {
@@ -88,7 +116,7 @@ describe("decidePush", () => {
     ).toMatchObject({ kind: "show", tag: "collie:herd@box2", paneId: "w1:p1", host: "box2", session: "demo" });
   });
 
-  test("a lead push carries no host — the pre-pack decision, unchanged", () => {
+  test("a lead push carries no host — the pre-crew decision, unchanged", () => {
     const decision = decidePush({ title: "claude needs you", data: { paneId: "w1:p1" } }, false);
     // SAFETY: the case asserts a field the union's "show" arm does not declare — that ABSENCE is
     // the invariant (a lead push carries no host), so it has to be read off the value to be pinned.
@@ -120,6 +148,41 @@ describe("decidePush", () => {
   });
 });
 
+describe("localisedTitle — the headline in this device's language (ADR 0074)", () => {
+  const korean = { "agent.blocked": "{agent} 입력 대기", "herd.done": "에이전트 {count}개 작업 완료" };
+
+  test("a known code with a stored template is filled from the push's own detail", () => {
+    const push = { title: "claude needs you", titleCode: "agent.blocked", titleDetail: { agent: "claude" } };
+    expect(localisedTitle(push, korean)).toBe("claude 입력 대기");
+    expect(decidePush(push, false, korean)).toMatchObject({ kind: "show", title: "claude 입력 대기" });
+  });
+
+  test("a number fills its slot as written", () => {
+    const push = { title: "3 agents done", titleCode: "herd.done", titleDetail: { count: 3 } };
+    expect(decidePush(push, false, korean)).toMatchObject({ title: "에이전트 3개 작업 완료" });
+  });
+
+  test("every miss falls through to the bridge's English, never to a key or a blank", () => {
+    // No code: an older bridge, or a title the operator typed with `collie push-test`.
+    expect(decidePush({ title: "hello" }, false, korean)).toMatchObject({ title: "hello" });
+    // A code a newer bridge invented, which this build cannot know.
+    const newer = { title: "claude is thinking", titleCode: "agent.thinking", titleDetail: { agent: "claude" } };
+    expect(decidePush(newer, false, korean)).toMatchObject({ title: "claude is thinking" });
+    // A known code the stored table has no template for (the page has not run since install).
+    const unstored = { title: "claude is done", titleCode: "agent.done", titleDetail: { agent: "claude" } };
+    expect(decidePush(unstored, false, korean)).toMatchObject({ title: "claude is done" });
+    // No table at all: the call every existing caller makes.
+    expect(decidePush(unstored, false)).toMatchObject({ title: "claude is done" });
+  });
+
+  test("a retraction is untouched by a table", () => {
+    expect(decidePush({ type: "clear", tag: "collie:herd" }, false, korean)).toEqual({
+      kind: "clear",
+      tag: "collie:herd",
+    });
+  });
+});
+
 describe("tagFor", () => {
   test("per-pane vs generic slot", () => {
     expect(tagFor("p1")).toBe("collie:p1");
@@ -136,17 +199,17 @@ describe("tagFor", () => {
   });
 });
 
-// The frontend half of bridge/pack/tags.ts. The bridge writes the tag on a render and this file
+// The frontend half of bridge/crew/tags.ts. The bridge writes the tag on a render and this file
 // re-derives it on a fallback and on a retraction, so the two derivations must agree by
 // construction, not by two string templates that happen to match today.
 describe("hostSlot", () => {
-  test("reproduces the bridge's pack herd slots exactly", () => {
+  test("reproduces the bridge's crew herd slots exactly", () => {
     expect(hostSlot("collie:herd")).toBe("collie:herd"); // the lead's own — must never move
     expect(hostSlot("collie:herd", "laptop")).toBe("collie:herd@laptop");
     expect(`${hostSlot("collie:herd", "laptop")}:demo`).toBe("collie:herd@laptop:demo");
   });
 
-  // The injectivity argument from bridge/pack/tags.ts, as a test: a member id can hold neither `@`
+  // The injectivity argument from bridge/crew/tags.ts, as a test: a member id can hold neither `@`
   // nor `:`, so the character after the base discriminates a peer's slot from a local session's.
   test("a local session cleverly named like a host cannot collide with that host's slot", () => {
     expect(`${hostSlot("collie:herd")}:@laptop`).not.toBe(hostSlot("collie:herd", "laptop"));
@@ -161,7 +224,7 @@ describe("notificationPath — where a tap lands", () => {
     expect(notificationPath({ paneId: "w1:p1", host: "box2" })).toBe("/pane/w1%3Ap1?h=box2");
   });
 
-  // The whole backward-compatibility story in one assertion: nothing about a lead-only pack changed.
+  // The whole backward-compatibility story in one assertion: nothing about a lead-only crew changed.
   test("the lead emits today's bytes — no host param anywhere", () => {
     expect(notificationPath({ paneId: "w1:p1" })).toBe("/pane/w1%3Ap1");
     expect(notificationPath({ paneId: "w1:p1", session: "demo" })).toBe("/pane/w1%3Ap1?s=demo");
@@ -172,6 +235,21 @@ describe("notificationPath — where a tap lands", () => {
   // The update push opens the UPDATES page, not Settings — that is where the check, the card, the
   // peers and the one button live (M16/01). Unscoped on purpose: an update is about the machine
   // the phone is talking to, and `host` must not send the tap somewhere else.
+  // A machine alert (ADR 0084) opens that machine's page, keyed by the crew member id in `host`.
+  test("a machine alert opens that machine, not a pane", () => {
+    expect(notificationPath({ target: "machine", machine: "laptop" })).toBe("/machines/laptop");
+    expect(notificationPath({ target: "machine", machine: "local" })).toBe("/machines/local");
+    expect(notificationPath({ target: "machine", machine: "a b/c" })).toBe("/machines/a%20b%2Fc");
+    expect(notificationPath({ target: "machine" })).toBe("/machines");
+  });
+
+  // `host` names where a PANE lives. A machine alert carries `machine`, and a stray `host` must not
+  // pick the page: it would send the tap to the wrong machine, or to a page for a pane's host.
+  test("a machine alert reads data.machine and never data.host", () => {
+    expect(notificationPath({ target: "machine", machine: "laptop", host: "box2" })).toBe("/machines/laptop");
+    expect(notificationPath({ target: "machine", host: "box2" })).toBe("/machines");
+  });
+
   test("update push opens updates, unscoped", () => {
     expect(notificationPath({ target: "settings", host: "box2" })).toBe("/settings/updates");
   });

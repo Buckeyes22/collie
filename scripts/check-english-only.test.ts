@@ -56,8 +56,10 @@ describe("English-only interface contract", () => {
     expect(existsSync(join(root, "scripts/android-locales.machine.json"))).toBe(false);
   });
 
-  test("project text contains no CJK or Hangul language characters", () => {
-    const violations = projectTextFiles(root).flatMap((path) => {
+  test("shipped UI catalogs contain no CJK or Hangul language characters", () => {
+    // Terminal fixtures and Unicode parser cases are user input, which must remain byte faithful.
+    const paths = [join(root, "web/src/lib/i18n/messages/en.ts"), ...projectTextFiles(join(root, "android/app/src/main/res/values"))];
+    const violations = paths.flatMap((path) => {
       const match = readFileSync(path, "utf8").match(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u);
       return match === null ? [] : [`${path.slice(root.length + 1)}: ${match[0]}`];
     });
