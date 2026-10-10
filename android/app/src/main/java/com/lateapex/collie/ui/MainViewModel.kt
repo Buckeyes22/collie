@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.lateapex.collie.CollieApplication
 import com.lateapex.collie.R
 import com.lateapex.collie.data.CollieRepository
+import com.lateapex.collie.domain.DeviceLabel
 import com.lateapex.collie.domain.PollingBackoff
 import com.lateapex.collie.domain.Scope
 import com.lateapex.collie.network.ApiFailure
@@ -66,13 +67,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val scopeBackStack = ScopeBackStack()
     private val nativePreferences = NativePreferences(application)
     private var scopeValidationPending = true
+    private var observedConnection = repository.connection.value
 
     init {
         repository.selectScope(nativePreferences.dashboardScope)
         syncConnection()
         viewModelScope.launch {
             repository.connection.collectLatest { connection ->
-                val previous = mutableState.value
+                val changed = connection != observedConnection
+                observedConnection = connection
+                if (changed) {
+                    configRequested = false
+                    scopeValidationPending = true
+                }
+                val previous = if (changed) mutableState.value.copy(
+                    snapshot = null, mux = null, muxName = null, launchers = null, lastSuccessAt = null,
+                ) else mutableState.value
                 val revoked = previous.configured && previous.paired && connection?.isPaired == false
                 mutableState.value = previous.copy(
                     configured = connection != null,
@@ -331,9 +341,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 is ApiResult.Failure -> {
                     pollingBackoff.failed()
-                    val pairingRequired = result.error is ApiFailure.Http &&
+                    val pairingRequired = result.error is ApiFailure.Http && result.error.status == 403 &&
                         result.error.message in setOf("device not paired", "device expired")
-                    if (pairingRequired) repository.demoteToReadOnly()
                     val authError = result.error is ApiFailure.Redirect ||
                         result.error is ApiFailure.Http && result.error.status in setOf(401, 403)
                     mutableState.value = mutableState.value.copy(
@@ -394,7 +403,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun validateLabel(label: String): String? = when {
         label.isBlank() -> getApplication<Application>().getString(R.string.device_label_required)
-        label.trim().length > 80 -> getApplication<Application>().getString(R.string.device_label_too_long)
+        DeviceLabel.normalize(label).length > DeviceLabel.MAX_CHARS -> getApplication<Application>().getString(R.string.device_label_too_long)
         else -> null
     }
 

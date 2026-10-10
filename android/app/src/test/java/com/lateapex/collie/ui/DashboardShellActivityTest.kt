@@ -58,7 +58,7 @@ class DashboardShellActivityTest {
     }
 
     @Test
-    fun connectionBannerActionsKeepTheFortyFourDpTouchFloor() {
+    fun connectionBannerActionsKeepTheFortyEightDpTouchFloor() {
         val activity = Robolectric.buildActivity(
             MainActivity::class.java,
             Intent(ApplicationProvider.getApplicationContext(), MainActivity::class.java),
@@ -68,9 +68,12 @@ class DashboardShellActivityTest {
         listOf(
             R.id.dashboard_connection_retry,
             R.id.dashboard_connection_reload,
+            R.id.dashboard_idle_resume,
+            R.id.host_switcher,
+            R.id.session_switcher,
         ).forEach { id ->
             val control = activity.findViewById<View>(id)
-            assertTrue("view $id should retain a 44dp height", control.layoutParams.height >= floor)
+            assertTrue("view $id should retain a 48dp height", control.layoutParams.height >= floor)
         }
         assertTrue(activity.findViewById<View>(R.id.dashboard_connection_reload).layoutParams.width >= floor)
         assertTrue(activity.findViewById<View>(R.id.dashboard_connection_banner).layoutParams.height >= floor)

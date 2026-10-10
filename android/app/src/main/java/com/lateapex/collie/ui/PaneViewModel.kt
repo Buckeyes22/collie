@@ -73,6 +73,7 @@ data class PaneUiState(
     val transcriptReason: String? = null,
     val transcriptHasMore: Boolean = false,
     val transcriptQueued: List<String> = emptyList(),
+    val codexAcceptedReplies: List<String> = emptyList(),
 )
 
 class PaneViewModel(
@@ -111,9 +112,17 @@ class PaneViewModel(
         return value
     }
     private var pollingJob: Job? = null
+    private var mutationJob: Job? = null
     private val readInFlight = AtomicBoolean(false)
     private val pollingBackoff = PollingBackoff()
     private val writeInFlight = AtomicBoolean(false)
+    // Credential scope stays in memory, with no generated toString or saved-state serialization.
+    private class AcceptedScope(val origin: String, val token: String?, val replies: CodexAcceptedReplies)
+    private val acceptedScopes = mutableListOf<AcceptedScope>()
+    private fun acceptedReplies(): CodexAcceptedReplies? = repository.connection.value?.let { connection ->
+        acceptedScopes.firstOrNull { it.origin == connection.origin.value && it.token == connection.token }?.replies
+            ?: CodexAcceptedReplies().also { acceptedScopes += AcceptedScope(connection.origin.value, connection.token, it) }
+    }
     private val directKeyQueue = ArrayDeque<String>()
     private var directTypingActive = false
     private var directTypingGeneration = 0L
@@ -134,11 +143,27 @@ class PaneViewModel(
         viewModelScope.launch {
             repository.connection.collect { connection ->
                 if (connection != observedConnection) {
+                    mutationJob?.cancel()
+                    endDirectTyping()
                     observedConnection = connection
                     deviceAuthorizationKnown = false
                     deviceWriteAllowed = false
                     mutableState.value = mutableState.value.copy(
                         topologyKnown = false,
+                        pane = null,
+                        sending = false,
+                        clearReplyDraft = false,
+                        composerReady = false,
+                        transcript = emptyList(),
+                        transcriptQueued = emptyList(),
+                        transcriptHasMore = false,
+                        transcriptAvailable = null,
+                        transcriptReason = null,
+                        codexAcceptedReplies = acceptedReplies()?.texts.orEmpty(),
+                        lastSuccessAt = null,
+                        quickReplies = emptyList(),
+                        commands = emptyList(),
+                        mux = null,
                         panes = emptyList(),
                         tabs = emptyList(),
                         servers = null,
@@ -212,7 +237,11 @@ class PaneViewModel(
             return
         }
         if (!writeInFlight.compareAndSet(false, true)) return
-        viewModelScope.launch {
+        val accepted = acceptedReplies()
+        val baseline = chatWindow.after?.let { cursor ->
+            chatWindow.head?.let { CodexAcceptedReplies.Baseline(cursor.gen, cursor.rev, it) }
+        }
+        mutationJob = viewModelScope.launch {
             try {
                 mutableState.value = mutableState.value.copy(
                     sending = true,
@@ -255,10 +284,19 @@ class PaneViewModel(
                 when (result) {
                 is ApiResult.Success -> {
                     val response = result.value
+                    if (response.ok && agent == "codex") {
+                        accepted?.accept(clean, baseline)
+                        // A concurrent poll can journal the turn while the submit guard is
+                        // awaiting composer consumption. Its upsert will not arrive twice.
+                        chatWindow.after?.let { cursor ->
+                            accepted?.reconcile(cursor.gen, cursor.rev, chatWindow.entries)
+                        }
+                    }
                     mutableState.value = if (response.ok) {
                         mutableState.value.copy(
                             sending = false,
-                            status = confirmation(text(R.string.pane_reply_sent)),
+                            status = confirmation(text(if (agent == "codex") R.string.pane_codex_accepted else R.string.pane_reply_sent)),
+                            codexAcceptedReplies = acceptedReplies()?.texts.orEmpty(),
                             clearReplyDraft = true,
                         )
                     } else if (response.textDelivered) {
@@ -293,6 +331,7 @@ class PaneViewModel(
                 )
                 }
             } finally {
+                mutableState.value = mutableState.value.copy(sending = false)
                 writeInFlight.set(false)
             }
         }
@@ -319,10 +358,10 @@ class PaneViewModel(
         val displayedPane = currentPaneOrRefuse() ?: return
         if (mutableState.value.sending || refuseTerminalWrite() || displayedSurface.interactionLocked ||
             displayedPane.revision != displayedSurface.revision || displayedAction !in displayedSurface.actions ||
-            displayedAction.keys.any { !MuxKeyGrammar.isValid(it) }
+            displayedAction.keys.any { !MuxKeyGrammar.isSupported(it, mutableState.value.unsupportedKeys) }
         ) return
         if (!writeInFlight.compareAndSet(false, true)) return
-        viewModelScope.launch {
+        mutationJob = viewModelScope.launch {
             try {
                 mutableState.value = mutableState.value.copy(
                     sending = true,
@@ -396,6 +435,7 @@ class PaneViewModel(
                 }
                 load()
             } finally {
+                mutableState.value = mutableState.value.copy(sending = false)
                 writeInFlight.set(false)
             }
         }
@@ -412,7 +452,7 @@ class PaneViewModel(
             displayedPane.revision != displayedSurface.revision || displayedSurface.nativeModel == null
         ) return
         if (!writeInFlight.compareAndSet(false, true)) return
-        viewModelScope.launch {
+        mutationJob = viewModelScope.launch {
             try {
                 mutableState.value = mutableState.value.copy(
                     sending = true,
@@ -429,7 +469,8 @@ class PaneViewModel(
                     }
 
                     override suspend fun keys(keys: List<String>, expectedPrompt: String?): SemanticWriteOutcome =
-                        when (val result = repository.keys(address, keys, expectedPrompt)) {
+                        if (keys.any { !MuxKeyGrammar.isSupported(it, mutableState.value.unsupportedKeys) }) SemanticWriteOutcome.FAILED
+                        else when (val result = repository.keys(address, keys, expectedPrompt)) {
                             is ApiResult.Success -> when {
                                 result.value.ok -> SemanticWriteOutcome.OK
                                 result.value.code == "prompt_changed" -> SemanticWriteOutcome.CHANGED
@@ -468,6 +509,7 @@ class PaneViewModel(
                 }
                 load()
             } finally {
+                mutableState.value = mutableState.value.copy(sending = false)
                 writeInFlight.set(false)
             }
         }
@@ -529,7 +571,12 @@ class PaneViewModel(
     }
 
     private fun sendKeys(keys: List<String>, direct: Boolean, directGeneration: Long? = null) {
-        if (keys.isEmpty() || keys.any { !MuxKeyGrammar.isValid(it) } || mutableState.value.sending || refuseTerminalWrite()) {
+        if (keys.any { !MuxKeyGrammar.isSupported(it, mutableState.value.unsupportedKeys) }) {
+            mutableState.value = mutableState.value.copy(mutationError = text(R.string.pane_error_key_refused))
+            if (direct) failDirectQueue(directGeneration)
+            return
+        }
+        if (keys.isEmpty() || mutableState.value.sending || refuseTerminalWrite()) {
             if (direct) failDirectQueue(directGeneration)
             return
         }
@@ -550,7 +597,7 @@ class PaneViewModel(
             if (direct) batchBackToFront(keys)
             return
         }
-        viewModelScope.launch {
+        mutationJob = viewModelScope.launch {
             var directSucceeded = false
             try {
                 mutableState.value = mutableState.value.copy(
@@ -606,6 +653,7 @@ class PaneViewModel(
                     load()
                 }
             } finally {
+                mutableState.value = mutableState.value.copy(sending = false)
                 writeInFlight.set(false)
                 if (direct) {
                     if (!directSucceeded) failDirectQueue(directGeneration)
@@ -743,8 +791,9 @@ class PaneViewModel(
                         transcriptSkipPolls = TRANSCRIPT_RETRY_POLLS
                         mutableState.value = mutableState.value.copy(transcriptAvailable = false, transcriptReason = page.reason, transcript = emptyList(), transcriptQueued = emptyList(), transcriptHasMore = false)
                     } else if (chatWindow.merge(page)) {
+                        acceptedReplies()?.reconcile(page)
                         chatEtag = result.etag
-                        mutableState.value = mutableState.value.copy(transcript = chatWindow.entries, transcriptQueued = chatWindow.queued, transcriptAvailable = true, transcriptReason = null, transcriptHasMore = chatWindow.hasOlder)
+                        mutableState.value = mutableState.value.copy(transcript = chatWindow.entries, transcriptQueued = chatWindow.queued, transcriptAvailable = true, transcriptReason = null, transcriptHasMore = chatWindow.hasOlder, codexAcceptedReplies = acceptedReplies()?.texts.orEmpty())
                     }
                     return
                 }
@@ -849,6 +898,11 @@ class PaneViewModel(
 
     fun onReplyDraftCleared() {
         mutableState.value = mutableState.value.copy(clearReplyDraft = false)
+    }
+
+    fun dismissAcceptedCodexReplies() {
+        acceptedReplies()?.dismiss()
+        mutableState.value = mutableState.value.copy(codexAcceptedReplies = emptyList())
     }
 
     private fun currentPaneOrRefuse(): PaneReadResponse? {
@@ -1018,8 +1072,7 @@ class PaneViewModel(
     }
 
     private fun demoteIfRevoked(failure: ApiFailure) {
-        if (failure is ApiFailure.Http && failure.message in setOf("device not paired", "device expired")) {
-            repository.demoteToReadOnly()
+        if (failure is ApiFailure.Http && failure.status == 403 && failure.message in setOf("device not paired", "device expired")) {
             connectionPaired = false
             applyWriteAccess()
         }

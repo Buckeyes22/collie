@@ -42,7 +42,7 @@ class DiagnosticsInterceptor internal constructor(
             "traceId" to traceId,
             "hadCredential" to (tagged.header("Authorization") != null),
         )
-        if (tagged.url.encodedPath == "/api/pair") {
+        if (tagged.url.pathSegments.takeLast(2) == listOf("api", "pair")) {
             diagnostics.record("network", fields)
             return response
         }

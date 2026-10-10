@@ -91,6 +91,7 @@ internal class SpaceViewModel(
     private val requestInFlight = AtomicBoolean(false)
     private val pollingBackoff = PollingBackoff()
     private var pollingJob: Job? = null
+    private var observedConnection = repository.connection.value
 
     init {
         mutableState.value = mutableState.value.copy(
@@ -99,6 +100,11 @@ internal class SpaceViewModel(
         )
         viewModelScope.launch {
             repository.connection.collectLatest { connection ->
+                if (connection !== observedConnection) {
+                    observedConnection = connection
+                    mutableState.value = SpaceUiState()
+                    loadConfig()
+                }
                 mutableState.value = mutableState.value.copy(
                     paired = connection?.isPaired == true,
                     writeAuthorized = repository.writesAllowed(),
@@ -157,7 +163,7 @@ internal class SpaceViewModel(
             error = null,
         )
         try {
-            when (val result = repository.snapshot(scope)) {
+            when (val result = repository.paneSnapshot(scope)) {
                 is ApiResult.Success -> {
                     pollingBackoff.succeeded()
                     val content = SpaceModel.from(result.value, workspaceId, scope)
@@ -180,9 +186,6 @@ internal class SpaceViewModel(
                 }
                 is ApiResult.Failure -> {
                     pollingBackoff.failed()
-                    if (result.error is ApiFailure.Http && result.error.message in setOf("device not paired", "device expired")) {
-                        repository.demoteToReadOnly()
-                    }
                     mutableState.value = mutableState.value.copy(
                         loading = false,
                         refreshing = false,

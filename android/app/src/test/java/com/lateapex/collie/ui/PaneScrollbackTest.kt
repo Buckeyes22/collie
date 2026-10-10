@@ -58,10 +58,12 @@ class PaneScrollbackTest {
 
     @Test
     fun journalAgentWithoutASessionGetsAnExplanationButNoDeadHistoryButton() {
-        val result = PaneBufferPolicy.resolve(pane(agent = "opencode", hasSession = false), null, 600)
-
-        assertEquals(PaneBufferAction.NONE, result.action)
-        assertEquals("opencode", result.missingSessionAgent)
+        listOf("opencode", "hermes", "omp").forEach { agent ->
+            val result = PaneBufferPolicy.resolve(pane(agent = agent, hasSession = false), null, 600)
+            assertEquals(PaneBufferAction.NONE, result.action)
+            assertEquals(agent, result.missingSessionAgent)
+        }
+        assertNull(PaneBufferPolicy.resolve(pane(agent = "muse", hasSession = false), null, 600).missingSessionAgent)
     }
 
     @Test

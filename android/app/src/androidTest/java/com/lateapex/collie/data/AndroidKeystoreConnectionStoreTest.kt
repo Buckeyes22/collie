@@ -10,12 +10,19 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Before
+import org.junit.After
 import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class AndroidKeystoreConnectionStoreTest {
-    private val context: Context = ApplicationProvider.getApplicationContext()
+    private val appContext: Context = ApplicationProvider.getApplicationContext()
+    private val context: Context = object : android.content.ContextWrapper(appContext) {
+        override fun getSharedPreferences(name: String, mode: Int): android.content.SharedPreferences =
+            appContext.getSharedPreferences("instrumentation-isolated-$name", mode)
+    }
+    private val keyAlias = "com.lateapex.collie.instrumentation.${java.util.UUID.randomUUID()}"
+    private val cipher = AndroidKeystoreCipher(keyAlias)
     private val json = Json { ignoreUnknownKeys = true }
     private val validator = OriginValidator()
 
@@ -25,9 +32,16 @@ class AndroidKeystoreConnectionStoreTest {
             .edit().clear().commit()
     }
 
+    @After
+    fun removeFixtureStorageAndKey() {
+        context.getSharedPreferences(EncryptedConnectionStore.PREFERENCES, Context.MODE_PRIVATE)
+            .edit().clear().commit()
+        java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null) }.deleteEntry(keyAlias)
+    }
+
     @Test
     fun androidKeystoreRoundTripLeavesNoPlaintextAndCanBeWiped() {
-        val store = EncryptedConnectionStore(context, AndroidKeystoreCipher(), json, validator)
+        val store = EncryptedConnectionStore(context, cipher, json, validator)
         store.save(
             Connection(
                 validator.requireValid("https://collie.example"),
@@ -40,7 +54,7 @@ class AndroidKeystoreConnectionStoreTest {
             .getString(EncryptedConnectionStore.RECORD, null).orEmpty()
         assertFalse(raw.contains("instrumented-secret-token"))
         assertFalse(raw.contains("collie.example"))
-        val restored = EncryptedConnectionStore(context, AndroidKeystoreCipher(), json, validator)
+        val restored = EncryptedConnectionStore(context, cipher, json, validator)
         assertEquals("instrumented-secret-token", restored.connection.value?.token)
 
         restored.clear()

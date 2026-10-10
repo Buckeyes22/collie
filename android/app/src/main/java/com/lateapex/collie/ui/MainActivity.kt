@@ -5,7 +5,6 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.net.Uri
-import android.provider.Settings
 import android.text.Spannable
 import android.text.SpannableStringBuilder
 import android.text.format.DateFormat
@@ -152,8 +151,7 @@ class MainActivity : AppCompatActivity() {
     private fun openDeepLink(uri: Uri?) {
         val origin = (application as com.lateapex.collie.CollieApplication)
             .container.repository.connection.value?.origin?.value ?: return
-        val allowedHost = runCatching { Uri.parse(origin).host }.getOrNull() ?: return
-        when (val target = CollieDeepLink.parse(uri, allowedHost)) {
+        when (val target = CollieDeepLink.parse(uri, com.lateapex.collie.domain.CollieOrigin(origin))) {
             null -> Unit
             is CollieDeepLink.Home -> viewModel.selectScope(target.scope, remember = false)
             is CollieDeepLink.Pack -> {
@@ -1012,7 +1010,7 @@ class MainActivity : AppCompatActivity() {
                         isAllCaps = false
                         isCheckable = true
                         gravity = Gravity.START or Gravity.CENTER_VERTICAL
-                        minHeight = dp(44)
+                        minHeight = dp(48)
                     },
                     LinearLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
@@ -1100,7 +1098,7 @@ class MainActivity : AppCompatActivity() {
         setHint(hintRes)
         inputType = InputType.TYPE_CLASS_TEXT
         isSingleLine = true
-        minHeight = dp(44)
+        minHeight = dp(48)
         setTextColor(ContextCompat.getColor(this@MainActivity, R.color.collie_foreground))
         setHintTextColor(ContextCompat.getColor(this@MainActivity, R.color.collie_muted))
     }
@@ -1112,7 +1110,7 @@ class MainActivity : AppCompatActivity() {
             text = label
             isAllCaps = false
             gravity = Gravity.START or Gravity.CENTER_VERTICAL
-            minHeight = dp(44)
+            minHeight = dp(48)
             setOnClickListener { action() }
         }
 
@@ -1212,10 +1210,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun defaultDeviceLabel(): String {
         val model = android.os.Build.MODEL.trim().take(40)
-        val androidId = Settings.Secure.getString(contentResolver, Settings.Secure.ANDROID_ID)
-            ?.takeLast(4)
-            .orEmpty()
-        return listOf(model, androidId).filter(String::isNotBlank).joinToString("-")
+        val suffix = NativePreferences(this).pairingLabelSuffix
+        return listOf(model, suffix).filter(String::isNotBlank).joinToString("-")
     }
 
     private fun isEligibleWorktreeRoot(workspace: WorkspaceSummary): Boolean =

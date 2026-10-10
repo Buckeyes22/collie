@@ -7,7 +7,6 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
-import com.google.android.material.textfield.TextInputEditText
 import com.lateapex.collie.CollieApplication
 import com.lateapex.collie.R
 import org.junit.Assert.assertTrue
@@ -15,7 +14,7 @@ import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
-/** Opt-in physical-device smoke. It performs reads only and is skipped without -e liveOrigin. */
+/** Opt-in read-only smoke. Requires -e liveOrigin and its already-paired installed connection. */
 @RunWith(AndroidJUnit4::class)
 class PhysicalLiveReadAcceptanceTest {
     @Test
@@ -24,18 +23,14 @@ class PhysicalLiveReadAcceptanceTest {
         assumeTrue("liveOrigin instrumentation argument was not supplied", !origin.isNullOrBlank())
         val context = ApplicationProvider.getApplicationContext<Context>()
         val application = context.applicationContext as CollieApplication
-        application.container.connectionStore.clear()
+        val connection = application.container.connectionStore.connection.value
+        assumeTrue("A paired connection for liveOrigin is required", connection?.isPaired == true)
+        val expected = com.lateapex.collie.network.OriginValidator().requireValid(origin!!)
+        assumeTrue("The installed pairing must match liveOrigin", connection?.origin == expected)
 
         var paneCount = 0
         var error = ""
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
-            scenario.onActivity { activity ->
-                activity.findViewById<TextInputEditText>(R.id.origin_input).setText(origin)
-                activity.findViewById<TextInputEditText>(R.id.device_label_input)
-                    .setText("Pixel physical read smoke")
-                activity.findViewById<View>(R.id.connect_button).performClick()
-            }
-
             val deadline = System.currentTimeMillis() + 25_000L
             while (System.currentTimeMillis() < deadline && paneCount == 0 && error.isEmpty()) {
                 Thread.sleep(250)
@@ -50,8 +45,6 @@ class PhysicalLiveReadAcceptanceTest {
                 }
             }
         }
-        application.container.connectionStore.clear()
-
         assertTrue("live read failed: ${error.ifEmpty { "no panes rendered" }}", paneCount > 0)
     }
 }

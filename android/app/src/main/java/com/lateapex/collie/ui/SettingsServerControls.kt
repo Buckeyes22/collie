@@ -356,7 +356,7 @@ internal class SettingsServerControls(
                     mutate(text(R.string.settings_snoozing_notifications)) {
                         repository.setNotificationSnooze(System.currentTimeMillis() + minutes * 60_000)
                     }
-                }, LinearLayout.LayoutParams(0, dp(44), 1f).apply { marginEnd = dp(6) })
+                }, LinearLayout.LayoutParams(0, dp(48), 1f).apply { marginEnd = dp(6) })
             }
         }
         card.addView(actions)
@@ -446,6 +446,8 @@ internal class SettingsServerControls(
         }
         val code = com.google.android.material.textfield.TextInputEditText(codeLayout.context).apply {
             id = R.id.settings_pair_code
+            isSaveEnabled = false
+            importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO
             isSingleLine = true
             maxEms = 12
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS or
@@ -466,6 +468,7 @@ internal class SettingsServerControls(
         val label = com.google.android.material.textfield.TextInputEditText(labelLayout.context).apply {
             id = R.id.settings_pair_label
             isSingleLine = true
+            filters = arrayOf(InputFilter.LengthFilter(com.lateapex.collie.domain.DeviceLabel.MAX_CHARS))
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
             setText(pairLabelDraft)
             doAfterTextChanged { pairLabelDraft = it?.toString().orEmpty() }
@@ -784,7 +787,7 @@ internal class SettingsServerControls(
             this.id = id
             text = label
             isAllCaps = false
-            minHeight = dp(44)
+            minHeight = dp(48)
             setOnClickListener { if (!mutationGate.busy) action() }
         }, enabled)
 

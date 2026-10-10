@@ -30,6 +30,40 @@ import org.robolectric.Shadows.shadowOf
 @RunWith(RobolectricTestRunner::class)
 class HistoryActivityTest {
     @Test
+    fun changingTheConnectionClosesTheOldServerHistory() {
+        val app = ApplicationProvider.getApplicationContext<com.lateapex.collie.CollieApplication>()
+        val store = object : com.lateapex.collie.data.ConnectionStore {
+            override val connection = kotlinx.coroutines.flow.MutableStateFlow<com.lateapex.collie.domain.Connection?>(
+                com.lateapex.collie.domain.Connection(com.lateapex.collie.domain.CollieOrigin("https://history.fixture/"), "history", null))
+            override fun save(connection: com.lateapex.collie.domain.Connection) { this.connection.value = connection }
+            override fun clear() { connection.value = null }
+        }
+        val api = object : com.lateapex.collie.network.CollieApi by app.container.api {
+            override suspend fun history(connection: com.lateapex.collie.domain.Connection,
+                address: PaneAddress, limit: Int, before: String?, etag: String?) =
+                com.lateapex.collie.network.ApiResult.Success(
+                    com.lateapex.collie.network.PaneHistoryResponse(address.paneId, available = true), 200)
+        }
+        val repository = com.lateapex.collie.data.CollieRepository(api, store, app.container.originValidator)
+        val original = app.container.repository
+        val field = app.container.javaClass.getDeclaredField("repository").apply { isAccessible = true }
+        field.set(app.container, repository)
+        val controller = Robolectric.buildActivity(HistoryActivity::class.java,
+            HistoryActivity.intent(app, PaneAddress(Scope(), "w1:p1"), "Pane", "codex"))
+            .create().start().resume()
+        try {
+            shadowOf(Looper.getMainLooper()).idle()
+            assertFalse(controller.get().isFinishing)
+            kotlinx.coroutines.runBlocking { repository.disconnect() }
+            shadowOf(Looper.getMainLooper()).idle()
+            assertTrue(controller.get().isFinishing)
+        } finally {
+            controller.pause().stop().destroy()
+            field.set(app.container, original)
+        }
+    }
+
+    @Test
     fun historyIsSecureAndRejectsAnUnscopedLaunch() {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         val activity = Robolectric.buildActivity(
@@ -66,7 +100,7 @@ class HistoryActivityTest {
     }
 
     @Test
-    fun historyNavigationAndSearchControlsKeepTheFortyFourDpTouchFloor() {
+    fun historyNavigationAndSearchControlsKeepTheFortyEightDpTouchFloor() {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         val activity = Robolectric.buildActivity(
             HistoryActivity::class.java,
@@ -84,10 +118,11 @@ class HistoryActivityTest {
             R.id.history_next_user,
         ).forEach { id ->
             val control = activity.findViewById<View>(id)
-            assertTrue("view $id should retain a 44dp width", control.layoutParams.width >= floor)
-            assertTrue("view $id should retain a 44dp height", control.layoutParams.height >= floor)
+            assertTrue("view $id should retain a 48dp width", control.layoutParams.width >= floor)
+            assertTrue("view $id should retain a 48dp height", control.layoutParams.height >= floor)
         }
         assertTrue(activity.findViewById<View>(R.id.history_user_jumps).layoutParams.width >= floor)
+        assertTrue(activity.findViewById<View>(R.id.history_load_older).layoutParams.height >= floor)
     }
 
     @Test

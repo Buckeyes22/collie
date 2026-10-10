@@ -1,5 +1,6 @@
 package com.lateapex.collie.data
 
+import com.lateapex.collie.domain.DeviceLabel
 import com.lateapex.collie.domain.Connection
 import com.lateapex.collie.domain.CollieOrigin
 import com.lateapex.collie.domain.PaneAddress
@@ -88,11 +89,15 @@ class CollieRepository(
     val connection: StateFlow<Connection?> = connectionStore.connection
 
     private val mutableDeviceWriteAuthorization = MutableStateFlow(DeviceWriteAuthorization.UNVERIFIED)
+    @Volatile private var authorizationConnection: Connection? = null
     val deviceWriteAuthorization: StateFlow<DeviceWriteAuthorization> =
         mutableDeviceWriteAuthorization.asStateFlow()
 
     fun writesAllowed(): Boolean =
-        connection.value?.isPaired == true && mutableDeviceWriteAuthorization.value.permitsWrites
+        connection.value?.let { configured ->
+            configured.isPaired && authorizationConnection === configured &&
+                mutableDeviceWriteAuthorization.value.permitsWrites
+        } == true
 
     private val mutableScope = MutableStateFlow(Scope())
     val selectedScope: StateFlow<Scope> = mutableScope.asStateFlow()
@@ -112,8 +117,8 @@ class CollieRepository(
     }
 
     fun connectReadOnly(origin: String, label: String): Connection {
-        val cleanLabel = label.trim()
-        require(cleanLabel.isNotEmpty() && cleanLabel.length <= MAX_LABEL_CHARS)
+        val cleanLabel = DeviceLabel.normalize(label)
+        require(cleanLabel.isNotEmpty() && cleanLabel.length <= DeviceLabel.MAX_CHARS)
         val connection = Connection(originValidator.requireValid(origin), cleanLabel, null)
         mutableDeviceWriteAuthorization.value = DeviceWriteAuthorization.UNVERIFIED
         connectionStore.save(connection)
@@ -127,8 +132,8 @@ class CollieRepository(
 
     suspend fun pair(origin: String, label: String, code: String): ApiResult<PairResult> {
         val normalized = originValidator.requireValid(origin)
-        val cleanLabel = label.trim()
-        require(cleanLabel.isNotEmpty() && cleanLabel.length <= MAX_LABEL_CHARS)
+        val cleanLabel = DeviceLabel.normalize(label)
+        require(cleanLabel.isNotEmpty() && cleanLabel.length <= DeviceLabel.MAX_CHARS)
         require(code.isNotBlank())
         return when (val result = api.pair(normalized, code.trim(), cleanLabel)) {
             is ApiResult.Success -> {
@@ -149,6 +154,7 @@ class CollieRepository(
             val result = api.snapshot(configured, scope)
             if (result is ApiResult.Success && connection.value == configured) {
                 mutableDeviceWriteAuthorization.value = DeviceWriteAuthorization.from(result.value.device)
+                authorizationConnection = configured
             }
             if (result is ApiResult.Success && !scope.viewAll && scope.session != null) {
                 // A narrow snapshot omits its session tags; they are supplied by the request.
@@ -331,16 +337,19 @@ class CollieRepository(
         markSeen: Boolean = true,
     ): ApiResult<PaneContent> {
         val configured = connection.value ?: return notConnected()
-        val cacheKey = PaneCacheKey(configured.origin, address)
+        val cacheKey = PaneCacheKey(configured, address)
         // A pane body is conditional only for the exact window that produced it. Reusing the
         // 600-line ETag for a later 1,000-line request can otherwise turn a valid grow into a 304
         // with the shorter cached body when a bridge keys ETags to pane revision rather than size.
-        // The origin is part of the key so switching servers cannot reuse another server's body.
+        // Credential identity is part of the key so reconnecting cannot reuse another device's body.
         val cached = cacheMutex.withLock { paneCache[cacheKey] }?.takeIf { it.lines == lines }
         return when (val result = withConnectionOf(configured) { api.pane(it, address, lines, cached?.etag, markSeen) }) {
             is ApiResult.Success -> {
                 val entry = CachedPane(result.value, result.etag, lines)
-                cacheMutex.withLock { paneCache[cacheKey] = entry }
+                cacheMutex.withLock {
+                    if (connection.value !== configured) return ApiResult.Failure(ApiFailure.Protocol("Connection changed; refresh before trying again"))
+                    paneCache[cacheKey] = entry
+                }
                 ApiResult.Success(
                     PaneContent(entry.pane, notModified = false, entry.etag),
                     result.status,
@@ -408,6 +417,7 @@ class CollieRepository(
     private suspend fun <T> withConnectionOf(configured: Connection, block: suspend (Connection) -> ApiResult<T>): ApiResult<T> {
         if (connection.value !== configured) return ApiResult.Failure(ApiFailure.Protocol("Connection changed; refresh before trying again"))
         val result = block(configured)
+        if (connection.value !== configured) return ApiResult.Failure(ApiFailure.Protocol("Connection changed; refresh before trying again"))
         if (result is ApiResult.Failure && result.error is ApiFailure.Http && result.error.status == 403 &&
             result.error.message in setOf("device not paired", "device expired") && connection.value === configured
         ) {
@@ -424,7 +434,7 @@ class CollieRepository(
         if (!configured.isPaired) {
             return ApiResult.Failure(ApiFailure.Protocol("Pair this device before controlling a terminal"))
         }
-        if (!mutableDeviceWriteAuthorization.value.permitsWrites) {
+        if (!writesAllowed()) {
             return ApiResult.Failure(ApiFailure.Http(403, "device not authorised", "device.not_authorised"))
         }
         return withConnectionOf(configured, block)
@@ -440,11 +450,8 @@ class CollieRepository(
     )
 
     private data class PaneCacheKey(
-        val origin: CollieOrigin,
+        val connection: Connection,
         val address: PaneAddress,
     )
 
-    companion object {
-        private const val MAX_LABEL_CHARS = 80
-    }
 }

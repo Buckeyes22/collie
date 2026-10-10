@@ -45,8 +45,8 @@ registration, deduplication, and deep-link contract.
 | Compile and target SDK | 36 |
 | Minimum SDK | 26 |
 | Gradle wrapper | 8.11.1 |
-| Android Gradle Plugin | 8.9.1 |
-| Kotlin and serialization plugins | 2.0.21 |
+| Android Gradle Plugin | 8.10.1 |
+| Kotlin and serialization plugins | 2.2.21 |
 
 The committed Gradle wrapper is the only supported build entry point. A global Gradle install is
 not required. Android dependencies stay under this directory; the root Bun install and Collie
@@ -125,8 +125,8 @@ server revocation action.
   is on, an AskUserQuestion-style dialog is up, no journal exists for this pane yet, or the
   operator manually taps "Show terminal" in the body row; an unrecognized surface such as
   Claude's `/cost` is not auto-detected.
-- The Keys drawer is one compact primary row plus a modifiers row and a More sheet that holds
-  presets and function keys; with the drawer open at most three rows sit above the composer.
+- The Keys drawer keeps primary keys and modifiers together, wrapping on narrow phones to retain
+  48 dp touch targets. Its More sheet holds presets and function keys.
 - The worktree sheet lists a repository's linked worktrees that have no open space; selecting one
   opens it only after a separate "Open worktree?" confirmation dialog, rather than branching
   again from the same base.
@@ -171,7 +171,7 @@ recorded 193 observed steps with zero failures. These are dated results against 
 the UX-walk record, not acceptance of a later release candidate. The instrumented suite covers, on
 the device, the Gboard row-count test that detects 3- or 4-row Gboard layouts dynamically from the
 letter-to-bottom-row height ratio (`NativeInteractionTest.kt`). The transcript-vs-mirror body
-switching for journalled agents (claude, codex, pi, opencode), the one-row-plus-More-sheet Keys
+switching for journalled agents (Claude, Codex, pi/OMP, opencode, Grok, Hermes, and Muse), the compact Keys drawer with a More sheet
 drawer, the unopened-worktree listing with its separate confirm dialog, and "Load older" pagination
 are the same pane-UX overhaul, covered separately by the JVM/Robolectric unit suite
 (`testDebugUnitTest`) rather than by this instrumented run. The newest-turn landing fix
@@ -219,7 +219,7 @@ release requirements. The following device checks remain useful acceptance cover
 6. Device revocation, notification preferences, Crew, and Updates reflect the live server; an
    update test preserves progress through the bridge restart via the standby route.
 7. Insets work in both gesture and three-button navigation, and TalkBack/font scaling retain usable
-   44 dp controls.
+   48 dp controls.
 8. Compare fixed web/native screens from `adb` screenshots. Automated layout assertions are not a
    substitute for that pixel comparison.
 

@@ -120,6 +120,24 @@ class HardeningLifecyclePollingTest {
     }
 
     @Test
+    fun spaceClearsTheOldServerSnapshotWhenTheConnectionChanges() = runTest(dispatcher) {
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        val store = FakeStore(Connection(CollieOrigin("https://collie.example/"), "phone", "token"))
+        val api = FakeApi()
+        val viewModel = SpaceViewModel(app, "w1", Scope(), CollieRepository(api, store, OriginValidator()))
+        viewModel.startPolling()
+        try {
+            runCurrent()
+            assertNotNull(viewModel.state.value.content)
+            store.save(Connection(CollieOrigin("https://other.example/"), "other", "new-token"))
+            runCurrent()
+            assertNull(viewModel.state.value.content)
+            assertNull(viewModel.state.value.mux)
+            org.junit.Assert.assertFalse(viewModel.state.value.writeAuthorized)
+        } finally { viewModel.stopPolling() }
+    }
+
+    @Test
     fun spacePreservesStaleSnapshotAndBacksOffUntilServerReturns() = runTest(dispatcher) {
         val app = ApplicationProvider.getApplicationContext<Application>()
         val store = FakeStore(Connection(CollieOrigin("https://collie.example/"), "phone", "token"))

@@ -75,6 +75,8 @@ configurations.configureEach {
 }
 
 dependencies {
+    // Keep application Kotlin libraries on the same release as the compiler plugins.
+    implementation(platform("org.jetbrains.kotlin:kotlin-bom:2.2.21"))
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.google.android.material:material:1.12.0")
@@ -106,7 +108,8 @@ tasks.withType<Test>().configureEach {
     // now-larger PaneActivityTest) that a full testDebugUnitTest run OOMs at 1g even though any
     // single test class still passes there.
     maxHeapSize = "2g"
-    forkEvery = 100
+    // The expanded audit suite exhausts 2g when 100 classes share one resource sandbox.
+    forkEvery = 25
 }
 
 dependencyLocking {

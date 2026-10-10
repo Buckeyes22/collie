@@ -30,6 +30,7 @@ Running a crew? Update the lead first; members follow on their own. Details:
 ### Fixed
 
 - **Large upstream merges keep their required commit checks effective.** Read entire staged path lists before judging changelog, protocol and flake-lock evidence so an early matching path cannot cause SIGPIPE to hide the match or skip a required gate.
+- **Claude command help reflects current review and fork behavior.** Describe `/review` as a current-diff or specified-target review and `/fork` as a copied background session with an optional prompt in the shared Android and web catalogs.
 
 ## [1.19.0] - 2026-10-09
 

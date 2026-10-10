@@ -32,7 +32,8 @@ internal suspend fun confirmLauncher(context: Context, launcher: Launcher, machi
         }
         dialog.setSheetContent(content)
         dialog.setOnDismissListener { if (continuation.isActive) continuation.resume(false) }
-        continuation.invokeOnCancellation { dialog.dismiss() }
         dialog.show()
+        // Registration immediately runs for an already cancelled caller, after show.
+        continuation.invokeOnCancellation { dialog.dismiss() }
     }
 }

@@ -107,6 +107,12 @@ class HistoryActivity : AppCompatActivity() {
             paneId,
         )
         retainedReader = ViewModelProvider(this)[HistoryReaderViewModel::class.java]
+        val connectionAtOpen = repository.connection.value
+        if (retainedReader.state != null && retainedReader.connection !== connectionAtOpen) {
+            retainedReader.state = null
+            retainedReader.findQuery = ""
+        }
+        retainedReader.connection = connectionAtOpen
         restoreReaderState(savedInstanceState)
         binding.historySubtitle.text = intent.getStringExtra(EXTRA_TITLE)?.trim()?.takeIf(String::isNotEmpty) ?: paneId
         binding.historyBackButton.setOnClickListener { finish() }
@@ -164,6 +170,17 @@ class HistoryActivity : AppCompatActivity() {
             renderState(getString(R.string.history_loading))
             restoreFindChrome()
             loadPage(older = false)
+        }
+        lifecycleScope.launch {
+            repository.connection.collect { connection ->
+                if (connection !== connectionAtOpen) {
+                    entries = emptyList()
+                    retainedReader.state = null
+                    retainedReader.findQuery = ""
+                    renderEntries()
+                    finish()
+                }
+            }
         }
     }
 
@@ -591,6 +608,7 @@ class HistoryActivity : AppCompatActivity() {
 }
 
 internal class HistoryReaderViewModel : ViewModel() {
+    var connection: com.lateapex.collie.domain.Connection? = null
     var state: HistoryRetainedState? = null
     var findQuery: String = ""
 }

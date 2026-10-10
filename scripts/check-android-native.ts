@@ -9,8 +9,8 @@ const EXPECTED_COMPILE_SDK = 36;
 const EXPECTED_TARGET_SDK = 36;
 const EXPECTED_MIN_SDK = 26;
 const EXPECTED_GRADLE = "8.11.1";
-const EXPECTED_AGP = "8.9.1";
-const EXPECTED_KOTLIN = "2.0.21";
+const EXPECTED_AGP = "8.10.1";
+const EXPECTED_KOTLIN = "2.2.21";
 const EXPECTED_DEFAULT_ORIGIN = "";
 
 const FORBIDDEN_ANDROID_PATTERN =
@@ -161,6 +161,7 @@ function validateBuildConfiguration(input: AndroidNativeValidationInput, errors:
   }
 
   const requiredDependencies = [
+    `org.jetbrains.kotlin:kotlin-bom:${EXPECTED_KOTLIN}`,
     "com.squareup.okhttp3:okhttp:4.12.0",
     "org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3",
     "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2",

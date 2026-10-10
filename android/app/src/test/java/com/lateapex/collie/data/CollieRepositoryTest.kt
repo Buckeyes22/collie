@@ -39,6 +39,25 @@ class CollieRepositoryTest {
     private val repository = CollieRepository(api, store, OriginValidator())
 
     @Test
+    fun writeAuthorityCannotCarryOverToAnotherPairingOnTheSameServer() = runBlocking {
+        authorizeWrites()
+        assertTrue(repository.writesAllowed())
+        store.save(Connection(connection.origin, "other phone", "different-token"))
+        assertFalse(repository.writesAllowed())
+        assertTrue(repository.reply(PaneAddress(paneId = "w1:p1"), "must not send") is ApiResult.Failure)
+        assertEquals(0, api.replyCalls)
+        repository.snapshot()
+        assertTrue(repository.writesAllowed())
+    }
+
+    @Test
+    fun oversizedDeviceLabelIsRejectedBeforePairing() {
+        assertThrows(IllegalArgumentException::class.java) {
+            runBlocking { repository.pair(connection.origin.value, "x".repeat(49), "fake-code") }
+        }
+    }
+
+    @Test
     fun etagAndBodyAreReusedOnlyForTheExactScopedPane() = runBlocking {
         val desk = PaneAddress(Scope(host = "desk", session = "work"), "w1:p1")
         val laptop = PaneAddress(Scope(host = "laptop", session = "work"), "w1:p1")

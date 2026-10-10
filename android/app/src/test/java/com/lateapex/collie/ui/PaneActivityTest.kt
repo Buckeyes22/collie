@@ -49,6 +49,149 @@ import org.robolectric.shadows.ShadowSystemClock
 @RunWith(RobolectricTestRunner::class)
 class PaneActivityTest {
     @Test
+    fun codexAcceptedPreviewUsesRetainedStateInsteadOfMirrorChangesOrATimer() {
+        val activity = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("accepted:pane")).create().get()
+        val state = PaneUiState(loading = false, pane = PaneReadResponse("accepted:pane", "output", false, 1),
+            codexAcceptedReplies = listOf("waiting input"))
+        render(activity, state)
+        val preview = activity.findViewById<TextView>(R.id.pending_send_notice)
+        assertTrue(preview.text.toString().contains("waiting input"))
+        assertTrue(preview.text.toString().startsWith("Accepted by Codex"))
+        render(activity, state.copy(pane = state.pane!!.copy(text = "other output", revision = 2)))
+        ShadowSystemClock.advanceBy(Duration.ofSeconds(10))
+        shadowOf(android.os.Looper.getMainLooper()).idle()
+        assertEquals(View.VISIBLE, preview.visibility)
+        // A recreated view renders the same retained ViewModel state without a sent-draft event.
+        val recreated = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("accepted:pane")).create().get()
+        render(recreated, state.copy(clearReplyDraft = false))
+        assertTrue(recreated.findViewById<TextView>(R.id.pending_send_notice).text.contains("waiting input"))
+        render(recreated, state.copy(codexAcceptedReplies = emptyList()))
+        assertEquals(View.GONE, recreated.findViewById<View>(R.id.pending_send_notice).visibility)
+    }
+    @Test
+    fun acceptedCodexPreviewIsRetainedByTheActualViewModelDuringConfigurationChange() {
+        val controller = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("accepted:rotation"))
+            .create().start().resume()
+        val activity = controller.get()
+        shadowOf(android.os.Looper.getMainLooper()).idleFor(Duration.ofMillis(20))
+        val modelField = PaneActivity::class.java.getDeclaredField("viewModel").apply { isAccessible = true }
+        val model = modelField.get(activity) as PaneViewModel
+        @Suppress("UNCHECKED_CAST")
+        val state = PaneViewModel::class.java.getDeclaredField("mutableState").apply { isAccessible = true }
+            .get(model) as kotlinx.coroutines.flow.MutableStateFlow<PaneUiState>
+        state.value = state.value.copy(codexAcceptedReplies = listOf("retained submission"), clearReplyDraft = false)
+        shadowOf(android.os.Looper.getMainLooper()).idleFor(Duration.ofMillis(20))
+        controller.configurationChange(android.content.res.Configuration(activity.resources.configuration).apply {
+            orientation = if (orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE)
+                android.content.res.Configuration.ORIENTATION_PORTRAIT else android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        })
+        shadowOf(android.os.Looper.getMainLooper()).idleFor(Duration.ofMillis(20))
+        val recreated = controller.get()
+        assertNotSame(activity, recreated)
+        assertSame(model, modelField.get(recreated))
+        assertTrue(recreated.findViewById<TextView>(R.id.pending_send_notice).text.contains("retained submission"))
+        controller.pause().stop().destroy()
+    }
+
+    @Test
+    fun pendingMediaBlocksButtonAndKeyboardSubmissionUntilItIsReady() {
+        val activity = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("media:pending")).create().get()
+        val input = activity.findViewById<DirectTypingEditText>(R.id.reply_input)
+        input.setText("inspect the image")
+        render(activity, PaneUiState(
+            loading = false,
+            pane = PaneReadResponse("media:pending", "~\n❯ ", false, 0),
+            canWrite = true,
+            composerReady = true,
+        ))
+        val busy = PaneActivity::class.java.getDeclaredMethod("setComposerMediaBusy", Boolean::class.javaPrimitiveType)
+            .apply { isAccessible = true }
+        val attempt = PaneActivity::class.java.getDeclaredField("pendingReplyAttempt").apply { isAccessible = true }
+        busy.invoke(activity, true)
+        assertFalse(activity.findViewById<View>(R.id.send_button).isEnabled)
+        // Ctrl+Enter has its own callback and must obey the same gate as the button.
+        input.onKeyDown(KeyEvent.KEYCODE_ENTER, KeyEvent(
+            0L, 0L, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER, 0, KeyEvent.META_CTRL_ON,
+        ))
+        assertNull(attempt.get(activity))
+        assertEquals("inspect the image", input.text.toString())
+        activity.acceptUploadForTest("/fixture/pending.png")
+        busy.invoke(activity, false)
+        assertTrue(activity.findViewById<View>(R.id.send_button).isEnabled)
+        assertEquals("/fixture/pending.png\ninspect the image", activity.outgoingReplyForTest(input.text.toString()))
+        input.onKeyDown(KeyEvent.KEYCODE_ENTER, KeyEvent(
+            0L, 0L, KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER, 0, KeyEvent.META_CTRL_ON,
+        ))
+        assertNotNull(attempt.get(activity))
+    }
+
+    @Test
+    fun delayedMicrophoneGrantRechecksSendingAndDirectTyping() {
+        val activity = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("speech:permission")).create().get()
+        PaneActivity::class.java.getDeclaredField("speechAvailability").apply { isAccessible = true }
+            .set(activity, SpeechAvailability.Available("fixture"))
+        val start = PaneActivity::class.java.getDeclaredMethod("startSpeechRecording").apply { isAccessible = true }
+        render(activity, PaneUiState(loading = false, canWrite = true, sending = true,
+            pane = PaneReadResponse("speech:permission", "~\n❯ ", false, 0), composerReady = true))
+        start.invoke(activity)
+        assertFalse(activity.findViewById<TextView>(R.id.composer_media_status).text.toString().contains("failed", true))
+        render(activity, PaneUiState(loading = false, canWrite = true,
+            pane = PaneReadResponse("speech:permission", "~\n❯ ", false, 0), composerReady = true))
+        PaneActivity::class.java.getDeclaredField("directTyping").apply { isAccessible = true }.setBoolean(activity, true)
+        start.invoke(activity)
+        assertFalse(activity.findViewById<TextView>(R.id.composer_media_status).text.toString().contains("failed", true))
+        val recorder = PaneActivity::class.java.getDeclaredField("speechRecorder").apply { isAccessible = true }
+            .get(activity) as ComposerSpeechRecorder
+        assertFalse(recorder.isRecording)
+    }
+
+    @Test
+    @org.robolectric.annotation.Config(shadows = [FocusedActivityShadow::class])
+    fun completedHandsFreeTranscriptionCanSubmitAfterItsOwnBusyGateClears() {
+        val controller = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("speech:complete"))
+            .create()
+        val activity = controller.get()
+        assertTrue("focused fixture", activity.hasWindowFocus())
+        activity.findViewById<EditText>(R.id.reply_input).setText("")
+        render(activity, PaneUiState(loading = false,
+            pane = PaneReadResponse("speech:complete", "~\n❯ ", false, 0), canWrite = true, composerReady = true))
+        PaneActivity::class.java.getDeclaredMethod("setComposerMediaBusy", Boolean::class.javaPrimitiveType)
+            .apply { isAccessible = true }.invoke(activity, true)
+        PaneActivity::class.java.getDeclaredMethod("completeComposerMediaResult", ComposerMediaResult::class.java)
+            .apply { isAccessible = true }.invoke(activity, ComposerMediaResult.AutoSend("spoken message"))
+        assertEquals("spoken message", activity.findViewById<EditText>(R.id.reply_input).text.toString())
+        assertNotNull(PaneActivity::class.java.getDeclaredField("pendingReplyAttempt")
+            .apply { isAccessible = true }.get(activity))
+        controller.destroy()
+    }
+
+    // Window focus is supplied independently of layout; this test exercises media completion.
+    @org.robolectric.annotation.Implements(android.app.Activity::class)
+    class FocusedActivityShadow : org.robolectric.shadows.ShadowActivity() {
+        @org.robolectric.annotation.Implementation
+        fun hasWindowFocus(): Boolean = true
+    }
+
+    @Test
+    fun attachmentSurvivesRecreationAndIsOnlyRemovedAfterAConfirmedSend() {
+        val intent = paneIntent("attach:recreate")
+        val controller = Robolectric.buildActivity(PaneActivity::class.java, intent).create().start().resume()
+        val activity = controller.get()
+        val path = "/fixture/upload.png"
+        activity.acceptUploadForTest(path)
+        activity.findViewById<EditText>(R.id.reply_input).setText("look at this")
+        // Even a refused send must retain the uploaded attachment for review.
+        activity.findViewById<View>(R.id.send_button).performClick()
+        assertEquals("$path\nlook at this", activity.outgoingReplyForTest("look at this"))
+        val saved = Bundle()
+        controller.pause().saveInstanceState(saved).stop().destroy()
+        val recreated = Robolectric.buildActivity(PaneActivity::class.java, intent).create(saved).get()
+        assertEquals("$path\nlook at this", recreated.outgoingReplyForTest("look at this"))
+        render(recreated, PaneUiState(loading = false, clearReplyDraft = true))
+        assertEquals("look at this", recreated.outgoingReplyForTest("look at this"))
+    }
+
+    @Test
     fun paneOverlayActionsKeepTheSharedTouchTargetFloor() {
         val activity = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("touch:pane")).create().get()
         val floor = activity.resources.getDimensionPixelSize(R.dimen.collie_touch_target)
@@ -60,6 +203,32 @@ class PaneActivityTest {
         ).forEach { action ->
             assertTrue(action.minimumHeight >= floor || action.layoutParams.height >= floor)
         }
+    }
+
+    @Test
+    fun stoppingPaneCancelsHeldKeyAndIgnoresItsLaterRelease() {
+        val controller = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("repeat:stop"))
+            .create().start().resume()
+        val activity = controller.get()
+        val button = MaterialButton(activity).apply { text = "Up" }
+        PaneActivity::class.java.getDeclaredMethod("bindKeyRepeat", MaterialButton::class.java, String::class.java)
+            .apply { isAccessible = true }.invoke(activity, button, "Up")
+        val down = MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, 0f, 0f, 0)
+        button.dispatchTouchEvent(down)
+        down.recycle()
+        controller.pause().stop()
+        shadowOf(android.os.Looper.getMainLooper()).idleFor(Duration.ofSeconds(2))
+        assertEquals(activity.getString(R.string.pane_key_up), button.text.toString())
+        assertFalse(button.isPressed)
+        val cancel = PaneActivity::class.java.getDeclaredField("cancelActiveKeyRepeat").apply { isAccessible = true }
+        assertNull(cancel.get(activity))
+        var clicked = false
+        button.setOnClickListener { clicked = true }
+        val up = MotionEvent.obtain(0, 2000, MotionEvent.ACTION_UP, 0f, 0f, 0)
+        button.dispatchTouchEvent(up)
+        up.recycle()
+        assertFalse(clicked)
+        controller.destroy()
     }
 
     @Test
@@ -867,11 +1036,19 @@ class PaneActivityTest {
         assertEquals(View.VISIBLE, microphone.visibility)
         assertEquals(View.GONE, send.visibility)
 
+        activity.acceptUploadForTest("/fixture/upload.png")
+        assertEquals(View.GONE, microphone.visibility)
+        assertEquals(View.VISIBLE, send.visibility)
+
         input.setText("hello")
         assertEquals(View.GONE, microphone.visibility)
         assertEquals(View.VISIBLE, send.visibility)
 
         input.text.clear()
+        assertEquals(View.GONE, microphone.visibility)
+        assertEquals(View.VISIBLE, send.visibility)
+        activity.findViewById<com.google.android.material.chip.Chip>(R.id.composer_attachment_chip)
+            .performCloseIconClick()
         assertEquals(View.VISIBLE, microphone.visibility)
         assertEquals(View.GONE, send.visibility)
     }

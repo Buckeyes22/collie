@@ -299,7 +299,7 @@ class CollieApiClientTest {
     }
 
     @Test
-    fun standbyUpdateReadsTheRootFailoverRouteWithTheStoredCredential() = runBlocking {
+    fun standbyUpdateReadsThePublicFailoverRouteWithoutThePairingCredential() = runBlocking {
         server.enqueue(jsonResponse(updateRunResponse("restarting")))
 
         val result = api.standbyUpdate(Connection(origin, "phone", "token"))
@@ -307,7 +307,7 @@ class CollieApiClientTest {
         assertEquals("restarting", (result as ApiResult.Success).value.state)
         server.takeRequest().also { request ->
             assertEquals("/standby/update", request.path)
-            assertEquals("Bearer token", request.getHeader("Authorization"))
+            assertNull(request.getHeader("Authorization"))
             assertNull(request.getHeader("Origin"))
         }
         Unit

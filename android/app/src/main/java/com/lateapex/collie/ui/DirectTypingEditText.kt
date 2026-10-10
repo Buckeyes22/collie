@@ -56,7 +56,11 @@ class DirectTypingEditText @JvmOverloads constructor(
                 if (editable != null && BaseInputConnection.getComposingSpanStart(editable) >= 0) {
                     return super.deleteSurroundingText(beforeLength, afterLength)
                 }
-                if (beforeLength > 0) onDirectKeys?.invoke(List(beforeLength) { "Backspace" })
+                if (beforeLength < 0 || afterLength < 0) return false
+                val count = beforeLength.toLong() + afterLength
+                if (count > MAX_SURROUNDING_DELETE) return false
+                val keys = List(beforeLength) { "Backspace" } + List(afterLength) { "Delete" }
+                if (keys.isNotEmpty()) onDirectKeys?.invoke(keys)
                 return true
             }
 
@@ -66,7 +70,11 @@ class DirectTypingEditText @JvmOverloads constructor(
                 if (editable != null && BaseInputConnection.getComposingSpanStart(editable) >= 0) {
                     return super.deleteSurroundingTextInCodePoints(beforeLength, afterLength)
                 }
-                if (beforeLength > 0) onDirectKeys?.invoke(List(beforeLength) { "Backspace" })
+                if (beforeLength < 0 || afterLength < 0) return false
+                val count = beforeLength.toLong() + afterLength
+                if (count > MAX_SURROUNDING_DELETE) return false
+                val keys = List(beforeLength) { "Backspace" } + List(afterLength) { "Delete" }
+                if (keys.isNotEmpty()) onDirectKeys?.invoke(keys)
                 return true
             }
 
@@ -110,6 +118,7 @@ class DirectTypingEditText @JvmOverloads constructor(
     }
 
     companion object {
+        private const val MAX_SURROUNDING_DELETE = 8_192L
         private val TERMINAL_EDITOR_ACTIONS = setOf(
             EditorInfo.IME_ACTION_DONE,
             EditorInfo.IME_ACTION_GO,

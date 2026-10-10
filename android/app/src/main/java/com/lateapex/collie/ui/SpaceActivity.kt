@@ -238,7 +238,7 @@ class SpaceActivity : AppCompatActivity() {
     ): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER
-        minimumWidth = dp(44)
+        minimumWidth = dp(48)
         isClickable = true
         isFocusable = true
         isSelected = active
@@ -456,7 +456,7 @@ class SpaceActivity : AppCompatActivity() {
             text = label
             isAllCaps = false
             gravity = Gravity.START or Gravity.CENTER_VERTICAL
-            minHeight = dp(44)
+            minHeight = dp(48)
             setOnClickListener { action() }
         }
 
@@ -472,7 +472,7 @@ class SpaceActivity : AppCompatActivity() {
         inputType = InputType.TYPE_CLASS_TEXT
         isSingleLine = true
         filters = arrayOf(InputFilter.LengthFilter(160))
-        minHeight = dp(44)
+        minHeight = dp(48)
         setTextColor(color(R.color.collie_foreground))
         setHintTextColor(color(R.color.collie_muted))
     }
@@ -538,7 +538,7 @@ class SpaceActivity : AppCompatActivity() {
 
     private fun stripParams(end: Int) = LinearLayout.LayoutParams(
         ViewGroup.LayoutParams.WRAP_CONTENT,
-        dp(44),
+        dp(48),
     ).apply { marginEnd = dp(end) }
 
     private fun matchRow(top: Int = 0) = LinearLayout.LayoutParams(

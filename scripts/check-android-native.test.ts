@@ -6,9 +6,9 @@ import {
 } from "./check-android-native.ts";
 
 const validRootGradle = `plugins {
-  id("com.android.application") version "8.9.1" apply false
-  id("org.jetbrains.kotlin.android") version "2.0.21" apply false
-  id("org.jetbrains.kotlin.plugin.serialization") version "2.0.21" apply false
+  id("com.android.application") version "8.10.1" apply false
+  id("org.jetbrains.kotlin.android") version "2.2.21" apply false
+  id("org.jetbrains.kotlin.plugin.serialization") version "2.2.21" apply false
 }
 dependencyLocking { lockAllConfigurations() }
 `;
@@ -38,6 +38,7 @@ android {
 }
 kotlin { jvmToolchain(21); compilerOptions { jvmTarget = JvmTarget.JVM_17 } }
 dependencies {
+  implementation(platform("org.jetbrains.kotlin:kotlin-bom:2.2.21"))
   implementation("com.squareup.okhttp3:okhttp:4.12.0")
   implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
   implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
@@ -122,14 +123,21 @@ describe("check-android-native validation", () => {
   test("requires the single app module and pinned plugin/wrapper versions", () => {
     const output = messages({
       settingsGradleText: 'include(":app", ":browser")',
-      rootGradleText: validRootGradle.replace("8.9.1", "8.8.0").replaceAll("2.0.21", "2.1.0"),
+      rootGradleText: validRootGradle.replace("8.10.1", "8.8.0").replaceAll("2.2.21", "2.1.0"),
       wrapperPropertiesText: "distributionUrl=gradle-8.10-bin.zip",
     });
     expect(output).toContain("include only :app");
-    expect(output).toContain("com.android.application 8.9.1");
-    expect(output).toContain("org.jetbrains.kotlin.android 2.0.21");
-    expect(output).toContain("serialization 2.0.21");
+    expect(output).toContain("com.android.application 8.10.1");
+    expect(output).toContain("org.jetbrains.kotlin.android 2.2.21");
+    expect(output).toContain("serialization 2.2.21");
     expect(output).toContain("Gradle wrapper must resolve to 8.11.1");
+  });
+
+  test("rejects Kotlin runtime BOM drift from the compiler pin", () => {
+    const output = messages({
+      appGradleText: validAppGradle.replace("kotlin-bom:2.2.21", "kotlin-bom:2.1.0"),
+    });
+    expect(output).toContain("org.jetbrains.kotlin:kotlin-bom:2.2.21");
   });
 
   test("rejects application, SDK, and version drift", () => {

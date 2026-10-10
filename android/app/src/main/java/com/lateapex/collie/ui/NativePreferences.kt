@@ -20,6 +20,13 @@ class NativePreferences(
         Context.MODE_PRIVATE,
     )
 
+    /** Only disambiguates the editable pairing label; never derived from a device identifier. */
+    val pairingLabelSuffix: String
+        get() = preferences.getString("pairing_label_suffix", null)
+            ?: java.util.UUID.randomUUID().toString().takeLast(4).also {
+                preferences.edit().putString("pairing_label_suffix", it).apply()
+            }
+
     var themeMode: ThemeMode
         get() {
             val stored = preferences.getString(THEME_MODE, null)

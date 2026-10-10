@@ -27,6 +27,9 @@ import com.lateapex.collie.network.ServerSummary
 import com.lateapex.collie.network.SnapshotResponse
 import com.lateapex.collie.network.TranscriptEntry
 import com.lateapex.collie.network.TranscriptPart
+import com.lateapex.collie.network.PaneChatResponse
+import com.lateapex.collie.network.ChatAfter
+import com.lateapex.collie.network.ChatBefore
 import com.lateapex.collie.ui.terminal.AgentSemanticParser
 import com.lateapex.collie.ui.terminal.TerminalDraft
 import kotlinx.coroutines.Dispatchers
@@ -586,6 +589,83 @@ class PaneViewModelTest {
         assertFalse(f.viewModel.state.value.clearReplyDraft)
         assertFalse(f.viewModel.state.value.sending)
         assertEquals(text(com.lateapex.collie.R.string.pane_error_codex_unconfirmed), f.viewModel.state.value.mutationError)
+        assertTrue(f.viewModel.state.value.codexAcceptedReplies.isEmpty())
+    }
+
+    @Test
+    fun acceptedCodexInputSurvivesUnrelatedOutputAndIsIsolatedByOriginWithoutReplay() = runTest(dispatcher) {
+        val f = fixture(ApiResult.Success(ActionResponse(ok = true), 200))
+        val original = f.store.connection.value!!
+        f.viewModel.refresh()
+        advanceUntilIdle()
+        f.api.replyHook = { message, submit ->
+            f.api.pane = f.api.pane.copy(text = "› ${if (submit) "" else message}\n\n  model · /repo · Context 50% left")
+        }
+        f.viewModel.sendReply("hello")
+        advanceUntilIdle()
+        assertEquals(listOf("hello"), f.viewModel.state.value.codexAcceptedReplies)
+        assertTrue(f.viewModel.state.value.clearReplyDraft)
+        f.viewModel.onReplyDraftCleared()
+        f.api.pane = f.api.pane.copy(text = "unrelated output\n${f.api.pane.text}", revision = 99)
+        f.viewModel.refresh()
+        advanceUntilIdle()
+        advanceTimeBy(10_000)
+        runCurrent()
+        assertEquals(listOf("hello"), f.viewModel.state.value.codexAcceptedReplies)
+        assertFalse(f.viewModel.state.value.clearReplyDraft)
+        f.store.save(Connection(original.origin, "re-paired", "different-token"))
+        runCurrent()
+        assertTrue(f.viewModel.state.value.codexAcceptedReplies.isEmpty())
+        f.store.save(Connection(original.origin, "renamed same pairing", original.token))
+        runCurrent()
+        assertEquals(listOf("hello"), f.viewModel.state.value.codexAcceptedReplies)
+        f.store.save(Connection(CollieOrigin("https://other.example/"), "other", "other-token"))
+        runCurrent()
+        assertTrue(f.viewModel.state.value.codexAcceptedReplies.isEmpty())
+        f.store.save(original)
+        runCurrent()
+        assertEquals(listOf("hello"), f.viewModel.state.value.codexAcceptedReplies)
+        f.viewModel.dismissAcceptedCodexReplies()
+        assertTrue(f.viewModel.state.value.codexAcceptedReplies.isEmpty())
+        assertEquals(2, f.api.replyCalls)
+    }
+
+    @Test
+    fun aTurnPolledDuringSubmitVerificationReconcilesAfterAcceptanceWithoutAnotherUpsert() = runTest(dispatcher) {
+        val f = fixture(ApiResult.Success(ActionResponse(ok = true), 200))
+        f.api.chatPage = PaneChatResponse("w1:p1", true, page = "live", gen = 2, rev = 4, head = 10)
+        f.viewModel.refresh()
+        advanceUntilIdle()
+        val guardRead = CompletableDeferred<Unit>()
+        var holdConsumptionRead = false
+        f.api.paneHook = {
+            if (holdConsumptionRead) {
+                holdConsumptionRead = false
+                guardRead.await()
+            }
+        }
+        f.api.replyHook = { message, submit ->
+            f.api.pane = f.api.pane.copy(text = "› ${if (submit) "" else message}\n\n  model · /repo · Context 50% left")
+            if (submit) {
+                holdConsumptionRead = true
+                f.api.chatPage = f.api.chatPage!!.copy(rev = 5, head = 11, upserts = listOf(
+                    TranscriptEntry("new-user", "", "user", listOf(TranscriptPart("text", "hello")), seq = 11),
+                ))
+            }
+        }
+        f.viewModel.sendReply("hello")
+        advanceTimeBy(301)
+        runCurrent()
+        assertEquals(2, f.api.replyCalls)
+        assertFalse(f.viewModel.state.value.clearReplyDraft)
+        f.viewModel.refresh()
+        runCurrent()
+        assertEquals(listOf("new-user"), f.viewModel.state.value.transcript.map { it.uuid })
+        guardRead.complete(Unit)
+        advanceUntilIdle()
+        assertTrue(f.viewModel.state.value.clearReplyDraft)
+        assertTrue(f.viewModel.state.value.codexAcceptedReplies.isEmpty())
+        assertEquals(2, f.api.replyCalls)
     }
 
     @Test
@@ -641,6 +721,39 @@ class PaneViewModelTest {
         assertEquals(0, f.api.replyCalls)
         assertFalse(f.viewModel.state.value.clearReplyDraft)
         assertNotNull(f.viewModel.state.value.mutationError)
+    }
+
+
+    @Test
+    fun unsupportedChordsAreBlockedWithoutDisablingThePlainKey() = runTest(dispatcher) {
+        val f = fixture(ApiResult.Success(ActionResponse(ok = true), 200), agent = "shell")
+        f.api.config = BridgeConfigResponse(mux = MuxConfigResponse(unsupportedKeys = listOf("ctrl+Enter", "Delete")))
+        f.viewModel.refresh()
+        advanceUntilIdle()
+        f.viewModel.sendKey("ctrl+Enter")
+        f.viewModel.sendKey("shift+Delete")
+        advanceUntilIdle()
+        assertTrue(f.api.keysCalls.isEmpty())
+        f.viewModel.sendKey("Enter")
+        advanceUntilIdle()
+        assertEquals(listOf(listOf("Enter")), f.api.keysCalls)
+    }
+
+    @Test
+    fun connectionChangeCancelsACodexSubmissionAndRetainsTheDraft() = runTest(dispatcher) {
+        val f = fixture(ApiResult.Success(ActionResponse(ok = true), 200))
+        f.viewModel.refresh()
+        advanceUntilIdle()
+        f.api.replyHook = { _, submit ->
+            if (!submit) f.store.save(Connection(CollieOrigin("https://other.example/"), "other", "other-token"))
+        }
+        f.viewModel.sendReply("hello")
+        advanceUntilIdle()
+        assertEquals(1, f.api.replyCalls)
+        assertFalse(f.viewModel.state.value.clearReplyDraft)
+        assertFalse(f.viewModel.state.value.sending)
+        assertNull(f.viewModel.state.value.pane)
+        assertFalse(f.viewModel.state.value.canWrite)
     }
 
     private fun entry(uuid: String) =
@@ -715,6 +828,13 @@ class PaneViewModelTest {
         )
         val historyPages = ArrayDeque<PaneHistoryResponse>()
         var historyCalls = 0
+        var chatPage: PaneChatResponse? = null
+        override suspend fun chat(connection: Connection, address: PaneAddress, limit: Int,
+            after: ChatAfter?, before: ChatBefore?, etag: String?): ApiResult<PaneChatResponse> {
+            val page = chatPage ?: return ApiResult.Failure(ApiFailure.Protocol("Live chat is unavailable"))
+            if (after?.gen == page.gen && after?.rev == page.rev) return ApiResult.NotModified(etag)
+            return ApiResult.Success(page, 200)
+        }
         val historyLimits = mutableListOf<Int>()
 
         val historyEtags = mutableListOf<String?>()

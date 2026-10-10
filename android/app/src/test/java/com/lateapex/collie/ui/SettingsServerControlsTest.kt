@@ -85,7 +85,10 @@ class SettingsServerControlsTest {
         assertEquals(R.id.settings_parity_pairing_card, reveals.single().first.id)
         val name = parent.findViewById<EditText>(R.id.settings_pair_label)
         assertSame(name, reveals.single().second)
-        assertEquals("AB12-CD34", parent.findViewById<EditText>(R.id.settings_pair_code).text.toString())
+        val code = parent.findViewById<EditText>(R.id.settings_pair_code)
+        assertEquals("AB12-CD34", code.text.toString())
+        assertFalse(code.isSaveEnabled)
+        assertEquals(View.IMPORTANT_FOR_AUTOFILL_NO, code.importantForAutofill)
     }
 
     private fun seedUnpairedConnection(application: CollieApplication) {

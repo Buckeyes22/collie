@@ -58,6 +58,7 @@ import com.lateapex.collie.CollieApplication
 import com.lateapex.collie.R
 import com.lateapex.collie.databinding.ActivityPaneBinding
 import com.lateapex.collie.domain.PaneAddress
+import com.lateapex.collie.domain.MuxKeyGrammar
 import com.lateapex.collie.domain.Scope
 import com.lateapex.collie.network.ActionResponse
 import com.lateapex.collie.network.ApiFailure
@@ -246,6 +247,7 @@ class PaneActivity : AppCompatActivity() {
             PaneViewModel.Factory(application, address, intent.getStringExtra(EXTRA_AGENT)),
         )[PaneViewModel::class.java]
         binding.transcriptBody.onLoadOlder = viewModel::loadOlderTranscript
+        binding.pendingCodexDismiss.setOnClickListener { viewModel.dismissAcceptedCodexReplies() }
         binding.transcriptBody.onPlaced = { fields ->
             (application as CollieApplication).container.diagnostics.record("transcriptPlacement", fields)
         }
@@ -288,6 +290,10 @@ class PaneActivity : AppCompatActivity() {
         restoringDraft = true
         binding.replyInput.setText(nativePreferences.paneDraft(paneDraftKey))
         binding.replyInput.setSelection(binding.replyInput.text?.length ?: 0)
+        if (savedInstanceState?.getString(STATE_ATTACHMENT_ORIGIN) == origin) {
+            pendingAttachment = savedInstanceState.getString(STATE_ATTACHMENT_PATH)
+            renderAttachmentChip()
+        }
         restoringDraft = false
         binding.replyInput.addTextChangedListener(simpleTextWatcher { draft ->
             if (pendingDestructiveSend?.draft != draft) resetDestructiveConfirm()
@@ -356,6 +362,8 @@ class PaneActivity : AppCompatActivity() {
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString(STATE_ATTACHMENT_PATH, pendingAttachment)
+        outState.putString(STATE_ATTACHMENT_ORIGIN, paneDraftKey.substringBefore('|'))
         if (::panePresenceTracker.isInitialized) {
             outState.putBoolean(STATE_FRESH_PANE_SEEN, panePresenceTracker.wasSeen)
         }
@@ -369,6 +377,8 @@ class PaneActivity : AppCompatActivity() {
     }
 
     override fun onStop() {
+        cancelActiveKeyRepeat?.invoke()
+        cancelActiveKeyRepeat = null
         resetDestructiveConfirm(render = false)
         if (!directTyping && noEchoPrompt == null) {
             nativePreferences.savePaneDraft(paneDraftKey, binding.replyInput.text?.toString().orEmpty())
@@ -578,8 +588,7 @@ class PaneActivity : AppCompatActivity() {
                 is ImageSelectionResult.Ready -> composerMediaActions.uploadImage(selection.upload)
                 is ImageSelectionResult.Rejected -> ComposerMediaResult.Failure(selection.reason)
             }
-            applyComposerMediaResult(result)
-            setComposerMediaBusy(false)
+            completeComposerMediaResult(result)
         }
     }
 
@@ -604,6 +613,7 @@ class PaneActivity : AppCompatActivity() {
 
     private fun startSpeechRecording() {
         if (speechAvailability !is SpeechAvailability.Available || composerMediaBusy || speechRecorder.isRecording ||
+            currentState.sending || directTyping || semanticSurface?.ownsKeyboard == true || noEchoPrompt != null ||
             terminalWriteBlock() != null
         ) return
         speechRecorder.start().fold(
@@ -631,11 +641,18 @@ class PaneActivity : AppCompatActivity() {
         }
         lifecycleScope.launch {
             setComposerMediaBusy(true)
-            applyComposerMediaResult(
-                composerMediaActions.transcribe(audio),
-            )
-            setComposerMediaBusy(false)
+            val result = try {
+                composerMediaActions.transcribe(audio)
+            } finally {
+                setComposerMediaBusy(false)
+            }
+            completeComposerMediaResult(result)
         }
+    }
+
+    private fun completeComposerMediaResult(result: ComposerMediaResult) {
+        setComposerMediaBusy(false)
+        applyComposerMediaResult(result)
     }
 
     private fun applyComposerMediaResult(result: ComposerMediaResult) {
@@ -708,12 +725,16 @@ class PaneActivity : AppCompatActivity() {
         val terminalWritable = terminalWriteBlock() == null
         val dialogPresent = semanticSurface?.ownsKeyboard == true
         val noEcho = noEchoPrompt != null
-        val micPrimary = speechAvailability !is SpeechAvailability.Hidden && !directTyping &&
+        val micPrimary = pendingAttachment == null && speechAvailability !is SpeechAvailability.Hidden && !directTyping &&
             replyInput.text?.toString().orEmpty().trim().isEmpty()
         attachImageButton.isEnabled = terminalWritable && hasPane && !currentState.sending && !composerMediaBusy &&
             !directTyping && !dialogPresent && !noEcho
         speechButton.isVisible = micPrimary
         sendButton.isVisible = !micPrimary
+        if (!directTyping) {
+            sendButton.isEnabled = terminalWritable && hasPane && !currentState.sending && !composerMediaBusy &&
+                (currentState.composerReady || takenOverTerminalDraft != null) && !dialogPresent && !noEcho
+        }
         speechButton.isEnabled = speechRecorder.isRecording ||
             (speechAvailability is SpeechAvailability.Available && terminalWritable && hasPane &&
                 !currentState.sending && !composerMediaBusy && !directTyping && !dialogPresent && !noEcho)
@@ -757,12 +778,12 @@ class PaneActivity : AppCompatActivity() {
         keyFunctionToggle = null
         renderedKeyPresets = presets
 
-        fun rowParams(button: View) = LinearLayout.LayoutParams(0, dp(44), 1f).apply {
+        fun rowParams(button: View) = LinearLayout.LayoutParams(0, dp(48), 1f).apply {
             marginStart = dp(2)
             marginEnd = dp(2)
         }.also { button.layoutParams = it }
 
-        fun gridParams(button: View, row: Int, column: Int, height: Int = 44) =
+        fun gridParams(button: View, row: Int, column: Int, height: Int = 48) =
             GridLayout.LayoutParams(GridLayout.spec(row), GridLayout.spec(column, 1f)).apply {
                 width = 0
                 this.height = dp(height)
@@ -823,9 +844,9 @@ class PaneActivity : AppCompatActivity() {
         }
         chipScroll.addView(
             keyQueueChips,
-            ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)),
+            ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)),
         )
-        queuePanel.addView(chipScroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)))
+        queuePanel.addView(chipScroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)))
         val queueActions = LinearLayout(this).apply {
             gravity = Gravity.END or Gravity.CENTER_VERTICAL
             orientation = LinearLayout.HORIZONTAL
@@ -846,7 +867,7 @@ class PaneActivity : AppCompatActivity() {
             minimumWidth = dp(92)
             queueActions.addView(
                 this,
-                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)).apply { marginEnd = dp(4) },
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)).apply { marginEnd = dp(4) },
             )
         }
         outlinedButton(getString(R.string.pane_key_clear)).apply {
@@ -860,20 +881,18 @@ class PaneActivity : AppCompatActivity() {
             tag = KEY_QUEUE_CLEAR_TAG
             isSingleLine = true
             minimumWidth = dp(68)
-            queueActions.addView(this, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)))
+            queueActions.addView(this, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)))
         }
-        queuePanel.addView(queueActions, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)))
+        queuePanel.addView(queueActions, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)))
         container.addView(
             queuePanel,
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
         )
 
-        // A.4/B.2: the Keys drawer is one compact row plus a modifiers row and a More sheet,
-        // so with the drawer open at most three rows sit above the composer.
-        val keysContent = LinearLayout(this).apply {
+        // Keep the primary keys and modifiers compact, wrapping on narrow phones so every
+        // control retains Android's 48dp touch target. Presets and F-keys stay in More.
+        val keysContent = CollieKeyRow(this).apply {
             id = R.id.pane_keys_primary
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
         }
         primaryButtons.forEachIndexed { index, button ->
             (button.parent as? ViewGroup)?.removeView(button)
@@ -882,12 +901,11 @@ class PaneActivity : AppCompatActivity() {
         }
         container.addView(
             keysContent,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)),
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
         )
 
-        val modifiers = LinearLayout(this).apply {
+        val modifiers = CollieKeyRow(this).apply {
             id = R.id.pane_keys_modifiers
-            orientation = LinearLayout.HORIZONTAL
         }
         rowTwoKeys.forEach { key ->
             (key.parent as? ViewGroup)?.removeView(key)
@@ -929,7 +947,7 @@ class PaneActivity : AppCompatActivity() {
         modifiers.addView(moreButton, rowParams(moreButton))
         container.addView(
             modifiers,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)),
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
         )
 
         val digits = GridLayout(this).apply {
@@ -969,7 +987,7 @@ class PaneActivity : AppCompatActivity() {
                 button,
                 GridLayout.LayoutParams(GridLayout.spec(index / 3), GridLayout.spec(index % 3, 1f)).apply {
                     width = 0
-                    height = dp(44)
+                    height = dp(48)
                     setMargins(dp(2), dp(2), dp(2), dp(2))
                 },
             )
@@ -994,7 +1012,7 @@ class PaneActivity : AppCompatActivity() {
                 button,
                 GridLayout.LayoutParams(GridLayout.spec((number - 1) / 4), GridLayout.spec((number - 1) % 4, 1f)).apply {
                     width = 0
-                    height = dp(44)
+                    height = dp(48)
                     setMargins(dp(2), dp(2), dp(2), dp(2))
                 },
             )
@@ -1163,7 +1181,7 @@ class PaneActivity : AppCompatActivity() {
             staged.forEachIndexed { index, key ->
                 val label = keyChipLabel(key)
                 val chip = outlinedButton("$label  ×").apply {
-                    minWidth = dp(44)
+                    minWidth = dp(48)
                     contentDescription = getString(R.string.pane_key_remove_staged, label)
                     if (isDangerKey(key)) setTextColor(getColor(R.color.collie_destructive))
                     setOnClickListener {
@@ -1174,7 +1192,7 @@ class PaneActivity : AppCompatActivity() {
                 }
                 chips.addView(
                     chip,
-                    LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)).apply { marginEnd = dp(4) },
+                    LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)).apply { marginEnd = dp(4) },
                 )
             }
 
@@ -1183,18 +1201,18 @@ class PaneActivity : AppCompatActivity() {
                 chips.addView(TextView(this).apply {
                     text = "$modifiers + …"
                     gravity = Gravity.CENTER
-                    minHeight = dp(44)
+                    minHeight = dp(48)
                     setTextColor(getColor(R.color.collie_muted))
                     setPadding(dp(10), 0, dp(10), 0)
                     setBackgroundResource(R.drawable.bg_collie_control_off)
-                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)).apply { marginEnd = dp(4) })
+                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)).apply { marginEnd = dp(4) })
                 var handlingInput = false
                 val input = EditText(this).apply {
                     id = R.id.pane_keys_base_input
                     hint = getString(R.string.pane_key_base_placeholder)
                     contentDescription = getString(R.string.pane_key_base_description)
                     isSingleLine = true
-                    minHeight = dp(44)
+                    minHeight = dp(48)
                     inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
                     setTextColor(getColor(R.color.collie_foreground))
                     setHintTextColor(getColor(R.color.collie_muted))
@@ -1213,7 +1231,7 @@ class PaneActivity : AppCompatActivity() {
                     })
                 }
                 keyBaseInput = input
-                chips.addView(input, LinearLayout.LayoutParams(dp(64), dp(44)))
+                chips.addView(input, LinearLayout.LayoutParams(dp(64), dp(48)))
             }
         }
 
@@ -1279,7 +1297,10 @@ class PaneActivity : AppCompatActivity() {
         repeat(childCount) { yield(getChildAt(it)) }
     }
 
+    private var cancelActiveKeyRepeat: (() -> Unit)? = null
+
     private fun bindKeyRepeat(button: MaterialButton, key: String) {
+        var active = false
         var engaged = false
         var repeats = 0
         var tick: Runnable? = null
@@ -1301,13 +1322,27 @@ class PaneActivity : AppCompatActivity() {
             if (paneKeyQueue.composing) return@setOnTouchListener false
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    cancelActiveKeyRepeat?.invoke()
+                    active = true
                     engaged = false
                     repeats = 0
+                    cancelActiveKeyRepeat = {
+                        active = false
+                        engaged = false
+                        repeats = 0
+                        confirmHandler.removeCallbacks(engage)
+                        tick?.let(confirmHandler::removeCallbacks)
+                        button.isPressed = false
+                        button.text = keyDisplayLabel(key)
+                    }
                     confirmHandler.postDelayed(engage, REPEAT_HOLD_MS)
                     view.isPressed = true
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    if (!active) return@setOnTouchListener true
+                    active = false
+                    cancelActiveKeyRepeat = null
                     confirmHandler.removeCallbacks(engage)
                     tick?.let(confirmHandler::removeCallbacks)
                     view.isPressed = false
@@ -1423,7 +1458,7 @@ class PaneActivity : AppCompatActivity() {
         val unsupportedKeys = state.unsupportedKeys.map { it.lowercase(Locale.ROOT) }.toSet()
         keyButtons.forEach { (button, keys) ->
             button.isEnabled = terminalWritable && !state.sending && hasPane &&
-                keys.all { key -> key.substringAfterLast('+').lowercase(Locale.ROOT) !in unsupportedKeys }
+                keys.all { key -> MuxKeyGrammar.isSupported(key, unsupportedKeys) }
         }
         renderKeyQueue()
         renderKeyEcho(state)
@@ -1433,7 +1468,7 @@ class PaneActivity : AppCompatActivity() {
             setDirectTyping(false, announce = false)
         }
         if (state.clearReplyDraft) {
-            pendingReplyAttempt?.let { attempt ->
+            pendingReplyAttempt?.takeIf { agentName != "codex" }?.let { attempt ->
                 pendingSent = PendingSent(
                     text = attempt.text,
                     revision = state.pane?.revision ?: attempt.revision,
@@ -1444,6 +1479,9 @@ class PaneActivity : AppCompatActivity() {
             }
             pendingReplyAttempt = null
             takenOverTerminalDraft = null
+            pendingAttachment = null
+            pendingAttachmentThumb = null
+            renderAttachmentChip()
             replyInput.text?.clear()
             nativePreferences.savePaneDraft(paneDraftKey, "")
             viewModel.onReplyDraftCleared()
@@ -1996,14 +2034,14 @@ class PaneActivity : AppCompatActivity() {
                     binding.semanticActions.removeView(controls)
                     offerButton.isVisible = true
                 }
-            }, LinearLayout.LayoutParams(0, dp(44), 1f))
+            }, LinearLayout.LayoutParams(0, dp(48), 1f))
             controls.addView(outlinedButton(submitLabel).apply {
                 tag = SEMANTIC_CONTROL_TAG
                 setOnClickListener {
                     val value = editor.text?.toString()?.trim().orEmpty()
                     if (value.isNotEmpty()) onSubmit(value)
                 }
-            }, LinearLayout.LayoutParams(0, dp(44), 1f))
+            }, LinearLayout.LayoutParams(0, dp(48), 1f))
             binding.semanticActions.addView(controls)
             editor.requestFocus()
         }
@@ -2050,6 +2088,9 @@ class PaneActivity : AppCompatActivity() {
     }
 
     private fun sendReplyWithConfirmation(draft: String) {
+        // Media results are rebased into this draft. Do not submit an earlier draft while a
+        // pending upload or transcription can still add content that success would clear.
+        if (composerMediaBusy) return
         if (semanticSurface?.ownsKeyboard == true) {
             showTransientMessage(getString(R.string.pane_dialog_owns_input))
             return
@@ -2077,7 +2118,7 @@ class PaneActivity : AppCompatActivity() {
 
     private fun sendReplyDraft() {
         val draft = binding.replyInput.text?.toString().orEmpty()
-        if (draft.isNotBlank()) sendReplyWithConfirmation(draft)
+        if (draft.isNotBlank() || pendingAttachment != null) sendReplyWithConfirmation(draft)
     }
 
     private fun beginReplySend(text: String) {
@@ -2085,11 +2126,6 @@ class PaneActivity : AppCompatActivity() {
         val outgoing = outgoingReply(text)
         pendingReplyAttempt = PendingReplyAttempt(outgoing, pane?.revision, pane?.text)
         viewModel.sendReply(outgoing, takenOverTerminalDraft)
-        if (pendingAttachment != null) {
-            pendingAttachment = null
-            pendingAttachmentThumb = null
-            renderAttachmentChip()
-        }
     }
 
     private fun outgoingReply(text: String): String =
@@ -2113,6 +2149,7 @@ class PaneActivity : AppCompatActivity() {
                 renderAttachmentChip()
             }
         }
+        renderComposerMediaControls()
     }
 
     @VisibleForTesting
@@ -2130,8 +2167,14 @@ class PaneActivity : AppCompatActivity() {
 
     private fun renderPendingSent() {
         if (!::binding.isInitialized) return
-        binding.pendingSendNotice.text = pendingSent?.text?.let { getString(R.string.pane_pending_sent, it) }.orEmpty()
-        binding.pendingSendNotice.isVisible = pendingSent != null && !directTyping
+        val accepted = currentState.codexAcceptedReplies
+        binding.pendingSendNotice.maxLines = if (accepted.isNotEmpty()) 5 else 1
+        binding.pendingSendNotice.setTextIsSelectable(accepted.isNotEmpty())
+        binding.pendingSendNotice.text = if (accepted.isNotEmpty()) {
+            getString(R.string.pane_codex_waiting_history, accepted.joinToString("\n\n"))
+        } else pendingSent?.text?.let { getString(R.string.pane_pending_sent, it) }.orEmpty()
+        binding.pendingSendNotice.isVisible = (accepted.isNotEmpty() || pendingSent != null) && !directTyping
+        binding.pendingCodexDismiss.isVisible = accepted.isNotEmpty() && !directTyping
     }
 
     private fun resetDestructiveConfirm(render: Boolean = true) {
@@ -2211,7 +2254,7 @@ class PaneActivity : AppCompatActivity() {
         LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            minimumHeight = dp(44)
+            minimumHeight = dp(48)
             setPadding(dp(12), 0, 0, 0)
             addView(TextView(this@PaneActivity).apply {
                 id = R.id.composer_dock_title
@@ -2224,14 +2267,14 @@ class PaneActivity : AppCompatActivity() {
                 id = R.id.composer_dock_close
                 background = null
                 contentDescription = getString(R.string.pane_dock_close)
-                minWidth = dp(44)
-                minimumHeight = dp(44)
+                minWidth = dp(48)
+                minimumHeight = dp(48)
                 text = getString(R.string.pane_close_symbol)
                 setTextColor(getColor(R.color.collie_muted))
                 textSize = 22f
                 isAllCaps = false
                 setOnClickListener { onClose() }
-            }, LinearLayout.LayoutParams(dp(44), dp(44)))
+            }, LinearLayout.LayoutParams(dp(48), dp(48)))
         }
 
     private fun resetKeyQueueDiscardConfirm(render: Boolean = true) {
@@ -3001,7 +3044,7 @@ class PaneActivity : AppCompatActivity() {
                 ),
             ).apply {
                 gravity = Gravity.START or Gravity.CENTER_VERTICAL
-                minHeight = dp(44)
+                minHeight = dp(48)
                 isClickable = false
                 isFocusable = false
             }
@@ -3031,7 +3074,7 @@ class PaneActivity : AppCompatActivity() {
     private fun switcherToggleLabel(label: String, open: Boolean, onClick: () -> Unit) = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
-        minimumHeight = dp(44)
+        minimumHeight = dp(48)
         isClickable = true
         isFocusable = true
         background = ContextCompat.getDrawable(this@PaneActivity, android.R.drawable.list_selector_background)
@@ -3053,7 +3096,7 @@ class PaneActivity : AppCompatActivity() {
             ),
         ).apply {
             gravity = Gravity.START or Gravity.CENTER_VERTICAL
-            minHeight = dp(44)
+            minHeight = dp(48)
             contentDescription = getString(
                 if (open) R.string.pane_switcher_collapse else R.string.pane_switcher_expand,
                 label,
@@ -3203,7 +3246,7 @@ class PaneActivity : AppCompatActivity() {
                         this.id = id
                         text = label
                         isChecked = checked
-                        minHeight = dp(44)
+                        minHeight = dp(48)
                         setPadding(dp(12), 0, dp(12), 0)
                         setOnCheckedChangeListener { _, value -> onToggle(value) }
                     },
@@ -3547,6 +3590,7 @@ class PaneActivity : AppCompatActivity() {
             ViewGroup.LayoutParams.WRAP_CONTENT,
         )
         includeFontPadding = false
+        // The constant is inlined; this does not load the API-29 class on older Android.
         breakStrategy = android.graphics.text.LineBreaker.BREAK_STRATEGY_SIMPLE
         hyphenationFrequency = android.text.Layout.HYPHENATION_FREQUENCY_NONE
         setLineSpacing(0f, 1.25f)
@@ -3588,7 +3632,7 @@ class PaneActivity : AppCompatActivity() {
                     // long-press timer), then open the composer; a focused mirror still clicks.
                     if (tap && !terminalTapBlocked && !view.isFocused) {
                         view.onTouchEvent(event)
-                        tapToType(view)
+                        view.performClick()
                         return@setOnTouchListener true
                     }
                 }
@@ -3899,7 +3943,7 @@ class PaneActivity : AppCompatActivity() {
     private fun outlinedButton(label: String) = MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
         text = label
         isAllCaps = false
-        minHeight = dp(44)
+        minHeight = dp(48)
         setTextColor(getColor(R.color.collie_foreground))
     }
 
@@ -4039,6 +4083,8 @@ class PaneActivity : AppCompatActivity() {
         const val EXTRA_TAB_LABEL = "tab_label"
         const val EXTRA_STATUS = "status"
         const val EXTRA_FRESH_PANE = "fresh_pane"
+        private const val STATE_ATTACHMENT_PATH = "attachment_path"
+        private const val STATE_ATTACHMENT_ORIGIN = "attachment_origin"
         private const val STATE_FRESH_PANE_SEEN = "fresh_pane_seen"
 
         internal fun filterAgentCommands(commands: List<AgentCommand>, query: String): List<AgentCommand> {

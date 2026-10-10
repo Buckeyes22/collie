@@ -1,6 +1,7 @@
 package com.lateapex.collie.network
 
 import com.lateapex.collie.domain.CollieOrigin
+import com.lateapex.collie.domain.DeviceLabel
 import com.lateapex.collie.domain.Connection
 import com.lateapex.collie.domain.PaneAddress
 import com.lateapex.collie.domain.MuxKeyGrammar
@@ -239,32 +240,25 @@ class CollieApiClient(
     override suspend fun pair(origin: CollieOrigin, code: String, label: String): ApiResult<PairResult> {
         val bootstrap = Connection(origin, label, null)
         val request = post(bootstrap, url(origin, path("pair")), json.encodeToString(PairRequest(code, label)))
-        val response = try {
-            client.newCall(request).await(MUTATION_TIMEOUT_SECONDS)
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: InterruptedIOException) {
-            return ApiResult.Failure(ApiFailure.Timeout)
-        } catch (io: IOException) {
-            return ApiResult.Failure(ApiFailure.Network(io.message))
-        }
-        response.use {
-            if (it.code in REDIRECT_CODES) return ApiResult.Failure(ApiFailure.Redirect(it.code))
+        return executeResponse(request, MUTATION_TIMEOUT_SECONDS) {
+            if (it.code in REDIRECT_CODES) return@executeResponse ApiResult.Failure(ApiFailure.Redirect(it.code))
             val body = it.body?.string().orEmpty()
             val decoded = decode(PairResponse.serializer(), body)
             if (it.code == 400) {
-                return if (decoded != null) {
+                return@executeResponse if (decoded != null) {
                     ApiResult.Success(PairResult.Refused(decoded.error ?: "bad-request"), it.code)
                 } else {
                     failure(it.code, body)
                 }
             }
-            if (!it.isSuccessful) return failure(it.code, body)
-            if (decoded == null) return ApiResult.Failure(ApiFailure.Protocol("Malformed pairing response"))
+            if (!it.isSuccessful) return@executeResponse failure(it.code, body)
+            if (decoded == null) return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Malformed pairing response"))
             val token = decoded.token
             val returnedLabel = decoded.label
-            return if (token.isNullOrBlank() || returnedLabel.isNullOrBlank()) {
-                ApiResult.Failure(ApiFailure.Protocol("Pairing response omitted required fields"))
+            if (token.isNullOrBlank() || returnedLabel.isNullOrBlank() || returnedLabel.length > DeviceLabel.MAX_CHARS ||
+                token.any { char -> char <= ' ' || char >= '\u007f' }
+            ) {
+                ApiResult.Failure(ApiFailure.Protocol("Pairing response omitted or invalidated required fields"))
             } else {
                 ApiResult.Success(PairResult.Paired(token, returnedLabel), it.code)
             }
@@ -572,7 +566,8 @@ class CollieApiClient(
     override suspend fun standbyUpdate(connection: Connection): ApiResult<StandbyUpdateResponse> =
         requireContract(
             executeJson(
-                request(connection, url(connection.origin, listOf("standby", "update"))),
+                requestBuilder(connection, url(connection.origin, listOf("standby", "update")))
+                    .removeHeader("Authorization").get().build(),
                 StandbyUpdateResponse.serializer(),
                 READ_TIMEOUT_SECONDS,
             ),
@@ -666,52 +661,50 @@ class CollieApiClient(
         is ApiResult.NotModified -> result
     }
 
-    private suspend fun executeAction(request: Request): ApiResult<ActionResponse> {
-        val response = try {
-            client.newCall(request).await(MUTATION_TIMEOUT_SECONDS)
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: InterruptedIOException) {
-            return ApiResult.Failure(ApiFailure.Timeout)
-        } catch (io: IOException) {
-            return ApiResult.Failure(ApiFailure.Network(io.message))
-        }
-        response.use {
-            if (it.code in REDIRECT_CODES) return ApiResult.Failure(ApiFailure.Redirect(it.code))
+    private suspend fun executeAction(request: Request): ApiResult<ActionResponse> =
+        executeResponse(request, MUTATION_TIMEOUT_SECONDS) {
+            if (it.code in REDIRECT_CODES) return@executeResponse ApiResult.Failure(ApiFailure.Redirect(it.code))
             val body = it.body?.string().orEmpty()
             val action = decode(ActionResponse.serializer(), body)
             if (action != null && (action.ok || !action.error.isNullOrBlank()) && (it.isSuccessful || it.code == 409)) {
-                return ApiResult.Success(action, it.code, buildId = it.header(BUILD_HEADER))
+                return@executeResponse ApiResult.Success(action, it.code, buildId = it.header(BUILD_HEADER))
             }
-            if (!it.isSuccessful) return failure(it.code, body)
-            return ApiResult.Failure(ApiFailure.Protocol("Malformed action response"))
+            if (!it.isSuccessful) return@executeResponse failure(it.code, body)
+            ApiResult.Failure(ApiFailure.Protocol("Malformed action response"))
         }
-    }
 
     private suspend fun <T> executeJson(
         request: Request,
         serializer: DeserializationStrategy<T>,
         timeoutSeconds: Long,
         allowNotModified: Boolean = false,
-    ): ApiResult<T> {
-        val response = try {
-            client.newCall(request).await(timeoutSeconds)
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: InterruptedIOException) {
-            return ApiResult.Failure(ApiFailure.Timeout)
-        } catch (io: IOException) {
-            return ApiResult.Failure(ApiFailure.Network(io.message))
-        }
-        response.use {
-            if (allowNotModified && it.code == 304) return ApiResult.NotModified(it.header("ETag"))
-            if (it.code in REDIRECT_CODES) return ApiResult.Failure(ApiFailure.Redirect(it.code))
-            val body = it.body?.string().orEmpty()
-            if (!it.isSuccessful) return failure(it.code, body)
-            val value = decode(serializer, body)
-                ?: return ApiResult.Failure(ApiFailure.Protocol("Malformed successful response"))
-            return ApiResult.Success(value, it.code, it.header("ETag"), it.header(BUILD_HEADER))
-        }
+    ): ApiResult<T> = executeResponse(request, timeoutSeconds) {
+        if (allowNotModified && it.code == 304) return@executeResponse ApiResult.NotModified(it.header("ETag"))
+        if (it.code in REDIRECT_CODES) return@executeResponse ApiResult.Failure(ApiFailure.Redirect(it.code))
+        val body = it.body?.string().orEmpty()
+        if (!it.isSuccessful) return@executeResponse failure(it.code, body)
+        val value = decode(serializer, body)
+            ?: return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Malformed successful response"))
+        ApiResult.Success(value, it.code, it.header("ETag"), it.header(BUILD_HEADER))
+    }
+
+    /** Consume and close the body on OkHttp's worker, before handing a value to the caller. */
+    private suspend fun <T> executeResponse(
+        request: Request,
+        timeoutSeconds: Long,
+        read: (Response) -> ApiResult<T>,
+    ): ApiResult<T> = try {
+        client.newBuilder()
+            .readTimeout(timeoutSeconds, TimeUnit.SECONDS)
+            .writeTimeout(timeoutSeconds, TimeUnit.SECONDS)
+            .build()
+            .newCall(request).await(timeoutSeconds, read)
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: InterruptedIOException) {
+        ApiResult.Failure(ApiFailure.Timeout)
+    } catch (io: IOException) {
+        ApiResult.Failure(ApiFailure.Network(io.message))
     }
 
     private fun failure(status: Int, body: String): ApiResult.Failure {
@@ -819,16 +812,24 @@ class CollieApiClient(
     }
 }
 
-private suspend fun Call.await(timeoutSeconds: Long): Response = suspendCancellableCoroutine { continuation ->
-    timeout().timeout(timeoutSeconds, TimeUnit.SECONDS)
-    continuation.invokeOnCancellation { cancel() }
-    enqueue(object : Callback {
-        override fun onFailure(call: Call, error: IOException) {
-            if (continuation.isActive) continuation.resumeWithException(error)
-        }
+private suspend fun <T> Call.await(timeoutSeconds: Long, read: (Response) -> T): T =
+    suspendCancellableCoroutine { continuation ->
+        timeout().timeout(timeoutSeconds, TimeUnit.SECONDS)
+        // Remains installed while the callback reads the body, so cancellation closes the socket.
+        continuation.invokeOnCancellation { cancel() }
+        enqueue(object : Callback {
+            override fun onFailure(call: Call, error: IOException) {
+                if (continuation.isActive) continuation.resumeWithException(error)
+            }
 
-        override fun onResponse(call: Call, response: Response) {
-            if (continuation.isActive) continuation.resume(response) else response.close()
-        }
-    })
-}
+            override fun onResponse(call: Call, response: Response) {
+                val result = runCatching {
+                    response.use {
+                        if (!continuation.isActive) return
+                        read(it)
+                    }
+                }
+                if (continuation.isActive) result.fold(continuation::resume, continuation::resumeWithException)
+            }
+        })
+    }

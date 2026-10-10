@@ -202,7 +202,7 @@ class SettingsActivityTest {
     }
 
     @Test
-    fun settingsHeaderAndInteractiveRowsPreserveTheFortyFourDpTapFloor() {
+    fun settingsHeaderAndInteractiveRowsPreserveTheFortyEightDpTapFloor() {
         val activity = Robolectric.buildActivity(SettingsActivity::class.java).create().get()
         val floor = activity.resources.getDimensionPixelSize(R.dimen.collie_touch_target)
         val back = activity.findViewById<View>(R.id.settings_back_button)
@@ -217,7 +217,7 @@ class SettingsActivityTest {
             R.id.settings_hands_free_switch,
         ).forEach { viewId ->
             val view = activity.findViewById<View>(viewId)
-            assertTrue("view $viewId should retain a 44dp height", view.layoutParams.height >= floor)
+            assertTrue("view $viewId should retain a 48dp height", view.layoutParams.height >= floor)
         }
         assertTrue(activity.findViewById<View>(R.id.settings_updates_button).minimumHeight >= floor)
         assertTrue(activity.findViewById<View>(R.id.settings_pack_button).minimumHeight >= floor)

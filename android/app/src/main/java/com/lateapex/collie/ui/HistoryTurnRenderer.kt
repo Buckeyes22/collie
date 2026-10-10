@@ -258,7 +258,7 @@ internal class HistoryTurnRenderer(
         val header = LinearLayout(context).apply {
             gravity = Gravity.CENTER_VERTICAL
             orientation = LinearLayout.HORIZONTAL
-            minimumHeight = dp(44)
+            minimumHeight = dp(48)
             isClickable = part.result != null
             isFocusable = part.result != null
             foreground = ContextCompat.getDrawable(context, android.R.drawable.list_selector_background)

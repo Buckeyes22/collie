@@ -133,7 +133,7 @@
     <string name="pairing_uncertain">Pairing outcome is uncertain. Generate a new code and retry with a new device label, or revoke the old label first.</string>
     <string name="pairing_empty">Pairing returned an unexpected empty response.</string>
     <string name="device_label_required">Enter a device label.</string>
-    <string name="device_label_too_long">Device labels may be at most 80 characters.</string>
+    <string name="device_label_too_long">Device labels may be at most 48 characters.</string>
     <string name="origin_invalid_detail">Origin is invalid: %1$s</string>
     <string name="origin_invalid">Enter a valid HTTPS Collie origin.</string>
     <string name="error_proxy_sign_in">Sign-in is required by the fronting proxy (HTTP %1$d).</string>

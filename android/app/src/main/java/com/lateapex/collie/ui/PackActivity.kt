@@ -186,7 +186,7 @@ class PackActivity : AppCompatActivity() {
                 ))
                 finish()
             }
-        }, LinearLayout.LayoutParams(dp(44), dp(44)))
+        }, LinearLayout.LayoutParams(dp(48), dp(48)))
         addView(CollieHeadingTextView(this@PackActivity).apply {
             setText(R.string.pack_title)
             textSize = 18f
@@ -308,7 +308,7 @@ class PackActivity : AppCompatActivity() {
             addView(MaterialButton(this@PackActivity).apply {
                 setText(R.string.pack_go_to_machine)
                 setOnClickListener { goTo(member) }
-            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)).apply { topMargin = dp(12) })
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)).apply { topMargin = dp(12) })
             applyAppTypeface()
         }
     }

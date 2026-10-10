@@ -13,6 +13,20 @@ import org.robolectric.RobolectricTestRunner
 @RunWith(RobolectricTestRunner::class)
 class DirectTypingEditTextTest {
     @Test
+    fun surroundingDeletionSendsForwardDeleteAndRejectsUnboundedRequests() {
+        val field = DirectTypingEditText(ApplicationProvider.getApplicationContext())
+        val emitted = mutableListOf<List<String>>()
+        field.onDirectKeys = emitted::add
+        field.beginDirectTyping()
+        val input = field.onCreateInputConnection(EditorInfo())!!
+        assertTrue(input.deleteSurroundingText(1, 2))
+        assertTrue(input.deleteSurroundingTextInCodePoints(0, 1))
+        assertFalse(input.deleteSurroundingText(Int.MAX_VALUE, 1))
+        assertFalse(input.deleteSurroundingTextInCodePoints(-1, 0))
+        assertEquals(listOf(listOf("Backspace", "Delete", "Delete"), listOf("Delete")), emitted)
+    }
+
+    @Test
     fun codecNormalizesLineEndingsAndPreservesUnicodeCodePoints() {
         assertEquals(
             listOf("a", "Space", "Tab", "Enter", "b", "Enter", "👋"),

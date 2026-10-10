@@ -98,7 +98,7 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:inputType="text"
-                        android:maxLength="80"
+                        android:maxLength="48"
                         android:maxLines="1" />
                 </com.google.android.material.textfield.TextInputLayout>
 
@@ -397,7 +397,7 @@
                 android:id="@+id/dashboard_idle_resume"
                 style="@style/Widget.Collie.Button"
                 android:layout_width="wrap_content"
-                android:layout_height="44dp"
+                android:layout_height="@dimen/collie_touch_target"
                 android:layout_marginTop="20dp"
                 android:text="@string/dashboard_idle_resume" />
         </LinearLayout>

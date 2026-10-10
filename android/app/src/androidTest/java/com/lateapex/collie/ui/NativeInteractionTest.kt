@@ -133,6 +133,18 @@ class NativeInteractionTest {
         launchPane().use {
             onView(withId(R.id.type_mode_button)).perform(click())
             onView(withId(R.id.reply_input)).perform(typeText("ab c"), pressKey(KeyEvent.KEYCODE_DEL), pressKey(KeyEvent.KEYCODE_ENTER))
+            // The terminal key queue drains through coroutines; Espresso's UI idle check alone
+            // does not mean the final queued write has reached the transport.
+            onView(isRoot()).perform(object : ViewAction {
+                override fun getConstraints(): Matcher<View> = isRoot()
+                override fun getDescription() = "Wait for the direct key sequence to reach the transport"
+                override fun perform(controller: UiController, view: View) {
+                    val deadline = android.os.SystemClock.uptimeMillis() + 4_000L
+                    while (api.keys.flatten().size < 6 && android.os.SystemClock.uptimeMillis() < deadline) {
+                        controller.loopMainThreadForAtLeast(25)
+                    }
+                }
+            })
             assertEquals(listOf("a", "b", "Space", "c", "Backspace", "Enter"), api.keys.flatten())
         }
     }
@@ -511,12 +523,16 @@ class NativeInteractionTest {
 
     @Test fun rejectedReplyKeepsTheDraftAndShowsTheFailure() {
         api.rejectReply = true
-        launchPane().use {
+        launchPane().use { scenario ->
+            scenario.onActivity { it.acceptUploadForTest("/fixture/upload.png") }
             onView(withId(R.id.reply_input)).perform(typeText("keep this draft"), closeSoftKeyboard())
             onView(withId(R.id.send_button)).perform(click())
             onView(withId(R.id.reply_input)).check(matches(withText("keep this draft")))
             onView(withId(R.id.error_text)).check(matches(isDisplayed()))
-            assertEquals(listOf("keep this draft"), api.replies.toList())
+            assertEquals(listOf("/fixture/upload.png\nkeep this draft"), api.replies.toList())
+            scenario.onActivity {
+                assertEquals("/fixture/upload.png\nkeep this draft", it.outgoingReplyForTest("keep this draft"))
+            }
             onView(withId(R.id.reply_input)).perform(replaceText(""), closeSoftKeyboard())
         }
     }

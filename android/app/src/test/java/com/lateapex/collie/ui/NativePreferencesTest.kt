@@ -32,6 +32,15 @@ class NativePreferencesTest {
     }
 
     @Test
+    fun pairingLabelSuffixIsPrivateToTheInstallAndStableAcrossPreferenceInstances() {
+        val first = NativePreferences(context).pairingLabelSuffix
+        assertTrue(first.matches(Regex("[0-9a-f]{4}")))
+        assertEquals(first, NativePreferences(context).pairingLabelSuffix)
+        val stored = context.getSharedPreferences(NativePreferences.PREFERENCES, Context.MODE_PRIVATE).all
+        assertEquals(first, stored["pairing_label_suffix"])
+    }
+
+    @Test
     fun defaultsFollowTheSystemAndEnableHaptics() {
         val preferences = NativePreferences(context)
 

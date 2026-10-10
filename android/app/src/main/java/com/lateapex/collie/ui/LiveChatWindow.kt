@@ -9,6 +9,8 @@ import com.lateapex.collie.network.TranscriptEntry
 internal class LiveChatWindow {
     private var generation: Long? = null
     private var revision: Long? = null
+    var head: Long? = null
+        private set
     private val turns = LinkedHashMap<String, TranscriptEntry>()
     var hasOlder = false
         private set
@@ -33,6 +35,7 @@ internal class LiveChatWindow {
             }
             if (turns.isEmpty()) hasOlder = page.hasOlder
             revision = page.rev
+            head = page.head
             queued = page.queued
         } else if (page.page == "older") {
             hasOlder = page.hasOlder
@@ -46,6 +49,7 @@ internal class LiveChatWindow {
     fun clear() {
         generation = null
         revision = null
+        head = null
         turns.clear()
         queued = emptyList()
         hasOlder = false

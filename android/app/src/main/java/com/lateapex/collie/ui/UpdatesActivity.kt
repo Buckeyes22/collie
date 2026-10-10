@@ -131,7 +131,7 @@ class UpdatesActivity : AppCompatActivity() {
         addView(horizontalRow(dp(12), dp(12)).apply {
             gravity = Gravity.CENTER_VERTICAL
             checkButton = outlinedButton(R.id.updates_check_button, getString(R.string.updates_check_now)) { checkNow() }
-            addView(checkButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)))
+            addView(checkButton, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)))
             checkResult = metadata("").apply { setPadding(dp(12), 0, 0, 0) }
             addView(checkResult, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         })
@@ -170,7 +170,7 @@ class UpdatesActivity : AppCompatActivity() {
                     renderPreflight(latestState)
                 }
             }
-            addView(preflightToggle, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)))
+            addView(preflightToggle, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)))
             preflightBody = LinearLayout(this@UpdatesActivity).apply { orientation = LinearLayout.VERTICAL }
             addView(preflightBody)
         }
@@ -188,8 +188,8 @@ class UpdatesActivity : AppCompatActivity() {
                     major = outlinedButton(R.id.updates_native_major_button, getString(R.string.updates_native_major_placeholder)) {
                         confirmMajor()
                     }
-                    addView(start, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)).apply { marginEnd = dp(8) })
-                    addView(major, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)).apply { marginEnd = dp(4) })
+                    addView(start, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)).apply { marginEnd = dp(8) })
+                    addView(major, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)).apply { marginEnd = dp(4) })
                 })
                 blockedReason = metadata("").apply {
                     id = R.id.updates_native_blocked_reason
@@ -202,7 +202,7 @@ class UpdatesActivity : AppCompatActivity() {
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                 ))
                 dismiss = outlinedButton(R.id.updates_snooze_button, getString(R.string.updates_native_dismiss)) { snooze() }
-                addView(dismiss, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)).apply { topMargin = dp(4) })
+                addView(dismiss, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)).apply { topMargin = dp(4) })
             }
             addView(standardActions)
             confirmation = LinearLayout(this@UpdatesActivity).apply {
@@ -230,7 +230,7 @@ class UpdatesActivity : AppCompatActivity() {
                         confirmationConfirm.setText(R.string.updates_native_starting)
                         action()
                     }
-                    addView(confirmationConfirm, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)).apply {
+                    addView(confirmationConfirm, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)).apply {
                         marginEnd = dp(8)
                     })
                     confirmationCancel = borderlessButton(
@@ -243,7 +243,7 @@ class UpdatesActivity : AppCompatActivity() {
                             confirmation.visibility = View.GONE
                         }
                     }
-                    addView(confirmationCancel, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)))
+                    addView(confirmationCancel, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)))
                 }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                     topMargin = dp(8)
                 })
@@ -484,7 +484,7 @@ class UpdatesActivity : AppCompatActivity() {
             ) {
                 logOpen = !logOpen
                 renderRun(latestState?.let(UpdateNativePresentation::visibleRun) ?: standbyRun)
-            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)))
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)))
             if (logOpen) runSection.addView(ScrollView(this).apply {
                 id = R.id.updates_native_log_tail
                 addView(code(run.logTail).apply {
@@ -499,7 +499,7 @@ class UpdatesActivity : AppCompatActivity() {
                 getString(R.string.updates_native_retry),
             ) { confirmRunRetry(run) }.apply {
                 isEnabled = !busy && repository.writesAllowed()
-            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)).apply {
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)).apply {
                 topMargin = dp(8)
             })
         }
@@ -677,7 +677,7 @@ class UpdatesActivity : AppCompatActivity() {
                 })
                 finish()
             }
-        }, LinearLayout.LayoutParams(dp(44), dp(44)))
+        }, LinearLayout.LayoutParams(dp(48), dp(48)))
         addView(CollieHeadingTextView(this@UpdatesActivity).apply {
             setText(R.string.updates_title)
             textSize = 18f
@@ -811,7 +811,7 @@ class UpdatesActivity : AppCompatActivity() {
         this.id = id
         text = label
         isAllCaps = false
-        minHeight = dp(44)
+        minHeight = dp(48)
         // A refused update is drawn as refused: the themed black fill had no disabled state.
         val states = arrayOf(intArrayOf(android.R.attr.state_enabled), intArrayOf(-android.R.attr.state_enabled))
         backgroundTintList = android.content.res.ColorStateList(
@@ -830,7 +830,7 @@ class UpdatesActivity : AppCompatActivity() {
         this.id = id
         text = label
         isAllCaps = false
-        minHeight = dp(44)
+        minHeight = dp(48)
         setOnClickListener { action() }
     }
 
@@ -842,7 +842,7 @@ class UpdatesActivity : AppCompatActivity() {
         this.id = id
         text = label
         isAllCaps = false
-        minHeight = dp(44)
+        minHeight = dp(48)
         setOnClickListener { action() }
     }
 

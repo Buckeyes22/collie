@@ -7,7 +7,7 @@
     <dimen name="collie_page_gutter">16dp</dimen>
     <dimen name="collie_content_max_width">640dp</dimen>
     <dimen name="collie_wide_content_max_width">768dp</dimen>
-    <dimen name="collie_touch_target">44dp</dimen>
+    <dimen name="collie_touch_target">48dp</dimen>
     <dimen name="collie_header_height">60dp</dimen>
     <dimen name="collie_header_icon">20dp</dimen>
     <dimen name="collie_header_mark">40dp</dimen>

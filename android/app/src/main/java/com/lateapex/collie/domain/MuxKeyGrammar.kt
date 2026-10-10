@@ -24,6 +24,11 @@ object MuxKeyGrammar {
         return key in named || isLiteral(key)
     }
 
+    /** A bare key refusal covers its modified forms; a chord refusal covers only that chord. */
+    fun isSupported(spelling: String, unsupported: Collection<String>): Boolean = isValid(spelling) &&
+        unsupported.none { it.equals(spelling, ignoreCase = true) ||
+            it.equals(spelling.substringAfterLast('+'), ignoreCase = true) }
+
     private fun isLiteral(value: String): Boolean =
         value.codePointCount(0, value.length) == 1 && value.codePointAt(0) >= 0x20
 }

@@ -10,6 +10,9 @@ import com.lateapex.collie.network.Launcher
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.launch
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -21,6 +24,16 @@ import org.robolectric.shadows.ShadowDialog
 
 @RunWith(RobolectricTestRunner::class)
 class LauncherConfirmationTest {
+    @Test(timeout = 10000)
+    fun anAlreadyCancelledLauncherNeverLeavesAConfirmationShowing() = runBlocking {
+        val activity = activity()
+        val job = launch(start = CoroutineStart.UNDISPATCHED) {
+            currentCoroutineContext().cancel()
+            confirmLauncher(activity, Launcher("codex --yolo", "Codex", noPrompts = true), "fixture")
+        }
+        job.join()
+        assertFalse(ShadowDialog.getLatestDialog().isShowing)
+    }
     @Test
     fun noPromptsStartNamesTheCommandAndCancellationRefusesIt() = runBlocking {
         val activity = activity()
