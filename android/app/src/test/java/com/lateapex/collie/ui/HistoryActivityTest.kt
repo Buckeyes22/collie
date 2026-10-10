@@ -42,7 +42,8 @@ class HistoryActivityTest {
             override suspend fun history(connection: com.lateapex.collie.domain.Connection,
                 address: PaneAddress, limit: Int, before: String?, etag: String?) =
                 com.lateapex.collie.network.ApiResult.Success(
-                    com.lateapex.collie.network.PaneHistoryResponse(address.paneId, available = true), 200)
+                    com.lateapex.collie.network.PaneHistoryResponse(address.paneId, available = true, entries = listOf(
+                        TranscriptEntry("secret-turn", "2026-01-01T00:00:00Z", "user", listOf(TranscriptPart("text", text = "sensitive body"))))), 200)
         }
         val repository = com.lateapex.collie.data.CollieRepository(api, store, app.container.originValidator)
         val original = app.container.repository
@@ -54,7 +55,13 @@ class HistoryActivityTest {
         try {
             shadowOf(Looper.getMainLooper()).idle()
             assertFalse(controller.get().isFinishing)
+            controller.saveInstanceState(android.os.Bundle())
+            val retained = androidx.lifecycle.ViewModelProvider(controller.get())[HistoryReaderViewModel::class.java]
+            assertTrue(retained.state?.entries?.isNotEmpty() == true)
             kotlinx.coroutines.runBlocking { repository.disconnect() }
+            assertEquals(null, retained.state)
+            assertEquals(null, retained.connection)
+            assertEquals("", retained.findQuery)
             shadowOf(Looper.getMainLooper()).idle()
             assertTrue(controller.get().isFinishing)
         } finally {

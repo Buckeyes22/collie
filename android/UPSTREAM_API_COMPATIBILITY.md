@@ -16,7 +16,7 @@ is refused. A mutation is attempted once; transport redirects and automatic writ
 | Contract | Native adaptation |
 | --- | --- |
 | `/api/health`, `/api/pair` | Health remains the open connectivity probe. Pairing request and response bodies stay excluded from diagnostics. |
-| All other `/api/*` reads and writes | Send the paired bearer and `X-Requested-With`; an authoritative `403 device not paired` or `device expired` clears the credential, caches and write authorization. Other failures keep the credential. Upstream now requires pairing for reads too. |
+| All other `/api/*` reads and writes | Send the paired bearer and `X-Requested-With`; only a typed authoritative Collie/pairing refusal with a known expired/revoked/unpaired code clears the credential and sensitive custody. Bare or proxy-origin 401/403 freezes writes and retains pairing. Upstream now requires pairing for reads too. |
 | Mounted deployment URLs | Preserve the HTTPS mount when constructing routes. Write `Origin` names only scheme and authority. Reject ambiguous paths, embedded credentials, query strings and fragments. |
 | `/api/config` | Request the pane or space's actual host/session. Decode upload limits, allowed extensions, redact and STT capabilities alongside operator commands, keys and replies. |
 | `/api/snapshot`, `/api/refresh` | Retain session names from narrow requests because upstream omits their row tags. Widened snapshots retain the server's tags. Pane checks resolve the implicit local lead without remapping peers or explicit host requests. Decode folder, tab placement, sole-tab name, git/cache and model metadata. |
@@ -61,3 +61,16 @@ instrumentation APK compilation; both TypeScript checks and full-tree lint; 20,6
 large-merge staged-path regression. No check is disabled for this sync. Installing and exercising the APK against real Codex threads still requires an attached
 Android device; no device was attached during this sync. Server code is built in an isolated worktree
 so validation does not replace the running deployment's assets.
+
+
+## Scoped control compatibility
+
+New control support requires a positive declaration in `/api/config.control.capabilities`; legacy mux absent-field compatibility applies only to existing actions. Crew negotiates the peer's independent `hello.controlCapabilities`. `hostControl` declares a separate typed host-management provider/capability/reason surface: current unsupported providers report every administration capability false and typed inspection returns unsupported. This is an interface for later workflows, not a claim that plugin/configuration/install actions exist.
+
+Native request contexts bind the HTTPS origin including its mount, credential and leader generation, host/session and subject. Space Look now uses the owning session's read-gated POST refresh before snapshot; older 404 peers get a labeled ordinary reload. Captured media scope is checked before upload and before applying its result. Saved copies never authorize terminal or structural actions. Unknown/gateway 401/403 freezes actions while retaining pairing; only exact authoritative Collie pairing provenance retires it.
+
+Control receipts use GET `/api/control/operations/<id>` and never return secret payload/evidence. Pending after restart is unknown, with no repeat dispatch. Existing launch/worktree/add receipts still use POST replay. The bridge health adapter uses its existing health seam with exact typed Herdr ping/pong validation; source/schema fixtures do not prove a live vendor handshake.
+
+See [scoped control authority decision](../.adr/0096-control-authority-is-scoped-and-positive.md). Joint B02/B03 and live vendor/device acceptance are tracked in the B01 handoff.
+
+New receipt ownership requires the stable opaque pairing incarnation, independent of a mutable device label. The B01 isolated seam advertises `controlOperations:false` until the joint B02 local and admitted Crew identity producer is integrated; missing identity refuses. Primitive injected-owner fixtures establish the shared store/reader seam, not final runtime support.

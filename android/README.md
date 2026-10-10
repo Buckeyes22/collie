@@ -281,3 +281,14 @@ findings, retain required notices, and avoid claiming that unverified permission
 The Simple Icons repository-wide license alone does not establish an individual mark's terms.
 All product names and marks remain trademarks of their respective owners; inclusion identifies the
 agent reported by Herdr and does not imply endorsement.
+
+
+## Scoped control compatibility
+
+New control support requires a positive declaration in `/api/config.control.capabilities`; legacy mux absent-field compatibility applies only to existing actions. Crew negotiates the peer's independent `hello.controlCapabilities`. `hostControl` declares a separate typed host-management provider/capability/reason surface: current unsupported providers report every administration capability false and typed inspection returns unsupported. This is an interface for later workflows, not a claim that plugin/configuration/install actions exist.
+
+Native request contexts bind the HTTPS origin including its mount, credential and leader generation, host/session and subject. Space Look now uses the owning session's read-gated POST refresh before snapshot; older 404 peers get a labeled ordinary reload. Captured media scope is checked before upload and before applying its result. Saved copies never authorize terminal or structural actions. Unknown/gateway 401/403 freezes actions while retaining pairing; only exact authoritative Collie pairing provenance retires it.
+
+Control receipts use GET `/api/control/operations/<id>` and never return secret payload/evidence. Pending after restart is unknown, with no repeat dispatch. Existing launch/worktree/add receipts still use POST replay. The bridge health adapter uses its existing health seam with exact typed Herdr ping/pong validation; source/schema fixtures do not prove a live vendor handshake.
+
+See [scoped control authority decision](../.adr/0096-control-authority-is-scoped-and-positive.md). Joint B02/B03 and live vendor/device acceptance are tracked in the B01 handoff.

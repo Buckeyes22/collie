@@ -47,6 +47,8 @@ import java.util.Locale
 import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
+    private var authorityRegistration: AutoCloseable? = null
+    private val repository get() = (application as CollieApplication).container.repository
     private lateinit var binding: ActivityMainBinding
     private lateinit var viewModel: MainViewModel
     private val nativePreferences by lazy { NativePreferences(this) }
@@ -141,6 +143,10 @@ class MainActivity : AppCompatActivity() {
         })
         if (savedInstanceState == null) openDeepLink(intent.data)
 
+        authorityRegistration = repository.onAuthorityInvalidated {
+            structuralBusy = false
+            launchingCommands.clear()
+        }
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 viewModel.state.collect(::render)
@@ -210,6 +216,11 @@ class MainActivity : AppCompatActivity() {
                 ))
             }
         }
+    }
+
+    override fun onDestroy() {
+        authorityRegistration?.close()
+        super.onDestroy()
     }
 
     override fun onStart() {
@@ -917,7 +928,7 @@ class MainActivity : AppCompatActivity() {
             lifecycleScope.launch {
                 handleCreate(structuralRequest(R.string.space_creating) {
                     viewModel.createWorkspace(label.valueOrNull(), cwd.valueOrNull(), target)
-                }, target)
+                } ?: return@launch, target)
             }
         }, sheetRowParams(top = 12))
         dialog.setSheetContent(body)
@@ -971,7 +982,9 @@ class MainActivity : AppCompatActivity() {
         fun loadExisting(repo: WorkspaceSummary) {
             // Undispatched: the lookup starts in this frame and only yields at the network call.
             lifecycleScope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+                val context = repository.readContext(viewModel.currentScope) ?: return@launch
                 val result = worktreeLister(repo.workspaceId, scope)
+                if (!repository.isCurrent(context)) return@launch
                 if (selected !== repo) return@launch
                 existing.removeAllViews()
                 val unopened = (result as? ApiResult.Success)?.value?.worktrees
@@ -1047,7 +1060,7 @@ class MainActivity : AppCompatActivity() {
             lifecycleScope.launch {
                 handleWorktree(structuralRequest(R.string.worktree_creating) {
                     viewModel.createWorktree(selected.workspaceId, name, target)
-                }, target)
+                } ?: return@launch, target)
             }
         }, sheetRowParams(top = 12))
         body.addView(existing, sheetRowParams())
@@ -1072,7 +1085,7 @@ class MainActivity : AppCompatActivity() {
             lifecycleScope.launch {
                 handleWorktree(structuralRequest(R.string.worktree_opening) {
                     worktreeOpener(workspace.workspaceId, worktree.path, target)
-                }, target)
+                } ?: return@launch, target)
             }
         }, sheetRowParams(top = 8))
         dialog.setSheetContent(body)
@@ -1125,14 +1138,19 @@ class MainActivity : AppCompatActivity() {
         val repository = (application as CollieApplication).container.repository
         val launchConnection = repository.connection.value
         val launchScope = viewModel.currentScope
+        val context = repository.readContext(launchScope) ?: return
         lifecycleScope.launch {
             try {
                 if (!confirmLauncher(this@MainActivity, launcher, launchScope.host ?: launchConnection?.origin?.value.orEmpty())) return@launch
                 if (repository.connection.value !== launchConnection || viewModel.currentScope != launchScope) return@launch
-                handleCreate(viewModel.launch(launcher.command), launchScope)
+                val result = viewModel.launch(launcher.command)
+                if (!repository.isCurrent(context)) return@launch
+                handleCreate(result, launchScope)
             } finally {
-                launchingCommands.remove(launcher.command)
-                render(viewModel.state.value)
+                if (repository.isCurrent(context)) {
+                    launchingCommands.remove(launcher.command)
+                    render(viewModel.state.value)
+                }
             }
         }
     }
@@ -1189,15 +1207,18 @@ class MainActivity : AppCompatActivity() {
     private suspend fun <T> structuralRequest(
         @androidx.annotation.StringRes progressRes: Int,
         block: suspend () -> T,
-    ): T {
+    ): T? {
+        val context = repository.readContext(viewModel.currentScope) ?: return null
         structuralBusy = true
         structuralProgressRes = progressRes
         render(viewModel.state.value)
         return try {
-            block()
+            block().takeIf { repository.isCurrent(context) }
         } finally {
-            structuralBusy = false
-            render(viewModel.state.value)
+            if (repository.isCurrent(context)) {
+                structuralBusy = false
+                render(viewModel.state.value)
+            }
         }
     }
 

@@ -353,6 +353,8 @@ export interface DeviceAuth {
 
 /** GET /api/snapshot — the current herd view. */
 export interface SnapshotResponse {
+  /** Authenticated lead incarnation; absent on solo/older bridges. Never a credential. */
+  controlAuthority?: { leadId: string; epoch: string };
   bridge: BridgeStatus;
   /** Per-device authorisation for the requesting client; absent when the feature is off. */
   device?: DeviceAuth;
@@ -1676,6 +1678,8 @@ export interface BridgeConfig {
    * M10/06 — which a client reads as "every capability present", i.e. exactly today's Herdr app.
    */
   mux?: MuxConfig;
+  control?: { capabilities: Record<string, boolean> };
+  hostControl?: { provider: string; capabilities: Record<string, boolean>; notes: Record<string, string> };
   /**
    * Speech-to-text, when a provider is configured. **Absent is the feature being off**, which is
    * also exactly what an older bridge sends — so a client reads "no key" as "no microphone" and a

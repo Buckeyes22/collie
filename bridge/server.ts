@@ -1,3 +1,9 @@
+import { controlScope, refusal, refusalResponse } from "./control/contracts.ts";
+import { OperationStore } from "./control/operations.ts";
+import { serveControlRoute } from "./control/routes.ts";
+import { hostControlForMux } from "./mux/registry.ts";
+import type { HostControlPort } from "./host-control/types.ts";
+import { hostControlConfig } from "./host-control/registry.ts";
 import { mkdir } from "node:fs/promises";
 import { isIP } from "node:net";
 import { homedir, networkInterfaces } from "node:os";
@@ -315,6 +321,19 @@ export function withHsts(handler: (req: Request) => Promise<Response>): (req: Re
   };
 }
 
+/** Stamp the answering lead's incarnation even on peer reads/304s; peer headers cannot lend it. */
+export function withControlAuthority(handler: (req: Request) => Promise<Response>, authority: () => { leadId: string; epoch: string } | null): (req: Request) => Promise<Response> {
+  return async (req) => {
+    const response = await handler(req);
+    const current = authority();
+    if (current !== null) {
+      response.headers.set("x-collie-lead-id", current.leadId);
+      response.headers.set("x-collie-lead-epoch", current.epoch);
+    }
+    return response;
+  };
+}
+
 export interface AccessLogRecord {
   at: "access";
   method: string;
@@ -574,6 +593,8 @@ interface RouteCaller {
   gate(level: GateLevel): Response | null;
   /** The device a write is attributed to. */
   device(): string | null;
+  /** New ownership-bound routes fail closed until the validated pairing projection is available. */
+  pairedIdentity?(): string | null;
   /** Where a write's audit line lands — the peer's is pre-stamped `via:"crew"` + originator (§12). */
   readonly audit: AuditLog;
   /**
@@ -828,6 +849,8 @@ export function bridgeConfigBody(opts: {
    * member's own switch is not in the capability block the lead holds.
    */
   redact?: boolean;
+  control?: { capabilities: Record<string, boolean> };
+  hostControl?: ReturnType<typeof hostControlConfig>;
 }): BridgeConfig {
   const mode = modeForWire(opts.mode);
   const mine = opts.operatorCommands ?? [];
@@ -861,6 +884,8 @@ export function bridgeConfigBody(opts: {
   // Appended last and omit-when-absent: no key is an older bridge, or a member's scoped answer, and
   // the phone shows "unknown" for both rather than guessing "on".
   if (opts.redact !== undefined) wire.redact = opts.redact;
+  if (opts.control !== undefined) wire.control = opts.control;
+  if (opts.hostControl !== undefined) wire.hostControl = opts.hostControl;
   return wire;
 }
 
@@ -1071,6 +1096,9 @@ export function startServer(opts: {
    * Absent means an in-memory store; `bridge/index.ts` passes the file-backed one.
    */
   launchReceipts?: LaunchReceiptSurface;
+  controlOperations?: OperationStore;
+  controlHostId?: string;
+  hostControl?: HostControlPort;
   /**
    * The launcher rows phones added on this machine (ADR 0094, `bridge/launchers-added.ts`). Absent
    * means an in-memory store; `bridge/index.ts` passes the file-backed one, which writes nothing until
@@ -1125,6 +1153,8 @@ export function startServer(opts: {
   const worktreeReceipts = opts.worktreeReceipts ?? memoryWorktreeReceipts();
   const worktreeBases = opts.worktreeBases ?? memoryWorktreeBases();
   const launchReceipts = opts.launchReceipts ?? memoryLaunchReceipts();
+  const controlOperations = opts.controlOperations ?? new OperationStore(cfg.stateDir);
+  const controlHostId = opts.controlHostId ?? opts.crewStatus?.()?.self.id ?? "local";
   const harnesses = opts.harnesses ?? createHarnessProbe();
   const worktreeChoices = opts.worktreeChoices ?? memoryWorktreeChoices();
   const machines = opts.machines;
@@ -1432,6 +1462,16 @@ export function startServer(opts: {
   ): Promise<Response | null> => {
     const { pathname } = url;
 
+    const controlled = await serveControlRoute(req, url, {
+      gate: (level) => caller.gate(level),
+      pairedIdentity: () => caller.pairedIdentity?.() ?? null,
+      resolve: async () => {
+        const runtime = await caller.resolve();
+        return runtime instanceof Response ? runtime : { host: controlHostId, session: runtime.name };
+      },
+    }, controlOperations);
+    if (controlled) return controlled;
+
     // ── "Look now" ────────────────────────────────────────────────────────
     // A READ, and gated as one. It changes nothing — `mux.refresh()` takes a listing and moves a
     // timer (mux/types.ts) — so gating it behind a device would refuse the one thing a read-only
@@ -1440,6 +1480,7 @@ export function startServer(opts: {
     if (pathname === "/api/refresh" && req.method === "POST") {
       const denied = caller.gate("read");
       if (denied) return denied;
+      if (!controlScope(url, "session")) return refusalResponse(refusal("scope.malformed", "Malformed refresh scope", "scope"), 400);
       const rt = await caller.resolve();
       if (rt instanceof Response) return rt;
       // A refresh is a phone asking to be shown something, which is attention by any reading.
@@ -1778,6 +1819,7 @@ export function startServer(opts: {
     // M22/03: this collie's own capability declaration, for `hello`. The SAME expression the
     // `/api/config` route below publishes to a browser — the primary session's adapter — so a peer
     // cannot report capabilities that differ from the ones it serves its own operator.
+    controlCapabilities: () => ({ controlOperations: false }),
     mux: () => {
       const active = registry.get();
       return active === undefined ? null : muxConfigBody(active.herdr);
@@ -1806,7 +1848,12 @@ export function startServer(opts: {
         resolve: async () => localRuntime(session, null),
         gate: (level) => {
           const verdict = crewGate(level, cfg, device);
-          return verdict.ok ? null : text(verdict.reason, 403);
+          if (verdict.ok) return null;
+          const response = text(verdict.reason, 403);
+          response.headers.set("x-collie-error-source", "collie");
+          response.headers.set("x-collie-error-factor", "device");
+          response.headers.set("x-collie-error-code", "device.not_authorised");
+          return response;
         },
         device: () => device,
         audit: audit.scoped({ via: "crew", from }),
@@ -1918,7 +1965,7 @@ export function startServer(opts: {
     // certificate never reaches `fetch` at all, so nothing below has to defend against it.
     tls: listenerTls,
 
-    fetch: withAccessLog(withHsts(async (req: Request) => {
+    fetch: withAccessLog(withHsts(withControlAuthority(async (req: Request) => {
       const url = new URL(req.url);
       // A mounted collie (`COLLIE_BASE_PATH`, ADR 0052) is normally reached through a proxy that
       // strips the mount before it forwards — `tailscale serve` does, `http.StripPrefix` on the
@@ -2259,6 +2306,9 @@ export function startServer(opts: {
             operatorQuickReplies: myReplies,
             operatorFonts: myFonts,
             mux: activeMux?.herdr,
+            // Peer support must be positively negotiated; the lead never lends its declarations.
+            control: { capabilities: scoped?.kind === "peer" ? crewLead?.controlFor(scoped.link.memberId) ?? {} : { controlOperations: false } },
+            hostControl: scoped?.kind === "peer" ? undefined : hostControlConfig(opts.hostControl ?? hostControlForMux(cfg.mux)),
             // Assigned through `?? undefined` rather than conditionally, so the no-`host=` request
             // builds the byte-identical body it always did (CREW_PROTOCOL.md §11).
             muxWire: memberMux ?? undefined,
@@ -2714,7 +2764,13 @@ export function startServer(opts: {
         // same reasoning: it answers "is this device allowlisted", which is the question pairing
         // exists to stop asking.
         const gate = checkAccess(req, cfg, "write");
-        if (!gate.ok) return text(gate.reason, 403);
+        if (!gate.ok) {
+    const response = text(gate.reason, 403);
+    // Access is this bridge's verdict, separate from pairing. Never label arbitrary upstream bodies.
+    response.headers.set("x-collie-error-source", "collie");
+    response.headers.set("x-collie-error-factor", gate.reason.startsWith("identity") ? "identity" : "scope");
+    return response;
+  }
         // The outer brake, before the body is read: ten attempts per source address per minute, then
         // 429 with `retry-after`. The five-tries-per-code rule in `pairing.claim` still applies on
         // top of this. The source is the socket address, or the rightmost `x-forwarded-for` entry only
@@ -2907,7 +2963,7 @@ export function startServer(opts: {
 
       // ── Static PWA (with SPA fallback) ───────────────────────────────────
       return serveStatic(pathname, req.headers.get("accept-encoding"), WEB_DIR, cfg.basePath);
-    })),
+    }, () => crewLead?.controlAuthority() ?? null))),
   });
 
   console.log(`[bridge] listening on http://${cfg.host}:${cfg.port}  (poll ${cfg.pollMs}ms)`);
@@ -5298,11 +5354,11 @@ export async function serveFolderRoute(
       return text("the folder list could not be saved", 500);
     }
     if (!outcome.ok) {
-      const refusal =
+      const folderRefusal =
         outcome.code === "folders.unknown"
           ? apiError(outcome.code, { folder: parsed.folder })
           : apiError(outcome.code, { max: MAX_FAVOURITES });
-      return jsonError(refusal, 409, ae);
+      return jsonError(folderRefusal, 409, ae);
     }
     return json(foldersBody(folders), ae);
   }
@@ -5993,8 +6049,20 @@ export function guard(
   // rule for writes (a CSRF defence, and browsers send no `Origin` on a same-origin GET) does not
   // apply, and a cross-site page cannot read the answer anyway. Its DEVICE half is the write's.
   const gate = checkAccess(req, cfg, level === "write" ? "write" : "read");
-  if (!gate.ok) return text(gate.reason, 403);
-  if (level !== "read" && !deviceAuth(req, cfg).authorized) return text("device not authorised", 403);
+  if (!gate.ok) {
+    const response = text(gate.reason, 403);
+    // Access is this bridge's verdict, separate from pairing. Never label arbitrary upstream bodies.
+    response.headers.set("x-collie-error-source", "collie");
+    response.headers.set("x-collie-error-factor", gate.reason.startsWith("identity") ? "identity" : "scope");
+    return response;
+  }
+  if (level !== "read" && !deviceAuth(req, cfg).authorized) {
+    const response = text("device not authorised", 403);
+    response.headers.set("x-collie-error-source", "collie");
+    response.headers.set("x-collie-error-factor", "device");
+    response.headers.set("x-collie-error-code", "device.not_authorised");
+    return response;
+  }
   // The pairing credential, on every level: a read needs the token as much as a write does, and an
   // empty registry is not a pass (ADR 0086). Distinct refusal text on purpose: "not authorised" is
   // the operator's proxy allowlist, "not paired" is this device's own missing credential, and the two
@@ -6379,7 +6447,11 @@ function text(body: string, status: number): Response {
  * The phone's own wipe deletes exactly what the pairing left, and is the one mechanism.
  */
 function pairingRefusal(body: "device not paired" | "device expired"): Response {
-  return text(body, 403);
+  const response = text(body, 403);
+  response.headers.set("x-collie-error-source", "collie");
+  response.headers.set("x-collie-error-factor", "pairing");
+  response.headers.set("x-collie-error-code", body === "device expired" ? "pairing.expired" : "pairing.unpaired");
+  return response;
 }
 
 /**

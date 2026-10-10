@@ -14,6 +14,9 @@ import { decodeReplyLine, decodeStreamLine, type EventData } from "../../wire.ts
 // response. So every request opens a fresh connection, reads one line, closes.
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Identity reported by the vendor ping; this alone grants no feature authority. */
+export interface HerdrHandshake { readonly version: string; readonly protocol: number }
+
 /** Raw wire shape of a workspace from `workspace.list`. */
 /** The repo a workspace sits in, as Herdr reports it on the workspace record itself. */
 export interface WireWorkspaceWorktree {
@@ -748,10 +751,20 @@ export class HerdrClient {
     return this.request<void>("tab.close", { tab_id: tabId });
   }
 
-  /** Reachability check for the connected/disconnected banner. */
+  /** Validate the schema-22 pong variant rather than treating an arbitrary successful RPC as health. */
+  async handshake(): Promise<HerdrHandshake> {
+    const result = await this.request<JsonObject>("ping");
+    if (result.type !== "pong" || typeof result.version !== "string" || !result.version || result.version.length > 256 ||
+        typeof result.protocol !== "number" || !Number.isInteger(result.protocol) || result.protocol < 0 || result.protocol > 0xffffffff) {
+      throw new Error("herdr ping: malformed pong");
+    }
+    return { version: result.version, protocol: result.protocol };
+  }
+
+  /** Reachability check through the existing adapter health seam; never infer new capabilities. */
   async ping(): Promise<boolean> {
     try {
-      await this.listWorkspaces();
+      await this.handshake();
       return true;
     } catch {
       return false;

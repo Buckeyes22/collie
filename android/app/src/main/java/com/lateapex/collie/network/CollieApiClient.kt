@@ -38,9 +38,10 @@ sealed interface ApiResult<out T> {
         val status: Int,
         val etag: String? = null,
         val buildId: String? = null,
+        val controlAuthority: ControlAuthority? = null,
     ) : ApiResult<T>
 
-    data class NotModified(val etag: String?) : ApiResult<Nothing>
+    data class NotModified(val etag: String?, val controlAuthority: ControlAuthority? = null) : ApiResult<Nothing>
     data class Failure(val error: ApiFailure) : ApiResult<Nothing>
 }
 
@@ -51,6 +52,8 @@ sealed interface ApiFailure {
         val message: String?,
         val code: String?,
         val textDelivered: Boolean = false,
+        val source: FailureSource = FailureSource.UNKNOWN,
+        val factor: FailureFactor = FailureFactor.UNKNOWN,
     ) : ApiFailure
     data class Protocol(val message: String) : ApiFailure
     data class Network(val message: String?) : ApiFailure
@@ -72,6 +75,7 @@ interface CollieApi {
     ): ApiResult<PaneReadResponse>
     suspend fun refresh(connection: Connection, scope: Scope = Scope()): ApiResult<ActionResponse>
     suspend fun pair(origin: CollieOrigin, code: String, label: String): ApiResult<PairResult>
+    suspend fun controlOperation(connection: Connection, scope: Scope, requestId: String): ApiResult<ControlOperationResponse> = unavailable("Control operations")
     suspend fun devices(connection: Connection): ApiResult<DevicesResponse>
     suspend fun revokeDevice(connection: Connection, label: String): ApiResult<DevicesResponse> = unavailable("Device revoke")
     suspend fun crew(connection: Connection): ApiResult<CrewStatusResponse> = unavailable("Crew status")
@@ -234,7 +238,7 @@ class CollieApiClient(
 
     override suspend fun refresh(connection: Connection, scope: Scope): ApiResult<ActionResponse> {
         val url = scopedUrl(connection.origin, path("refresh"), scope)
-        return executeAction(post(connection, url, EMPTY_JSON))
+        return executeAction(post(connection, url, ""))
     }
 
     override suspend fun pair(origin: CollieOrigin, code: String, label: String): ApiResult<PairResult> {
@@ -248,10 +252,10 @@ class CollieApiClient(
                 return@executeResponse if (decoded != null) {
                     ApiResult.Success(PairResult.Refused(decoded.error ?: "bad-request"), it.code)
                 } else {
-                    failure(it.code, body)
+                    failure(it, body)
                 }
             }
-            if (!it.isSuccessful) return@executeResponse failure(it.code, body)
+            if (!it.isSuccessful) return@executeResponse failure(it, body)
             if (decoded == null) return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Malformed pairing response"))
             val token = decoded.token
             val returnedLabel = decoded.label
@@ -661,15 +665,21 @@ class CollieApiClient(
         is ApiResult.NotModified -> result
     }
 
+    override suspend fun controlOperation(connection: Connection, scope: Scope, requestId: String): ApiResult<ControlOperationResponse> {
+        require(requestId.matches(Regex("[a-zA-Z0-9_-]{1,128}")))
+        val result = executeJson(request(connection, scopedUrl(connection.origin, listOf("api", "control", "operations", requestId), scope)), ControlOperationResponse.serializer(), READ_TIMEOUT_SECONDS)
+        return requireContract(result, "Unknown or mismatched control operation") { it.ok && it.operation.validFor(requestId) }
+    }
+
     private suspend fun executeAction(request: Request): ApiResult<ActionResponse> =
         executeResponse(request, MUTATION_TIMEOUT_SECONDS) {
             if (it.code in REDIRECT_CODES) return@executeResponse ApiResult.Failure(ApiFailure.Redirect(it.code))
             val body = it.body?.string().orEmpty()
             val action = decode(ActionResponse.serializer(), body)
             if (action != null && (action.ok || !action.error.isNullOrBlank()) && (it.isSuccessful || it.code == 409)) {
-                return@executeResponse ApiResult.Success(action, it.code, buildId = it.header(BUILD_HEADER))
+                return@executeResponse ApiResult.Success(action, it.code, buildId = it.header(BUILD_HEADER), controlAuthority = responseAuthority(it))
             }
-            if (!it.isSuccessful) return@executeResponse failure(it.code, body)
+            if (!it.isSuccessful) return@executeResponse failure(it, body)
             ApiResult.Failure(ApiFailure.Protocol("Malformed action response"))
         }
 
@@ -679,13 +689,13 @@ class CollieApiClient(
         timeoutSeconds: Long,
         allowNotModified: Boolean = false,
     ): ApiResult<T> = executeResponse(request, timeoutSeconds) {
-        if (allowNotModified && it.code == 304) return@executeResponse ApiResult.NotModified(it.header("ETag"))
+        if (allowNotModified && it.code == 304) return@executeResponse ApiResult.NotModified(it.header("ETag"), responseAuthority(it))
         if (it.code in REDIRECT_CODES) return@executeResponse ApiResult.Failure(ApiFailure.Redirect(it.code))
         val body = it.body?.string().orEmpty()
-        if (!it.isSuccessful) return@executeResponse failure(it.code, body)
+        if (!it.isSuccessful) return@executeResponse failure(it, body)
         val value = decode(serializer, body)
             ?: return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Malformed successful response"))
-        ApiResult.Success(value, it.code, it.header("ETag"), it.header(BUILD_HEADER))
+        ApiResult.Success(value, it.code, it.header("ETag"), it.header(BUILD_HEADER), responseAuthority(it))
     }
 
     /** Consume and close the body on OkHttp's worker, before handing a value to the caller. */
@@ -707,7 +717,22 @@ class CollieApiClient(
         ApiResult.Failure(ApiFailure.Network(io.message))
     }
 
-    private fun failure(status: Int, body: String): ApiResult.Failure {
+    private fun failure(response: Response, body: String): ApiResult.Failure {
+        val status = response.code
+        val source = when (response.header("x-collie-error-source")) {
+            "collie" -> FailureSource.COLLIE
+            "gateway" -> FailureSource.GATEWAY
+            else -> FailureSource.UNKNOWN
+        }
+        val factor = if (source == FailureSource.UNKNOWN) FailureFactor.UNKNOWN else when (response.header("x-collie-error-factor")) {
+            "pairing" -> FailureFactor.PAIRING
+            "identity" -> FailureFactor.IDENTITY
+            "device" -> FailureFactor.DEVICE
+            "scope" -> FailureFactor.SCOPE
+            "capability" -> FailureFactor.CAPABILITY
+            "operation" -> FailureFactor.OPERATION
+            else -> FailureFactor.UNKNOWN
+        }
         val parsed = decode(ErrorResponse.serializer(), body)
         val plainMessage = body.trim()
             .take(MAX_ERROR_MESSAGE_CHARS)
@@ -716,8 +741,10 @@ class CollieApiClient(
             ApiFailure.Http(
                 status = status,
                 message = parsed?.error ?: plainMessage,
-                code = parsed?.code,
+                code = response.header("x-collie-error-code") ?: parsed?.code,
                 textDelivered = parsed?.textDelivered == true,
+                source = source,
+                factor = factor,
             ),
         )
     }
@@ -754,6 +781,13 @@ class CollieApiClient(
             .header("Origin", connection.origin.headerValue)
             .post(OneShotRequestBody(body))
             .build()
+
+    private fun responseAuthority(response: okhttp3.Response): ControlAuthority? {
+        val lead = response.header("X-Collie-Lead-Id") ?: return null
+        val epoch = response.header("X-Collie-Lead-Epoch") ?: return null
+        if (!lead.matches(Regex("[A-Za-z0-9_-]{1,128}")) || !epoch.matches(Regex("[A-Za-z0-9_-]{1,128}"))) return null
+        return ControlAuthority(lead, epoch)
+    }
 
     private fun url(origin: CollieOrigin, relativePath: List<String>): HttpUrl =
         origin.value.toHttpUrl().newBuilder().apply {

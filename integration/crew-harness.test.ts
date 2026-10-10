@@ -682,6 +682,25 @@ describe("the TLS factor is enforced at the handshake", () => {
 // ── The merged snapshot and the proxied read ─────────────────────────────────
 
 describe("the lead speaks for the crew", () => {
+  test("scoped foundation refresh and operation reads traverse the mounted real Crew handlers", async () => {
+    const peerId = peer.store()!.self.memberId;
+    const local = await lead.api("/api/refresh", { method: "POST" });
+    expect(local.status).toBe(200);
+    const remote = await lead.api(`/api/refresh?host=${peerId}`, { method: "POST" });
+    expect(remote.status).toBe(200);
+    expect(await remote.json()).toEqual({ ok: true });
+    const wrongSession = await lead.api(`/api/refresh?host=${peerId}&session=not-a-session`, { method: "POST" });
+    expect(wrongSession.status).toBe(404);
+    const malformed = await lead.api(`/api/refresh?host=${peerId}&session=one&session=two`, { method: "POST" });
+    expect(malformed.status).toBe(400);
+    const operation = await lead.apiWrite(`/api/control/operations/missing?host=${peerId}`);
+    // The stable paired identity producer belongs to the joint B02 patch; no label fallback meanwhile.
+    expect(operation.status).toBe(403);
+    expect(await operation.json()).toMatchObject({ code: "device.identity_required", source: "collie", factor: "device" });
+    expect(existsSync(join(lead.stateDir, "control-operations.json"))).toBe(false);
+    expect(existsSync(join(peer.stateDir, "control-operations.json"))).toBe(false);
+  }, 30_000);
+
   test("the merged snapshot carries both hosts' sessions, host-tagged", async () => {
     const body = await snapshotOf(lead);
     await waitFor(

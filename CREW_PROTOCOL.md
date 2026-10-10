@@ -3164,3 +3164,18 @@ A member that predates this amendment ignores both headers and omits the field. 
 are the closed one, and none of them refuses anything. A lead that predates it sends neither header,
 which is the state every crew is in until an operator confirms an update. The protocol integer is
 still the only thing that refuses (§7.1).
+
+
+## Scoped control foundation (additive protocol 2 fields)
+
+`hello.controlCapabilities` is an optional boolean map independent of `hello.mux`. Missing, malformed or false new declarations mean unsupported/unknown; the lead never lends its own control capabilities to a peer. The receipt reader declares `controlOperations:true` only after validated local and forwarded paired-identity producers are integrated. The isolated B01 seam currently declares false and refuses ownership-bound reads without that identity; a display label is never a fallback. This does not declare downstream mutation verbs or host administration.
+
+`POST /api/refresh?host=&session=` has no body and crosses the link as a **read**, with the originating device and one session selector preserved. Both lead and owning peer apply read admission before resolving the session or refreshing its mux. A paired device without terminal write permission can refresh; Files remain `device-read`. An older peer's 404 is returned intact so native Space labels its ordinary snapshot reload.
+
+`GET /api/control/operations/<opaque-request-id>?host=&session=` also crosses as a **read**. The owning peer additionally matches the originating paired-device identity and canonical local host/session; wrong owners see not found. Its redacted response contains state, capability, target identity and times, never bearer, payload, plan token or evidence. The file is created only when a handler reserves a mutation. Legacy launch/worktree/add receipts retain their existing POST replay contract.
+
+Typed `X-Collie-Error-Source`, `X-Collie-Error-Factor` and `X-Collie-Error-Code` survive the allowlisted forward response. Configured device refusal at either dispatch boundary carries `collie/device/device.not_authorised`. Authoritative pairing refusal carries `collie/pairing/pairing.expired` or `pairing.unpaired`; generic proxy status/prose is insufficient evidence to retire a bearer.
+
+Merged Crew snapshots add optional `controlAuthority: {leadId, epoch}`. The epoch is an opaque non-secret incarnation identifier generated when a lead instance is constructed; a takeover/restart changes it. The answering lead also stamps `X-Collie-Lead-Id` and `X-Collie-Lead-Epoch` on responses, including forwarded peer reads and 304s; it replaces any upstream values. Native increments its local lead generation and discards the first changed-incarnation result before accepting a fresh scoped snapshot. Older snapshots can only supply lead-ID change detection through their existing `servers` rows. Solo snapshots omit this field and retain their byte contract. These additive fields need no protocol-version bump.
+
+See [ADR 0096](.adr/0096-control-authority-is-scoped-and-positive.md). Live older-peer/vendor and joint acceptance remain separately evidenced.

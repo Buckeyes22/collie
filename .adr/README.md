@@ -180,3 +180,5 @@ the branch you happen to be on.
 | [0035](./0035-the-android-app-is-a-twa-not-a-webview.md) | The Android app is a TWA, not a WebView | Superseded by 0036 |
 | [0036](./0036-the-android-app-is-a-native-rest-client.md) | The Android app is a native REST client | Accepted |
 | [0037](./0037-the-interface-is-english-only.md) | The interface is English-only | Accepted |
+
+| [0096](./0096-control-authority-is-scoped-and-positive.md) | Control authority is scoped and positive | Accepted |

@@ -65,6 +65,7 @@ internal object SpaceActionModel {
 }
 
 class SpaceActivity : AppCompatActivity() {
+    private var authorityRegistration: AutoCloseable? = null
     private lateinit var binding: ActivitySpaceBinding
     private lateinit var viewModel: SpaceViewModel
     private lateinit var scope: Scope
@@ -103,9 +104,18 @@ class SpaceActivity : AppCompatActivity() {
             this,
             SpaceViewModel.Factory(application, workspaceId, scope),
         )[SpaceViewModel::class.java]
+        authorityRegistration = repository.onAuthorityInvalidated {
+            creatingTab = false
+            creatingSpace = false
+        }
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) { viewModel.state.collect(::render) }
         }
+    }
+
+    override fun onDestroy() {
+        authorityRegistration?.close()
+        super.onDestroy()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -150,6 +160,10 @@ class SpaceActivity : AppCompatActivity() {
                     else -> R.string.read_only_device_unauthorised
                 },
             )
+            (state.readSource as? ReadSourceState.SavedCopy)?.let { saved ->
+                spaceReadOnlyBanner.text = getString(R.string.read_only_saved_copy,
+                    android.text.format.DateUtils.getRelativeTimeSpanString(saved.capturedAt))
+            }
             spaceReadOnlyBanner.setOnClickListener(
                 if (state.paired) null else View.OnClickListener {
                     startActivity(SettingsActivity.intent(this@SpaceActivity, focusDevices = true))
@@ -338,16 +352,27 @@ class SpaceActivity : AppCompatActivity() {
             }
         }
 
+    private val repository get() = (application as com.lateapex.collie.CollieApplication).container.repository
+
+    private suspend fun <T> currentActorResult(action: suspend () -> T): T? {
+        val context = repository.readContext(scope, workspaceId) ?: return null
+        val result = action()
+        return result.takeIf { repository.isCurrent(context) }
+    }
+
     private fun showNewTab() {
         if (creatingTab) return
         creatingTab = true
         viewModel.state.value.content?.let { renderTabStrip(it, viewModel.state.value) }
         lifecycleScope.launch {
+            val context = repository.readContext(scope, workspaceId) ?: return@launch
             try {
-                handleCreate(viewModel.createTab(null, null))
+                handleCreate(currentActorResult { viewModel.createTab(null, null) } ?: return@launch)
             } finally {
-                creatingTab = false
-                viewModel.state.value.content?.let { renderTabStrip(it, viewModel.state.value) }
+                if (repository.isCurrent(context)) {
+                    creatingTab = false
+                    viewModel.state.value.content?.let { renderTabStrip(it, viewModel.state.value) }
+                }
             }
         }
     }
@@ -365,11 +390,14 @@ class SpaceActivity : AppCompatActivity() {
             creatingSpace = true
             viewModel.state.value.content?.let { renderTabStrip(it, viewModel.state.value) }
             lifecycleScope.launch {
+                val context = repository.readContext(scope, workspaceId) ?: return@launch
                 try {
-                    handleCreate(viewModel.createWorkspace(label.valueOrNull(), cwd.valueOrNull()))
+                    handleCreate(currentActorResult { viewModel.createWorkspace(label.valueOrNull(), cwd.valueOrNull()) } ?: return@launch)
                 } finally {
-                    creatingSpace = false
-                    viewModel.state.value.content?.let { renderTabStrip(it, viewModel.state.value) }
+                    if (repository.isCurrent(context)) {
+                        creatingSpace = false
+                        viewModel.state.value.content?.let { renderTabStrip(it, viewModel.state.value) }
+                    }
                 }
             }
         }, matchRow(top = 12))
@@ -420,7 +448,7 @@ class SpaceActivity : AppCompatActivity() {
             val value = label.text.toString().trim()
             if (value.isNotEmpty()) {
                 dialog.dismiss()
-                lifecycleScope.launch { handleAction(viewModel.renameTab(tab.tabId, value)) }
+                lifecycleScope.launch { handleAction(currentActorResult { viewModel.renameTab(tab.tabId, value) } ?: return@launch) }
             }
         }
         body.addView(label, matchRow(top = 4))
@@ -442,7 +470,7 @@ class SpaceActivity : AppCompatActivity() {
                 dialog.dismiss()
                 val closedId = tab.tabId
                 if (selectedTabId == closedId) selectedTabId = null
-                lifecycleScope.launch { handleAction(viewModel.closeTab(closedId)) }
+                lifecycleScope.launch { handleAction(currentActorResult { viewModel.closeTab(closedId) } ?: return@launch) }
             }
         }
     }

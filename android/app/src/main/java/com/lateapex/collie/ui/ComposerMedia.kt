@@ -114,8 +114,8 @@ internal class ComposerMediaActions(
         is ApiResult.NotModified -> SpeechAvailability.Hidden
     }
 
-    suspend fun uploadImage(selected: ImageUpload): ComposerMediaResult =
-        when (val result = upload(selected)) {
+    suspend fun uploadImage(selected: ImageUpload, dispatch: suspend (ImageUpload) -> ApiResult<UploadResponse> = upload): ComposerMediaResult =
+        when (val result = dispatch(selected)) {
             is ApiResult.Success -> {
                 val path = result.value.path
                 if (path.isNullOrBlank()) {
@@ -131,8 +131,8 @@ internal class ComposerMediaActions(
             is ApiResult.NotModified -> ComposerMediaResult.Failure(text.imageUploadNoResult)
         }
 
-    suspend fun transcribe(audio: AudioUpload): ComposerMediaResult =
-        when (val result = transcribeRequest(audio)) {
+    suspend fun transcribe(audio: AudioUpload, dispatch: suspend (AudioUpload) -> ApiResult<SttResponse> = transcribeRequest): ComposerMediaResult =
+        when (val result = dispatch(audio)) {
             is ApiResult.Success -> {
                 val transcript = result.value.text
                 if (transcript.isNullOrBlank()) {

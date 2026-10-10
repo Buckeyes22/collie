@@ -197,7 +197,7 @@ class CollieRepositoryTest {
     }
 
     @Test
-    fun deviceWriteGateIsUnknownUntilSnapshotAndRetainsTheLastSuccessfulDecision() = runBlocking {
+    fun deviceWriteGateFreezesAfterAnUnsuccessfulSnapshot() = runBlocking {
         assertFalse(repository.writesAllowed())
         assertTrue(repository.reply(PaneAddress(paneId = "w1:p1"), "blocked") is ApiResult.Failure)
         assertEquals(0, api.replyCalls)
@@ -209,8 +209,8 @@ class CollieRepositoryTest {
 
         api.snapshotFailure = true
         repository.snapshot()
-        assertEquals(DeviceWriteAuthorization.AUTHORIZED, repository.deviceWriteAuthorization.value)
-        assertTrue(repository.writesAllowed())
+        assertEquals(DeviceWriteAuthorization.UNVERIFIED, repository.deviceWriteAuthorization.value)
+        assertFalse(repository.writesAllowed())
     }
 
     @Test
@@ -255,7 +255,7 @@ class CollieRepositoryTest {
         authorizeWrites()
         val address = PaneAddress(paneId = "p1")
         repository.readPane(address)
-        api.paneFailure = ApiFailure.Http(403, "device expired", null)
+        api.paneFailure = ApiFailure.Http(403, "device expired", "pairing.expired", source = com.lateapex.collie.network.FailureSource.COLLIE, factor = com.lateapex.collie.network.FailureFactor.PAIRING)
         assertTrue(repository.readPane(address) is ApiResult.Failure)
         assertFalse(repository.connection.value!!.isPaired)
         assertFalse(repository.writesAllowed())
@@ -270,7 +270,7 @@ class CollieRepositoryTest {
         api.paneFailure = ApiFailure.Http(403, "host not allowed", null)
         repository.readPane(PaneAddress(paneId = "p1"))
         assertTrue(repository.connection.value!!.isPaired)
-        assertTrue(repository.writesAllowed())
+        assertFalse(repository.writesAllowed())
     }
 
     private suspend fun authorizeWrites() {

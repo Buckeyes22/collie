@@ -178,6 +178,14 @@ class NativePreferences(
         editor.apply()
     }
 
+    /** Content custody retires with pairing/origin, while display preferences may survive. */
+    fun clearSensitiveContent() {
+        volatileDrafts.clear()
+        val editor = preferences.edit()
+        preferences.all.keys.filter { it.startsWith(PANE_DRAFT_PREFIX) || it.startsWith(PANE_DRAFT_SAVED_PREFIX) }.forEach(editor::remove)
+        editor.commit()
+    }
+
     fun fitsPaneDraftStore(value: String): Boolean = value.length <= MAX_PERSISTED_DRAFT_CHARS
 
     fun applyTheme() {

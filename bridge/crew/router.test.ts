@@ -2668,3 +2668,25 @@ describe("version negotiation", () => {
     });
   });
 });
+
+describe("foundation routes on the admitted Crew dispatcher", () => {
+  test("refresh and operation reads preserve peer session; wrong secret never resolves", async () => {
+    const h = harness(peerStore());
+    await h.store.load();
+    const seen: string[] = [];
+    const handler = createCrewRouter({ store: h.store, audit: h.audit, transportPinned: true, now: () => T0,
+      controlCapabilities: () => ({ controlOperations: true }),
+      dispatch: async (_req, url) => { seen.push(`${url.pathname}${url.search}`); return Response.json({ ok: true }); },
+    });
+    const hello = (await call(handler, CREW_HELLO_PATH, { headers: authed }))!;
+    expect(await hello.json()).toMatchObject({ controlCapabilities: { controlOperations: true } });
+    for (const [route, method] of [["refresh", "POST"], ["control/operations/intent", "GET"]]) {
+      const result = (await call(handler, `${CREW_PREFIX}${route}?session=work`, { method, headers: authed }))!;
+      expect(result.status).toBe(200);
+    }
+    expect(seen).toEqual(["/api/refresh?session=work", "/api/control/operations/intent?session=work"]);
+    const refused = (await call(handler, `${CREW_PREFIX}refresh`, { method: "POST", headers: withSecret("wrong") }))!;
+    expect(refused.status).toBe(401);
+    expect(seen).toHaveLength(2);
+  });
+});

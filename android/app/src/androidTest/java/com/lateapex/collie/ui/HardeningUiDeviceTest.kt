@@ -135,15 +135,13 @@ class HardeningUiDeviceTest {
             connectionStore.clear()
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
                 val displayWidthDp = scenarioActivityWidthDp(scenario)
-                onView(withId(R.id.pair_button)).perform(scrollTo()).check(matches(isDisplayed()))
-                onView(withId(R.id.connect_button)).perform(scrollTo()).check(matches(isDisplayed()))
-
-                scenario.onActivity { activity ->
-                    val labels = listOf(
-                        R.id.pair_button to R.string.pair_and_connect,
-                        R.id.connect_button to R.string.connect_read_only,
-                    )
-                    labels.forEach { (buttonId, labelId) ->
+                val labels = listOf(
+                    R.id.pair_button to R.string.pair_and_connect,
+                    R.id.connect_button to R.string.connect_read_only,
+                )
+                labels.forEach { (buttonId, labelId) ->
+                    onView(withId(buttonId)).perform(scrollTo()).check(matches(isDisplayed()))
+                    scenario.onActivity { activity ->
                         val button = activity.findViewById<TextView>(buttonId)
                         val textLayout = requireNotNull(button.layout) { "button text must be laid out" }
                         val ellipsisCount = (0 until textLayout.lineCount).sumOf(textLayout::getEllipsisCount)

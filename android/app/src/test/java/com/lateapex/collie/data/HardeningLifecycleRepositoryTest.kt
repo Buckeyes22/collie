@@ -75,6 +75,29 @@ class HardeningLifecycleRepositoryTest {
         assertEquals(listOf(null, null), api.etags)
     }
 
+    @Test
+    fun aCancellationResistantReadCannotCrossHostSessionOrSubjectNavigation() = runBlocking {
+        val store = FakeStore(Connection(CollieOrigin("https://one.example/"), "phone", "token"))
+        val api = FakeApi()
+        val repository = CollieRepository(api, store, OriginValidator())
+        val before = PaneAddress(Scope(host = "desk", session = "work"), "p1")
+        val after = PaneAddress(Scope(host = "laptop", session = "personal"), "p2")
+        repository.selectSubject(before.scope, before.paneId)
+        val entered = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>()
+        api.beforePane = { kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { entered.complete(Unit); release.await() } }
+        val pending = async { repository.readPane(before) }
+        entered.await()
+        repository.selectSubject(after.scope, after.paneId)
+        release.complete(Unit)
+        assertTrue(pending.await() is ApiResult.Failure)
+        api.beforePane = null
+        repository.readPane(after)
+        assertNull(api.etags.last())
+        repository.selectSubject(before.scope, before.paneId)
+        repository.readPane(before)
+        assertNull("old response must not repopulate its cache", api.etags.last())
+    }
+
     private class FakeStore(initial: Connection) : ConnectionStore {
         private val value = MutableStateFlow<Connection?>(initial)
         override val connection: StateFlow<Connection?> = value

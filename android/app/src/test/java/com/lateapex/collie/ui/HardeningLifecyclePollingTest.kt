@@ -66,6 +66,7 @@ class HardeningLifecyclePollingTest {
     @Test
     fun paneKeepsLastReadDuringOutageThenRecoversAfterBackoff() = runTest(dispatcher) {
         val fixture = paneFixture()
+        try {
         fixture.api.paneResult = ApiResult.Success(PaneReadResponse("w1:p1", "fresh", false, 1), 200)
         fixture.viewModel.startPolling()
         runCurrent()
@@ -91,7 +92,7 @@ class HardeningLifecyclePollingTest {
         assertEquals(4, fixture.api.paneCalls)
         assertEquals("recovered", fixture.viewModel.state.value.pane?.text)
         assertNull(fixture.viewModel.state.value.error)
-        fixture.viewModel.stopPolling()
+        } finally { fixture.viewModel.stopPolling() }
     }
 
     @Test
@@ -174,6 +175,25 @@ class HardeningLifecyclePollingTest {
         viewModel.stopPolling()
     }
 
+    @Test
+    fun visiblePaneContinuesPollingAfterReplacementCancelsItsOldRead() = runTest(dispatcher) {
+        val fixture = paneFixture()
+        fixture.api.blockPaneReads = true
+        fixture.viewModel.startPolling(); runCurrent()
+        assertEquals(1, fixture.api.paneCalls)
+        fixture.store.save(Connection(CollieOrigin("https://replacement.example/"), "phone", "new-token"))
+        // Creating the next actor synchronously retires the old protected read and content.
+        fixture.repository.readContext()
+        runCurrent()
+        assertEquals(1, fixture.api.cancelledPaneCalls)
+        assertNull(fixture.viewModel.state.value.pane)
+        fixture.api.blockPaneReads = false
+        fixture.api.paneResult = ApiResult.Success(PaneReadResponse("w1:p1", "replacement", false, 2), 200)
+        advanceTimeBy(PaneViewModel.POLL_MS); runCurrent()
+        assertEquals("replacement", fixture.viewModel.state.value.pane?.text)
+        fixture.viewModel.stopPolling()
+    }
+
     private fun paneFixture(): Fixture {
         val app = ApplicationProvider.getApplicationContext<Application>()
         val store = FakeStore(Connection(CollieOrigin("https://collie.example/"), "phone", "token"))
@@ -186,10 +206,10 @@ class HardeningLifecyclePollingTest {
             repository,
             RecordingDiagnosticsRecorder(mutableListOf()),
         )
-        return Fixture(viewModel, api)
+        return Fixture(viewModel, api, store, repository)
     }
 
-    private data class Fixture(val viewModel: PaneViewModel, val api: FakeApi)
+    private data class Fixture(val viewModel: PaneViewModel, val api: FakeApi, val store: FakeStore, val repository: CollieRepository)
 
     private class FakeStore(initial: Connection) : ConnectionStore {
         private val value = MutableStateFlow<Connection?>(initial)

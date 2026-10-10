@@ -23,6 +23,10 @@ Running a crew? Update the lead first; members follow on their own. Details:
 
 ## [Unreleased]
 
+### Added
+
+- **Scoped control reads preserve authority across Crew and reconnects.** Declare independent positive control capabilities, carry typed refusal provenance, forward session refresh as a read, and expose device-bound durable operation receipts without repeating uncertain dispatch.
+
 ### Changed
 
 - **The Android fork follows the current upstream server contract.** Merge Collie 1.19.0 while retaining native Kotlin screens, English-only UI, Android release isolation, transcript caching, and request trace correlation. Android handles scoped sessions, Crew, paired reads, mounted origins and live chat.

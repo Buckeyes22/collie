@@ -12,6 +12,7 @@ import com.lateapex.collie.domain.PaneAddress
 import com.lateapex.collie.domain.MuxKeyGrammar
 import com.lateapex.collie.domain.PollingBackoff
 import com.lateapex.collie.network.ApiResult
+import com.lateapex.collie.network.retiresPairing
 import com.lateapex.collie.network.ApiFailure
 import com.lateapex.collie.network.PaneReadResponse
 import com.lateapex.collie.network.PaneSummary
@@ -129,7 +130,43 @@ class PaneViewModel(
     private var supportPoll = 0
     private var paneRequestedLines = PaneScrollbackWindow.INITIAL_LINES
 
+    private class DiscardedActor : kotlinx.coroutines.CancellationException()
+    private suspend fun <T> withCurrentActor(block: suspend () -> ApiResult<T>): ApiResult<T> {
+        val context = repository.readContext(address.scope, address.paneId) ?: throw DiscardedActor()
+        val result = block()
+        if (!repository.isCurrent(context)) throw DiscardedActor()
+        return result
+    }
+
+    private val authorityRegistration = repository.onAuthorityInvalidated { reason ->
+        if (reason == com.lateapex.collie.data.AuthorityInvalidation.ACCESS_FROZEN) {
+            repository.accessFailure?.takeIf { it is ApiFailure.Http && it.status in setOf(401, 403) }?.let { failure ->
+                mutableState.value = mutableState.value.copy(loading = false, error = MainViewModel.describe(getApplication<Application>().resources, failure))
+            }
+        }
+        deviceAuthorizationKnown = false
+        deviceWriteAllowed = false
+        endDirectTyping()
+        mutableState.value = mutableState.value.copy(canWrite = false, composerReady = false)
+        if (reason in setOf(com.lateapex.collie.data.AuthorityInvalidation.PAIRING_RETIRED,
+            com.lateapex.collie.data.AuthorityInvalidation.CONNECTION_CHANGED, com.lateapex.collie.data.AuthorityInvalidation.DISCONNECTED)) {
+            acceptedScopes.clear()
+            chatWindow.clear()
+            chatEtag = null
+            transcriptEtag = null
+            transcriptSkipPolls = 0
+            legacyChat = false
+            mutableState.value = PaneUiState(clearReplyDraft = true)
+        }
+    }
+
+    override fun onCleared() {
+        authorityRegistration.close()
+        super.onCleared()
+    }
+
     init {
+        repository.selectSubject(address.scope, address.paneId)
         // A confirmation ("Reply sent.", "Typed into terminal.") is a notice, not a state: it used to
         // sit over the mirror until the next mutation replaced it. Only confirmations expire; the
         // authorization statuses stay until the fact they report changes.
@@ -176,14 +213,19 @@ class PaneViewModel(
     }
 
     fun startPolling() {
+        repository.selectSubject(address.scope, address.paneId)
         if (pollingJob != null) return
-        pollingJob = viewModelScope.launch {
+        val activePoll = viewModelScope.launch {
             while (true) {
-                load()
-                if (supportPoll++ % 3 == 0) loadSupportingData()
+                try {
+                    load()
+                    if (supportPoll++ % 3 == 0) loadSupportingData()
+                } catch (_: DiscardedActor) { /* A changed target owns the next iteration. */ }
                 delay(pollingBackoff.delayAfter(POLL_MS))
             }
         }
+        pollingJob = activePoll
+        activePoll.invokeOnCompletion { if (pollingJob === activePoll) pollingJob = null }
     }
 
     fun stopPolling() {
@@ -264,11 +306,11 @@ class PaneViewModel(
                         expectedPrompt,
                         text(R.string.pane_error_codex_unconfirmed),
                         reply = { message, submit, binding ->
-                            if (message.isEmpty()) repository.submitReply(address, binding)
-                            else repository.reply(address, message, submit, binding)
+                            if (message.isEmpty()) withCurrentActor { repository.submitReply(address, binding) }
+                            else withCurrentActor { repository.reply(address, message, submit, binding) }
                         },
                         read = {
-                            when (val observed = repository.readPane(address, paneRequestedLines, markSeen = true)) {
+                            when (val observed = withCurrentActor { repository.readPane(address, paneRequestedLines, markSeen = true) }) {
                                 is ApiResult.Success -> observed.value.pane.let { pane ->
                                     mutableState.value = mutableState.value.copy(
                                         pane = pane,
@@ -280,7 +322,7 @@ class PaneViewModel(
                             }
                         },
                     )
-                } else repository.reply(address, clean, submit = true, expectedPrompt = expectedPrompt)
+                } else withCurrentActor { repository.reply(address, clean, submit = true, expectedPrompt = expectedPrompt) }
                 when (result) {
                 is ApiResult.Success -> {
                     val response = result.value
@@ -369,7 +411,7 @@ class PaneViewModel(
                     mutationError = null,
                     status = null,
                 )
-                val fresh = when (val result = repository.readPane(address, paneRequestedLines, markSeen = true)) {
+                val fresh = when (val result = withCurrentActor { repository.readPane(address, paneRequestedLines, markSeen = true) }) {
                     is ApiResult.Success -> result.value.pane
                     is ApiResult.Failure -> {
                         mutableState.value = mutableState.value.copy(
@@ -403,7 +445,7 @@ class PaneViewModel(
                     )
                     return@launch
                 }
-                when (val result = repository.keys(address, verified.keys, expectedPrompt = displayedSurface.regionSignature)) {
+                when (val result = withCurrentActor { repository.keys(address, verified.keys, expectedPrompt = displayedSurface.regionSignature) }) {
                     is ApiResult.Success -> mutableState.value = if (result.value.ok) {
                         mutableState.value.copy(
                             sending = false,
@@ -462,7 +504,7 @@ class PaneViewModel(
                 )
                 val transport = object : SemanticInteractionTransport {
                     override suspend fun read(): SemanticPane? = when (
-                        val result = repository.readPane(address, paneRequestedLines, markSeen = true)
+                        val result = withCurrentActor { repository.readPane(address, paneRequestedLines, markSeen = true) }
                     ) {
                         is ApiResult.Success -> SemanticPane(result.value.pane.text, result.value.pane.revision)
                         else -> null
@@ -470,7 +512,7 @@ class PaneViewModel(
 
                     override suspend fun keys(keys: List<String>, expectedPrompt: String?): SemanticWriteOutcome =
                         if (keys.any { !MuxKeyGrammar.isSupported(it, mutableState.value.unsupportedKeys) }) SemanticWriteOutcome.FAILED
-                        else when (val result = repository.keys(address, keys, expectedPrompt)) {
+                        else when (val result = withCurrentActor { repository.keys(address, keys, expectedPrompt) }) {
                             is ApiResult.Success -> when {
                                 result.value.ok -> SemanticWriteOutcome.OK
                                 result.value.code == "prompt_changed" -> SemanticWriteOutcome.CHANGED
@@ -483,7 +525,7 @@ class PaneViewModel(
                         text: String,
                         submit: Boolean,
                         expectedPrompt: String?,
-                    ): SemanticWriteOutcome = when (val result = repository.reply(address, text, submit, expectedPrompt)) {
+                    ): SemanticWriteOutcome = when (val result = withCurrentActor { repository.reply(address, text, submit, expectedPrompt) }) {
                         is ApiResult.Success -> when {
                             result.value.ok -> SemanticWriteOutcome.OK
                             result.value.code == "prompt_changed" -> SemanticWriteOutcome.CHANGED
@@ -615,7 +657,7 @@ class PaneViewModel(
                     mutableState.value = mutableState.value.copy(sending = false)
                     return@launch
                 }
-                when (val result = repository.keys(address, keys, expectedPrompt = expectedPrompt)) {
+                when (val result = withCurrentActor { repository.keys(address, keys, expectedPrompt = expectedPrompt) }) {
                 is ApiResult.Success -> mutableState.value = if (result.value.ok) {
                     directSucceeded = true
                     mutableState.value.copy(
@@ -674,7 +716,7 @@ class PaneViewModel(
     }
 
     private suspend fun refreshAfterDirectBatch(): Boolean = when (
-        val result = repository.readPane(address, paneRequestedLines, markSeen = true)
+        val result = withCurrentActor { repository.readPane(address, paneRequestedLines, markSeen = true) }
     ) {
         is ApiResult.Success -> {
             mutableState.value = mutableState.value.copy(
@@ -708,7 +750,7 @@ class PaneViewModel(
         try {
             do {
                 val lines = paneRequestedLines
-                when (val result = repository.readPane(address, lines, markSeen = true)) {
+                when (val result = withCurrentActor { repository.readPane(address, lines, markSeen = true) }) {
                     is ApiResult.Success -> {
                         pollingBackoff.succeeded()
                         mutableState.value = mutableState.value.copy(
@@ -780,7 +822,7 @@ class PaneViewModel(
         }
         if (!legacyChat) {
             val chatConnection = repository.connection.value
-            val chatResult = repository.chat(address, limit = TRANSCRIPT_PAGE, after = chatWindow.after, etag = chatEtag)
+            val chatResult = withCurrentActor { repository.chat(address, limit = TRANSCRIPT_PAGE, after = chatWindow.after, etag = chatEtag) }
             if (repository.connection.value !== chatConnection) return
             when (val result = chatResult) {
                 is ApiResult.Success -> {
@@ -810,7 +852,7 @@ class PaneViewModel(
         val limit = if (firstLoad) TRANSCRIPT_PAGE else TRANSCRIPT_POLL
         // The long first page and the short poll page are different reads with different ETags.
         val etag = if (firstLoad) null else transcriptEtag
-        when (val result = repository.history(address, limit = limit, etag = etag)) {
+        when (val result = withCurrentActor { repository.history(address, limit = limit, etag = etag) }) {
             is ApiResult.Success -> {
                 val page = result.value
                 transcriptEtag = if (firstLoad || !page.available) null else result.etag
@@ -841,14 +883,14 @@ class PaneViewModel(
             if (!legacyChat) {
                 val before = chatWindow.before ?: return@launch
                 val chatConnection = repository.connection.value
-                val result = repository.chat(address, limit = TRANSCRIPT_PAGE, before = before)
+                val result = withCurrentActor { repository.chat(address, limit = TRANSCRIPT_PAGE, before = before) }
                 if (repository.connection.value !== chatConnection) return@launch
                 if (result is ApiResult.Success && chatWindow.merge(result.value)) {
                     mutableState.value = mutableState.value.copy(transcript = chatWindow.entries, transcriptQueued = chatWindow.queued, transcriptHasMore = chatWindow.hasOlder)
                 }
                 return@launch
             }
-            val result = repository.history(address, limit = TRANSCRIPT_PAGE, before = oldest)
+            val result = withCurrentActor { repository.history(address, limit = TRANSCRIPT_PAGE, before = oldest) }
             if (result is ApiResult.Success && result.value.available) {
                 mutableState.value = mutableState.value.copy(
                     transcript = HistoryPresentation.mergeOlder(mutableState.value.transcript, result.value.entries),
@@ -859,7 +901,7 @@ class PaneViewModel(
     }
 
     private suspend fun loadSupportingData() {
-        val config = repository.config(address.scope)
+        val config = withCurrentActor { repository.config(address.scope) }
         if (config is ApiResult.Success) {
             val isShell = agent.equals("shell", ignoreCase = true)
             mutableState.value = mutableState.value.copy(
@@ -876,7 +918,7 @@ class PaneViewModel(
             if (terminalWriteBlock() != null) failDirectQueue(directTypingGeneration)
         }
         val snapshotConnection = repository.connection.value
-        val snapshot = repository.paneSnapshot(address.scope)
+        val snapshot = withCurrentActor { repository.paneSnapshot(address.scope) }
         if (snapshot is ApiResult.Success && snapshotConnection == observedConnection &&
             repository.connection.value == snapshotConnection
         ) {
@@ -964,7 +1006,7 @@ class PaneViewModel(
             add("ctrl+k")
             repeat(clearCount) { add("Backspace") }
         }
-        when (val result = repository.keys(address, clearKeys, expectedPrompt = freshBinding)) {
+        when (val result = withCurrentActor { repository.keys(address, clearKeys, expectedPrompt = freshBinding) }) {
             is ApiResult.Success -> if (!result.value.ok) {
                 mutableState.value = mutableState.value.copy(
                     sending = false,
@@ -993,7 +1035,7 @@ class PaneViewModel(
             }
         }
         delay(TAKEOVER_SETTLE_MS)
-        val cleared = when (val result = repository.readPane(address, paneRequestedLines, markSeen = true)) {
+        val cleared = when (val result = withCurrentActor { repository.readPane(address, paneRequestedLines, markSeen = true) }) {
             is ApiResult.Success -> result.value.pane
             else -> {
                 mutableState.value = mutableState.value.copy(
@@ -1025,7 +1067,7 @@ class PaneViewModel(
         derive: (String) -> String?,
         wholePane: Boolean = true,
     ): String? {
-        val fresh = when (val result = repository.readPane(address, paneRequestedLines, markSeen = true)) {
+        val fresh = when (val result = withCurrentActor { repository.readPane(address, paneRequestedLines, markSeen = true) }) {
             is ApiResult.Success -> result.value.pane
             is ApiResult.Failure -> {
                 mutableState.value = mutableState.value.copy(
@@ -1072,14 +1114,14 @@ class PaneViewModel(
     }
 
     private fun demoteIfRevoked(failure: ApiFailure) {
-        if (failure is ApiFailure.Http && failure.status == 403 && failure.message in setOf("device not paired", "device expired")) {
+        if (failure is ApiFailure.Http && failure.retiresPairing()) {
             connectionPaired = false
             applyWriteAccess()
         }
     }
 
     private fun applyWriteAccess() {
-        val writable = connectionPaired && deviceWriteAllowed
+        val writable = connectionPaired && deviceWriteAllowed && repository.writesAllowed(address.scope, address.paneId)
         val previous = mutableState.value
         val accessStatus = when {
             !connectionPaired -> text(R.string.pane_status_not_paired)

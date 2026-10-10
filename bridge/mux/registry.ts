@@ -1,3 +1,5 @@
+import { herdrHostControl } from "../host-control/herdr.ts";
+import type { HostControlPort } from "../host-control/types.ts";
 // The mux registry — the SINGLE decision site for "which multiplexer is this collie driving".
 //
 // Maps a configured mux name to the factory that builds its adapter. Adding a multiplexer is one
@@ -231,4 +233,10 @@ export function createMux(
     throw new Error(`unknown multiplexer "${name}" — this build drives: ${muxNames(registry).join(", ") || "none"}`);
   }
   return factory.create(target);
+}
+
+/** Provider selection stays at the mux registry seam; declaration never implies administration support. */
+export function hostControlForMux(name: string): HostControlPort | undefined {
+  const providers = new Map([["herdr", herdrHostControl]]);
+  return providers.get(name);
 }

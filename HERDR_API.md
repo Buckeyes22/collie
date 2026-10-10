@@ -378,3 +378,8 @@ event costs one interval, never correctness.
 
 Also visible in the 0.7.2 schema but unused by Collie: `events.wait`, `pane.send_input`,
 `agent.list`, `pane.wait_for_output` — run `herdr api schema` for the full ~80-method catalog.
+
+
+## Scoped foundation health mapping
+
+The host adapter's existing `health()` boolean now calls the exact vendor `ping` with empty params through `HerdrClient.handshake()`. Only the expected `pong` discriminant, a nonempty version and uint32 protocol are accepted; an arbitrary successful response is unavailable. This replaces the previous workspace-list reachability surrogate. The handshake provides runtime identity, not inferred feature capabilities. The pinned 0.9.3/protocol22 schema and owned-socket fixture validate decoding; live disposable runtime capture remains acceptance evidence to obtain separately.

@@ -119,3 +119,19 @@ describe("HerdrClient per-call timeout", () => {
     expect(Object.keys(lastRequest?.params ?? {})).not.toContain("base");
   });
 });
+
+
+describe("HerdrClient exact ping mapping", () => {
+  test("one-shot ping returns validated vendor identity without listing or mutating panes", async () => {
+    const client = new HerdrClient(await lateHerdr({ type: "pong", version: "0.9.3", protocol: 22 }), 1000);
+    expect(await client.handshake()).toEqual({ version: "0.9.3", protocol: 22 });
+    expect(lastRequest).toEqual({ method: "ping", params: {} });
+  });
+  for (const result of [{ type: "ok", version: "0.9.3", protocol: 22 }, { type: "pong", version: "0.9.3", protocol: -1 }, { type: "pong", version: "0.9.3", protocol: 22.5 }]) {
+    test(`health refuses malformed pong ${JSON.stringify(result)}`, async () => {
+      const client = new HerdrClient(await lateHerdr(result), 1000);
+      expect(await client.ping()).toBe(false);
+      expect(lastRequest?.method).toBe("ping");
+    });
+  }
+});

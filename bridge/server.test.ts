@@ -59,6 +59,7 @@ import {
   stripMount,
   mountIndexHtml,
   withHsts,
+  withControlAuthority,
   arrivedOverHttps,
   chatBodyForMux,
 } from "./server.ts";
@@ -2706,7 +2707,7 @@ describe("the host gate — `?host=` selects among enrolled members and nothing 
     // writes on this machine's one-off command history, served by one function (ADR 0095), and the
     // read that checks a typed line before it runs (ADR 0095, amendment)) reach
     // their runtime through the caller's resolver and nothing else.
-    expect([...src.matchAll(/await caller\.resolve\(\);/g)]).toHaveLength(21);
+    expect([...src.matchAll(/await caller\.resolve\(\);/g)]).toHaveLength(22);
     // Exactly eight `registry.get(` calls remain, and each is a sanctioned one, named here rather
     // than exempted: assembling THIS collie's own snapshot body; `localRuntime`, the single
     // "(session) → runtime, or 404" helper both callers share; `/api/config`, which reports THIS
@@ -4285,4 +4286,44 @@ describe("accessLogRecord", () => {
     });
     expect(accessLogRecord(request, 200, 1).traceId).toBe("abc-123");
   });
+});
+
+
+describe("scoped admission provenance", () => {
+  test("read-only paired refresh retains read admission; device reads and writes declare their own factor", async () => {
+    const pairing = { resolve: (token: string | null) => token === "tok-phone" ? { label: "phone" } : null };
+    const config = cfg({ deviceHeader: "x-device-id", deviceAllowlist: ["other"] });
+    const headers = { host: "collie.ts.net", authorization: "Bearer tok-phone", "x-device-id": "phone" };
+    expect(guard(req(headers), config, "read", pairing)).toBeNull();
+    for (const kind of ["device-read", "write"] as const) {
+      const response = guard(req({ ...headers, origin: "https://collie.ts.net" }), config, kind, pairing)!;
+      expect(response.status).toBe(403);
+      expect(response.headers.get("x-collie-error-source")).toBe("collie");
+      expect(response.headers.get("x-collie-error-factor")).toBe("device");
+      expect(response.headers.get("x-collie-error-code")).toBe("device.not_authorised");
+    }
+    const expired = guard(req({ host: "collie.ts.net", authorization: "Bearer old" }), cfg(), "read", { resolve: () => null, expired: () => true })!;
+    expect(expired.status).toBe(403);
+    expect(expired.headers.get("x-collie-error-factor")).toBe("pairing");
+    expect(expired.headers.get("x-collie-error-code")).toBe("pairing.expired");
+  });
+  test("control capability publishing is independent and explicit, never borrowed from mux metadata", () => {
+    const omitted = bridgeConfigBody({ push: false, vapidPublicKey: "", build: "test", mode: "solo" });
+    expect(omitted.control).toBeUndefined();
+    const positive = bridgeConfigBody({ push: false, vapidPublicKey: "", build: "test", mode: "solo", control: { capabilities: { controlOperations: true } } });
+    expect(positive.control?.capabilities.controlOperations).toBe(true);
+    const negative = bridgeConfigBody({ push: false, vapidPublicKey: "", build: "test", mode: "solo", control: { capabilities: {} } });
+    expect(negative.control?.capabilities.controlOperations).toBeUndefined();
+  });
+});
+
+
+test("the answering lead replaces peer authority headers on successful reads and 304s", async () => {
+  for (const status of [200, 304]) {
+    const handler = withControlAuthority(async () => new Response(null, { status, headers: { "x-collie-lead-id": "peer", "x-collie-lead-epoch": "stale" } }),
+      () => ({ leadId: "lead", epoch: "current" }));
+    const response = await handler(new Request("https://collie.example/api/pane/remote?host=peer"));
+    expect(response.headers.get("x-collie-lead-id")).toBe("lead");
+    expect(response.headers.get("x-collie-lead-epoch")).toBe("current");
+  }
 });

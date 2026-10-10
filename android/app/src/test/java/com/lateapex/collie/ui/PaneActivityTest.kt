@@ -49,6 +49,177 @@ import org.robolectric.shadows.ShadowSystemClock
 @RunWith(RobolectricTestRunner::class)
 class PaneActivityTest {
     @Test
+    fun externalResultsCannotConsumeReplacementActorsOrRebindBeforeOldCallbacksDrain() {
+        val app = ApplicationProvider.getApplicationContext<CollieApplication>()
+        val initial = com.lateapex.collie.domain.Connection(com.lateapex.collie.domain.CollieOrigin("https://picker.fixture/"), "same-label", "old-token")
+        val store = object : com.lateapex.collie.data.ConnectionStore {
+            override val connection = kotlinx.coroutines.flow.MutableStateFlow<com.lateapex.collie.domain.Connection?>(initial)
+            override fun save(connection: com.lateapex.collie.domain.Connection) { this.connection.value = connection }
+            override fun clear() { connection.value = null }
+        }
+        var uploads = 0
+        val api = object : com.lateapex.collie.network.CollieApi by app.container.api {
+            override suspend fun snapshot(connection: com.lateapex.collie.domain.Connection, scope: com.lateapex.collie.domain.Scope) =
+                com.lateapex.collie.network.ApiResult.Success(com.lateapex.collie.network.SnapshotResponse("connected",
+                    agents = emptyList(), shellPanes = emptyList(), workspaces = emptyList(), tabs = emptyList(),
+                    device = com.lateapex.collie.network.DeviceAuthorization(false, null, true), ts = 1), 200)
+            override suspend fun upload(connection: com.lateapex.collie.domain.Connection, address: com.lateapex.collie.domain.PaneAddress,
+                upload: com.lateapex.collie.network.ImageUpload): com.lateapex.collie.network.ApiResult<com.lateapex.collie.network.UploadResponse> {
+                uploads++
+                return com.lateapex.collie.network.ApiResult.Success(com.lateapex.collie.network.UploadResponse(true, "/new/upload.png"), 200)
+            }
+        }
+        val repository = com.lateapex.collie.data.CollieRepository(api, store, app.container.originValidator)
+        val original = app.container.repository
+        val repositoryField = app.container.javaClass.getDeclaredField("repository").apply { isAccessible = true }
+        repositoryField.set(app.container, repository)
+        val controller = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("picker:pane")).create()
+        val activity = controller.get()
+        fun field(name: String) = PaneActivity::class.java.getDeclaredField(name).apply { isAccessible = true }
+        fun launch(name: String, target: PaneActivity = activity) = PaneActivity::class.java.getDeclaredMethod(name)
+            .apply { isAccessible = true }.invoke(target)
+        try {
+            kotlinx.coroutines.runBlocking { repository.snapshot() }
+            val pickerContext = field("imagePickerContext")
+            val permissionContext = field("microphonePermissionContext")
+            launch("launchImagePicker")
+            launch("requestMicrophonePermission")
+            assertNotNull(pickerContext.get(activity))
+            assertNotNull(permissionContext.get(activity))
+            assertTrue(field("imagePickerOutstanding").getBoolean(activity))
+            assertTrue(field("microphonePermissionOutstanding").getBoolean(activity))
+            store.save(com.lateapex.collie.domain.Connection(initial.origin, initial.label, "replacement-token"))
+            kotlinx.coroutines.runBlocking { repository.snapshot() }
+            assertTrue(repository.writesAllowed(com.lateapex.collie.domain.Scope(), "picker:pane"))
+            assertNull(pickerContext.get(activity))
+            assertNull(permissionContext.get(activity))
+            // The external system still owns the old callback slots despite replacement Live admission.
+            launch("launchImagePicker")
+            launch("requestMicrophonePermission")
+            assertNull(pickerContext.get(activity))
+            assertNull(permissionContext.get(activity))
+            assertTrue(field("imagePickerOutstanding").getBoolean(activity))
+            assertTrue(field("microphonePermissionOutstanding").getBoolean(activity))
+            render(activity, PaneUiState(loading = false, canWrite = true,
+                pane = PaneReadResponse("picker:pane", "replacement output", false, 1), composerReady = true))
+            // Invoke the same callback registered with ActivityResultRegistry, after new Live admission.
+            PaneActivity::class.java.getDeclaredMethod("onImagePicked", android.net.Uri::class.java)
+                .apply { isAccessible = true }.invoke(activity, android.net.Uri.parse("content://fixture/old-image"))
+            PaneActivity::class.java.getDeclaredMethod("onMicrophonePermissionResult", Boolean::class.javaPrimitiveType)
+                .apply { isAccessible = true }.invoke(activity, true)
+            assertFalse(field("imagePickerOutstanding").getBoolean(activity))
+            assertFalse(field("microphonePermissionOutstanding").getBoolean(activity))
+            assertNull(field("recordingContext").get(activity))
+            assertFalse(PaneActivity::class.java.getDeclaredField("composerMediaBusy").apply { isAccessible = true }.getBoolean(activity))
+            assertEquals(0, uploads)
+            assertEquals("replacement output", (PaneActivity::class.java.getDeclaredField("currentState")
+                .apply { isAccessible = true }.get(activity) as PaneUiState).pane?.text)
+
+            // Rotation saves only outstanding latches; callbacks must not regain sensitive actor custody.
+            launch("launchImagePicker")
+            launch("requestMicrophonePermission")
+            val saved = Bundle()
+            controller.saveInstanceState(saved).destroy()
+            val recreated = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("picker:pane")).create(saved)
+            try {
+                val replacement = recreated.get()
+                assertTrue(field("imagePickerOutstanding").getBoolean(replacement))
+                assertTrue(field("microphonePermissionOutstanding").getBoolean(replacement))
+                launch("launchImagePicker", replacement)
+                launch("requestMicrophonePermission", replacement)
+                assertNull(pickerContext.get(replacement))
+                assertNull(permissionContext.get(replacement))
+                PaneActivity::class.java.getDeclaredMethod("onImagePicked", android.net.Uri::class.java)
+                    .apply { isAccessible = true }.invoke(replacement, android.net.Uri.parse("content://fixture/rotated-image"))
+                PaneActivity::class.java.getDeclaredMethod("onMicrophonePermissionResult", Boolean::class.javaPrimitiveType)
+                    .apply { isAccessible = true }.invoke(replacement, true)
+                assertFalse(field("imagePickerOutstanding").getBoolean(replacement))
+                assertFalse(field("microphonePermissionOutstanding").getBoolean(replacement))
+                assertNull(field("recordingContext").get(replacement))
+                assertEquals(0, uploads)
+            } finally { recreated.destroy() }
+        } finally {
+            if (!activity.isDestroyed) controller.destroy()
+            repositoryField.set(app.container, original)
+        }
+    }
+
+    @Test
+    fun attachmentRecreationRefusesReplacementCredentialAtTheSameOrigin() {
+        val app = ApplicationProvider.getApplicationContext<CollieApplication>()
+        val initial = com.lateapex.collie.domain.Connection(com.lateapex.collie.domain.CollieOrigin("https://custody.fixture/"), "same-label", "old-token")
+        val store = object : com.lateapex.collie.data.ConnectionStore {
+            override val connection = kotlinx.coroutines.flow.MutableStateFlow<com.lateapex.collie.domain.Connection?>(initial)
+            override fun save(connection: com.lateapex.collie.domain.Connection) { this.connection.value = connection }
+            override fun clear() { connection.value = null }
+        }
+        val repository = com.lateapex.collie.data.CollieRepository(app.container.api, store, app.container.originValidator)
+        val original = app.container.repository
+        val field = app.container.javaClass.getDeclaredField("repository").apply { isAccessible = true }
+        field.set(app.container, repository)
+        try {
+            val intent = paneIntent("custody:restore")
+            val controller = Robolectric.buildActivity(PaneActivity::class.java, intent).create().start()
+            controller.get().acceptUploadForTest("/private/old-upload.png")
+            val saved = Bundle()
+            controller.saveInstanceState(saved).stop().destroy()
+            store.save(com.lateapex.collie.domain.Connection(initial.origin, initial.label, "replacement-token"))
+            val recreated = Robolectric.buildActivity(PaneActivity::class.java, intent).create(saved)
+            assertEquals("draft", recreated.get().outgoingReplyForTest("draft"))
+            recreated.destroy()
+        } finally { field.set(app.container, original) }
+    }
+
+    @Test
+    fun retiringConnectionSynchronouslyDestroysCopiedTerminalAndAttachmentCustody() {
+        val app = ApplicationProvider.getApplicationContext<CollieApplication>()
+        val store = object : com.lateapex.collie.data.ConnectionStore {
+            override val connection = kotlinx.coroutines.flow.MutableStateFlow<com.lateapex.collie.domain.Connection?>(
+                com.lateapex.collie.domain.Connection(com.lateapex.collie.domain.CollieOrigin("https://custody.fixture/"), "phone", "old-token"))
+            override fun save(connection: com.lateapex.collie.domain.Connection) { this.connection.value = connection }
+            override fun clear() { connection.value = null }
+        }
+        val repository = com.lateapex.collie.data.CollieRepository(app.container.api, store, app.container.originValidator)
+        val original = app.container.repository
+        val repositoryField = app.container.javaClass.getDeclaredField("repository").apply { isAccessible = true }
+        repositoryField.set(app.container, repository)
+        val controller = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("custody:pane")).create()
+        val activity = controller.get()
+        fun field(name: String) = PaneActivity::class.java.getDeclaredField(name).apply { isAccessible = true }
+        try {
+            render(activity, PaneUiState(loading = false, pane = PaneReadResponse("custody:pane", "private terminal body", false, 1)))
+            activity.acceptUploadForTest("/private/upload.png")
+            activity.findViewById<EditText>(R.id.reply_input).setText("private draft")
+            field("pendingTerminalText").set(activity, "queued private text")
+            val job = kotlinx.coroutines.Job()
+            field("terminalRenderJob").set(activity, job)
+            val generation = field("terminalRenderGeneration").getLong(activity)
+            field("paneActionInFlight").setBoolean(activity, true)
+            field("tabCreateInFlight").setBoolean(activity, true)
+            kotlinx.coroutines.runBlocking { repository.disconnect() }
+            // No Looper drain: copied custody must retire before a delayed collector/render can run.
+            for (name in listOf("lastRawText", "latestRawText", "renderedTerminalText")) assertEquals("", field(name).get(activity))
+            for (name in listOf("pendingAttachment", "pendingAttachmentThumb", "pendingTerminalText", "lastRenderedState")) assertNull(field(name).get(activity))
+            assertNull((field("currentState").get(activity) as PaneUiState).pane)
+            assertTrue(job.isCancelled)
+            assertFalse(field("paneActionInFlight").getBoolean(activity))
+            assertFalse(field("tabCreateInFlight").getBoolean(activity))
+            assertTrue(field("terminalRenderGeneration").getLong(activity) > generation)
+            // A cancellation-resistant CPU projection finishing afterwards is pure, so cannot refill custody.
+            PaneActivity::class.java.getDeclaredMethod("prepareTerminalText", String::class.java, Long::class.javaPrimitiveType,
+                Boolean::class.javaPrimitiveType, Boolean::class.javaPrimitiveType, Boolean::class.javaPrimitiveType,
+                String::class.java, String::class.java).apply { isAccessible = true }
+                .invoke(activity, "private late body", 1L, false, false, true, "claude", "omitted")
+            assertEquals(emptyList<String>(), field("renderedStatusRows").get(activity))
+            assertEquals("", field("renderedTerminalText").get(activity))
+            assertEquals("draft", activity.outgoingReplyForTest("draft"))
+        } finally {
+            controller.destroy()
+            repositoryField.set(app.container, original)
+        }
+    }
+
+    @Test
     fun codexAcceptedPreviewUsesRetainedStateInsteadOfMirrorChangesOrATimer() {
         val activity = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("accepted:pane")).create().get()
         val state = PaneUiState(loading = false, pane = PaneReadResponse("accepted:pane", "output", false, 1),

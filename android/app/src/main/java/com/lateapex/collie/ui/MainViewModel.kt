@@ -10,6 +10,7 @@ import com.lateapex.collie.data.CollieRepository
 import com.lateapex.collie.domain.DeviceLabel
 import com.lateapex.collie.domain.PollingBackoff
 import com.lateapex.collie.domain.Scope
+import com.lateapex.collie.network.retiresPairing
 import com.lateapex.collie.network.ApiFailure
 import com.lateapex.collie.network.ApiResult
 import com.lateapex.collie.network.CreateResponse
@@ -69,6 +70,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var scopeValidationPending = true
     private var observedConnection = repository.connection.value
 
+    private val authorityRegistration = repository.onAuthorityInvalidated { reason ->
+        if (reason == com.lateapex.collie.data.AuthorityInvalidation.ACCESS_FROZEN) {
+            repository.accessFailure?.takeIf { it is ApiFailure.Http && it.status in setOf(401, 403) }?.let { failure ->
+                mutableState.value = mutableState.value.copy(loading = false, error = MainViewModel.describe(getApplication<Application>().resources, failure))
+            }
+        }
+        mutableState.value = mutableState.value.copy(writeAuthorized = false)
+        if (reason in setOf(com.lateapex.collie.data.AuthorityInvalidation.PAIRING_RETIRED,
+            com.lateapex.collie.data.AuthorityInvalidation.CONNECTION_CHANGED, com.lateapex.collie.data.AuthorityInvalidation.DISCONNECTED)) {
+            mutableState.value = MainUiState()
+        }
+    }
+
+    override fun onCleared() {
+        authorityRegistration.close()
+        super.onCleared()
+    }
+
     init {
         repository.selectScope(nativePreferences.dashboardScope)
         syncConnection()
@@ -97,8 +116,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun startPolling(refreshBridge: Boolean = true) {
+        repository.selectSubject(currentScope, null)
         if (pollingJob != null || repository.connection.value == null) return
-        pollingJob = viewModelScope.launch {
+        val activePoll = viewModelScope.launch {
             if (refreshBridge) repository.refresh()
             while (true) {
                 loadSnapshot(isManual = false)
@@ -109,6 +129,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 delay(pollDelay(mutableState.value.snapshot))
             }
         }
+        pollingJob = activePoll
+        activePoll.invokeOnCompletion { if (pollingJob === activePoll) pollingJob = null }
     }
 
     fun stopPolling() {
@@ -311,7 +333,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 requestStartedAt = System.currentTimeMillis(),
             )
             val requestedScope = repository.selectedScope.value
+            val context = repository.readContext() ?: return
             var result = repository.snapshot(if (scopeValidationPending) Scope() else requestedScope)
+            if (!repository.isCurrent(context)) return
             if (result is ApiResult.Success && scopeValidationPending) {
                 val restore = DashboardScopePersistence.resolve(requestedScope, result.value)
                 scopeValidationPending = false
@@ -321,7 +345,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     configRequested = false
                     mutableState.value = mutableState.value.copy(launchers = null)
                 }
-                restore.readScope?.let { result = repository.snapshot(it) }
+                restore.readScope?.let { restoredScope ->
+                    val restoredContext = repository.readContext(restoredScope) ?: return
+                    result = repository.snapshot(restoredScope)
+                    if (!repository.isCurrent(restoredContext)) return
+                }
             }
             when (result) {
                 is ApiResult.Success -> {
@@ -341,8 +369,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 is ApiResult.Failure -> {
                     pollingBackoff.failed()
-                    val pairingRequired = result.error is ApiFailure.Http && result.error.status == 403 &&
-                        result.error.message in setOf("device not paired", "device expired")
+                    val pairingRequired = result.error is ApiFailure.Http && result.error.retiresPairing()
                     val authError = result.error is ApiFailure.Redirect ||
                         result.error is ApiFailure.Http && result.error.status in setOf(401, 403)
                     mutableState.value = mutableState.value.copy(
@@ -416,7 +443,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         fun describe(resources: Resources, failure: ApiFailure): String = when (failure) {
             is ApiFailure.Redirect -> resources.getString(R.string.error_proxy_sign_in, failure.status)
             is ApiFailure.Http -> when {
-                failure.message in setOf("device not paired", "device expired") -> resources.getString(R.string.error_device_not_paired)
+                failure.retiresPairing() -> resources.getString(R.string.error_device_not_paired)
                 failure.message == "device not authorised" -> resources.getString(R.string.error_device_unauthorised)
                 else -> failure.message ?: resources.getString(R.string.error_http, failure.status)
             }

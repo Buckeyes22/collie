@@ -53,6 +53,20 @@ class CollieApiClientTest {
     }
 
     @Test
+    fun controlReceiptUsesMountedReadAdmissionAndValidatesItsBoundSchema() = runBlocking {
+        val mounted = Connection(CollieOrigin(server.url("/mount/").toString()), "phone", "token")
+        server.enqueue(MockResponse().setBody("{\"ok\":true,\"operation\":{\"schema\":1,\"requestId\":\"intent\",\"state\":\"unknown\",\"capability\":\"movePane\",\"targetIdentity\":\"occupant\",\"at\":1,\"updatedAt\":2}}"))
+        assertTrue(api.controlOperation(mounted, Scope(host = "peer", session = "work"), "intent") is ApiResult.Success)
+        val request = server.takeRequest()
+        assertEquals("GET", request.method)
+        assertEquals("/mount/api/control/operations/intent?host=peer&session=work", request.path)
+        assertEquals("Bearer token", request.getHeader("Authorization"))
+        assertEquals(null, request.getHeader("Origin"))
+        server.enqueue(MockResponse().setBody("{\"ok\":true,\"operation\":{\"schema\":2,\"requestId\":\"intent\",\"state\":\"retry\",\"capability\":\"movePane\",\"targetIdentity\":\"occupant\",\"at\":1,\"updatedAt\":2}}"))
+        assertTrue(api.controlOperation(mounted, Scope(), "intent") is ApiResult.Failure)
+    }
+
+    @Test
     fun paneRequestUsesScopedIdentityHeadersAndEtag() = runBlocking {
         server.enqueue(
             MockResponse()

@@ -61,6 +61,7 @@ import com.lateapex.collie.domain.PaneAddress
 import com.lateapex.collie.domain.MuxKeyGrammar
 import com.lateapex.collie.domain.Scope
 import com.lateapex.collie.network.ActionResponse
+import com.lateapex.collie.network.retiresPairing
 import com.lateapex.collie.network.ApiFailure
 import com.lateapex.collie.network.ApiResult
 import com.lateapex.collie.network.CreatedPane
@@ -92,6 +93,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class PaneActivity : AppCompatActivity() {
+    private var authorityRegistration: AutoCloseable? = null
     private lateinit var binding: ActivityPaneBinding
     private lateinit var viewModel: PaneViewModel
     private lateinit var address: PaneAddress
@@ -134,7 +136,7 @@ class PaneActivity : AppCompatActivity() {
         androidx.core.content.res.ResourcesCompat.getFont(this, R.font.collie_mono) ?: Typeface.MONOSPACE
     }
     private var terminalRenderJob: Job? = null
-    private var terminalRenderGeneration = 0L
+    @Volatile private var terminalRenderGeneration = 0L
     private var pendingTerminalRevision: Long? = null
     // Herdr 0.7.x reports revision 0 for every pane (HERDR_API.md), so revision alone can never
     // tell a changed grid from a repeated one. The rendered/pending TEXT is the change key; the
@@ -207,15 +209,21 @@ class PaneActivity : AppCompatActivity() {
     private var keyboardStripFold: Boolean? = null
     private lateinit var panePresenceTracker: PanePresenceTracker
     private var closedPaneRedirected = false
-    private val imagePicker = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        uri?.let(::handleSelectedImage)
-    }
-    private val microphonePermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) startSpeechRecording() else showComposerMediaMessage(getString(R.string.pane_microphone_denied))
-    }
+    private var imagePickerContext: com.lateapex.collie.data.ScopedReadContext? = null
+    private var microphonePermissionContext: com.lateapex.collie.data.ScopedReadContext? = null
+    // External callbacks have one slot each. Keep this nonsecret ownership until the old result drains,
+    // even when its sensitive actor context retires, so it cannot consume a replacement actor.
+    private var imagePickerOutstanding = false
+    private var microphonePermissionOutstanding = false
+    private var recordingContext: com.lateapex.collie.data.ScopedReadContext? = null
+    private val imagePicker = registerForActivityResult(ActivityResultContracts.PickVisualMedia(), ::onImagePicked)
+    private val microphonePermission = registerForActivityResult(ActivityResultContracts.RequestPermission(), ::onMicrophonePermissionResult)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // A restored pending result is discarded: no credential/content context is restored with it.
+        imagePickerOutstanding = savedInstanceState?.getBoolean(STATE_IMAGE_PICKER_OUTSTANDING) == true
+        microphonePermissionOutstanding = savedInstanceState?.getBoolean(STATE_MICROPHONE_PERMISSION_OUTSTANDING) == true
         window.prepareEdgeToEdgeContent()
         binding = ActivityPaneBinding.inflate(layoutInflater)
         setContentView(binding.root)
@@ -258,7 +266,7 @@ class PaneActivity : AppCompatActivity() {
         composerMediaActions = ComposerMediaActions(
             config = repository::config,
             upload = { repository.upload(address, it) },
-            transcribe = repository::transcribe,
+            transcribe = { repository.transcribe(it) },
             handsFreeEnabled = { nativePreferences.handsFreeEnabled },
             text = composerMediaText,
         )
@@ -288,9 +296,53 @@ class PaneActivity : AppCompatActivity() {
         binding.replyInput.onDirectKeys = viewModel::sendDirectKeys
         binding.replyInput.onSendShortcut = ::sendReplyDraft
         restoringDraft = true
+        authorityRegistration = repository.onAuthorityInvalidated { reason ->
+            ++terminalRenderGeneration
+            terminalRenderJob?.cancel()
+            terminalRenderJob = null
+            pendingTerminalRevision = null
+            pendingTerminalText = null
+            paneActionInFlight = false
+            tabCreateInFlight = false
+            composerMediaBusy = false
+            pickedImageThumb = null
+            imagePickerContext = null
+            microphonePermissionContext = null
+            recordingContext = null
+            if (::speechRecorder.isInitialized) speechRecorder.cancel()
+            if (reason in setOf(com.lateapex.collie.data.AuthorityInvalidation.PAIRING_RETIRED,
+                com.lateapex.collie.data.AuthorityInvalidation.CONNECTION_CHANGED, com.lateapex.collie.data.AuthorityInvalidation.DISCONNECTED)) {
+                nativePreferences.clearSensitiveContent()
+                retireSensitiveCustody()
+                val retirementGeneration = terminalRenderGeneration
+                runOnUiThread {
+                    if (retirementGeneration != terminalRenderGeneration) return@runOnUiThread
+                    restoringDraft = true
+                    binding.replyInput.setText("")
+                    restoringDraft = false
+                    pickedImageThumb = null
+                    pendingDestructiveSend = null
+                    pendingQuickReply = null
+                    pendingReplyAttempt = null
+                    pendingSent = null
+                    paneKeyQueue.clear()
+                    binding.terminalText.text = ""
+                    binding.terminalBlockContent.removeAllViews()
+                    binding.terminalStatusline.text = ""
+                    binding.composerMediaStatus.text = ""
+                    binding.composerMediaStatus.isVisible = false
+                    binding.transcriptBody.bind(agentName, emptyList(), false)
+                    binding.semanticActions.removeAllViews()
+                    binding.semanticPanel.isVisible = false
+                    renderAttachmentChip()
+                    if (::speechRecorder.isInitialized) speechRecorder.cancel()
+                }
+            }
+        }
         binding.replyInput.setText(nativePreferences.paneDraft(paneDraftKey))
         binding.replyInput.setSelection(binding.replyInput.text?.length ?: 0)
-        if (savedInstanceState?.getString(STATE_ATTACHMENT_ORIGIN) == origin) {
+        if (savedInstanceState?.getString(STATE_ATTACHMENT_ORIGIN) == origin &&
+            savedInstanceState.getString(STATE_ATTACHMENT_CUSTODY) == attachmentCustody()) {
             pendingAttachment = savedInstanceState.getString(STATE_ATTACHMENT_PATH)
             renderAttachmentChip()
         }
@@ -364,6 +416,9 @@ class PaneActivity : AppCompatActivity() {
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putString(STATE_ATTACHMENT_PATH, pendingAttachment)
         outState.putString(STATE_ATTACHMENT_ORIGIN, paneDraftKey.substringBefore('|'))
+        outState.putString(STATE_ATTACHMENT_CUSTODY, attachmentCustody())
+        outState.putBoolean(STATE_IMAGE_PICKER_OUTSTANDING, imagePickerOutstanding)
+        outState.putBoolean(STATE_MICROPHONE_PERMISSION_OUTSTANDING, microphonePermissionOutstanding)
         if (::panePresenceTracker.isInitialized) {
             outState.putBoolean(STATE_FRESH_PANE_SEEN, panePresenceTracker.wasSeen)
         }
@@ -395,6 +450,8 @@ class PaneActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        authorityRegistration?.close()
+        authorityRegistration = null
         binding.root.viewTreeObserver.removeOnPreDrawListener(keysViewportListener)
         terminalRenderJob?.cancel()
         confirmHandler.removeCallbacksAndMessages(null)
@@ -457,7 +514,7 @@ class PaneActivity : AppCompatActivity() {
      */
     private fun applyHomeToHeader(cwd: String) {
         lifecycleScope.launch {
-            val result = repository.launchers(address.scope)
+            val result = currentActorResult { repository.launchers(address.scope) } ?: return@launch
             if (result is ApiResult.Success && !isFinishing && binding.paneCwd.text.toString() == cwd) {
                 binding.paneCwd.text = DisplayText.abbreviateHome(cwd, result.value.home)
             }
@@ -525,9 +582,7 @@ class PaneActivity : AppCompatActivity() {
             render(currentState)
             replyInput.requestFocus()
         }
-        attachImageButton.setOnClickListener {
-            imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-        }
+        attachImageButton.setOnClickListener { launchImagePicker() }
         speechButton.setOnClickListener { toggleSpeechRecording() }
         keysModeButton.setOnClickListener { toggleDrawer(ComposerDrawer.KEYS) }
         quickModeButton.setOnClickListener { toggleDrawer(ComposerDrawer.QUICK) }
@@ -564,9 +619,67 @@ class PaneActivity : AppCompatActivity() {
         }
     }
 
+    private fun attachmentCustody(): String = listOf(
+        repository.readContext(address.scope, address.paneId)?.key?.pairedDeviceIdentity.orEmpty(),
+        address.scope.host.orEmpty(), address.scope.session.orEmpty(), address.paneId,
+    ).joinToString("|")
+
+    private suspend fun <T> currentActorResult(action: suspend () -> T): T? {
+        val context = repository.readContext(address.scope, address.paneId) ?: return null
+        val result = action()
+        return result.takeIf { repository.isCurrent(context) }
+    }
+
+    /** Retire copied content before the next Flow/render dispatch can run. */
+    private fun retireSensitiveCustody() {
+        ++terminalRenderGeneration
+        terminalRenderJob?.cancel()
+        terminalRenderJob = null
+        pendingTerminalRevision = null
+        pendingTerminalText = null
+        lastRawText = ""
+        latestRawText = ""
+        latestRevision = null
+        renderedRevision = null
+        renderedTerminalText = ""
+        renderedStatusRows = emptyList()
+        renderedTerminalBlocks = emptyList()
+        findMatches = emptyList()
+        findCursor = -1
+        currentState = PaneUiState()
+        lastRenderedState = null
+        analyzedPaneRevision = null
+        analyzedPaneText = null
+        analyzedSemanticSurface = null
+        analyzedNoEchoPrompt = null
+        analyzedTerminalDraft = null
+        semanticSurface = null
+        noEchoPrompt = null
+        dismissedNoEchoSignature = null
+        stableTerminalDraft = null
+        takenOverTerminalDraft = null
+        terminalDraftTracker.observe(null)
+        pendingAttachment = null
+        pendingAttachmentThumb = null
+        pickedImageThumb = null
+        pendingDestructiveSend = null
+        pendingQuickReply = null
+        pendingReplyAttempt = null
+        pendingSent = null
+        composerMediaBusy = false
+        composerMediaMessage = null
+        paneActionInFlight = false
+        tabCreateInFlight = false
+        speechAvailability = SpeechAvailability.Hidden
+        paneKeyQueue.clear()
+    }
+
     private fun refreshSpeechAvailability() {
         lifecycleScope.launch {
-            speechAvailability = composerMediaActions.speechAvailability()
+            val context = repository.readContext(address.scope, address.paneId) ?: return@launch
+            val availability = composerMediaActions.speechAvailability()
+            if (!repository.isCurrent(context)) return@launch
+            speechAvailability = availability
             if (speechAvailability is SpeechAvailability.Unavailable) {
                 showComposerMediaMessage((speechAvailability as SpeechAvailability.Unavailable).reason)
             } else {
@@ -575,19 +688,70 @@ class PaneActivity : AppCompatActivity() {
         }
     }
 
-    private fun handleSelectedImage(uri: android.net.Uri) {
+    private fun launchImagePicker() {
+        if (imagePickerOutstanding) return
+        val context = repository.readContext(address.scope, address.paneId) ?: return
+        imagePickerContext = context
+        imagePickerOutstanding = true
+        try {
+            imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+        } catch (_: RuntimeException) {
+            imagePickerContext = null
+            imagePickerOutstanding = false
+            if (repository.isCurrent(context)) showComposerMediaMessage(composerMediaText.imageUnreadable)
+        }
+    }
+
+    private fun onImagePicked(uri: android.net.Uri?) {
+        if (!imagePickerOutstanding) return
+        imagePickerOutstanding = false
+        val context = imagePickerContext
+        imagePickerContext = null
+        if (uri != null && context != null && repository.isCurrent(context)) handleSelectedImage(uri, context)
+    }
+
+    private fun requestMicrophonePermission() {
+        if (microphonePermissionOutstanding) return
+        val context = repository.readContext(address.scope, address.paneId) ?: return
+        microphonePermissionContext = context
+        microphonePermissionOutstanding = true
+        try {
+            microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
+        } catch (_: RuntimeException) {
+            microphonePermissionContext = null
+            microphonePermissionOutstanding = false
+            if (repository.isCurrent(context)) showComposerMediaMessage(getString(R.string.pane_microphone_denied))
+        }
+    }
+
+    private fun onMicrophonePermissionResult(granted: Boolean) {
+        if (!microphonePermissionOutstanding) return
+        microphonePermissionOutstanding = false
+        val context = microphonePermissionContext
+        microphonePermissionContext = null
+        if (context != null && repository.isCurrent(context)) {
+            if (granted) startSpeechRecording() else showComposerMediaMessage(getString(R.string.pane_microphone_denied))
+        }
+    }
+
+    private fun handleSelectedImage(uri: android.net.Uri, context: com.lateapex.collie.data.ScopedReadContext) {
         if (composerMediaBusy || directTyping || terminalWriteBlock() != null || semanticSurface?.ownsKeyboard == true ||
             noEchoPrompt != null) return
         lifecycleScope.launch {
+            if (!repository.isCurrent(context)) return@launch
             setComposerMediaBusy(true)
             val selection = ComposerMedia.imageUpload(contentResolver, uri, composerMediaText)
-            pickedImageThumb = (selection as? ImageSelectionResult.Ready)?.upload?.bytes?.let {
+            if (!repository.isCurrent(context)) return@launch
+            val thumbnail = (selection as? ImageSelectionResult.Ready)?.upload?.bytes?.let {
                 withContext(Dispatchers.Default) { ComposerMedia.thumbnail(it, dp(32)) }
             }
+            if (!repository.isCurrent(context)) return@launch
+            pickedImageThumb = thumbnail
             val result = when (selection) {
-                is ImageSelectionResult.Ready -> composerMediaActions.uploadImage(selection.upload)
+                is ImageSelectionResult.Ready -> composerMediaActions.uploadImage(selection.upload) { repository.upload(address, it, context) }
                 is ImageSelectionResult.Rejected -> ComposerMediaResult.Failure(selection.reason)
             }
+            if (!repository.isCurrent(context)) return@launch
             completeComposerMediaResult(result)
         }
     }
@@ -607,7 +771,7 @@ class PaneActivity : AppCompatActivity() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
             startSpeechRecording()
         } else {
-            microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
+            requestMicrophonePermission()
         }
     }
 
@@ -616,6 +780,8 @@ class PaneActivity : AppCompatActivity() {
             currentState.sending || directTyping || semanticSurface?.ownsKeyboard == true || noEchoPrompt != null ||
             terminalWriteBlock() != null
         ) return
+        val context = repository.readContext(address.scope, address.paneId) ?: return
+        recordingContext = context
         speechRecorder.start().fold(
             onSuccess = {
                 showComposerMediaMessage(getString(R.string.pane_recording))
@@ -634,18 +800,23 @@ class PaneActivity : AppCompatActivity() {
 
     private fun stopSpeechRecording() {
         if (!speechRecorder.isRecording || composerMediaBusy) return
+        val context = recordingContext ?: return
+        if (!repository.isCurrent(context)) { speechRecorder.cancel(); return }
+        recordingContext = null
         val audio = speechRecorder.stop().getOrElse {
             showComposerMediaMessage(getString(R.string.pane_recording_unreadable))
             renderComposerMediaControls()
             return
         }
         lifecycleScope.launch {
+            if (!repository.isCurrent(context)) return@launch
             setComposerMediaBusy(true)
             val result = try {
-                composerMediaActions.transcribe(audio)
+                composerMediaActions.transcribe(audio) { repository.transcribe(it, context) }
             } finally {
-                setComposerMediaBusy(false)
+                if (repository.isCurrent(context)) setComposerMediaBusy(false)
             }
+            if (!repository.isCurrent(context)) return@launch
             completeComposerMediaResult(result)
         }
     }
@@ -1588,6 +1759,7 @@ class PaneActivity : AppCompatActivity() {
         pendingTerminalRevision = revision
         pendingTerminalText = text
         val generation = ++terminalRenderGeneration
+        val context = repository.readContext(address.scope, address.paneId)
         val lightTheme = isLightTheme()
         val rawMode = displayPreferences.getBoolean(PREF_RAW, false)
         val claudePane = isClaudePane
@@ -1607,20 +1779,18 @@ class PaneActivity : AppCompatActivity() {
         terminalRenderJob?.cancel()
         terminalRenderJob = lifecycleScope.launch {
             val prepared = withContext(Dispatchers.Default) {
-                PrecomputedTextCompat.create(
-                    prepareTerminalText(
-                        text,
-                        revision,
-                        lightTheme,
-                        rawMode,
-                        claudePane,
-                        displayAgent,
-                        omittedMarker,
-                    ),
-                    textMetrics,
+                val projection = prepareTerminalText(
+                    text,
+                    revision,
+                    lightTheme,
+                    rawMode,
+                    claudePane,
+                    displayAgent,
+                    omittedMarker,
                 )
+                projection.copy(text = PrecomputedTextCompat.create(projection.text, textMetrics))
             }
-            if (generation != terminalRenderGeneration || pendingTerminalRevision != revision ||
+            if (generation != terminalRenderGeneration || (context != null && !repository.isCurrent(context)) || pendingTerminalRevision != revision ||
                 pendingTerminalText != text
             ) {
                 return@launch
@@ -1632,7 +1802,7 @@ class PaneActivity : AppCompatActivity() {
     private fun commitTerminalRender(
         text: String,
         revision: Long,
-        prepared: CharSequence,
+        prepared: PreparedTerminalText,
         scrollToBottom: Boolean,
         afterRender: (() -> Unit)?,
     ) {
@@ -1640,7 +1810,8 @@ class PaneActivity : AppCompatActivity() {
         pendingTerminalText = null
         lastRawText = text
         renderedRevision = revision
-        renderedTerminalText = prepared
+        renderedTerminalText = prepared.text
+        renderedStatusRows = prepared.statusRows
         applyFindHighlights(resetCursor = false)
         afterRender?.invoke()
         if (!scrollToBottom) return
@@ -1710,6 +1881,8 @@ class PaneActivity : AppCompatActivity() {
         }
     }
 
+    private data class PreparedTerminalText(val text: CharSequence, val statusRows: List<String>)
+
     private fun prepareTerminalText(
         text: String,
         revision: Long,
@@ -1718,7 +1891,7 @@ class PaneActivity : AppCompatActivity() {
         claudePane: Boolean,
         displayAgent: String,
         omittedMarker: String,
-    ): CharSequence {
+    ): PreparedTerminalText {
         val boundedText = TerminalRenderWindow.limit(text, omittedMarker)
         val parsed = AnsiParser().parse(
             boundedText,
@@ -1732,23 +1905,21 @@ class PaneActivity : AppCompatActivity() {
             AgentSemanticParser.detect(displayAgent, boundedText, revision)?.takeIf(::hasNativeSemanticPresentation),
             rawMode,
         )
-        val projectedChrome: CharSequence = if (claudePane && !rawMode) {
+        val prepared = if (claudePane && !rawMode) {
             val chrome = ClaudeChromeFilter().split(
                 projected,
                 reflow = displayPreferences.getBoolean(PREF_WRAP, true),
             )
-            renderedStatusRows = chrome.statusRows.map { it.toString() }
-            chrome.body
+            PreparedTerminalText(TerminalLinks.apply(chrome.body), chrome.statusRows.map { it.toString() })
         } else {
-            renderedStatusRows = emptyList()
-            projected
+            PreparedTerminalText(TerminalLinks.apply(projected), emptyList())
         }
-        return TerminalLinks.apply(projectedChrome)
+        return prepared
     }
 
     /** Synchronous one-shot path for display toggles and deterministic view tests. */
     private fun renderTerminal(text: String) {
-        renderedTerminalText = prepareTerminalText(
+        val prepared = prepareTerminalText(
             text,
             renderedRevision ?: latestRevision ?: 0L,
             isLightTheme(),
@@ -1757,6 +1928,8 @@ class PaneActivity : AppCompatActivity() {
             agentName,
             getString(R.string.pane_terminal_output_omitted),
         )
+        renderedTerminalText = prepared.text
+        renderedStatusRows = prepared.statusRows
         applyFindHighlights(resetCursor = false)
     }
 
@@ -2817,7 +2990,7 @@ class PaneActivity : AppCompatActivity() {
         tabCreateInFlight = true
         binding.newTabButton.isEnabled = false
         lifecycleScope.launch {
-            when (val result = repository.createTab(address.scope, pane.workspaceId)) {
+            when (val result = currentActorResult { repository.createTab(address.scope, pane.workspaceId) } ?: return@launch) {
                 is ApiResult.Success -> if (result.value.ok) {
                     result.value.pane?.let(::openCreatedPane)
                         ?: showTransientMessage(getString(R.string.pane_new_tab_failed))
@@ -2894,11 +3067,12 @@ class PaneActivity : AppCompatActivity() {
                                     if (!launchDuplicateLock.tryStart(launcher.command)) return@setOnClickListener
                                     rebuild()
                                     val launchConnection = repository.connection.value
+                                    val launchContext = repository.readContext(address.scope, address.paneId) ?: return@setOnClickListener
                                     lifecycleScope.launch {
                                         try {
                                             if (!confirmLauncher(this@PaneActivity, launcher, address.scope.host ?: launchConnection?.origin?.value.orEmpty())) return@launch
-                                            if (repository.connection.value !== launchConnection) return@launch
-                                            when (val result = repository.launch(launcher.command, address.scope, address.paneId)) {
+                                            if (!repository.isCurrent(launchContext)) return@launch
+                                            when (val result = currentActorResult { repository.launch(launcher.command, address.scope, address.paneId) } ?: return@launch) {
                                                 is ApiResult.Success -> if (result.value.ok) {
                                                     result.value.pane?.let {
                                                         dialog.dismiss()
@@ -2916,7 +3090,7 @@ class PaneActivity : AppCompatActivity() {
                                             }
                                         } finally {
                                             launchDuplicateLock.finish(launcher.command)
-                                            if (!isFinishing) rebuild()
+                                            if (!isFinishing && repository.isCurrent(launchContext)) rebuild()
                                         }
                                     }
                                 }
@@ -2932,7 +3106,7 @@ class PaneActivity : AppCompatActivity() {
         dialog.setOnDismissListener { restorePaneFocus() }
         dialog.show()
         lifecycleScope.launch {
-            when (val result = repository.launchers(address.scope)) {
+            when (val result = currentActorResult { repository.launchers(address.scope) } ?: return@launch) {
                 is ApiResult.Success -> {
                     launchers = result.value.launchers
                     launcherHome = result.value.home
@@ -3849,7 +4023,7 @@ class PaneActivity : AppCompatActivity() {
         if (!canMutatePane(capability, target)) return
         paneActionInFlight = true
         lifecycleScope.launch {
-            when (val result = request()) {
+            when (val result = currentActorResult { request() } ?: return@launch) {
                 is ApiResult.Success -> if (result.value.ok) {
                     onSuccess()
                 } else {
@@ -3857,7 +4031,7 @@ class PaneActivity : AppCompatActivity() {
                 }
                 is ApiResult.NotModified -> showTransientMessage(getString(R.string.pane_action_failed))
                 is ApiResult.Failure -> {
-                    if (result.error is ApiFailure.Http && result.error.message in setOf("device not paired", "device expired")) {
+                    if (result.error is ApiFailure.Http && result.error.retiresPairing()) {
                         repository.demoteToReadOnly()
                     }
                     val uncertain = result.error is ApiFailure.Timeout || result.error is ApiFailure.Network ||
@@ -4085,6 +4259,9 @@ class PaneActivity : AppCompatActivity() {
         const val EXTRA_FRESH_PANE = "fresh_pane"
         private const val STATE_ATTACHMENT_PATH = "attachment_path"
         private const val STATE_ATTACHMENT_ORIGIN = "attachment_origin"
+        private const val STATE_ATTACHMENT_CUSTODY = "attachment_custody"
+        private const val STATE_IMAGE_PICKER_OUTSTANDING = "image_picker_outstanding"
+        private const val STATE_MICROPHONE_PERMISSION_OUTSTANDING = "microphone_permission_outstanding"
         private const val STATE_FRESH_PANE_SEEN = "fresh_pane_seen"
 
         internal fun filterAgentCommands(commands: List<AgentCommand>, query: String): List<AgentCommand> {

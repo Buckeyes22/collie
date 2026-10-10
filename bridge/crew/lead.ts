@@ -210,7 +210,7 @@ export interface CrewLeadDeps {
    */
   readonly hello?: (
     link: CrewLink,
-  ) => Promise<PeerOutcome<{ readonly version: string | null; readonly mux?: MuxConfig | null }>>;
+  ) => Promise<PeerOutcome<{ readonly version: string | null; readonly mux?: MuxConfig | null; readonly controlCapabilities?: Record<string, boolean> | null }>>;
   /** This collie's member id and label — the `servers[0]` entry (§9.2). */
   readonly self: { readonly id: string; readonly name: string };
   /**
@@ -354,6 +354,11 @@ export interface WarrantDistribution {
  * keeps emitting a solo body: `servers` present ⇔ a crew with peers exists.
  */
 export class CrewLead {
+  /** A new lead incarnation invalidates actors even when the HTTP origin is unchanged. */
+  private readonly controlEpoch = crypto.randomUUID();
+  controlAuthority() {
+    return { leadId: this.deps.self.id, epoch: this.controlEpoch };
+  }
   private readonly memory = new Map<string, PeerMemory>();
   /**
    * What each member last said its own multiplexer can do (M22/03), for `/api/config?host=<member>`.
@@ -369,6 +374,7 @@ export class CrewLead {
    * the same reason: the member's current answer is "nothing", and "nothing" means the lead's.
    */
   private readonly muxBlocks = new Map<string, MuxConfig>();
+  private readonly controlBlocks = new Map<string, Record<string, boolean>>();
   /**
    * Members whose CURRENT link has already answered a hello, so their block is as fresh as the link.
    *
@@ -465,6 +471,7 @@ export class CrewLead {
         // A member that left takes its declaration with it, so nothing can answer `?host=` for a
         // machine this lead no longer knows.
         this.muxBlocks.delete(id);
+        this.controlBlocks.delete(id);
         this.muxAsked.delete(id);
         this.loggedState.delete(id);
         this.contactResets.delete(id);
@@ -905,7 +912,11 @@ export class CrewLead {
         // M22/03: ASSIGNED, never merged. Whatever this hello said about that member's multiplexer
         // is now the whole answer for it, and a hello that said nothing drops the entry — which
         // reads as "use the lead's", not as "every capability present". See {@link muxBlocks}.
-        if (outcome.ok) this.setCapabilities(link.memberId, outcome.value.mux ?? null);
+        if (outcome.ok) {
+          this.setCapabilities(link.memberId, outcome.value.mux ?? null);
+          if (outcome.value.controlCapabilities) this.controlBlocks.set(link.memberId, outcome.value.controlCapabilities);
+          else this.controlBlocks.delete(link.memberId);
+        }
       }
     } catch (err) {
       // Defensive, exactly as `sweep` is: failure is a value everywhere in the crew client, so a
@@ -941,6 +952,10 @@ export class CrewLead {
    * gives every pane today. It dials nobody, for the reason {@link CrewLead.updateRows} does not: a
    * surface the phone polls must not be able to make the lead reach a machine.
    */
+  controlFor(memberId: string): Record<string, boolean> | null {
+    return this.controlBlocks.get(memberId) ?? null;
+  }
+
   muxFor(memberId: string): MuxConfig | null {
     return this.muxBlocks.get(memberId) ?? null;
   }
@@ -1114,12 +1129,12 @@ export class CrewLead {
    * `narrowPeerBody`, and this is its only call site — the merge narrows, nothing else does.
    */
   merge(local: SnapshotResponse, plan: SnapshotPlan): SnapshotResponse {
-    return mergeSnapshot(local, {
+    return { ...mergeSnapshot(local, {
       self: this.deps.self,
       peers: this.contributions().map((c) =>
         Object.assign({}, c, { body: narrowPeerBody(c.body, plan.peer(c.state.memberId)) }),
       ),
       now: this.now(),
-    });
+    }), controlAuthority: this.controlAuthority() };
   }
 }

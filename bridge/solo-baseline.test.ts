@@ -250,6 +250,7 @@ function soloSnapshot(registry: SessionRegistry): SnapshotResponse {
 // authorised change; every byte-level assertion in this file is untouched.
 
 const SNAPSHOT_KEYS = {
+  controlAuthority: true,
   bridge: true,
   device: true,
   agents: true,
@@ -401,10 +402,11 @@ const TAB_KEYS = {
 } satisfies Record<keyof TabView, true>;
 
 describe("solo zero-tax — wire shapes carry no crew dimension", () => {
-  test("SnapshotResponse carries `servers` as OPTIONAL and nothing else new", () => {
+  test("SnapshotResponse carries crew authority as OPTIONAL; solo bytes stay unchanged", () => {
     expect(Object.keys(SNAPSHOT_KEYS).toSorted()).toEqual([
       "agents",
       "bridge",
+      "controlAuthority",
       "device",
       "notifications",
       "servers",
@@ -981,6 +983,8 @@ const STATE_DIR_ENTRIES = [
   // The one-off lines a phone ran on this machine, newest first (ADR 0095). Written by use and by
   // nothing else: absent until the first one-off run that works.
   "commands-recent.json",
+  // Reserved only by declared, admitted control mutations; status reads create no file.
+  "control-operations.json",
   // The new-space sheet's folder list (M40/02, #289), and a §11 row RENEGOTIATED ON PURPOSE: it is
   // the one entry here a solo instance's own operator writes through ordinary use, from the phone.
   // Absent until the first space created with a folder or the first star — both are acts, and a

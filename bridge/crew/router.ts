@@ -285,6 +285,7 @@ export interface CrewSurface {
   readonly dispatch?: ApiDispatch;
   /** This collie's own capability declaration, for `hello`. See {@link MuxSource}. */
   readonly mux?: MuxSource;
+  readonly controlCapabilities?: () => Record<string, boolean>;
 }
 
 /**
@@ -328,6 +329,7 @@ export interface CrewRouterDeps {
   readonly dispatch?: ApiDispatch;
   /** Absent ⇒ `hello` carries no capability block, which reads as "use the lead's" (M22/03). */
   readonly mux?: MuxSource;
+  readonly controlCapabilities?: () => Record<string, boolean>;
   /**
    * Whether the listener this handler is mounted on was built pin-enforcing
    * (`bridge/crew/transport.ts`). **Defaults to `false`, which admits nothing but a signed request.**
@@ -567,6 +569,7 @@ type HelloBody = {
   pairingCollision?: string[];
   /** This peer's own capability declaration (§7.1's amendment of 2026-09-08). See {@link CREW_MUX_FIELD}. */
   mux?: MuxConfig;
+  controlCapabilities?: Record<string, boolean>;
 };
 
 /**
@@ -947,6 +950,8 @@ export function createCrewRouter(deps: CrewRouterDeps): CrewHandler {
       // machine that serves it: the lead answering its own `/api/mux/logo.svg` for a member's block
       // would put the LEAD's mark beside the MEMBER's name. Absent means "no picture for you", which
       // the header already renders as text alone.
+      const control = deps.controlCapabilities?.();
+      if (control !== undefined) hello.controlCapabilities = control;
       const declared = deps.mux?.() ?? null;
       if (declared !== null) hello.mux = portableMuxBlock(declared);
       return new Response(JSON.stringify(hello), {

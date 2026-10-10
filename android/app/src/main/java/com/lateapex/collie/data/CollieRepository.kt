@@ -45,6 +45,14 @@ import com.lateapex.collie.network.WorktreeOpenResponse
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import com.lateapex.collie.network.retiresPairing
+import com.lateapex.collie.network.ControlOperationResponse
+import com.lateapex.collie.ui.ReadSourceState
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.currentCoroutineContext
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -93,16 +101,35 @@ class CollieRepository(
     val deviceWriteAuthorization: StateFlow<DeviceWriteAuthorization> =
         mutableDeviceWriteAuthorization.asStateFlow()
 
-    fun writesAllowed(): Boolean =
-        connection.value?.let { configured ->
-            configured.isPaired && authorizationConnection === configured &&
-                mutableDeviceWriteAuthorization.value.permitsWrites
-        } == true
+    fun writesAllowed(scope: Scope = selectedScope.value, subjectIdentity: String? = activeSubject): Boolean {
+        val configured = connection.value ?: return false
+        val live = mutableReadSource.value as? ReadSourceState.Live ?: return false
+        return configured.isPaired && authorizationConnection === configured &&
+            mutableDeviceWriteAuthorization.value.permitsWrites &&
+            live.key.origin == configured.origin.value && live.key.connectionGeneration == generation.get() &&
+            live.key.leadEpoch == leadEpoch && live.key.host == scope.host && live.key.session == scope.session &&
+            (activeSubject == null || live.key.subjectIdentity == activeSubject) &&
+            (subjectIdentity == null || activeSubject == null || subjectIdentity == activeSubject)
+    }
 
     private val mutableScope = MutableStateFlow(Scope())
     val selectedScope: StateFlow<Scope> = mutableScope.asStateFlow()
 
-    private val cacheMutex = Mutex()
+    private val generation = AtomicLong(0)
+    private val navigationGeneration = AtomicLong(0)
+    @Volatile private var generationConnection: Connection? = connection.value
+    @Volatile private var leadEpoch: Long = 0
+    @Volatile private var observedLeadAuthority: String? = null
+    @Volatile var accessFailure: ApiFailure? = null
+        private set
+    @Volatile private var activeSubject: String? = null
+    private val scopeJobs = java.util.concurrent.ConcurrentHashMap.newKeySet<Job>()
+    private val authorityInvalidations = java.util.concurrent.CopyOnWriteArrayList<(AuthorityInvalidation) -> Unit>()
+    private val mutableReadSource = MutableStateFlow<ReadSourceState>(ReadSourceState.Unavailable(0))
+    val readSource: StateFlow<ReadSourceState> = mutableReadSource.asStateFlow()
+    private val refreshMutex = Mutex()
+    private val refreshes = mutableMapOf<Pair<ScopedRequestKey, Long>, kotlinx.coroutines.CompletableDeferred<ApiResult<ActionResponse>>>()
+    private val cacheLock = Any()
     private val paneCache = object : LinkedHashMap<PaneCacheKey, CachedPane>(16, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<PaneCacheKey, CachedPane>?): Boolean =
             size > maxPaneCacheEntries
@@ -113,7 +140,76 @@ class CollieRepository(
     }
 
     fun selectScope(scope: Scope) {
+        if (mutableScope.value == scope) return
+        invalidateAuthority(AuthorityInvalidation.SCOPE_CHANGED)
         mutableScope.value = scope
+        activeSubject = null
+    }
+
+    /** Screen owners select one lightweight target; replacement invalidates all old actors. */
+    fun selectSubject(scope: Scope, subjectIdentity: String?) {
+        if (selectedScope.value == scope && activeSubject == subjectIdentity) return
+        invalidateAuthority(AuthorityInvalidation.SCOPE_CHANGED)
+        mutableScope.value = scope
+        activeSubject = subjectIdentity
+    }
+
+    /** Sensitive feature custody retires synchronously; callbacks receive no credential. */
+    fun onAuthorityInvalidated(listener: (AuthorityInvalidation) -> Unit): AutoCloseable {
+        authorityInvalidations.add(listener)
+        return AutoCloseable { authorityInvalidations.remove(listener) }
+    }
+
+    @Synchronized
+    fun readContext(scope: Scope = selectedScope.value, subjectIdentity: String? = activeSubject): ScopedReadContext? {
+        val configured = connection.value ?: return null
+        if (generationConnection !== configured) {
+            generationConnection = configured
+            generation.incrementAndGet()
+            observedLeadAuthority = null
+            invalidateAuthority(AuthorityInvalidation.CONNECTION_CHANGED)
+        }
+        return ScopedReadContext(ScopedRequestKey(configured.origin.value, generation.get(), credentialIdentity(configured),
+            leadEpoch, scope.host, scope.session, subjectIdentity), configured, navigationGeneration.get())
+    }
+
+    /** Local custody identity only: stable across recreation and different for replacement credentials. */
+    private fun credentialIdentity(configured: Connection): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        digest.update("collie.native.custody.v1\u0000".toByteArray(Charsets.UTF_8))
+        for (value in listOf(configured.origin.value, configured.token.orEmpty())) {
+            val bytes = value.toByteArray(Charsets.UTF_8)
+            digest.update(java.nio.ByteBuffer.allocate(4).putInt(bytes.size).array())
+            digest.update(bytes)
+        }
+        return digest.digest().joinToString("") { "%02x".format(it.toInt() and 255) }
+    }
+
+    fun isCurrent(context: ScopedReadContext): Boolean = connection.value === context.connection &&
+        generation.get() == context.key.connectionGeneration && navigationGeneration.get() == context.navigationGeneration &&
+        leadEpoch == context.key.leadEpoch &&
+        (activeSubject == null || context.key.subjectIdentity == null || activeSubject == context.key.subjectIdentity)
+
+    fun setLeadEpoch(epoch: Long) {
+        if (leadEpoch == epoch) return
+        leadEpoch = epoch
+        invalidateAuthority(AuthorityInvalidation.LEAD_CHANGED)
+    }
+
+    fun showSavedCopy(capturedAt: Long) {
+        invalidateAuthority(AuthorityInvalidation.SAVED_COPY)
+        mutableReadSource.value = ReadSourceState.SavedCopy(capturedAt, generation.get())
+    }
+
+    private fun invalidateAuthority(reason: AuthorityInvalidation) {
+        navigationGeneration.incrementAndGet()
+        mutableDeviceWriteAuthorization.value = DeviceWriteAuthorization.UNVERIFIED
+        mutableReadSource.value = ReadSourceState.Unavailable(generation.get())
+        scopeJobs.toList().forEach { it.cancel() }
+        if (reason in setOf(AuthorityInvalidation.CONNECTION_CHANGED, AuthorityInvalidation.PAIRING_RETIRED, AuthorityInvalidation.DISCONNECTED)) {
+            synchronized(cacheLock) { paneCache.clear() }
+        }
+        authorityInvalidations.forEach { listener -> runCatching { listener(reason) } }
     }
 
     fun connectReadOnly(origin: String, label: String): Connection {
@@ -121,6 +217,7 @@ class CollieRepository(
         require(cleanLabel.isNotEmpty() && cleanLabel.length <= DeviceLabel.MAX_CHARS)
         val connection = Connection(originValidator.requireValid(origin), cleanLabel, null)
         mutableDeviceWriteAuthorization.value = DeviceWriteAuthorization.UNVERIFIED
+        invalidateAuthority(AuthorityInvalidation.CONNECTION_CHANGED)
         connectionStore.save(connection)
         return connection
     }
@@ -140,6 +237,7 @@ class CollieRepository(
                 val paired = result.value
                 if (paired is PairResult.Paired) {
                     mutableDeviceWriteAuthorization.value = DeviceWriteAuthorization.UNVERIFIED
+                    invalidateAuthority(AuthorityInvalidation.CONNECTION_CHANGED)
                     connectionStore.save(Connection(normalized, paired.label, paired.token))
                 }
                 result
@@ -149,21 +247,32 @@ class CollieRepository(
         }
     }
 
-    suspend fun snapshot(scope: Scope = selectedScope.value): ApiResult<SnapshotResponse> =
-        withConnection { configured ->
-            val result = api.snapshot(configured, scope)
-            if (result is ApiResult.Success && connection.value == configured) {
-                mutableDeviceWriteAuthorization.value = DeviceWriteAuthorization.from(result.value.device)
-                authorizationConnection = configured
+    suspend fun snapshot(scope: Scope = selectedScope.value): ApiResult<SnapshotResponse> {
+        val context = readContext(scope) ?: return notConnected()
+        val result = withConnection(scope) { configured -> api.snapshot(configured, scope) }
+        if (result !is ApiResult.Success) return result
+        if (!isCurrent(context)) return staleScope()
+        val authority = result.value.controlAuthority?.let { "${it.leadId}/${it.epoch}" }
+            ?: result.value.servers?.firstOrNull { it.isLead }?.id
+        if (authority != null) {
+            val previous = observedLeadAuthority
+            observedLeadAuthority = authority
+            if (previous != null && previous != authority) {
+                setLeadEpoch(leadEpoch + 1)
+                return staleScope()
             }
-            if (result is ApiResult.Success && !scope.viewAll && scope.session != null) {
-                // A narrow snapshot omits its session tags; they are supplied by the request.
-                result.copy(value = result.value.copy(
-                    agents = result.value.agents.map { it.copy(session = it.session ?: scope.session) },
-                    shellPanes = result.value.shellPanes.map { it.copy(session = it.session ?: scope.session) },
-                ))
-            } else result
         }
+        accessFailure = null
+        mutableDeviceWriteAuthorization.value = DeviceWriteAuthorization.from(result.value.device)
+        authorizationConnection = context.connection
+        mutableReadSource.value = ReadSourceState.Live(context.key, result.value.ts)
+        return if (!scope.viewAll && scope.session != null) {
+            result.copy(value = result.value.copy(
+                agents = result.value.agents.map { it.copy(session = it.session ?: scope.session) },
+                shellPanes = result.value.shellPanes.map { it.copy(session = it.session ?: scope.session) },
+            ))
+        } else result
+    }
 
     /** Resolve the implicit local host for pane joins, while keeping other crew identities intact. */
     suspend fun paneSnapshot(scope: Scope): ApiResult<SnapshotResponse> {
@@ -178,63 +287,93 @@ class CollieRepository(
         ))
     }
 
-    suspend fun config(scope: Scope = selectedScope.value): ApiResult<BridgeConfigResponse> = withConnection { api.config(it, scope) }
+    suspend fun config(scope: Scope = selectedScope.value): ApiResult<BridgeConfigResponse> = withConnection(scope) { api.config(it, scope) }
 
-    suspend fun refresh(scope: Scope = selectedScope.value): ApiResult<ActionResponse> =
-        withConnection { api.refresh(it, scope) }
+    suspend fun refresh(scope: Scope = selectedScope.value): ApiResult<ActionResponse> {
+        val context = readContext(scope) ?: return notConnected()
+        val refreshKey = context.key to context.navigationGeneration
+        var owns = false
+        val pending = refreshMutex.withLock {
+            refreshes[refreshKey] ?: kotlinx.coroutines.CompletableDeferred<ApiResult<ActionResponse>>().also {
+                refreshes[refreshKey] = it
+                owns = true
+            }
+        }
+        if (!owns) return pending.await().takeIf { isCurrent(context) } ?: staleScope()
+        try {
+            val result = withConnection(scope) { api.refresh(it, scope) }
+            pending.complete(result)
+            return result
+        } catch (error: Throwable) {
+            pending.completeExceptionally(error)
+            throw error
+        } finally {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                refreshMutex.withLock { refreshes.remove(refreshKey) }
+            }
+        }
+    }
 
-    suspend fun devices(): ApiResult<DevicesResponse> = withConnection(api::devices)
+    suspend fun controlOperation(scope: Scope, requestId: String): ApiResult<ControlOperationResponse> = withConnection(scope) {
+        val config = api.config(it, scope)
+        if (config is ApiResult.Failure) return@withConnection config
+        if (config !is ApiResult.Success || config.value.control?.supportsNew("controlOperations") != true) {
+            ApiResult.Failure(ApiFailure.Http(404, "Control operations are unsupported on this server", "capability.unsupported"))
+        } else api.controlOperation(it, scope, requestId)
+    }
+
+    suspend fun devices(): ApiResult<DevicesResponse> = withConnection(block = api::devices)
 
     suspend fun revokeDevice(label: String): ApiResult<DevicesResponse> = withWritableConnection {
         require(label.isNotBlank())
         api.revokeDevice(it, label)
     }
 
-    suspend fun crew(): ApiResult<CrewStatusResponse> = withConnection(api::crew)
+    suspend fun crew(): ApiResult<CrewStatusResponse> = withConnection(block = api::crew)
 
     suspend fun history(
         address: PaneAddress,
         limit: Int = 200,
         before: String? = null,
         etag: String? = null,
-    ): ApiResult<PaneHistoryResponse> = withConnection {
+    ): ApiResult<PaneHistoryResponse> = withConnection(address.scope, address.paneId) {
         api.history(it, address, limit, before, etag)
     }
 
-    suspend fun chat(address: PaneAddress, limit: Int = 200, after: ChatAfter? = null, before: ChatBefore? = null, etag: String? = null): ApiResult<PaneChatResponse> = withConnection {
+    suspend fun chat(address: PaneAddress, limit: Int = 200, after: ChatAfter? = null, before: ChatBefore? = null, etag: String? = null): ApiResult<PaneChatResponse> = withConnection(address.scope, address.paneId) {
         api.chat(it, address, limit, after, before, etag)
     }
 
-    suspend fun startLaunch(scope: Scope, target: StartTarget, requestId: String, cwd: String? = null): ApiResult<CreateResponse> = withWritableConnection {
+    suspend fun startLaunch(scope: Scope, target: StartTarget, requestId: String, cwd: String? = null): ApiResult<CreateResponse> = withWritableConnection(scope) {
         api.startLaunch(it, scope, target, requestId, cwd)
     }
 
-    suspend fun planWorktree(scope: Scope, cwd: String, branch: String? = null, parent: String? = null): ApiResult<WorktreePlanResponse> = withConnection {
+    suspend fun planWorktree(scope: Scope, cwd: String, branch: String? = null, parent: String? = null): ApiResult<WorktreePlanResponse> = withConnection(scope) {
         api.planWorktree(it, scope, cwd, branch, parent)
     }
 
-    suspend fun createWorktreeAt(scope: Scope, cwd: String, branch: String, target: StartTarget, requestId: String, base: WorktreeBase = WorktreeBase(), folder: WorktreeFolder = WorktreeFolder()): ApiResult<WorktreeOpenResponse> = withWritableConnection {
+    suspend fun createWorktreeAt(scope: Scope, cwd: String, branch: String, target: StartTarget, requestId: String, base: WorktreeBase = WorktreeBase(), folder: WorktreeFolder = WorktreeFolder()): ApiResult<WorktreeOpenResponse> = withWritableConnection(scope) {
         api.createWorktreeAt(it, scope, cwd, branch, target, requestId, base, folder)
     }
 
-    suspend fun closePane(address: PaneAddress): ApiResult<ActionResponse> = withWritableConnection {
+    suspend fun closePane(address: PaneAddress): ApiResult<ActionResponse> = withWritableConnection(address.scope, address.paneId) {
         api.closePane(it, address)
     }
 
-    suspend fun focusPane(address: PaneAddress): ApiResult<ActionResponse> = withWritableConnection {
+    suspend fun focusPane(address: PaneAddress): ApiResult<ActionResponse> = withWritableConnection(address.scope, address.paneId) {
         api.focusPane(it, address)
     }
 
     suspend fun renamePane(address: PaneAddress, label: String): ApiResult<ActionResponse> =
-        withWritableConnection { api.renamePane(it, address, label) }
+        withWritableConnection(address.scope, address.paneId) { api.renamePane(it, address, label) }
 
     suspend fun renameTab(scope: Scope, tabId: String, label: String): ApiResult<ActionResponse> =
-        withWritableConnection {
+        withWritableConnection(scope) {
             require(tabId.isNotBlank() && label.isNotBlank())
             api.renameTab(it, scope, tabId, label)
         }
 
-    suspend fun closeTab(scope: Scope, tabId: String): ApiResult<ActionResponse> = withWritableConnection {
+    suspend fun closeTab(scope: Scope, tabId: String): ApiResult<ActionResponse> = withWritableConnection(scope) {
         require(tabId.isNotBlank())
         api.closeTab(it, scope, tabId)
     }
@@ -244,7 +383,7 @@ class CollieRepository(
         workspaceId: String,
         label: String? = null,
         cwd: String? = null,
-    ): ApiResult<CreateResponse> = withWritableConnection {
+    ): ApiResult<CreateResponse> = withWritableConnection(scope) {
         require(workspaceId.isNotBlank())
         api.createTab(it, scope, workspaceId, label, cwd)
     }
@@ -253,19 +392,19 @@ class CollieRepository(
         scope: Scope = selectedScope.value,
         label: String? = null,
         cwd: String? = null,
-    ): ApiResult<CreateResponse> = withWritableConnection {
+    ): ApiResult<CreateResponse> = withWritableConnection(scope) {
         api.createWorkspace(it, scope, label, cwd)
     }
 
     suspend fun launchers(scope: Scope = selectedScope.value): ApiResult<LaunchersResponse> =
-        withConnection { api.launchers(it, scope) }
+        withConnection(scope) { api.launchers(it, scope) }
 
     /** `command` must be a value returned by [launchers], never caller-authored shell text. */
     suspend fun launch(
         command: String,
         scope: Scope = selectedScope.value,
         besidePaneId: String? = null,
-    ): ApiResult<CreateResponse> = withWritableConnection {
+    ): ApiResult<CreateResponse> = withWritableConnection(scope) {
         require(command.isNotBlank())
         api.launch(it, scope, command, besidePaneId)
     }
@@ -273,7 +412,7 @@ class CollieRepository(
     suspend fun listWorktrees(
         workspaceId: String,
         scope: Scope = selectedScope.value,
-    ): ApiResult<WorktreeListResponse> = withConnection {
+    ): ApiResult<WorktreeListResponse> = withConnection(scope) {
         require(workspaceId.isNotBlank())
         api.listWorktrees(it, scope, workspaceId)
     }
@@ -282,7 +421,7 @@ class CollieRepository(
         workspaceId: String,
         branch: String,
         scope: Scope = selectedScope.value,
-    ): ApiResult<WorktreeOpenResponse> = withWritableConnection {
+    ): ApiResult<WorktreeOpenResponse> = withWritableConnection(scope) {
         require(workspaceId.isNotBlank() && branch.isNotBlank())
         api.createWorktree(it, scope, workspaceId, branch)
     }
@@ -291,34 +430,38 @@ class CollieRepository(
         workspaceId: String,
         path: String,
         scope: Scope = selectedScope.value,
-    ): ApiResult<WorktreeOpenResponse> = withWritableConnection {
+    ): ApiResult<WorktreeOpenResponse> = withWritableConnection(scope) {
         require(workspaceId.isNotBlank() && path.isNotBlank())
         api.openWorktree(it, scope, workspaceId, path)
     }
 
-    suspend fun upload(address: PaneAddress, upload: ImageUpload): ApiResult<UploadResponse> =
-        withWritableConnection { api.upload(it, address, upload) }
+    suspend fun upload(address: PaneAddress, upload: ImageUpload, context: ScopedReadContext? = null): ApiResult<UploadResponse> =
+        withWritableConnection(address.scope, address.paneId) {
+            if (context != null && (!isCurrent(context) || it !== context.connection)) staleScope() else api.upload(it, address, upload)
+        }
 
-    suspend fun transcribe(audio: AudioUpload): ApiResult<SttResponse> =
-        withWritableConnection { api.transcribe(it, audio) }
+    suspend fun transcribe(audio: AudioUpload, context: ScopedReadContext? = null): ApiResult<SttResponse> =
+        withWritableConnection {
+            if (context != null && (!isCurrent(context) || it !== context.connection)) staleScope() else api.transcribe(it, audio)
+        }
 
     suspend fun notificationPreferences(): ApiResult<NotifyPreferences> =
-        withConnection(api::notificationPreferences)
+        withConnection(block = api::notificationPreferences)
 
     suspend fun setNotificationPreferences(
         patch: NotifyPreferencesPatch,
-    ): ApiResult<NotifyPreferences> = withConnection {
+    ): ApiResult<NotifyPreferences> = withDeviceOwnedConnection {
         api.setNotificationPreferences(it, patch)
     }
 
     suspend fun setNotificationSnooze(snoozedUntil: Long?): ApiResult<NotificationState> =
-        withConnection { api.setNotificationSnooze(it, snoozedUntil) }
+        withDeviceOwnedConnection { api.setNotificationSnooze(it, snoozedUntil) }
 
-    suspend fun checkForUpdates(): ApiResult<UpdateInfo> = withConnection(api::checkForUpdates)
+    suspend fun checkForUpdates(): ApiResult<UpdateInfo> = withConnection(block = api::checkForUpdates)
 
-    suspend fun updateState(): ApiResult<UpdateCheckResponse> = withConnection(api::updateState)
+    suspend fun updateState(): ApiResult<UpdateCheckResponse> = withConnection(block = api::updateState)
 
-    suspend fun standbyUpdate(): ApiResult<StandbyUpdateResponse> = withConnection(api::standbyUpdate)
+    suspend fun standbyUpdate(): ApiResult<StandbyUpdateResponse> = withConnection(block = api::standbyUpdate)
 
     suspend fun startUpdate(
         target: String,
@@ -329,7 +472,7 @@ class CollieRepository(
         api.startUpdate(it, target, major, peersOnly)
     }
 
-    suspend fun snoozeUpdate(): ApiResult<UpdateInfo> = withConnection(api::snoozeUpdate)
+    suspend fun snoozeUpdate(): ApiResult<UpdateInfo> = withDeviceOwnedConnection(block = api::snoozeUpdate)
 
     suspend fun readPane(
         address: PaneAddress,
@@ -342,11 +485,11 @@ class CollieRepository(
         // 600-line ETag for a later 1,000-line request can otherwise turn a valid grow into a 304
         // with the shorter cached body when a bridge keys ETags to pane revision rather than size.
         // Credential identity is part of the key so reconnecting cannot reuse another device's body.
-        val cached = cacheMutex.withLock { paneCache[cacheKey] }?.takeIf { it.lines == lines }
-        return when (val result = withConnectionOf(configured) { api.pane(it, address, lines, cached?.etag, markSeen) }) {
+        val cached = synchronized(cacheLock) { paneCache[cacheKey] }?.takeIf { it.lines == lines }
+        return when (val result = withConnectionOf(configured, address.scope, address.paneId) { api.pane(it, address, lines, cached?.etag, markSeen) }) {
             is ApiResult.Success -> {
                 val entry = CachedPane(result.value, result.etag, lines)
-                cacheMutex.withLock {
+                synchronized(cacheLock) {
                     if (connection.value !== configured) return ApiResult.Failure(ApiFailure.Protocol("Connection changed; refresh before trying again"))
                     paneCache[cacheKey] = entry
                 }
@@ -375,7 +518,7 @@ class CollieRepository(
         text: String,
         submit: Boolean = true,
         expectedPrompt: String? = null,
-    ): ApiResult<ActionResponse> = withWritableConnection {
+    ): ApiResult<ActionResponse> = withWritableConnection(address.scope, address.paneId) {
         require(text.isNotBlank())
         // Exactly one client call. Ambiguous terminal writes are never automatically retried.
         api.reply(it, address, text, submit, expectedPrompt)
@@ -383,22 +526,23 @@ class CollieRepository(
 
     /** Submit already-observed text with the operator's server-configured submit keys. */
     suspend fun submitReply(address: PaneAddress, expectedPrompt: String): ApiResult<ActionResponse> =
-        withWritableConnection { api.reply(it, address, "", true, expectedPrompt) }
+        withWritableConnection(address.scope, address.paneId) { api.reply(it, address, "", true, expectedPrompt) }
 
     suspend fun keys(
         address: PaneAddress,
         keys: List<String>,
         expectedPrompt: String? = null,
-    ): ApiResult<ActionResponse> = withWritableConnection {
+    ): ApiResult<ActionResponse> = withWritableConnection(address.scope, address.paneId) {
         require(keys.isNotEmpty() && keys.all(MuxKeyGrammar::isValid))
         // Exactly one client call. Ambiguous terminal writes are never automatically retried.
         api.keys(it, address, keys, expectedPrompt)
     }
 
     suspend fun disconnect() {
+        invalidateAuthority(AuthorityInvalidation.DISCONNECTED)
         connectionStore.clear()
         mutableDeviceWriteAuthorization.value = DeviceWriteAuthorization.UNVERIFIED
-        cacheMutex.withLock { paneCache.clear() }
+        synchronized(cacheLock) { paneCache.clear() }
         mutableScope.value = Scope()
     }
 
@@ -408,36 +552,81 @@ class CollieRepository(
         connectionStore.save(Connection(current.origin, current.label, null))
     }
 
-    private suspend fun <T> withConnection(block: suspend (Connection) -> ApiResult<T>): ApiResult<T> {
+    private suspend fun <T> withConnection(scope: Scope = selectedScope.value, subjectIdentity: String? = activeSubject, block: suspend (Connection) -> ApiResult<T>): ApiResult<T> {
         val configured = connection.value ?: return notConnected()
-        return withConnectionOf(configured, block)
+        return withConnectionOf(configured, scope, subjectIdentity, block = block)
     }
 
-    /** Keep the cached read and its credential on the same server across suspending cache locks. */
-    private suspend fun <T> withConnectionOf(configured: Connection, block: suspend (Connection) -> ApiResult<T>): ApiResult<T> {
-        if (connection.value !== configured) return ApiResult.Failure(ApiFailure.Protocol("Connection changed; refresh before trying again"))
-        val result = block(configured)
-        if (connection.value !== configured) return ApiResult.Failure(ApiFailure.Protocol("Connection changed; refresh before trying again"))
-        if (result is ApiResult.Failure && result.error is ApiFailure.Http && result.error.status == 403 &&
-            result.error.message in setOf("device not paired", "device expired") && connection.value === configured
-        ) {
-            demoteToReadOnly()
-            cacheMutex.withLock { paneCache.clear() }
-        }
-        return result
+    /** Child jobs cancel reads; writes discard stale replies without claiming dispatch failed. */
+    private suspend fun <T> withConnectionOf(configured: Connection, scope: Scope = selectedScope.value, subjectIdentity: String? = activeSubject, mutation: Boolean = false, block: suspend (Connection) -> ApiResult<T>): ApiResult<T> = try { coroutineScope {
+        val context = readContext(scope, subjectIdentity) ?: return@coroutineScope notConnected()
+        if (context.connection !== configured) return@coroutineScope staleScope()
+        val job = currentCoroutineContext()[Job]!!
+        if (!mutation) scopeJobs.add(job)
+        try {
+            val result = block(configured)
+            if (!isCurrent(context)) return@coroutineScope staleScope()
+            val responseAuthority = when (result) {
+                is ApiResult.Success -> result.controlAuthority
+                is ApiResult.NotModified -> result.controlAuthority
+                is ApiResult.Failure -> null
+            }
+            if (responseAuthority != null) {
+                val authority = "${responseAuthority.leadId}/${responseAuthority.epoch}"
+                val previous = observedLeadAuthority
+                observedLeadAuthority = authority
+                if (previous != null && previous != authority) {
+                    scopeJobs.remove(job)
+                    setLeadEpoch(leadEpoch + 1)
+                    return@coroutineScope staleScope()
+                }
+            }
+            if (result is ApiResult.Failure) {
+                mutableDeviceWriteAuthorization.value = DeviceWriteAuthorization.UNVERIFIED
+                mutableReadSource.value = ReadSourceState.Unavailable(context.key.connectionGeneration)
+                accessFailure = result.error
+                if (result.error is ApiFailure.Http && result.error.status in setOf(401, 403) && !result.error.retiresPairing()) {
+                    scopeJobs.remove(job)
+                    invalidateAuthority(AuthorityInvalidation.ACCESS_FROZEN)
+                } else authorityInvalidations.forEach { listener -> runCatching { listener(AuthorityInvalidation.ACCESS_FROZEN) } }
+                if (result.error is ApiFailure.Http && result.error.retiresPairing()) {
+                    scopeJobs.remove(job)
+                    invalidateAuthority(AuthorityInvalidation.PAIRING_RETIRED)
+                    demoteToReadOnly()
+                }
+            }
+            result
+        } finally { scopeJobs.remove(job) }
+    } } catch (cancelled: kotlinx.coroutines.CancellationException) {
+        // A cancelled request child must not kill its screen's poll loop. External screen/lifecycle
+        // cancellation still propagates normally; only an authority invalidation becomes a discard.
+        currentCoroutineContext().ensureActive()
+        staleScope()
+    }
+
+    private fun <T> staleScope(): ApiResult<T> = ApiResult.Failure(ApiFailure.Protocol("Connection or scope changed; refresh before trying again"))
+
+    /** Device-owned preferences keep read admission; saved/offline authority cannot dispatch writes. */
+    private suspend fun <T> withDeviceOwnedConnection(block: suspend (Connection) -> ApiResult<T>): ApiResult<T> {
+        if (readSource.value is ReadSourceState.SavedCopy ||
+            (accessFailure as? ApiFailure.Http)?.status in setOf(401, 403)) return staleScope()
+        val configured = connection.value ?: return notConnected()
+        return withConnectionOf(configured, mutation = true, block = block)
     }
 
     private suspend fun <T> withWritableConnection(
+        scope: Scope = selectedScope.value,
+        subjectIdentity: String? = activeSubject,
         block: suspend (Connection) -> ApiResult<T>,
     ): ApiResult<T> {
         val configured = connection.value ?: return notConnected()
         if (!configured.isPaired) {
             return ApiResult.Failure(ApiFailure.Protocol("Pair this device before controlling a terminal"))
         }
-        if (!writesAllowed()) {
+        if (!writesAllowed(scope, subjectIdentity)) {
             return ApiResult.Failure(ApiFailure.Http(403, "device not authorised", "device.not_authorised"))
         }
-        return withConnectionOf(configured, block)
+        return withConnectionOf(configured, scope, subjectIdentity, mutation = true, block = block)
     }
 
     private fun <T> notConnected(): ApiResult<T> =

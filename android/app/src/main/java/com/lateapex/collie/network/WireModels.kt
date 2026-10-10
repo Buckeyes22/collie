@@ -24,6 +24,8 @@ data class BridgeConfigResponse(
     val stt: SttCapability? = null,
     val upload: UploadCapability? = null,
     val redact: Boolean? = null,
+    val control: ControlCapabilityResponse? = null,
+    val hostControl: HostControlResponse? = null,
 )
 
 @Serializable
@@ -43,6 +45,8 @@ data class MuxConfigResponse(
 ) {
     /** Missing capability data fails open, matching the web client during mixed-version upgrades. */
     fun supports(capability: String): Boolean = capabilities[capability] != false
+    /** New operations require a positive declaration; legacy behavior stays limited to supports(). */
+    fun supportsNew(capability: String): Boolean = capabilities[capability] == true
 }
 
 @Serializable
@@ -168,8 +172,12 @@ data class DeviceAuthorization(
 )
 
 @Serializable
+data class ControlAuthority(val leadId: String, val epoch: String)
+
+@Serializable
 data class SnapshotResponse(
     val bridge: String,
+    val controlAuthority: ControlAuthority? = null,
     val device: DeviceAuthorization? = null,
     val agents: List<PaneSummary>,
     val shellPanes: List<PaneSummary>,

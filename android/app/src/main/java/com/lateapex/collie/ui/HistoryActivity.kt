@@ -50,6 +50,8 @@ import java.util.Locale
 class HistoryActivity : AppCompatActivity() {
     private lateinit var binding: ActivityHistoryBinding
     private lateinit var address: PaneAddress
+    private var authorityRegistration: AutoCloseable? = null
+    private var retired = false
     private var entries = emptyList<TranscriptEntry>()
     private var hasMore = false
     private var fileTruncated = false
@@ -111,6 +113,30 @@ class HistoryActivity : AppCompatActivity() {
         if (retainedReader.state != null && retainedReader.connection !== connectionAtOpen) {
             retainedReader.state = null
             retainedReader.findQuery = ""
+        }
+        repository.selectSubject(address.scope, address.paneId)
+        authorityRegistration = repository.onAuthorityInvalidated { reason ->
+            loading = false
+            if (reason in setOf(com.lateapex.collie.data.AuthorityInvalidation.PAIRING_RETIRED,
+                com.lateapex.collie.data.AuthorityInvalidation.CONNECTION_CHANGED, com.lateapex.collie.data.AuthorityInvalidation.DISCONNECTED)) {
+                retired = true
+                entries = emptyList()
+                retainedReader.state = null
+                retainedReader.findQuery = ""
+                retainedReader.connection = null
+                findHits = emptyList()
+                findStops = emptyList()
+                turnViews.clear()
+                historyTextTargets.clear()
+                expandedTools.clear()
+                pendingRestoreAnchor = null
+                loading = false
+                runOnUiThread {
+                    binding.historyFindQuery.text?.clear()
+                    binding.historyEntries.removeAllViews()
+                    finish()
+                }
+            }
         }
         retainedReader.connection = connectionAtOpen
         restoreReaderState(savedInstanceState)
@@ -184,7 +210,14 @@ class HistoryActivity : AppCompatActivity() {
         }
     }
 
+    override fun onDestroy() {
+        authorityRegistration?.close()
+        authorityRegistration = null
+        super.onDestroy()
+    }
+
     override fun onSaveInstanceState(outState: Bundle) {
+        if (retired) { super.onSaveInstanceState(outState); return }
         val anchor = captureReadAnchor()
         retainedReader.state = HistoryRetainedState(
             entries = entries,
@@ -292,12 +325,15 @@ class HistoryActivity : AppCompatActivity() {
         val oldest = entries.firstOrNull()?.uuid
         if (older && oldest == null) return
         val anchor = if (older) captureAnchor() else null
+        val context = repository.readContext(address.scope, address.paneId) ?: return
         loading = true
         binding.historyProgress.isVisible = !loadedOnce
         binding.historyLoadOlder.isEnabled = false
         if (loadedOnce) binding.historyLoadOlder.setText(R.string.history_loading)
         lifecycleScope.launch {
-            when (val result = repository.history(address, limit = HISTORY_PAGE_SIZE, before = oldest.takeIf { older })) {
+            val result = repository.history(address, limit = HISTORY_PAGE_SIZE, before = oldest.takeIf { older })
+            if (retired || !repository.isCurrent(context)) return@launch
+            when (result) {
                 is ApiResult.Success -> applyPage(result.value, older, anchor)
                 is ApiResult.Failure -> renderFailure(MainViewModel.describe(resources, result.error))
                 is ApiResult.NotModified -> renderFailure(getString(R.string.history_load_failed))

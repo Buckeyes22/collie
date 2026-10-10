@@ -53,6 +53,30 @@ class HardeningLifecycleApiClientTest {
     }
 
     @Test
+    fun unchangedPeerReadStillCarriesTheAnsweringLeaderIncarnation() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(304).setHeader("ETag", "same")
+            .setHeader("X-Collie-Lead-Id", "lead").setHeader("X-Collie-Lead-Epoch", "two"))
+        val result = api.pane(Connection(origin, "phone", "token"), PaneAddress(paneId = "p1"), 600, "same", false) as ApiResult.NotModified
+        assertEquals(ControlAuthority("lead", "two"), result.controlAuthority)
+    }
+
+    @Test
+    fun identicalProxyProseAndStatusOnlyRetiresWithAuthoritativeHeaders() = runBlocking {
+        val connection = Connection(origin, "phone", "token")
+        for ((source, factor, expected) in listOf(Triple(null, null, false), Triple("gateway", "pairing", false),
+            Triple("collie", "identity", false), Triple("collie", "pairing", true))) {
+            val response = MockResponse().setResponseCode(401).setBody("{\"error\":\"device expired\",\"code\":\"pairing.expired\",\"source\":\"collie\",\"factor\":\"pairing\"}")
+            if (source != null) response.setHeader("X-Collie-Error-Source", source)
+            if (factor != null) response.setHeader("X-Collie-Error-Factor", factor)
+            response.setHeader("X-Collie-Error-Code", "pairing.expired")
+            server.enqueue(response)
+            val result = api.health(connection) as ApiResult.Failure
+            assertEquals(expected, (result.error as ApiFailure.Http).retiresPairing())
+        }
+        assertEquals(4, server.requestCount)
+    }
+
+    @Test
     fun terminalWriteIsNotReplayedForServiceUnavailableRetryAfterZero() = runBlocking {
         server.enqueue(
             MockResponse()

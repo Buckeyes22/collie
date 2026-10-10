@@ -195,37 +195,49 @@ class DashboardShellActivityTest {
 
     @Test
     fun anUnopenedWorktreeCanStillBeOpenedAndWaitsForConfirmation() {
-        // Restored after the one-sheet rework dropped it: the old options sheet listed every
-        // linked worktree with no open space, and opening one asked first (NativeInteractionTest
-        // openWorktreeWaitsForConfirmation, removed 2026-09-10).
-        val activity = launchDashboardWithWorktreeRepos(listOf(repo("collie-app")))
-        val opened = mutableListOf<String>()
-        activity.worktreeLister = { _, _ ->
-            ApiResult.Success(
-                com.lateapex.collie.network.WorktreeListResponse(
-                    ok = true,
-                    worktrees = listOf(
-                        com.lateapex.collie.network.Worktree("/repos/collie-app", "main", "collie-app", linked = false, prunable = false),
-                        com.lateapex.collie.network.Worktree("/fixture/existing", "existing-fixture", null, linked = true, prunable = false),
-                        com.lateapex.collie.network.Worktree("/fixture/open", "already-open", "w9", linked = true, prunable = false),
-                    ),
-                ),
-                200,
-            )
+        val app = ApplicationProvider.getApplicationContext<com.lateapex.collie.CollieApplication>()
+        val store = object : com.lateapex.collie.data.ConnectionStore {
+            override val connection = kotlinx.coroutines.flow.MutableStateFlow<com.lateapex.collie.domain.Connection?>(
+                com.lateapex.collie.domain.Connection(com.lateapex.collie.domain.CollieOrigin("https://worktree.fixture/"), "phone", null))
+            override fun save(connection: com.lateapex.collie.domain.Connection) { this.connection.value = connection }
+            override fun clear() { connection.value = null }
         }
-        activity.worktreeOpener = { _, path, _ -> opened += path; ApiResult.Failure(com.lateapex.collie.network.ApiFailure.Network("fixture")) }
-        activity.startWorktreeFlowForTest()
-        val sheet = ShadowDialog.getLatestDialog() as CollieBottomSheetDialog
-        val existing = sheet.findViewById<ViewGroup>(R.id.worktree_existing)!!
-        val labels = (0 until existing.childCount).map(existing::getChildAt).filterIsInstance<TextView>().map { it.text.toString() }
-        assertTrue(labels.contains("existing-fixture"))
-        assertFalse(labels.contains("already-open"))
-        assertFalse(labels.contains("main"))
+        val original = app.container.repository
+        val field = app.container.javaClass.getDeclaredField("repository").apply { isAccessible = true }
+        field.set(app.container, com.lateapex.collie.data.CollieRepository(app.container.api, store, app.container.originValidator))
+        try {
+            // Restored after the one-sheet rework dropped it: the old options sheet listed every
+            // linked worktree with no open space, and opening one asked first (NativeInteractionTest
+            // openWorktreeWaitsForConfirmation, removed 2026-09-10).
+            val activity = launchDashboardWithWorktreeRepos(listOf(repo("collie-app")))
+            val opened = mutableListOf<String>()
+            activity.worktreeLister = { _, _ ->
+                ApiResult.Success(
+                    com.lateapex.collie.network.WorktreeListResponse(
+                        ok = true,
+                        worktrees = listOf(
+                            com.lateapex.collie.network.Worktree("/repos/collie-app", "main", "collie-app", linked = false, prunable = false),
+                            com.lateapex.collie.network.Worktree("/fixture/existing", "existing-fixture", null, linked = true, prunable = false),
+                            com.lateapex.collie.network.Worktree("/fixture/open", "already-open", "w9", linked = true, prunable = false),
+                        ),
+                    ),
+                    200,
+                )
+            }
+            activity.worktreeOpener = { _, path, _ -> opened += path; ApiResult.Failure(com.lateapex.collie.network.ApiFailure.Network("fixture")) }
+            activity.startWorktreeFlowForTest()
+            val sheet = ShadowDialog.getLatestDialog() as CollieBottomSheetDialog
+            val existing = sheet.findViewById<ViewGroup>(R.id.worktree_existing)!!
+            val labels = (0 until existing.childCount).map(existing::getChildAt).filterIsInstance<TextView>().map { it.text.toString() }
+            assertTrue(labels.contains("existing-fixture"))
+            assertFalse(labels.contains("already-open"))
+            assertFalse(labels.contains("main"))
 
-        (0 until existing.childCount).map(existing::getChildAt).filterIsInstance<TextView>().single { it.text == "existing-fixture" }.performClick()
-        val confirm = ShadowDialog.getLatestDialog() as CollieBottomSheetDialog
-        assertEquals(activity.getString(R.string.worktree_open_title), confirm.findViewById<TextView>(R.id.collie_sheet_title)!!.text.toString())
-        assertTrue(opened.isEmpty())
+            (0 until existing.childCount).map(existing::getChildAt).filterIsInstance<TextView>().single { it.text == "existing-fixture" }.performClick()
+            val confirm = ShadowDialog.getLatestDialog() as CollieBottomSheetDialog
+            assertEquals(activity.getString(R.string.worktree_open_title), confirm.findViewById<TextView>(R.id.collie_sheet_title)!!.text.toString())
+            assertTrue(opened.isEmpty())
+        } finally { field.set(app.container, original) }
     }
 
     private fun launchDashboardWithWorktreeRepos(repos: List<WorkspaceSummary>): MainActivity {

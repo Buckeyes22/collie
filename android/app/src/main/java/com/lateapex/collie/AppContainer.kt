@@ -42,4 +42,12 @@ class AppContainer(context: Context) {
     )
     val api: CollieApi = CollieApiClient(httpClient, json)
     val repository = CollieRepository(api, connectionStore, originValidator)
+    init {
+        repository.onAuthorityInvalidated { reason ->
+            if (reason in setOf(com.lateapex.collie.data.AuthorityInvalidation.PAIRING_RETIRED,
+                com.lateapex.collie.data.AuthorityInvalidation.CONNECTION_CHANGED, com.lateapex.collie.data.AuthorityInvalidation.DISCONNECTED)) {
+                nativePreferences.clearSensitiveContent()
+            }
+        }
+    }
 }

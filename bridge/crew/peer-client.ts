@@ -469,6 +469,7 @@ export interface HelloResult {
    * reads as `null`, which is the same "said nothing" the absent field carries.
    */
   readonly mux: MuxConfig | null;
+  readonly controlCapabilities?: Record<string, boolean> | null;
 }
 
 export interface PeerClientDeps {
@@ -661,6 +662,7 @@ export class PeerClient {
         pairingDigest,
         pairingCollision,
         mux,
+        controlCapabilities: parseControlCapabilities(outcome.value),
       },
     };
   }
@@ -1442,4 +1444,13 @@ function readMismatch(body: JsonObject | null) {
   const expected = typeof body?.expected === "number" ? body.expected : CREW_PROTOCOL_VERSION;
   const received = typeof body?.received === "number" ? body.received : null;
   return { reason: error, expected, received };
+}
+
+/** New features never inherit the lead's declarations; malformed or absent blocks fail closed. */
+export function parseControlCapabilities(value: JsonValue): Record<string, boolean> | null {
+  const rec = asRecord(value);
+  const block = rec === null ? null : asRecord(rec.controlCapabilities);
+  if (!block || Object.keys(block).length > 128) return null;
+  if (!Object.entries(block).every(([key, yes]) => /^[a-zA-Z][a-zA-Z0-9]{0,63}$/.test(key) && typeof yes === "boolean")) return null;
+  return Object.fromEntries(Object.entries(block).map(([key, yes]) => [key, yes === true]));
 }

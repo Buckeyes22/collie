@@ -193,4 +193,6 @@ Command: %2$s
 Folder: %3$s</string>
     <string name="launch_no_prompts_start">Start without prompts</string>
     <string name="pane_transcript_queued">Queued: %1$s</string>
+    <string name="refresh_ordinary_reload">This server does not support Look now. Reloaded its available snapshot.</string>
+    <string name="read_only_saved_copy">Saved copy from %1$s · actions unavailable</string>
 </resources>

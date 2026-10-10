@@ -1,3 +1,4 @@
+import { controlGate } from "../control/contracts.ts";
 import type { JsonObject } from "../json.ts";
 import { MASK_VERSION } from "../redact.ts";
 import { MAX_UPLOAD_OVERHEAD, uploadTooLarge } from "../uploads.ts";
@@ -62,6 +63,8 @@ export function crewRouteFor(pathname: string): string | null {
  * but not across a link (or, worse, the reverse).
  */
 const FORWARDABLE: readonly RegExp[] = [
+  /^refresh$/,
+  /^control\/operations\/[a-zA-Z0-9_-]{1,128}$/,
   /^pane\/[^/]+(?:\/(?:reply|keys|upload|close|rename|history|chat|changes|files|focus))?$/,
   // One picture under the Files root, as bytes (ADR 0090): off the disk of the member that owns the
   // pane or the space, like the Files read it sits beside. Mirrors `PANE_FILES_IMAGE_ROUTE` and
@@ -157,6 +160,7 @@ export type ForwardKind = "read" | "write";
  * an action segment types into or restructures a terminal.
  */
 export function forwardKind(route: string): ForwardKind {
+  if (route === "refresh" || route.startsWith("control/operations/")) return "read";
   // A GET that changes nothing, exactly like `pane/:id/history` — attempted even against a member
   // this lead has not heard from in a while, never refused before it is tried (§10.3's "a READ to a
   // dead member is still attempted").
@@ -205,6 +209,7 @@ export function forwardPaneId(route: string): string | undefined {
  * lead's line would have nothing to be read against.
  */
 export function forwardAuditAction(route: string): string | null {
+  if (route === "refresh" || route.startsWith("control/operations/")) return null;
   if (route === "tab") return "tab.create";
   if (route === "workspace") return "workspace.create";
   // `launch` writes either `workspace.launch` or `tab.launch`, decided by the body a route string
@@ -315,6 +320,9 @@ const PROXIED_RESPONSE_HEADERS = [
   "vary",
   // The picture's version, as plain data (ADR 0090): a file's size and mtime. Without them a member's
   // picture reaches the phone with no key to hold it under, so the phone would never keep it.
+  "x-collie-error-source",
+  "x-collie-error-factor",
+  "x-collie-error-code",
   "x-collie-file-size",
   "x-collie-file-mtime",
 ];
@@ -725,3 +733,11 @@ export async function forwardToPeer(req: Request, url: URL, deps: ForwardDeps): 
   return proxiedResponse(answered, req.headers.get("accept-encoding"));
 }
 
+
+/** Explicit admission, shared by lead and peer; transport read budgets alone are not permission. */
+export function forwardGate(route: string, method: string): "read" | "device-read" | "write" {
+  const control = controlGate(`/api/${route}`, method);
+  if (control) return control;
+  if (/^(?:pane|workspace)\/[^/]+\/files(?:\/image)?$/.test(route)) return "device-read";
+  return forwardKind(route);
+}

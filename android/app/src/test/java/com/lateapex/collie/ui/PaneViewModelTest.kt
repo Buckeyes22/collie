@@ -91,7 +91,7 @@ class PaneViewModelTest {
     @Test
     fun revokedWriteDemotesTheConnectionAndDisarmsControls() = runTest(dispatcher) {
         val fixture = fixture(
-            ApiResult.Failure(ApiFailure.Http(403, "device not paired", null)),
+            ApiResult.Failure(ApiFailure.Http(403, "device not paired", "pairing.unpaired", source = com.lateapex.collie.network.FailureSource.COLLIE, factor = com.lateapex.collie.network.FailureFactor.PAIRING)),
         )
         fixture.viewModel.refresh()
         advanceUntilIdle()
@@ -102,6 +102,17 @@ class PaneViewModelTest {
         assertFalse(fixture.viewModel.state.value.canWrite)
         assertFalse(fixture.store.connection.value?.isPaired == true)
         assertEquals(1, fixture.api.replyCalls)
+    }
+
+    @Test
+    fun unknownProvenanceWriteRefusalFreezesControlsWithoutErasingPairing() = runTest(dispatcher) {
+        val fixture = fixture(ApiResult.Failure(ApiFailure.Http(403, "device expired", "pairing.expired")))
+        fixture.viewModel.refresh(); advanceUntilIdle()
+        fixture.viewModel.sendReply("hello"); advanceUntilIdle()
+        assertFalse(fixture.viewModel.state.value.canWrite)
+        assertTrue(fixture.store.connection.value?.isPaired == true)
+        assertEquals(1, fixture.api.replyCalls)
+        assertNotNull(fixture.viewModel.state.value.error)
     }
 
     @Test

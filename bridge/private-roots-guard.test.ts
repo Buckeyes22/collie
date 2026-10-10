@@ -104,7 +104,7 @@ describe("every private write lives under a private root", () => {
 
   test("the scan finds the known sites, so a broken pattern cannot pass by finding nothing", () => {
     const found = sites().map((s) => s.file);
-    for (const file of ["bridge/push.ts", "bridge/pairing.ts", "bridge/crew/trust-store.ts", "cli/pairing.ts", "cli/push-keys.ts"]) {
+    for (const file of ["bridge/push.ts", "bridge/pairing.ts", "bridge/control/operations.ts", "bridge/crew/trust-store.ts", "cli/pairing.ts", "cli/push-keys.ts"]) {
       expect(found).toContain(file);
     }
   });

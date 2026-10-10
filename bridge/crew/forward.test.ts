@@ -1006,3 +1006,24 @@ describe("the added-launcher routes cross the link as writes", () => {
     expect(crewRouteFor("/api/launchers/added/")).toBeNull();
   });
 });
+
+describe("scoped foundation Crew reads", () => {
+  test("refresh and control receipts reach only the addressed peer and retain session/device", async () => {
+    const calls: { route: string; params: Record<string, string> }[] = [];
+    for (const [path, method] of [["refresh", "POST"], ["control/operations/intent", "GET"]]) {
+      const url = new URL(`https://lead.example/api/${path}?host=laptop&session=work`);
+      const res = await forwardToPeer(new Request(url, { method }), url, {
+        link: LINK, state: DEAD, device: "phone", maxUploadBytes: 1024,
+        transport: async (_link, route, params, init) => {
+          calls.push({ route, params });
+          expect(crewDeviceOf(new Request("https://peer", { headers: init.headers }))).toBe("phone");
+          return { ok: true, value: new Response("old peer unsupported", { status: 404 }), status: 404, member: "laptop", receivedAt: 1, date: null };
+        },
+      });
+      expect(res.status).toBe(404);
+      expect(forwardKind(path!)).toBe("read");
+      expect(forwardAuditAction(path!)).toBeNull();
+    }
+    expect(calls).toEqual([{ route: "refresh", params: { session: "work" } }, { route: "control/operations/intent", params: { session: "work" } }]);
+  });
+});
