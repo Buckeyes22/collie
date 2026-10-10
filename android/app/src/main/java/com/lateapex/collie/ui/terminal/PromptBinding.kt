@@ -35,35 +35,9 @@ object PromptBinding {
     }
 
     private fun codexComposerRegion(text: String): String? {
-        val framed = frame(text)
-        val lines = framed.plain
-        var status = lines.indexOfLast { it.trim().isNotEmpty() }
-        if (status < 0 || !CodexStatusRow.matches(framed.raw[status])) return null
-
-        var cursor = status - 1
-        var gap = 0
-        while (cursor >= 0 && lines[cursor].trim().isEmpty()) {
-            cursor--
-            if (++gap > 2) return null
-        }
-        if (cursor < 0) return null
-        val draftEnd = cursor
-        var scanned = 0
-        while (cursor >= 0 && scanned++ < 100) {
-            val row = lines[cursor].trimEnd()
-            if (row == "›" || row.startsWith("› ")) {
-                if (draftEnd != cursor) return null
-                if (!isEmptyCodexPrompt(text, cursor, row)) return null
-                val candidate = lines.subList(cursor, draftEnd + 1)
-                    .joinToString("\n") { it.trimEnd() }
-                return candidate.takeIf {
-                    it.length in 1..MAX_CHARS && verifyNearTail(text, it)
-                }
-            }
-            if (row.isEmpty() || !CODEX_CONTINUATION.matches(row)) return null
-            cursor--
-        }
-        return null
+        val composer = CodexComposer.locate(text) ?: return null
+        if (composer.draft() != null) return null
+        return composer.region().takeIf { it.length in 1..MAX_CHARS && verifyNearTail(text, it) }
     }
 
     /** Claude's `rule / ❯ / rule` input box, followed by at most the bridge's tail allowance. */
@@ -273,52 +247,6 @@ object PromptBinding {
             .replace('\r', '\n')
             .split('\n')
 
-    private fun isEmptyCodexPrompt(fullText: String, rowIndex: Int, plainRow: String): Boolean {
-        if (plainRow == "›") return true
-        val body = plainRow.removePrefix("› ").trimEnd()
-        if (body.isEmpty()) return true
-        if (body != CODEX_PLACEHOLDER) return false
-        val rawRow = fullText.replace("\r\n", "\n").replace('\r', '\n')
-            .split('\n')
-            .getOrNull(rowIndex)
-            ?: return false
-        return placeholderBodyIsDim(rawRow)
-    }
-
-    /** Codex distinguishes its empty placeholder from identical operator text with dim paint. */
-    private fun placeholderBodyIsDim(rawRow: String): Boolean {
-        var index = 0
-        var plainOffset = 0
-        var dim = false
-        var sawBody = false
-        while (index < rawRow.length) {
-            if (rawRow[index] == '\u001b' && index + 1 < rawRow.length && rawRow[index + 1] == '[') {
-                var end = index + 2
-                while (end < rawRow.length && rawRow[end].code !in 0x40..0x7e) end++
-                if (end >= rawRow.length) return false
-                if (rawRow[end] == 'm') {
-                    val body = rawRow.substring(index + 2, end)
-                    val codes = if (body.isBlank()) listOf(0) else body.split(';').mapNotNull(String::toIntOrNull)
-                    for (code in codes) when (code) {
-                        0, 22 -> dim = false
-                        2 -> dim = true
-                    }
-                }
-                index = end + 1
-                continue
-            }
-            val char = rawRow[index++]
-            if (plainOffset >= 2 && !char.isWhitespace()) {
-                sawBody = true
-                if (!dim) return false
-            }
-            plainOffset++
-        }
-        return sawBody
-    }
-
-    private val CODEX_CONTINUATION = Regex("^ {2}\\s*\\S.*$")
-    private const val CODEX_PLACEHOLDER = "Ask Codex to do anything"
     private val CLAUDE_BOTTOM = Regex("^─{8,}$")
     private val CLAUDE_LABELLED = Regex("^─+\\s+(.+)\\s+─+$")
     private const val CLAUDE_EMPTY_PLACEHOLDER = "Press up to edit queued messages"

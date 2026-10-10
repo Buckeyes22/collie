@@ -198,6 +198,7 @@
     <string name="pane_error_no_composer">A recognized free-text composer is not visible. Use only the named keys on this screen.</string>
     <string name="pane_reply_sent">Reply sent.</string>
     <string name="pane_error_text_delivered">Text was already typed, but submit did not complete. Check the pane; do not resend it blindly.</string>
+    <string name="pane_error_codex_unconfirmed">Codex has not confirmed this message. Check the terminal before sending it again.</string>
     <string name="pane_error_screen_changed_reply">The screen changed before the reply could be sent. Review it and try again.</string>
     <string name="pane_error_reply_refused">The reply was refused.</string>
     <string name="pane_action_send">Send</string>

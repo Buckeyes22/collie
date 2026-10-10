@@ -6,6 +6,8 @@ the first Android release from this fork.
 
 ## Unreleased
 
+- Recognize current Codex composers and verify typed replies and submission before clearing the phone draft.
+
 ## 1.5.2 - 2026-10-08
 
 - Start public builds without a private server address and accept internal deep links only for the configured server.

@@ -30,6 +30,7 @@ import com.lateapex.collie.network.TranscriptPart
 import com.lateapex.collie.ui.terminal.AgentSemanticParser
 import com.lateapex.collie.ui.terminal.TerminalDraft
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -570,6 +571,78 @@ class PaneViewModelTest {
         assertTrue(lines.any { it.first == "action" && it.second["name"] == "pane.send_key_sequence" })
     }
 
+    @Test
+    fun codexAcknowledgementWithoutConsumptionKeepsTheDraftAndWarns() = runTest(dispatcher) {
+        val f = fixture(ApiResult.Success(ActionResponse(ok = true), 200))
+        f.viewModel.refresh()
+        advanceUntilIdle()
+        f.api.replyHook = { message, submit ->
+            if (!submit) f.api.pane = f.api.pane.copy(text = "› $message\n\n  model · /repo · Context 50% left")
+        }
+        f.viewModel.sendReply("hello")
+        advanceUntilIdle()
+
+        assertEquals(2, f.api.replyCalls)
+        assertFalse(f.viewModel.state.value.clearReplyDraft)
+        assertFalse(f.viewModel.state.value.sending)
+        assertEquals(text(com.lateapex.collie.R.string.pane_error_codex_unconfirmed), f.viewModel.state.value.mutationError)
+    }
+
+    @Test
+    fun outputPollDuringComposerVerificationDoesNotRefuseAStableEmptyComposer() = runTest(dispatcher) {
+        val f = fixture(ApiResult.Success(ActionResponse(ok = true), 200))
+        f.viewModel.refresh()
+        advanceUntilIdle()
+        val gate = CompletableDeferred<Unit>()
+        var holdNextRead = true
+        f.api.paneHook = {
+            if (holdNextRead) {
+                holdNextRead = false
+                gate.await()
+            }
+        }
+        f.viewModel.sendReply("hello")
+        runCurrent()
+        f.api.pane = f.api.pane.copy(text = "more output\n${f.api.pane.text}", revision = 8)
+        f.viewModel.refresh()
+        runCurrent()
+        f.api.replyHook = { message, submit ->
+            f.api.pane = f.api.pane.copy(text = "› ${if (submit) "" else message}\n\n  model · /repo · Context 50% left")
+        }
+        gate.complete(Unit)
+        advanceUntilIdle()
+
+        assertEquals(2, f.api.replyCalls)
+        assertTrue(f.viewModel.state.value.clearReplyDraft)
+        assertNull(f.viewModel.state.value.mutationError)
+    }
+
+    @Test
+    fun modalPollDuringComposerVerificationStillRefusesTheWrite() = runTest(dispatcher) {
+        val f = fixture(ApiResult.Success(ActionResponse(ok = true), 200))
+        f.viewModel.refresh()
+        advanceUntilIdle()
+        val gate = CompletableDeferred<Unit>()
+        var holdNextRead = true
+        f.api.paneHook = {
+            if (holdNextRead) {
+                holdNextRead = false
+                gate.await()
+            }
+        }
+        f.viewModel.sendReply("hello")
+        runCurrent()
+        f.api.pane = f.api.pane.copy(text = "› 1. Yes\n  2. No\nPress enter to confirm or esc to cancel", revision = 8)
+        f.viewModel.refresh()
+        runCurrent()
+        gate.complete(Unit)
+        advanceUntilIdle()
+
+        assertEquals(0, f.api.replyCalls)
+        assertFalse(f.viewModel.state.value.clearReplyDraft)
+        assertNotNull(f.viewModel.state.value.mutationError)
+    }
+
     private fun entry(uuid: String) =
         TranscriptEntry(uuid, "2026-09-10T00:00:00Z", "assistant", listOf(TranscriptPart("text", text = uuid)))
 
@@ -625,6 +698,8 @@ class PaneViewModelTest {
         val keysCalls = mutableListOf<List<String>>()
         var snapshotHook: (() -> Unit)? = null
         var keysHook: ((List<String>) -> Unit)? = null
+        var replyHook: ((String, Boolean) -> Unit)? = null
+        var paneHook: (suspend () -> Unit)? = null
         var config = BridgeConfigResponse()
         var snapshotPanes = listOf(paneSummary(PaneAddress(paneId = "w1:p1")))
         var servers: List<ServerSummary>? = null
@@ -668,6 +743,7 @@ class PaneViewModelTest {
             markSeen: Boolean,
         ): ApiResult<PaneReadResponse> {
             paneLines += lines
+            paneHook?.invoke()
             return ApiResult.Success(pane, 200, etag = "\"7\"")
         }
 
@@ -679,6 +755,7 @@ class PaneViewModelTest {
             expectedPrompt: String?,
         ): ApiResult<ActionResponse> {
             replyCalls++
+            replyHook?.invoke(text, submit)
             lastReplyExpectedPrompt = expectedPrompt
             return replyResult
         }

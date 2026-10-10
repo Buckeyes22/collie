@@ -330,6 +330,10 @@ class CollieRepository(
         api.reply(it, address, text, submit, expectedPrompt)
     }
 
+    /** Submit already-observed text with the operator's server-configured submit keys. */
+    suspend fun submitReply(address: PaneAddress, expectedPrompt: String): ApiResult<ActionResponse> =
+        withWritableConnection { api.reply(it, address, "", true, expectedPrompt) }
+
     suspend fun keys(
         address: PaneAddress,
         keys: List<String>,

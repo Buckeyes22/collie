@@ -33,7 +33,7 @@ object TerminalComposerSemantics {
         val rawLines = tail.replace("\r\n", "\n").replace('\r', '\n').split('\n')
         return when (agent?.trim()?.lowercase()) {
             "claude" -> claudeDraft(rawLines, lines)
-            "codex" -> codexDraft(tail, lines)
+            "codex" -> CodexComposer.locate(tail)?.draft()?.let(::TerminalDraft)
             "grok" -> grokDraft(lines)
             "agy", "antigravity" -> agyDraft(lines)
             else -> null
@@ -105,29 +105,6 @@ object TerminalComposerSemantics {
     private fun String.indexOfFirst(from: Int, predicate: (Char) -> Boolean): Int {
         for (j in from until length) if (predicate(this[j])) return j
         return -1
-    }
-
-    private fun codexDraft(rawTail: String, lines: List<String>): TerminalDraft? {
-        val status = lines.indexOfLast(String::isNotBlank)
-        val rawLines = rawTail.replace("\r\n", "\n").replace('\r', '\n').split('\n')
-        if (status < 0 || !CodexStatusRow.matches(rawLines.getOrNull(status) ?: return null)) return null
-        var cursor = status - 1
-        while (cursor >= 0 && lines[cursor].isBlank()) cursor--
-        val end = cursor
-        var walked = 0
-        while (cursor >= 0 && walked++ < MAX_SCAN_LINES) {
-            val row = lines[cursor]
-            if (row.trimStart().startsWith("›")) {
-                val head = row.trimStart().removePrefix("›").trim()
-                val parts = mutableListOf(head)
-                for (index in cursor + 1..end) parts += lines[index].trim()
-                val draft = parts.filter(String::isNotEmpty).joinToString(" ")
-                return draft.takeIf(String::isNotEmpty)?.let(::TerminalDraft)
-            }
-            if (row.isBlank() || !row.startsWith("  ")) return null
-            cursor--
-        }
-        return null
     }
 
     private fun grokDraft(lines: List<String>): TerminalDraft? {

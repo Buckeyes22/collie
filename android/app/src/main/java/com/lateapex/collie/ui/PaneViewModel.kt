@@ -20,6 +20,7 @@ import com.lateapex.collie.network.ServerSummary
 import com.lateapex.collie.network.TabSummary
 import com.lateapex.collie.network.TranscriptEntry
 import com.lateapex.collie.ui.terminal.PromptBinding
+import com.lateapex.collie.ui.terminal.CodexReplyGuard
 import com.lateapex.collie.ui.terminal.SemanticAction
 import com.lateapex.collie.ui.terminal.SemanticActionGuard
 import com.lateapex.collie.ui.terminal.SemanticInteractionEngine
@@ -219,7 +220,7 @@ class PaneViewModel(
                     status = null,
                 )
                 val expectedPrompt = if (terminalDraftToClear == null) {
-                    refreshBinding(displayed, displayedPrompt) { PromptBinding.composerRegion(agent, it) }
+                    refreshBinding(displayed, displayedPrompt, { PromptBinding.composerRegion(agent, it) }, wholePane = agent != "codex")
                 } else {
                     clearTakenOverTerminalDraft(displayed, displayedPrompt, terminalDraftToClear)
                 } ?: return@launch
@@ -227,7 +228,30 @@ class PaneViewModel(
                     mutableState.value = mutableState.value.copy(sending = false)
                     return@launch
                 }
-                when (val result = repository.reply(address, clean, submit = true, expectedPrompt = expectedPrompt)) {
+                val result = if (agent == "codex") {
+                    CodexReplyGuard.send(
+                        clean,
+                        expectedPrompt,
+                        text(R.string.pane_error_codex_unconfirmed),
+                        reply = { message, submit, binding ->
+                            if (message.isEmpty()) repository.submitReply(address, binding)
+                            else repository.reply(address, message, submit, binding)
+                        },
+                        read = {
+                            when (val observed = repository.readPane(address, paneRequestedLines, markSeen = true)) {
+                                is ApiResult.Success -> observed.value.pane.let { pane ->
+                                    mutableState.value = mutableState.value.copy(
+                                        pane = pane,
+                                        composerReady = PromptBinding.composerRegion(agent, pane.text) != null,
+                                    )
+                                    pane.text
+                                }
+                                else -> null
+                            }
+                        },
+                    )
+                } else repository.reply(address, clean, submit = true, expectedPrompt = expectedPrompt)
+                when (result) {
                 is ApiResult.Success -> {
                     val response = result.value
                     mutableState.value = if (response.ok) {
@@ -239,7 +263,8 @@ class PaneViewModel(
                     } else if (response.textDelivered) {
                         mutableState.value.copy(
                             sending = false,
-                            mutationError = text(R.string.pane_error_text_delivered),
+                            mutationError = if (response.code == "codex_unconfirmed") response.error
+                                else text(R.string.pane_error_text_delivered),
                         )
                     } else if (response.code == "prompt_changed") {
                         mutableState.value.copy(
@@ -893,6 +918,7 @@ class PaneViewModel(
         displayed: PaneReadResponse,
         displayedBinding: String,
         derive: (String) -> String?,
+        wholePane: Boolean = true,
     ): String? {
         val fresh = when (val result = repository.readPane(address, paneRequestedLines, markSeen = true)) {
             is ApiResult.Success -> result.value.pane
@@ -913,7 +939,8 @@ class PaneViewModel(
         }
         val freshBinding = derive(fresh.text)
         val stillDisplayed = mutableState.value.pane?.let {
-            it.revision == displayed.revision && it.text == displayed.text
+            if (wholePane) it.revision == displayed.revision && it.text == displayed.text
+            else derive(it.text) == displayedBinding
         } == true
         if (!stillDisplayed || freshBinding == null || freshBinding != displayedBinding) {
             mutableState.value = mutableState.value.copy(
