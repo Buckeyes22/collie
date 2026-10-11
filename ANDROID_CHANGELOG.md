@@ -6,8 +6,12 @@ the first Android release from this fork.
 
 ## Unreleased
 
+- Decode declared string agent statuses and tolerate bounded object-shaped status compatibility while showing unfamiliar states as unknown.
+
+- Render structured history calls and question choices with distinct completed, denied and failed outcomes.
 - Bind reads, terminal actions and media to the current server, Crew leader, host, session and pane; freeze unverified access without discarding a valid pairing, and retire sensitive content for authoritative pairing refusal.
 - Make Space Look now refresh its owning session before reloading, with an ordinary-reload explanation for older peers.
+- Show declared mux topology freshness separately from the last successful read, negotiate bounded pane mirror growth, and label Find as search within loaded turns.
 
 - Sync the server foundation to upstream Collie 1.19.0 and adapt Crew, scoped configuration, paired reads, device expiry, mounted HTTPS origins, launcher and worktree contracts, upload capabilities, notification fields, and update progress.
 - Recover the requested session on narrow snapshots and resolve the local lead identity before pane write checks.

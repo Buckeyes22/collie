@@ -1365,6 +1365,12 @@ export function parseMuxReport(value: JsonValue): MuxConfig | null {
   if (latency?.kind === "bounded" && typeof latency.ms === "number" && Number.isFinite(latency.ms)) {
     wire.topologyLatency = { kind: "bounded", ms: latency.ms };
   }
+  const readLimits = asRecord(block.readLimits);
+  const maxRequestedLines = readLimits?.maxRequestedLines;
+  if (typeof maxRequestedLines === "number" && Number.isSafeInteger(maxRequestedLines) &&
+    maxRequestedLines > 0 && maxRequestedLines <= 10_000) {
+    wire.readLimits = { maxRequestedLines };
+  }
   return wire;
 }
 

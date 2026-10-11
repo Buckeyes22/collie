@@ -7,6 +7,9 @@ import androidx.test.core.app.ApplicationProvider
 import com.lateapex.collie.R
 import com.lateapex.collie.network.TranscriptEntry
 import com.lateapex.collie.network.TranscriptPart
+import com.lateapex.collie.network.TranscriptResult
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertNotSame
@@ -154,6 +157,76 @@ class TranscriptBodyViewTest {
         assertTrue(texts(view).any { it == "Queued: next message" })
         view.bind("claude", listOf(first, finished), false, emptyList())
         assertTrue(texts(view).none { it.contains("Queued:") })
+    }
+
+    @Test
+    fun sameUuidToolRevisionReplacesPendingContentAndRetainsDisclosure() {
+        val view = laidOutBody()
+        val pendingPart = TranscriptPart(
+            kind = "tool", name = "execute", summary = "Waiting for result", id = "call-1",
+            call = Json.parseToJsonElement("""{"kind":"execute","command":"dangerous-looking but inert"}""") as JsonObject,
+        )
+        val pending = TranscriptEntry("live-tool", "2026-09-10T00:00:00Z", "assistant", listOf(pendingPart), seq = 1)
+        view.bind("claude", listOf(pending), hasMore = false)
+
+        var row = view.turnViewForTest("live-tool")!!
+        val disclosure = descendants(row).first {
+            it.isClickable && it.contentDescription?.toString().orEmpty().contains("collapsed")
+        }
+        disclosure.performClick()
+        row = view.turnViewForTest("live-tool")!!
+        val expandedPendingRow = row
+        assertTrue(descendants(row).any { it.contentDescription?.toString().orEmpty().contains("expanded") })
+        assertTrue(texts(row).any { it.contains("dangerous-looking but inert") })
+
+        val completed = pending.copy(
+            seq = 2,
+            parts = listOf(pendingPart.copy(
+                summary = "Completed successfully",
+                result = TranscriptResult("Result revision two"),
+            )),
+        )
+        view.bind("claude", listOf(completed), hasMore = false)
+        row = view.turnViewForTest("live-tool")!!
+        assertNotSame(expandedPendingRow, row)
+        val completedRow = row
+        assertEquals(1, view.turnCountForTest())
+        assertTrue(descendants(row).any { it.contentDescription?.toString().orEmpty().contains("expanded") })
+        assertTrue(texts(row).any { it.contains("Completed") })
+        assertTrue(texts(row).any { it.contains("Result revision two") })
+        assertTrue(textViews(row).any { it.text.contains("Result revision two") && it.isShown })
+        assertTrue(texts(row).none { it.contains("Waiting for result") })
+
+        val deniedAndTruncated = completed.copy(
+            seq = 3,
+            parts = listOf(completed.parts.single().copy(
+                summary = "Denied with bounded output",
+                result = TranscriptResult("Operator policy denied this action", truncated = true, isError = true, denied = true),
+            )),
+        )
+        view.bind("claude", listOf(deniedAndTruncated), hasMore = false)
+        row = view.turnViewForTest("live-tool")!!
+        assertNotSame(completedRow, row)
+        val updatedTexts = texts(row)
+
+        assertEquals(1, view.turnCountForTest())
+        assertTrue(descendants(row).any { it.contentDescription?.toString().orEmpty().contains("expanded") })
+        assertTrue(updatedTexts.any { it.contains("Denied with bounded output") })
+        assertTrue(updatedTexts.any { it.contains("Denied by the operator") })
+        assertTrue(updatedTexts.any { it.contains("Operator policy denied this action") })
+        assertTrue(updatedTexts.any { it.contains("Output truncated") })
+        assertTrue(textViews(row).any { it.text.contains("Operator policy denied this action") && it.isShown })
+        assertTrue(updatedTexts.none { it.contains("Waiting for result") || it.contains("Result revision two") })
+    }
+
+    private fun descendants(root: View): List<View> = if (root !is ViewGroup) listOf(root) else buildList {
+        add(root)
+        for (index in 0 until root.childCount) addAll(descendants(root.getChildAt(index)))
+    }
+
+    private fun textViews(view: View): List<android.widget.TextView> = buildList {
+        if (view is android.widget.TextView) add(view)
+        if (view is ViewGroup) for (index in 0 until view.childCount) addAll(textViews(view.getChildAt(index)))
     }
 
     private fun texts(view: View): List<String> = buildList {

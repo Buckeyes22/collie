@@ -176,7 +176,11 @@ class SpaceActivity : AppCompatActivity() {
         if (content != null) {
             val tabs = resources.getQuantityString(R.plurals.space_tab_count, content.workspace.tabCount, content.workspace.tabCount)
             val panes = resources.getQuantityString(R.plurals.space_pane_count, content.workspace.paneCount, content.workspace.paneCount)
-            spaceSubtitle.text = getString(R.string.space_header_counts, tabs, panes)
+            val counts = getString(R.string.space_header_counts, tabs, panes)
+            val freshness = TopologyStatus.describe(state.mux, state.readSource.capturedAt, System.currentTimeMillis())
+            spaceSubtitle.text = "$counts · $freshness"
+            if (state.refreshNotice != null) spaceSubtitle.text = "${state.refreshNotice} · $freshness"
+            spaceSubtitle.contentDescription = "$counts. $freshness${state.refreshNotice?.let { ". $it" }.orEmpty()}"
             spaceSubtitle.isVisible = true
             tabsStrip.isVisible = content.tabs.isNotEmpty()
             renderTabStrip(content, state)

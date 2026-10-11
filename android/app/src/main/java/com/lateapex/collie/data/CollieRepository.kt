@@ -124,6 +124,9 @@ class CollieRepository(
         private set
     @Volatile private var activeSubject: String? = null
     private val scopeJobs = java.util.concurrent.ConcurrentHashMap.newKeySet<Job>()
+    private val readAdmissionLock = Any()
+    /** Suspending seam for deterministic admission-race tests; production remains a no-op. */
+    internal var beforeReadAdmissionForTesting: suspend () -> Unit = {}
     private val authorityInvalidations = java.util.concurrent.CopyOnWriteArrayList<(AuthorityInvalidation) -> Unit>()
     private val mutableReadSource = MutableStateFlow<ReadSourceState>(ReadSourceState.Unavailable(0))
     val readSource: StateFlow<ReadSourceState> = mutableReadSource.asStateFlow()
@@ -202,10 +205,13 @@ class CollieRepository(
     }
 
     private fun invalidateAuthority(reason: AuthorityInvalidation) {
-        navigationGeneration.incrementAndGet()
+        val jobs = synchronized(readAdmissionLock) {
+            navigationGeneration.incrementAndGet()
+            scopeJobs.toList()
+        }
         mutableDeviceWriteAuthorization.value = DeviceWriteAuthorization.UNVERIFIED
         mutableReadSource.value = ReadSourceState.Unavailable(generation.get())
-        scopeJobs.toList().forEach { it.cancel() }
+        jobs.forEach { it.cancel() }
         if (reason in setOf(AuthorityInvalidation.CONNECTION_CHANGED, AuthorityInvalidation.PAIRING_RETIRED, AuthorityInvalidation.DISCONNECTED)) {
             synchronized(cacheLock) { paneCache.clear() }
         }
@@ -247,9 +253,10 @@ class CollieRepository(
         }
     }
 
-    suspend fun snapshot(scope: Scope = selectedScope.value): ApiResult<SnapshotResponse> {
-        val context = readContext(scope) ?: return notConnected()
-        val result = withConnection(scope) { configured -> api.snapshot(configured, scope) }
+    suspend fun snapshot(scope: Scope = selectedScope.value, expectedContext: ScopedReadContext? = null): ApiResult<SnapshotResponse> {
+        val context = expectedContext ?: readContext(scope) ?: return notConnected()
+        if (context.key.host != scope.host || context.key.session != scope.session || !isCurrent(context)) return staleScope()
+        val result = withConnection(scope, context.key.subjectIdentity, context) { configured -> api.snapshot(configured, scope) }
         if (result !is ApiResult.Success) return result
         if (!isCurrent(context)) return staleScope()
         val authority = result.value.controlAuthority?.let { "${it.leadId}/${it.epoch}" }
@@ -275,8 +282,8 @@ class CollieRepository(
     }
 
     /** Resolve the implicit local host for pane joins, while keeping other crew identities intact. */
-    suspend fun paneSnapshot(scope: Scope): ApiResult<SnapshotResponse> {
-        val result = snapshot(scope)
+    suspend fun paneSnapshot(scope: Scope, expectedContext: ScopedReadContext? = null): ApiResult<SnapshotResponse> {
+        val result = snapshot(scope, expectedContext)
         if (result !is ApiResult.Success || scope.host != null) return result
         val lead = result.value.servers?.firstOrNull { it.isLead }?.id ?: return result
         return result.copy(value = result.value.copy(
@@ -289,8 +296,14 @@ class CollieRepository(
 
     suspend fun config(scope: Scope = selectedScope.value): ApiResult<BridgeConfigResponse> = withConnection(scope) { api.config(it, scope) }
 
-    suspend fun refresh(scope: Scope = selectedScope.value): ApiResult<ActionResponse> {
-        val context = readContext(scope) ?: return notConnected()
+    suspend fun refresh(
+        scope: Scope = selectedScope.value,
+        expectedContext: ScopedReadContext? = null,
+    ): ApiResult<ActionResponse> {
+        val context = expectedContext ?: readContext(scope) ?: return notConnected()
+        if (context.key.host != scope.host || context.key.session != scope.session || !isCurrent(context)) {
+            return staleScope()
+        }
         val refreshKey = context.key to context.navigationGeneration
         var owns = false
         val pending = refreshMutex.withLock {
@@ -301,9 +314,10 @@ class CollieRepository(
         }
         if (!owns) return pending.await().takeIf { isCurrent(context) } ?: staleScope()
         try {
-            val result = withConnection(scope) { api.refresh(it, scope) }
-            pending.complete(result)
-            return result
+            val result = withConnectionOf(context.connection, scope, context.key.subjectIdentity, expectedContext = context) { api.refresh(it, scope) }
+            val admittedResult = if (isCurrent(context)) result else staleScope()
+            pending.complete(admittedResult)
+            return admittedResult
         } catch (error: Throwable) {
             pending.completeExceptionally(error)
             throw error
@@ -488,6 +502,13 @@ class CollieRepository(
         val cached = synchronized(cacheLock) { paneCache[cacheKey] }?.takeIf { it.lines == lines }
         return when (val result = withConnectionOf(configured, address.scope, address.paneId) { api.pane(it, address, lines, cached?.etag, markSeen) }) {
             is ApiResult.Success -> {
+                val pane = result.value
+                val served = pane.servedLines
+                if ((pane.requestedLines != null && pane.requestedLines != lines) ||
+                    (served != null && (served !in 0..lines || served != pane.text.rowCount())) ||
+                    (pane.readableLines != null && pane.readableLines !in 0..100_000) ||
+                    (pane.limitReason != null && pane.limitReason !in setOf("adapter-ceiling", "server-ceiling", "available-depth"))
+                ) return ApiResult.Failure(ApiFailure.Protocol("Pane read returned inconsistent bounded-read metadata"))
                 val entry = CachedPane(result.value, result.etag, lines)
                 synchronized(cacheLock) {
                     if (connection.value !== configured) return ApiResult.Failure(ApiFailure.Protocol("Connection changed; refresh before trying again"))
@@ -512,6 +533,9 @@ class CollieRepository(
             is ApiResult.Failure -> result
         }
     }
+
+    private fun String.rowCount(): Int =
+        if (isEmpty()) 0 else split('\n').let { rows -> rows.size - if (endsWith('\n')) 1 else 0 }
 
     suspend fun reply(
         address: PaneAddress,
@@ -552,17 +576,31 @@ class CollieRepository(
         connectionStore.save(Connection(current.origin, current.label, null))
     }
 
-    private suspend fun <T> withConnection(scope: Scope = selectedScope.value, subjectIdentity: String? = activeSubject, block: suspend (Connection) -> ApiResult<T>): ApiResult<T> {
-        val configured = connection.value ?: return notConnected()
-        return withConnectionOf(configured, scope, subjectIdentity, block = block)
+    private suspend fun <T> withConnection(scope: Scope = selectedScope.value, subjectIdentity: String? = activeSubject, expectedContext: ScopedReadContext? = null, block: suspend (Connection) -> ApiResult<T>): ApiResult<T> {
+        val context = expectedContext ?: readContext(scope, subjectIdentity) ?: return notConnected()
+        if (!isCurrent(context) || context.key.host != scope.host || context.key.session != scope.session ||
+            (subjectIdentity != null && context.key.subjectIdentity != subjectIdentity)) return staleScope()
+        return withConnectionOf(context.connection, scope, context.key.subjectIdentity, expectedContext = context, block = block)
     }
 
     /** Child jobs cancel reads; writes discard stale replies without claiming dispatch failed. */
-    private suspend fun <T> withConnectionOf(configured: Connection, scope: Scope = selectedScope.value, subjectIdentity: String? = activeSubject, mutation: Boolean = false, block: suspend (Connection) -> ApiResult<T>): ApiResult<T> = try { coroutineScope {
-        val context = readContext(scope, subjectIdentity) ?: return@coroutineScope notConnected()
-        if (context.connection !== configured) return@coroutineScope staleScope()
-        val job = currentCoroutineContext()[Job]!!
-        if (!mutation) scopeJobs.add(job)
+    private suspend fun <T> withConnectionOf(configured: Connection, scope: Scope = selectedScope.value, subjectIdentity: String? = activeSubject, mutation: Boolean = false, expectedContext: ScopedReadContext? = null, block: suspend (Connection) -> ApiResult<T>): ApiResult<T> = try { coroutineScope {
+        val context = expectedContext ?: readContext(scope, subjectIdentity) ?: return@coroutineScope notConnected()
+        if (!isCurrent(context) || context.connection !== configured || context.key.host != scope.host || context.key.session != scope.session ||
+            (subjectIdentity != null && context.key.subjectIdentity != subjectIdentity)) return@coroutineScope staleScope()
+        val coroutineContext = currentCoroutineContext()
+        val job = coroutineContext[Job]!!
+        if (!mutation) {
+            beforeReadAdmissionForTesting()
+            val admitted = synchronized(readAdmissionLock) {
+                if (!isCurrent(context)) false else {
+                    scopeJobs.add(job)
+                    true
+                }
+            }
+            if (!admitted) return@coroutineScope staleScope()
+            coroutineContext.ensureActive()
+        }
         try {
             val result = block(configured)
             if (!isCurrent(context)) return@coroutineScope staleScope()
@@ -576,7 +614,7 @@ class CollieRepository(
                 val previous = observedLeadAuthority
                 observedLeadAuthority = authority
                 if (previous != null && previous != authority) {
-                    scopeJobs.remove(job)
+                    synchronized(readAdmissionLock) { scopeJobs.remove(job) }
                     setLeadEpoch(leadEpoch + 1)
                     return@coroutineScope staleScope()
                 }
@@ -586,17 +624,17 @@ class CollieRepository(
                 mutableReadSource.value = ReadSourceState.Unavailable(context.key.connectionGeneration)
                 accessFailure = result.error
                 if (result.error is ApiFailure.Http && result.error.status in setOf(401, 403) && !result.error.retiresPairing()) {
-                    scopeJobs.remove(job)
+                    synchronized(readAdmissionLock) { scopeJobs.remove(job) }
                     invalidateAuthority(AuthorityInvalidation.ACCESS_FROZEN)
                 } else authorityInvalidations.forEach { listener -> runCatching { listener(AuthorityInvalidation.ACCESS_FROZEN) } }
                 if (result.error is ApiFailure.Http && result.error.retiresPairing()) {
-                    scopeJobs.remove(job)
+                    synchronized(readAdmissionLock) { scopeJobs.remove(job) }
                     invalidateAuthority(AuthorityInvalidation.PAIRING_RETIRED)
                     demoteToReadOnly()
                 }
             }
             result
-        } finally { scopeJobs.remove(job) }
+        } finally { synchronized(readAdmissionLock) { scopeJobs.remove(job) } }
     } } catch (cancelled: kotlinx.coroutines.CancellationException) {
         // A cancelled request child must not kill its screen's poll loop. External screen/lifecycle
         // cancellation still propagates normally; only an authority invalidation becomes a discard.

@@ -135,6 +135,7 @@ const TUIOS_CAPABILITIES = declareCapabilities({
   // appearing, closing, moving and being renamed, and workspaces being renamed. So there is no
   // census and no number to state.
   topologyLatency: { kind: "push" },
+  readLimits: { maxRequestedLines: 10_000 },
   notes: {
     agentDetection:
       "tuios names the agent in a pane from its harness. An agent Collie has no harness for reads as a shell.",

@@ -85,6 +85,7 @@ import { fakeBeaconReader } from "./beacon/fake.ts";
 import { withAgentHints } from "./beacon/hint.ts";
 import { HerdrMux, herdrMuxFactory } from "./mux/herdr/adapter.ts";
 import { tmuxMuxFactory } from "./mux/tmux/adapter.ts";
+import type { MuxCapabilityDeclaration } from "./mux/capabilities.ts";
 import type { HerdrClient, PaneRead } from "./mux/herdr/client.ts";
 import {
   muxAck,
@@ -1140,6 +1141,7 @@ describe("paneReadResponse — pane read → REST body", () => {
       text: "hello",
       truncated: true,
       revision: 42,
+      servedLines: 1,
     });
   });
 
@@ -1164,6 +1166,15 @@ describe("paneReadResponse — pane read → REST body", () => {
       text: "",
       truncated: false,
       revision: 0,
+      servedLines: 0,
+    });
+  });
+
+  test("reports admitted size, actual rows, optional reported depth and honest ceiling reason", () => {
+    const read: MuxGrid = { paneId: "w1:p1", text: "a\nb", truncated: true, revision: 3 };
+    expect(paneReadResponse("w1:p1", read, undefined, false, 1_000, undefined, "adapter-ceiling")).toEqual({
+      paneId: "w1:p1", text: "a\nb", truncated: true, revision: 3,
+      requestedLines: 1_000, servedLines: 2, limitReason: "adapter-ceiling",
     });
   });
 });
@@ -2305,6 +2316,8 @@ describe("muxConfigBody — the capability declaration, as the phone reads it", 
     const wire = muxConfigBody({ mux: "reference", capabilities: everything });
     expect(Object.keys(wire.capabilities).toSorted()).toEqual([...MUX_CAPABILITIES].toSorted());
     for (const cap of MUX_CAPABILITIES) expect(wire.capabilities[cap]).toBe(true);
+    // Omitted declarations preserve the old-peer compatibility budget.
+    expect(wire.readLimits).toEqual({ maxRequestedLines: 1_000 });
   });
 
   test("an adapter missing capabilities says false, never omits the key", () => {
@@ -2313,6 +2326,7 @@ describe("muxConfigBody — the capability declaration, as the phone reads it", 
     expect(wire.capabilities.createSpace).toBe(false);
     expect(wire.capabilities.paneGrid).toBe(true);
     expect("agentSessionRef" in wire.capabilities).toBe(true);
+    expect(wire.readLimits).toEqual({ maxRequestedLines: 1_000 });
   });
 
   test("notes ride only for the capabilities the adapter LACKS", () => {
@@ -4107,6 +4121,61 @@ describe("readPane — the logical read is asked for only when it can repair som
     expect(body.logicalText).toBe("run:\nhttps://a.dev/auth?client=1&state=y then");
     // The mirror keeps its own rows, styling and all — only the hrefs are repaired downstream.
     expect(body.text).toBe(grid);
+  });
+
+  test("clamps a requested window to the adapter declaration and reports actual served rows", async () => {
+    let requested = 0;
+    const stub: Partial<MuxAdapter> = {
+      mux: "limited",
+      // SAFETY: the route reads only `readLimits` from the declaration stub below.
+      capabilities: { readLimits: { maxRequestedLines: 1_000 } } as MuxCapabilityDeclaration,
+      readGrid: (paneId, request) => {
+        requested = request.lines;
+        return Promise.resolve(muxOk({ paneId, text: Array.from({ length: request.lines }, (_, i) => `row-${i}`).join("\n"), truncated: true, revision: 1 }));
+      },
+    };
+    // SAFETY: the route reaches only mux name, read limit, and readGrid, all installed above.
+    const res = await readPane(stub as MuxAdapter, cfg(), "p", new URL("http://x/api/pane/p?lines=1500"), new Request("http://x/api/pane/p?lines=1500"));
+    // SAFETY: this route produced its JSON response directly above.
+    const body = await res.json() as PaneReadResponse;
+    expect(requested).toBe(1_000);
+    expect(body.requestedLines).toBe(1_000);
+    expect(body.servedLines).toBe(1_000);
+    expect(body.limitReason).toBe("adapter-ceiling");
+  });
+
+  test("reports the bridge hard ceiling when it is the tightest bound", async () => {
+    let requested = 0;
+    const stub: Partial<MuxAdapter> = {
+      mux: "reference",
+      // SAFETY: the route reads only `readLimits` from the declaration stub below.
+      capabilities: { readLimits: { maxRequestedLines: 10_000 } } as MuxCapabilityDeclaration,
+      readGrid: (paneId, request) => {
+        requested = request.lines;
+        return Promise.resolve(muxOk({ paneId, text: "one", truncated: true, revision: 1 }));
+      },
+    };
+    // SAFETY: the route reaches only mux name, read limit, and readGrid, all installed above.
+    const res = await readPane(stub as MuxAdapter, cfg(), "p", new URL("http://x/api/pane/p?lines=20000"), new Request("http://x/api/pane/p?lines=20000"));
+    // SAFETY: this route produced its JSON response directly above.
+    const body = await res.json() as PaneReadResponse;
+    expect(requested).toBe(10_000);
+    expect(body.requestedLines).toBe(10_000);
+    expect(body.servedLines).toBe(1);
+    expect(body.limitReason).toBe("server-ceiling");
+  });
+
+  test("refuses an adapter response that exceeds the admitted row budget", async () => {
+    const stub: Partial<MuxAdapter> = {
+      mux: "over-serving",
+      // SAFETY: the route reads only `readLimits` from the declaration stub below.
+      capabilities: { readLimits: { maxRequestedLines: 1_000 } } as MuxCapabilityDeclaration,
+      readGrid: (paneId) => Promise.resolve(muxOk({ paneId, text: "one\ntwo", truncated: false, revision: 1 })),
+    };
+    // SAFETY: the route reaches only mux name, capability limit, and readGrid, all installed above.
+    const res = await readPane(stub as MuxAdapter, cfg(), "p", new URL("http://x/api/pane/p?lines=1"), new Request("http://x/api/pane/p?lines=1"));
+    expect(res.status).toBe(502);
+    expect(await res.text()).toContain("exceeded admitted line limit");
   });
 });
 

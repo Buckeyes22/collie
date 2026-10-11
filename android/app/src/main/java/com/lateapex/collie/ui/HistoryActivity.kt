@@ -144,6 +144,7 @@ class HistoryActivity : AppCompatActivity() {
         binding.historyBackButton.setOnClickListener { finish() }
         binding.historyClose.setOnClickListener { finish() }
         binding.historyFindOpen.setOnClickListener(::openFind)
+        binding.historyFindQuery.contentDescription = getString(R.string.history_find_coverage)
         binding.historyFindClose.setOnClickListener { closeFind() }
         binding.historyLoadOlder.setOnClickListener { growUpward() }
         restoringFindState = true

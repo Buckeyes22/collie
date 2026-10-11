@@ -434,6 +434,7 @@ class PaneActivityTest {
             .associateBy { it.text.toString() }
         assertTrue(rows.getValue(activity.getString(R.string.pane_action_find)).isEnabled)
         assertTrue(rows.getValue(activity.getString(R.string.pane_action_history)).isEnabled)
+        assertTrue(rows.containsKey("topology timing: not declared · snapshot: not read"))
         assertFalse(rows.containsKey("Refresh"))
         assertFalse(rows.getValue(activity.getString(R.string.pane_action_read_only)).isEnabled)
     }
@@ -541,7 +542,10 @@ class PaneActivityTest {
         )
         val explanation = activity.findViewById<TextView>(R.id.pane_buffer_explanation)
         assertEquals(View.VISIBLE, explanation.visibility)
-        assertEquals(note, explanation.text.toString())
+        assertEquals(
+            "$note Served 1 of 600 requested rows; available depth is unknown.",
+            explanation.text.toString(),
+        )
 
         render(activity, state.copy(requestedLines = 1_000, loadingOlder = true))
         val loading = activity.findViewById<TextView>(R.id.pane_buffer_action)

@@ -35,6 +35,7 @@ export type {
   MuxCapabilityDeclaration,
   MuxSpaceCapacity,
   MuxTopologyLatency,
+  MuxReadLimits,
 } from "./capabilities.ts";
 export { declareCapabilities, MUX_CAPABILITIES, supportsCapability } from "./capabilities.ts";
 export type { MuxIdentity, MuxIdentityProblem } from "./identity.ts";

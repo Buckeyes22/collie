@@ -239,6 +239,7 @@ the same handlers. There is no second handler set, no second semantic, and no He
 
 | Method | Path | Backs onto (Verified) | Lead treatment |
 |---|---|---|---|
+| `POST` | `/crew/v1/refresh` | `POST /api/refresh?session=` | forwarded as a **read** — asks the addressed member to run its owning-mux refresh and coalesced census before the matching snapshot. The phone's paired read admission is preserved; the lead does not refresh its own runtime on a peer-scoped request. An older peer's 404 is returned unchanged, so the phone labels its subsequent ordinary snapshot reload as fallback rather than claiming a look-now succeeded |
 | `GET` | `/crew/v1/snapshot` | `GET /api/snapshot` (`bridge/server.ts:177`) | **merged** — the only merged route |
 | `GET` | `/crew/v1/pane/:id` | `GET /api/pane/:id` (`:276`) | proxied byte-for-byte |
 | `GET` | `/crew/v1/pane/:id/history` | `GET …/history` (`:277`) | proxied byte-for-byte |

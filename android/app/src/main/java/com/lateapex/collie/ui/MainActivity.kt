@@ -299,7 +299,10 @@ class MainActivity : AppCompatActivity() {
             }.orEmpty(),
         )
         dashboardProgress.visibility = if (state.loading && state.snapshot == null) View.VISIBLE else View.GONE
-        headerStatus.text = state.muxName?.let { getString(R.string.header_on, it) }.orEmpty()
+        val muxTitle = state.muxName?.let { getString(R.string.header_on, it) }
+        val freshness = TopologyStatus.describe(state.mux, state.lastSuccessAt, System.currentTimeMillis())
+        headerStatus.text = listOfNotNull(muxTitle, freshness).joinToString(" · ")
+        headerStatus.contentDescription = listOfNotNull(muxTitle, freshness).joinToString(". ")
         dashboardReadOnlyBanner.isVisible = state.configured && !state.writeAuthorized
         if (dashboardReadOnlyBanner.isVisible) {
             // Offline is not "unauthorised": until a snapshot has answered, the device's standing is
@@ -321,7 +324,7 @@ class MainActivity : AppCompatActivity() {
         renderScopeSwitchers(state)
         errorText.text = state.error.orEmpty()
         errorText.visibility = if (state.error == null) View.GONE else View.VISIBLE
-        val dashboardNotice = state.error.takeUnless { state.snapshotFailed || state.authError }
+        val dashboardNotice = state.refreshNotice ?: state.error.takeUnless { state.snapshotFailed || state.authError }
         dashboardErrorText.text = dashboardNotice.orEmpty()
         dashboardErrorText.visibility = if (dashboardNotice == null) View.GONE else View.VISIBLE
         if (state.pairingRequired) {

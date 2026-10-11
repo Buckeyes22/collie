@@ -138,13 +138,9 @@ export const ZELLIJ_SPACE_ID = "session";
  * How far behind the viewport a `recent` read is assumed to reach.
  *
  * zellij's own default `scroll_buffer_size` is 10 000 lines and no CLI verb reports the configured
- * value or the depth actually kept, so `readableLines` is that default plus the pane's rows. It is a
- * bound rather than a measurement, which is exactly what the contract asks the field for — and it is
- * the only thing that makes the mirror's "Load older" appear at all (../types.ts § readableLines).
- * An operator who lowered the setting gets a read that simply returns fewer lines.
+ * value or the depth actually kept, so there is no honest `readableLines` value to publish. Keep the
+ * requested read ceiling separate from available depth; the latter remains unknown for this adapter.
  */
-export const ASSUMED_SCROLLBACK_LINES = 10_000;
-
 /** How many request shapes one pane's revision tracker remembers. tmux's number, for tmux's reason. */
 const REVISION_VARIANTS = 32;
 
@@ -202,6 +198,7 @@ const ZELLIJ_CAPABILITIES = declareCapabilities({
   // something a caller can promise, so the declaration states the cadence that always holds
   // (watch.ts § the cadence).
   topologyLatency: { kind: "bounded", ms: ZELLIJ_CENSUS_MAX_MS },
+  readLimits: { maxRequestedLines: 10_000 },
   notes: {
     agentDetection:
       "zellij does not know what an agent is. It can say what a pane is called and which command it was launched with, and neither is the same question — so every pane reads as a shell rather than as a guess that would pick the wrong grammar.",
@@ -735,8 +732,6 @@ function toMuxPane(
     // The header's decision: zellij knows of no agent, so every pane is a shell of unknown status.
     agent: "shell",
     status: "unknown",
-    // A bound rather than a measurement — see ASSUMED_SCROLLBACK_LINES.
-    readableLines: raw.contentRows + ASSUMED_SCROLLBACK_LINES,
   };
   // The raw fact, reported as one: `terminal_command` is what zellij was asked to run here, which is
   // NOT who runs here (the header, and ../types.ts § MuxPane.agent). `agent` above stays `"shell"`.

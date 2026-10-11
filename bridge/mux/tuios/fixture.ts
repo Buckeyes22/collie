@@ -110,6 +110,12 @@ export class FakeTuios implements TuiosRpc {
     return this.recorded;
   }
 
+  /** Replace retained history for bounded pane-read fixtures. */
+  setScrollback(paneId: string, rows: readonly string[]): void {
+    const screen = this.screens.get(paneId);
+    if (screen !== undefined) screen.history.splice(0, screen.history.length, ...rows);
+  }
+
   /** The connection drops and comes back. Every request opens its own connection, as in client.ts. */
   async reconnect(): Promise<void> {
     this.connected = false;

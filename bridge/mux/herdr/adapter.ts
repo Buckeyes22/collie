@@ -113,9 +113,10 @@ const HERDR_CAPABILITIES = declareCapabilities({
   // Herdr announces every structure change on `events.subscribe`, so there is no census and no
   // number to state (HERDR_API.md § Event stream). `refresh()` is correspondingly a no-op below.
   topologyLatency: { kind: "push" },
+  readLimits: { maxRequestedLines: 1_000 },
   notes: {
     gridScrollback:
-      "Herdr reports a pane's scrollback depth, so how far back a read can reach is known rather than guessed (MuxPane.readableLines) — its own `truncated` flag is always false and must not be gated on.",
+      "Herdr reports the pane's scroll-ring depth through readableLines; its bounded read also reports omitted rows. Neither fact proves exhaustive agent-owned alternate-screen history.",
   },
   // Herdr's workspaces are Collie's spaces, and there are as many as the operator created.
   spaces: "many",

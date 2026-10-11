@@ -147,9 +147,9 @@ export interface WirePane {
    * +1 is the trailing newline). Exact once scrollback exists; an OVER-estimate on a near-empty
    * screen, where trailing blank rows are trimmed from the read (0+31 → 4 lines read).
    *
-   * This is the only trustworthy "is there more to load" signal Herdr gives us — `PaneRead.truncated`
-   * is ALWAYS false, even when a read demonstrably cut scrollback off (200 requested of 6895
-   * available still reports `truncated: false`). Gate on this, never on `truncated`.
+   * This is the reported pane scroll-ring depth, not proof that an agent's alternate-screen output is
+   * recoverable. Herdr 0.9.3 also reports `PaneRead.truncated` when its bounded line helper omits
+   * rows; retain both facts without treating `truncated: false` as exhaustive history.
    */
   scroll?: {
     offset_from_bottom: number;

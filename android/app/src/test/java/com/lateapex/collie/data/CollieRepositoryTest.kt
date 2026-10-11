@@ -85,6 +85,25 @@ class CollieRepositoryTest {
     }
 
     @Test
+    fun hostileBoundedReadMetadataIsRejectedBeforeItCanGrowTheWindow() = runBlocking {
+        api.paneValue = PaneReadResponse(
+            "w1:p1", "two\nrows", false, 1,
+            requestedLines = 600,
+            servedLines = 601,
+            readableLines = 1_000_000,
+            limitReason = "future-unbounded",
+        )
+
+        val result = repository.readPane(PaneAddress(paneId = "w1:p1"), lines = 600)
+
+        assertTrue(result is ApiResult.Failure)
+        assertEquals(
+            ApiFailure.Protocol("Pane read returned inconsistent bounded-read metadata"),
+            (result as ApiResult.Failure).error,
+        )
+    }
+
+    @Test
     fun ambiguousMutationFailureIsReturnedAfterExactlyOneAttempt() = runBlocking {
         authorizeWrites()
         api.replyResult = ApiResult.Failure(
@@ -309,6 +328,7 @@ class CollieRepositoryTest {
         var snapshotFailure = false
         var snapshotValue: SnapshotResponse? = null
         var paneFailure: ApiFailure? = null
+        var paneValue: PaneReadResponse? = null
 
         override suspend fun pane(
             connection: Connection,
@@ -320,6 +340,7 @@ class CollieRepositoryTest {
             paneLines += lines
             paneEtags += etag
             paneFailure?.let { return ApiResult.Failure(it) }
+            paneValue?.let { return ApiResult.Success(it, status = 200, etag = "\"bounded\"") }
             if (etag != null) return ApiResult.NotModified(etag)
             val host = address.scope.host ?: "local"
             return ApiResult.Success(

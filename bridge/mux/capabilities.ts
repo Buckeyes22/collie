@@ -72,6 +72,11 @@ export type MuxTopologyLatency =
   | { readonly kind: "push" }
   | { readonly kind: "bounded"; readonly ms: number };
 
+/** The largest single pane-read request this adapter accepts without changing its semantics. */
+export interface MuxReadLimits {
+  readonly maxRequestedLines: number;
+}
+
 /**
  * The route that consumes each capability — the evidence the set was derived rather than invented.
  *
@@ -155,6 +160,8 @@ export interface MuxCapabilityDeclaration {
    * adapter never said.
    */
   readonly topologyLatency: MuxTopologyLatency;
+  /** Maximum request size, independent of how much history an individual pane retained. */
+  readonly readLimits: MuxReadLimits;
 }
 
 /**
@@ -180,6 +187,8 @@ export interface MuxCapabilityInput {
   readonly spaces?: MuxSpaceCapacity;
   /** Required — see {@link MuxCapabilityDeclaration.topologyLatency} for why there is no default. */
   readonly topologyLatency: MuxTopologyLatency;
+  /** Maximum safe request size; omitted declarations use the conservative legacy ceiling. */
+  readonly readLimits?: MuxReadLimits;
 }
 
 /**
@@ -190,6 +199,10 @@ export interface MuxCapabilityInput {
  * behaviour none of them implement.
  */
 export function declareCapabilities(input: MuxCapabilityInput): MuxCapabilityDeclaration {
+  const maxRequestedLines = input.readLimits?.maxRequestedLines ?? 1_000;
+  if (!Number.isSafeInteger(maxRequestedLines) || maxRequestedLines < 1 || maxRequestedLines > 10_000) {
+    throw new RangeError("mux read limit must be an integer between 1 and 10000");
+  }
   const claimed = new Set<MuxCapability>(input.supports);
   // Spelled out rather than mapped over MUX_CAPABILITIES, and that is the point: the compiler now
   // demands an answer for every capability, so adding one to the list above fails the build here
@@ -221,6 +234,7 @@ export function declareCapabilities(input: MuxCapabilityInput): MuxCapabilityDec
     notes: input.notes ?? {},
     spaces: input.spaces ?? "many",
     topologyLatency: input.topologyLatency,
+    readLimits: { maxRequestedLines },
   };
 }
 

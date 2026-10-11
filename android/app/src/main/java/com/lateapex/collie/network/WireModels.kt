@@ -6,6 +6,7 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonNames
+import kotlinx.serialization.json.JsonPrimitive
 
 @Serializable
 data class HealthResponse(
@@ -42,11 +43,26 @@ data class MuxConfigResponse(
     val notes: Map<String, String> = emptyMap(),
     val spaces: String? = null,
     val unsupportedKeys: List<String> = emptyList(),
+    val topologyLatency: MuxTopologyLatencyResponse? = null,
+    val readLimits: MuxReadLimitsResponse? = null,
 ) {
     /** Missing capability data fails open, matching the web client during mixed-version upgrades. */
     fun supports(capability: String): Boolean = capabilities[capability] != false
     /** New operations require a positive declaration; legacy behavior stays limited to supports(). */
     fun supportsNew(capability: String): Boolean = capabilities[capability] == true
+}
+
+@Serializable
+data class MuxTopologyLatencyResponse(val kind: String, val ms: JsonPrimitive? = null) {
+    fun displayBoundMs(): Long? = ms?.takeIf { kind == "bounded" && !it.isString }?.content
+        ?.toLongOrNull()?.takeIf { it > 0L && it <= 12_000L }
+    fun isPush(): Boolean = kind == "push"
+}
+
+@Serializable
+data class MuxReadLimitsResponse(val maxRequestedLines: JsonPrimitive? = null) {
+    fun verifiedMaximum(): Int? = maxRequestedLines?.takeIf { !it.isString }?.content
+        ?.toIntOrNull()?.takeIf { it in 1..10_000 }
 }
 
 @Serializable
@@ -75,7 +91,7 @@ data class OperatorKeyRow(
     val danger: Boolean = false,
 )
 
-@Serializable
+@Serializable(with = AgentStatusSerializer::class)
 enum class AgentStatus {
     @SerialName("idle") IDLE,
     @SerialName("working") WORKING,
@@ -99,6 +115,7 @@ data class PaneSummary(
     val paneLabel: String? = null,
     val sessionName: String? = null,
     val hasSession: Boolean? = null,
+    /** Mux-reported depth may lag a shrinking buffer and never proves agent history exhaustive. */
     val readableLines: Int? = null,
     val tabLabel: String? = null,
     val soleTabName: String? = null,
@@ -200,6 +217,10 @@ data class PaneReadResponse(
     val truncated: Boolean,
     val revision: Long,
     val linkText: String? = null,
+    val requestedLines: Int? = null,
+    val servedLines: Int? = null,
+    val readableLines: Int? = null,
+    val limitReason: String? = null,
 )
 
 @Serializable

@@ -195,6 +195,7 @@ const TMUX_CAPABILITIES = declareCapabilities({
   // The census exists for the sessions no control client is attached to and for a tmux too old to
   // have control mode at all — stating 5 s here would describe the fallback rather than the promise.
   topologyLatency: { kind: "push" },
+  readLimits: { maxRequestedLines: 10_000 },
   notes: {
     agentDetection:
       "tmux does not know what an agent is. It can say which command is in the foreground, and that is not the same question — so every pane reads as a shell rather than as a guess that would pick the wrong grammar.",

@@ -1510,6 +1510,12 @@ describe("parseMuxReport — a member's declaration, bounded and re-checked", ()
     expect(
       Object.hasOwn(parseMuxReport({ mux: { ...block, topologyLatency: { kind: "bounded" } } })!, "topologyLatency"),
     ).toBe(false);
+    expect(parseMuxReport({ mux: { ...block, readLimits: { maxRequestedLines: 10_000 } } })?.readLimits)
+      .toEqual({ maxRequestedLines: 10_000 });
+    for (const maxRequestedLines of [0, -1, 10_001, 1.5, "1000"]) {
+      expect(Object.hasOwn(parseMuxReport({ mux: { ...block, readLimits: { maxRequestedLines } } })!, "readLimits"))
+        .toBe(false);
+    }
   });
 
   test("strings and collections are capped, so a member cannot make the lead serve an unbounded body", () => {

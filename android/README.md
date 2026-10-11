@@ -125,6 +125,8 @@ server revocation action.
   is on, an AskUserQuestion-style dialog is up, no journal exists for this pane yet, or the
   operator manually taps "Show terminal" in the body row; an unrecognized surface such as
   Claude's `/cost` is not auto-detected.
+- Transcript tool cards preserve structured file, command, search, task, fetch and question details;
+  historic questions are read-only, and denied calls are labeled separately from execution failures.
 - The Keys drawer keeps primary keys and modifiers together, wrapping on narrow phones to retain
   48 dp touch targets. Its More sheet holds presets and function keys.
 - The worktree sheet lists a repository's linked worktrees that have no open space; selecting one

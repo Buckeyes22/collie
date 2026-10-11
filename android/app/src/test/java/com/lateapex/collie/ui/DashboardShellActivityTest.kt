@@ -9,6 +9,7 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.core.view.ViewCompat
+import androidx.lifecycle.ViewModelProvider
 import androidx.test.core.app.ApplicationProvider
 import com.lateapex.collie.R
 import com.lateapex.collie.network.AgentStatus
@@ -29,6 +30,16 @@ import org.robolectric.shadows.ShadowDialog
 
 @RunWith(RobolectricTestRunner::class)
 class DashboardShellActivityTest {
+    @Test
+    fun dashboardDefaultFactoryCreatesTheApplicationOnlyViewModelConstructor() {
+        val activity = Robolectric.buildActivity(
+            MainActivity::class.java,
+            Intent(ApplicationProvider.getApplicationContext(), MainActivity::class.java),
+        ).create().get()
+
+        assertNotNull(ViewModelProvider(activity)[MainViewModel::class.java])
+    }
+
     @Test
     fun scopeRowsExposeCurrentSelectionToAccessibility() {
         val activity = Robolectric.buildActivity(

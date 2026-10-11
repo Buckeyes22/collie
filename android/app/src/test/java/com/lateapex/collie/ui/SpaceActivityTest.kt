@@ -27,6 +27,35 @@ import org.robolectric.Shadows.shadowOf
 @RunWith(RobolectricTestRunner::class)
 class SpaceActivityTest {
     @Test
+    fun savedCopyRefreshFailureKeepsItsAgeAndStaleDispositionVisible() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val workspace = WorkspaceSummary("w1", 1, "StormLens", true, "t1", 1, 1, host = "desk")
+        val activity = Robolectric.buildActivity(
+            SpaceActivity::class.java,
+            SpaceActivity.intent(context, workspace, "work"),
+        ).create().start().resume().get()
+        val content = SpaceContent(workspace, emptyList(), emptyList(), emptyList())
+        val capturedAt = System.currentTimeMillis() - 120_000
+        SpaceActivity::class.java.getDeclaredMethod("render", SpaceUiState::class.java).apply {
+            isAccessible = true
+        }.invoke(activity, SpaceUiState(
+            loading = false,
+            content = content,
+            error = "offline",
+            paired = true,
+            writeAuthorized = false,
+            readSource = ReadSourceState.SavedCopy(capturedAt, 1),
+        ))
+
+        val subtitle = activity.findViewById<TextView>(R.id.space_subtitle).text.toString()
+        val banner = activity.findViewById<TextView>(R.id.space_read_only_banner).text.toString()
+        assertTrue(subtitle.contains("snapshot read:"))
+        assertTrue(subtitle.contains("ago"))
+        assertFalse(subtitle.contains("snapshot: not read"))
+        assertTrue(banner.startsWith("Saved copy from "))
+    }
+
+    @Test
     fun intentCarriesTheCompleteScopedWorkspaceIdentity() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val workspace = WorkspaceSummary(
@@ -181,7 +210,8 @@ class SpaceActivityTest {
     @Test
     fun overviewCardIsGoneAndSubtitleCarriesCounts() {
         val activity = launchSpace(workspaces = 2, tabs = 3, currentTab = 0)
-        assertEquals("3 tabs · 3 panes", activity.findViewById<TextView>(R.id.space_subtitle).text.toString())
+        assertTrue(activity.findViewById<TextView>(R.id.space_subtitle).text.toString()
+            .startsWith("3 tabs · 3 panes · topology timing: not declared · snapshot: not read"))
     }
 
     @Test

@@ -591,6 +591,7 @@ function portableMuxBlock(declared: MuxConfig): MuxConfig {
   // which is the rule every optional field on this surface follows (§11).
   if (declared.spaces !== undefined) portable.spaces = declared.spaces;
   if (declared.topologyLatency !== undefined) portable.topologyLatency = declared.topologyLatency;
+  if (declared.readLimits !== undefined) portable.readLimits = { ...declared.readLimits };
   return portable;
 }
 

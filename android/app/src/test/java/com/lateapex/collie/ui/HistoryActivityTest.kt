@@ -347,7 +347,7 @@ class HistoryActivityTest {
         activity.findViewById<View>(R.id.history_find_next).performClick()
         val collapsedTool = activity.findViewById<ViewGroup>(R.id.history_entries)
             .descendants()
-            .single { it.contentDescription?.toString() == "Read · fixture, collapsed" }
+            .single { it.contentDescription?.toString() == "Read · fixture · Completed, collapsed" }
         collapsedTool.performClick()
         activity.findViewById<View>(R.id.history_root).apply {
             measure(
@@ -386,7 +386,7 @@ class HistoryActivityTest {
         assertTrue(
             recreated.findViewById<ViewGroup>(R.id.history_entries)
                 .descendants()
-                .any { it.contentDescription?.toString() == "Read · fixture, expanded" },
+                .any { it.contentDescription?.toString() == "Read · fixture · Completed, expanded" },
         )
         assertEquals(savedScrollY, recreated.findViewById<android.widget.ScrollView>(R.id.history_scroll).scrollY)
     }

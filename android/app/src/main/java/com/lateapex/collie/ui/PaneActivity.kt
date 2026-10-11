@@ -1679,9 +1679,16 @@ class PaneActivity : AppCompatActivity() {
                         setNewOutputAvailable(false)
                     },
                 )
-            } else if (grownTarget != null && !state.loadingOlder && state.requestedLines < grownTarget) {
+            } else if (grownTarget != null && !state.loadingOlder) {
                 pendingScrollbackTarget = null
-                pendingScrollbackAnchor = null
+                if (state.loadedLines > 0) {
+                    showTerminalRevision(
+                        pane.text,
+                        pane.revision,
+                        scrollToBottom = false,
+                        afterRender = { restoreScrollbackAnchor(); setNewOutputAvailable(false) },
+                    )
+                } else pendingScrollbackAnchor = null
             } else if (changed && renderedRevision == null) {
                 showTerminalRevision(pane.text, pane.revision, scrollToBottom = true)
             } else if (changed && !findBar.isVisible && followingOutput) {
@@ -1701,7 +1708,9 @@ class PaneActivity : AppCompatActivity() {
         // Keep the action in-place as a disabled Loading row until the grown response lands. The
         // requested target advances immediately, but the screen still represents the loaded window.
         val representedLines = state.loadedLines.takeIf { state.loadingOlder && it > 0 } ?: state.requestedLines
-        bufferAffordance = PaneBufferPolicy.resolve(paneSummary, state.mux, representedLines)
+        bufferAffordance = PaneBufferPolicy.resolve(
+            paneSummary, state.mux, representedLines, state.pane.takeUnless { state.loadingOlder },
+        )
         paneBufferAction.isVisible = bufferAffordance.action != PaneBufferAction.NONE
         paneBufferAction.isEnabled = bufferAffordance.action != PaneBufferAction.LOAD_OLDER || !state.loadingOlder
         when (bufferAffordance.action) {
@@ -1717,9 +1726,16 @@ class PaneActivity : AppCompatActivity() {
             }
             PaneBufferAction.NONE -> paneBufferAction.icon = null
         }
-        val explanation = bufferAffordance.muxExplanation ?: bufferAffordance.missingSessionAgent?.let {
+        val capabilityExplanation = bufferAffordance.muxExplanation ?: bufferAffordance.missingSessionAgent?.let {
             getString(R.string.pane_scrollback_no_session, it)
         }
+        val depthExplanation = PaneReadDepthPresentation.explanation(
+            state.pane,
+            state.desiredLines,
+            PaneScrollbackWindow.maxLines(state.mux),
+            adapterLimitDeclared = state.mux?.readLimits?.verifiedMaximum() != null,
+        )
+        val explanation = listOfNotNull(capabilityExplanation, depthExplanation).joinToString(" ").ifBlank { null }
         paneBufferExplanation.text = explanation.orEmpty()
         paneBufferExplanation.isVisible = explanation != null
     }
@@ -3406,6 +3422,9 @@ class PaneActivity : AppCompatActivity() {
         lateinit var renderActions: () -> Unit
         renderActions = {
             val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            content.addView(messageText(
+                TopologyStatus.describe(currentState.mux, currentState.lastSuccessAt, System.currentTimeMillis()),
+            ).apply { contentDescription = text })
 
             fun closingRow(label: String, enabled: Boolean = true, action: () -> Unit) {
                 content.addView(sheetActionButton(label) {

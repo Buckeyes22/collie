@@ -338,8 +338,23 @@ class PaneViewModelTest {
     }
 
     @Test
-    fun loadOlderGrowsThePolledPaneWindowToTheHerdrCap() = runTest(dispatcher) {
+    fun loadOlderClampsItsEffectiveRequestToTheDeclaredAdapterMaximum() = runTest(dispatcher) {
         val fixture = fixture(ApiResult.Success(ActionResponse(ok = true), 200), agent = "shell")
+        fixture.api.config = BridgeConfigResponse(
+            mux = MuxConfigResponse(
+                name = "herdr",
+                readLimits = com.lateapex.collie.network.MuxReadLimitsResponse(
+                    kotlinx.serialization.json.JsonPrimitive(1_000),
+                ),
+            ),
+        )
+        fixture.api.pane = PaneReadResponse(
+            paneId = "w1:p1",
+            text = (1..600).joinToString("\n") { "row $it" },
+            truncated = true,
+            revision = 7,
+            servedLines = 600,
+        )
         fixture.viewModel.refresh()
         advanceUntilIdle()
 
@@ -350,7 +365,8 @@ class PaneViewModelTest {
 
         assertEquals(listOf(600, 1_000), fixture.api.paneLines)
         assertEquals(1_000, fixture.viewModel.state.value.requestedLines)
-        assertEquals(1_000, fixture.viewModel.state.value.loadedLines)
+        assertEquals(1_200, fixture.viewModel.state.value.desiredLines)
+        assertEquals(600, fixture.viewModel.state.value.loadedLines)
         assertFalse(fixture.viewModel.state.value.loadingOlder)
         assertNull(fixture.viewModel.loadOlderScrollback())
     }

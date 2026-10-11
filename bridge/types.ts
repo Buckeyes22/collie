@@ -7,7 +7,7 @@ import type { ApiErrorDetail, ErrorCode } from "./error-codes.ts";
 import type { GitHead } from "./git-head.ts";
 import type { ChatBody } from "./journal/live.ts";
 import type { AgentSessionRef, TranscriptEntry } from "./journal/types.ts";
-import type { MuxCapability, MuxSpaceCapacity, MuxTopologyLatency } from "./mux/capabilities.ts";
+import type { MuxCapability, MuxReadLimits, MuxSpaceCapacity, MuxTopologyLatency } from "./mux/capabilities.ts";
 import type { UpdateRun } from "./update-run.ts";
 
 // Re-exported so the wire surface has ONE import site: a consumer of PaneHistoryResponse gets the
@@ -65,11 +65,9 @@ export interface AgentView {
    */
   sessionAgent?: string;
   /**
-   * Upper bound on the lines a `recent` read of this pane can return — Herdr's scrollback depth plus
-   * the viewport. This is the ONLY reliable "is there more scrollback" signal: `PaneRead.truncated`
-   * is always false even when a read cut history off, which is why the mirror's "Load older" button
-   * never used to appear. A pane on the alternate screen (any Claude agent) reports just its viewport
-   * here, because the alt screen keeps no scrollback ring at all. Absent on older Herdr servers.
+   * Depth reported by the owning mux census. It is a hint for the loaded mirror window, not a
+   * guarantee that the buffer has not since shrunk or that agent-owned alternate-screen history is
+   * exhaustive. Absent when the adapter cannot measure retained depth or on older peers.
    */
   readableLines?: number;
   /**
@@ -785,6 +783,14 @@ export interface PaneReadResponse {
   truncated: boolean;
   /** Herdr's monotonic pane revision — passed through for the client's prompt-select race guard. */
   revision: number;
+  /** Lines admitted by the bridge after applying verified adapter and server ceilings. */
+  requestedLines?: number;
+  /** Actual non-empty rows in `text`; never inferred from the request. */
+  servedLines?: number;
+  /** Mux-reported retained depth; it may lag a shrinking buffer and is not exhaustive journal history. */
+  readableLines?: number;
+  /** Why this read stopped before the client's desired window, when known. */
+  limitReason?: "adapter-ceiling" | "server-ceiling" | "available-depth";
   /**
    * The same rows with soft wraps undone, present only when the grid shows a URL the pane's width
    * cut in two (`hasSplitUrl`). The mirror keeps rendering `text`; the client uses this to give the
@@ -1296,6 +1302,8 @@ export interface MuxConfig {
    * put "synced 4s ago" under a multiplexer that is never stale, which is noise that means nothing.
    */
   topologyLatency?: MuxTopologyLatency;
+  /** The adapter's declared per-request ceiling, absent on old bridges. */
+  readLimits?: MuxReadLimits;
 }
 
 /**

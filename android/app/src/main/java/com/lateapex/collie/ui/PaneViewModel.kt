@@ -67,6 +67,7 @@ data class PaneUiState(
     val unsupportedKeys: Set<String> = emptySet(),
     val clearReplyDraft: Boolean = false,
     val requestedLines: Int = PaneScrollbackWindow.INITIAL_LINES,
+    val desiredLines: Int = PaneScrollbackWindow.INITIAL_LINES,
     val loadedLines: Int = 0,
     val loadingOlder: Boolean = false,
     val transcript: List<TranscriptEntry> = emptyList(),
@@ -129,6 +130,7 @@ class PaneViewModel(
     private var directTypingGeneration = 0L
     private var supportPoll = 0
     private var paneRequestedLines = PaneScrollbackWindow.INITIAL_LINES
+    private var paneDesiredLines = PaneScrollbackWindow.INITIAL_LINES
 
     private class DiscardedActor : kotlinx.coroutines.CancellationException()
     private suspend fun <T> withCurrentActor(block: suspend () -> ApiResult<T>): ApiResult<T> {
@@ -243,11 +245,20 @@ class PaneViewModel(
     /** Grow the bounded live-pane window. Returns the target used to match the resulting read. */
     fun loadOlderScrollback(): Int? {
         val previous = mutableState.value
-        if (previous.loadingOlder || paneRequestedLines >= PaneScrollbackWindow.MAX_LINES) return null
-        val target = PaneScrollbackWindow.grow(paneRequestedLines)
+        val maximum = PaneScrollbackWindow.maxLines(previous.mux)
+        if (previous.loadingOlder || paneDesiredLines >= PaneScrollbackWindow.MAX_DESIRED_LINES) return null
+        val desired = PaneScrollbackWindow.growDesired(paneDesiredLines)
+        val target = desired.coerceAtMost(maximum)
+        if (target <= paneRequestedLines) {
+            paneDesiredLines = desired
+            mutableState.value = previous.copy(desiredLines = desired)
+            return null
+        }
+        paneDesiredLines = desired
         paneRequestedLines = target
         mutableState.value = previous.copy(
             requestedLines = target,
+            desiredLines = desired,
             loadingOlder = true,
             error = null,
         )
@@ -748,7 +759,7 @@ class PaneViewModel(
     private suspend fun load() {
         if (!readInFlight.compareAndSet(false, true)) return
         try {
-            do {
+            run {
                 val lines = paneRequestedLines
                 when (val result = withCurrentActor { repository.readPane(address, lines, markSeen = true) }) {
                     is ApiResult.Success -> {
@@ -760,7 +771,9 @@ class PaneViewModel(
                             composerReady = PromptBinding.composerRegion(agent, result.value.pane.text) != null,
                             lastSuccessAt = System.currentTimeMillis(),
                             requestedLines = paneRequestedLines,
-                            loadedLines = lines,
+                            desiredLines = paneDesiredLines,
+                            loadedLines = result.value.pane.servedLines?.coerceIn(0, lines)
+                                ?: result.value.pane.text.lineSequence().count().coerceAtMost(lines),
                             loadingOlder = lines < paneRequestedLines,
                         )
                         loadTranscript()
@@ -770,11 +783,13 @@ class PaneViewModel(
                         // Keep the last successful window actionable so a failed grow can be retried.
                         if (mutableState.value.loadingOlder && mutableState.value.loadedLines > 0) {
                             paneRequestedLines = mutableState.value.loadedLines
+                            paneDesiredLines = paneRequestedLines
                         }
                         mutableState.value = mutableState.value.copy(
                             loading = false,
                             error = MainViewModel.describe(getApplication<Application>().resources, result.error),
                             requestedLines = paneRequestedLines,
+                            desiredLines = paneDesiredLines,
                             loadingOlder = false,
                         )
                         return
@@ -785,7 +800,7 @@ class PaneViewModel(
                         return
                     }
                 }
-            } while (mutableState.value.loadedLines < paneRequestedLines)
+            }
         } finally {
             readInFlight.set(false)
         }

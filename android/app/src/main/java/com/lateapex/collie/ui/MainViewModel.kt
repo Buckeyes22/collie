@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.lateapex.collie.CollieApplication
 import com.lateapex.collie.R
 import com.lateapex.collie.data.CollieRepository
+import com.lateapex.collie.data.ScopedReadContext
 import com.lateapex.collie.domain.DeviceLabel
 import com.lateapex.collie.domain.PollingBackoff
 import com.lateapex.collie.domain.Scope
@@ -49,14 +50,18 @@ data class MainUiState(
     val muxName: String? = null,
     val mux: MuxConfigResponse? = null,
     val launchers: LaunchersResponse? = null,
+    val refreshNotice: String? = null,
 ) {
     val panes: List<PaneSummary>
         get() = snapshot?.let { it.agents + it.shellPanes }.orEmpty()
 }
 
-class MainViewModel(application: Application) : AndroidViewModel(application) {
-    private val repository: CollieRepository =
-        (application as CollieApplication).container.repository
+class MainViewModel @JvmOverloads constructor(
+    application: Application,
+    repositoryOverride: CollieRepository? = null,
+) : AndroidViewModel(application) {
+    private val repository: CollieRepository = repositoryOverride
+        ?: (application as CollieApplication).container.repository
     private val mutableState = MutableStateFlow(MainUiState())
     val state: StateFlow<MainUiState> = mutableState.asStateFlow()
     val currentScope: Scope get() = repository.selectedScope.value
@@ -64,6 +69,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var pollingJob: Job? = null
     private var configRequested = false
     private val requestInFlight = AtomicBoolean(false)
+    private val manualRefreshPending = AtomicBoolean(false)
     private val pollingBackoff = PollingBackoff()
     private val scopeBackStack = ScopeBackStack()
     private val nativePreferences = NativePreferences(application)
@@ -80,6 +86,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (reason in setOf(com.lateapex.collie.data.AuthorityInvalidation.PAIRING_RETIRED,
             com.lateapex.collie.data.AuthorityInvalidation.CONNECTION_CHANGED, com.lateapex.collie.data.AuthorityInvalidation.DISCONNECTED)) {
             mutableState.value = MainUiState()
+        } else if (reason == com.lateapex.collie.data.AuthorityInvalidation.LEAD_CHANGED) {
+            mutableState.value = mutableState.value.copy(loading = false, refreshing = false)
         }
     }
 
@@ -101,6 +109,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 val previous = if (changed) mutableState.value.copy(
                     snapshot = null, mux = null, muxName = null, launchers = null, lastSuccessAt = null,
+                    refreshing = false, refreshNotice = null,
                 ) else mutableState.value
                 val revoked = previous.configured && previous.paired && connection?.isPaired == false
                 mutableState.value = previous.copy(
@@ -226,18 +235,52 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun refresh() {
+        if (!manualRefreshPending.compareAndSet(false, true)) return
+        val refreshScope = currentScope
+        val readContext = repository.readContext(refreshScope, null)
+        if (readContext == null) {
+            manualRefreshPending.set(false)
+            return
+        }
         viewModelScope.launch {
-            mutableState.value = mutableState.value.copy(refreshing = true, error = null)
+            if (!isCurrentRefresh(readContext, refreshScope)) {
+                manualRefreshPending.set(false)
+                return@launch
+            }
+            mutableState.value = mutableState.value.copy(refreshing = true, error = null, refreshNotice = null)
             try {
-                repository.refresh()
-                loadSnapshot(isManual = true)
+                while (requestInFlight.get() && isCurrentRefresh(readContext, refreshScope)) delay(10)
+                if (!isCurrentRefresh(readContext, refreshScope)) return@launch
+                when (val refreshed = repository.refresh(refreshScope, readContext)) {
+                    is ApiResult.Failure -> {
+                        if (!isCurrentRefresh(readContext, refreshScope)) return@launch
+                        mutableState.value = mutableState.value.copy(refreshNotice = getApplication<Application>().getString(
+                            if (refreshed.error is ApiFailure.Http && refreshed.error.status == 404)
+                                R.string.refresh_ordinary_reload else R.string.refresh_failed_fallback,
+                        ))
+                    }
+                    is ApiResult.Success -> if (!refreshed.value.ok) {
+                        if (!isCurrentRefresh(readContext, refreshScope)) return@launch
+                        mutableState.value = mutableState.value.copy(
+                            refreshNotice = getApplication<Application>().getString(R.string.refresh_failed_fallback),
+                        )
+                    }
+                    is ApiResult.NotModified -> Unit
+                }
+                if (isCurrentRefresh(readContext, refreshScope)) loadSnapshot(
+                    isManual = true, scopeOverride = refreshScope, expectedContext = readContext,
+                )
             } finally {
-                // A poll may already own the snapshot request. Pull-to-refresh must still stop its
-                // spinner when that happens.
-                mutableState.value = mutableState.value.copy(refreshing = false)
+                manualRefreshPending.set(false)
+                if (isCurrentRefresh(readContext, refreshScope)) {
+                    mutableState.value = mutableState.value.copy(refreshing = false)
+                }
             }
         }
     }
+
+    private fun isCurrentRefresh(context: ScopedReadContext, scope: Scope): Boolean =
+        repository.selectedScope.value == scope && repository.isCurrent(context)
 
     /** Retry the read path only. The dashboard connection band never invokes a bridge mutation. */
     fun retryConnection() {
@@ -264,11 +307,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         configRequested = false
         mutableState.value = mutableState.value.copy(
             loading = true,
+            refreshing = false,
             snapshot = null,
             launchers = null,
             error = null,
             snapshotFailed = false,
             authError = false,
+            refreshNotice = null,
         )
         startPolling()
     }
@@ -324,7 +369,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private suspend fun loadSnapshot(isManual: Boolean) {
+    private suspend fun loadSnapshot(
+        isManual: Boolean,
+        scopeOverride: Scope? = null,
+        expectedContext: ScopedReadContext? = null,
+    ) {
+        if (!isManual && manualRefreshPending.get()) return
         if (!requestInFlight.compareAndSet(false, true)) return
         try {
             mutableState.value = mutableState.value.copy(
@@ -332,9 +382,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 error = if (mutableState.value.snapshot == null) null else mutableState.value.error,
                 requestStartedAt = System.currentTimeMillis(),
             )
-            val requestedScope = repository.selectedScope.value
-            val context = repository.readContext() ?: return
-            var result = repository.snapshot(if (scopeValidationPending) Scope() else requestedScope)
+            val requestedScope = scopeOverride ?: repository.selectedScope.value
+            val context = expectedContext ?: repository.readContext(requestedScope) ?: return
+            val initialScope = if (scopeValidationPending) Scope() else requestedScope
+            val initialContext = if (initialScope == requestedScope) context else {
+                if (!repository.isCurrent(context)) return
+                repository.readContext(initialScope) ?: return
+            }
+            var result = repository.snapshot(initialScope, initialContext)
             if (!repository.isCurrent(context)) return
             if (result is ApiResult.Success && scopeValidationPending) {
                 val restore = DashboardScopePersistence.resolve(requestedScope, result.value)
@@ -347,7 +402,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 restore.readScope?.let { restoredScope ->
                     val restoredContext = repository.readContext(restoredScope) ?: return
-                    result = repository.snapshot(restoredScope)
+                    result = repository.snapshot(restoredScope, restoredContext)
                     if (!repository.isCurrent(restoredContext)) return
                 }
             }
@@ -365,6 +420,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             ?: mutableState.value.lastSuccessAt,
                         snapshotFailed = false,
                         authError = false,
+                        refreshNotice = if (isManual) mutableState.value.refreshNotice else null,
                     )
                 }
                 is ApiResult.Failure -> {
@@ -394,6 +450,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         } ?: mutableState.value.lastSuccessAt,
                         snapshotFailed = false,
                         authError = false,
+                        refreshNotice = if (isManual) mutableState.value.refreshNotice else null,
                     )
                 }
             }

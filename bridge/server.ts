@@ -37,6 +37,7 @@ import {
 import { apiError, type ApiErrorBody, type ApiErrorDetail, type ErrorCode } from "./error-codes.ts";
 import { keysDeliverable, MUX_CAPABILITIES, type MuxCapability, type MuxCapabilityDeclaration } from "./mux/capabilities.ts";
 import type { MuxAdapter, MuxAck, MuxGrid, MuxWorktreeCreateRequest } from "./mux/types.ts";
+import { MAX_PANE_READ_LINES, negotiateReadLimit } from "./mux/read-limits.ts";
 import { allCacheRules } from "./cache/rules/index.ts";
 import type { CacheOverride } from "./cache/engine.ts";
 import type { GitHeadSurface } from "./git-head.ts";
@@ -233,7 +234,7 @@ export function requestBodyCap(cfg: Config): number {
   return Math.max(cfg.maxUploadBytes, MAX_STT_AUDIO_BYTES) + REQUEST_BODY_HEADROOM;
 }
 // Upper bound on the pane-read `lines` param — don't trust the client (or Herdr) to cap it.
-const MAX_READ_LINES = 10_000;
+const MAX_READ_LINES = MAX_PANE_READ_LINES;
 // A bound region is whatever a dialog card covers, and a full-screen picker covers the whole pane:
 // about rows times columns, so 8192 refused a pane wider than ~134 columns at 59 rows. 32 KiB takes
 // a 220-column pane. A phone newer than this bridge gets the old 400 on such a pane and no key is sent.
@@ -631,6 +632,7 @@ export function muxConfigBody(mux: MuxPublication): MuxConfig {
     // Unconditional, like `capabilities`: the declaration is total, so there is nothing to omit and
     // an absent key means "a bridge too old to know", which the phone already reads as `"many"`.
     spaces: decl.spaces,
+    readLimits: { ...decl.readLimits },
   };
   // Assigned only when the adapter actually has a mark — the key's ABSENCE is what tells the phone
   // to render its text alone, so a bridge that published `logoUrl` unconditionally would point every
@@ -1776,7 +1778,10 @@ export function startServer(opts: {
       const device = isRead ? null : caller.device();
       const audit_ = caller.audit;
 
-      if (!action && req.method === "GET") return readPane(herdr, cfg, paneId, url, req);
+      if (!action && req.method === "GET") {
+        const pane = [...rt.engine.current().agents, ...rt.engine.current().shellPanes].find((item) => item.paneId === paneId);
+        return readPane(herdr, cfg, paneId, url, req, pane?.readableLines);
+      }
       if (action === "history" && req.method === "GET")
         return paneHistory(cfg, journals, transcripts, rt.engine, paneId, url, req);
       if (action === "chat" && req.method === "GET")
@@ -3103,13 +3108,22 @@ export async function readPane(
   paneId: string,
   url: URL,
   req: Request,
+  readableLines?: number,
 ): Promise<Response> {
   const linesParam = Number.parseInt(url.searchParams.get("lines") ?? "", 10);
-  // Clamp to a sane ceiling — don't trust the client (or Herdr) to bound an enormous read.
-  const lines =
-    Number.isFinite(linesParam) && linesParam > 0
-      ? Math.min(linesParam, MAX_READ_LINES)
-      : cfg.readLines;
+  const desiredLines = Number.isFinite(linesParam) && linesParam > 0 ? linesParam : cfg.readLines;
+  // A hand-built/older adapter boundary is treated like a legacy peer until it declares a verified limit.
+  const adapterLimit = negotiateReadLimit(herdr.capabilities?.readLimits).maxRequestedLines;
+  const lines = Math.min(desiredLines, adapterLimit, MAX_READ_LINES);
+  // Name the tightest active bound: an adapter-specific lower ceiling wins; the bridge ceiling wins ties.
+  const ceilingReason: "adapter-ceiling" | "server-ceiling" | undefined =
+    desiredLines > adapterLimit && adapterLimit < MAX_READ_LINES
+      ? "adapter-ceiling"
+      : desiredLines > MAX_READ_LINES
+        ? "server-ceiling"
+        : desiredLines > adapterLimit
+          ? "adapter-ceiling"
+          : undefined;
   try {
     // "ansi" so the client can render a faithful, colored terminal mirror. It is also, as far as we
     // have probed, why this read leaves the operator's terminal alone: a `recent` read only harvests
@@ -3118,6 +3132,12 @@ export async function readPane(
     // to `strip` would move someone's screen on every revalidate — see the adapter's `readGrid`.
     const read = await herdr.readGrid(paneId, { scope: "recent", lines, styling: "preserve" });
     if (!read.ok) return text(`${herdr.mux} read failed: ${read.detail}`, 502);
+    // The declaration is an admission ceiling, not permission to return an unbounded payload.
+    // Refuse a misbehaving adapter rather than truncating its answer here and fabricating
+    // truncation/read-depth metadata that the owning runtime did not provide.
+    if (lineCount(read.value.text) > lines) {
+      return text(`${herdr.mux} read exceeded admitted line limit`, 502);
+    }
     // A URL the pane's column edge cut in two is the one thing the mirror cannot repair on its own,
     // and the repair needs the same rows with soft wraps undone. Ask for them only when the grid
     // shows such a URL — this is a second round trip, and a multiplexer without the source has
@@ -3132,6 +3152,12 @@ export async function readPane(
       read.value,
       logical?.ok ? stripSgr(logical.value) : undefined,
       cfg.redact,
+      lines,
+      readableLines,
+      ceilingReason ?? (read.value.truncated === false && readableLines !== undefined &&
+        readableLines < desiredLines && readableLines <= lineCount(read.value.text)
+        ? "available-depth"
+        : undefined),
     );
     // ETag is derived from the serialised body — if content hasn't changed the client gets a 304
     // and skips the whole transfer (the big win on a cellular link).
@@ -3161,6 +3187,10 @@ export async function readPane(
   }
 }
 
+function lineCount(gridText: string): number {
+  return gridText.length === 0 ? 0 : gridText.split("\n").length - (gridText.endsWith("\n") ? 1 : 0);
+}
+
 /**
  * Map a multiplexer's grid to the REST response body. Pure + exported so the `revision` passthrough
  * (the client's prompt-select race guard depends on it) is covered by the bridge unit tests without
@@ -3176,6 +3206,9 @@ export function paneReadResponse(
   read: MuxGrid,
   logicalText?: string,
   redact = false,
+  requestedLines?: number,
+  readableLines?: number,
+  limitReason?: "adapter-ceiling" | "server-ceiling" | "available-depth",
 ): PaneReadResponse {
   const body: PaneReadResponse = {
     paneId,
@@ -3183,6 +3216,10 @@ export function paneReadResponse(
     truncated: read.truncated,
     revision: read.revision,
   };
+  if (requestedLines !== undefined) body.requestedLines = requestedLines;
+  body.servedLines = read.text.length === 0 ? 0 : read.text.split("\n").length - (read.text.endsWith("\n") ? 1 : 0);
+  if (readableLines !== undefined && Number.isSafeInteger(readableLines) && readableLines >= 0) body.readableLines = readableLines;
+  if (limitReason !== undefined) body.limitReason = limitReason;
   // Absent, never empty, when there is nothing to repair: the ETag is computed over this body, so an
   // always-present key would invalidate every client's cached copy once for no gain.
   if (logicalText !== undefined) body.logicalText = logicalText;

@@ -16,8 +16,9 @@
 // (HERDR_API.md), because a fake that is kinder than the real server proves nothing:
 //   • an unknown id answers `pane_not_found` / `tab_not_found` / `workspace_not_found` — the codes the
 //     adapter turns into the contract's `gone`;
-//   • `pane.read` never sets `truncated` (it is always false on the real server, which is why
-//     `readableLines` exists at all) and `visible` vs `recent` really do return different depths;
+//   • Herdr 0.9.3 clamps `lines` at 1000 and sets `truncated` when its line limiter omits rows;
+//     `visible` vs `recent` return different depths. `readableLines` remains useful for the actual
+//     scroll ring and must not be treated as evidence about agent-owned alt-screen history;
 //   • `format:"ansi"` carries SGR and `format:"text"` carries none, so the contract's `styling`
 //     request is a real branch rather than a field nobody reads;
 //   • ids are the session's, so they survive a restart — that is the Herdr promise identity rule 2
@@ -154,6 +155,12 @@ export class FakeHerdr implements HerdrRpc {
     await Promise.resolve();
   }
 
+  /** Replace retained history for bounded pane-read fixtures. */
+  setScrollback(paneId: string, rows: readonly string[]): void {
+    const screen = this.screens.get(paneId);
+    if (screen !== undefined) screen.history.splice(0, screen.history.length, ...rows);
+  }
+
   /** The pane's process ends; Herdr drops it from `pane.list` and answers `pane_not_found` after. */
   async endPane(paneId: string): Promise<void> {
     this.panes = this.panes.filter((pane) => pane.pane_id !== paneId);
@@ -220,15 +227,16 @@ export class FakeHerdr implements HerdrRpc {
     const pane = this.pane("pane.read", paneId);
     const screen = this.screens.get(paneId) ?? { history: [], viewport: [] };
     const all = source === "visible" ? screen.viewport : [...screen.history, ...screen.viewport];
-    const shown = all.slice(Math.max(0, all.length - lines));
+    // Herdr 0.9.3 clamps a pane read to 1000 rows and reports when the clamp omits rows.
+    const limit = Math.min(lines, 1_000);
+    const omitted = all.length > limit;
+    const shown = all.slice(Math.max(0, all.length - limit));
     // SGR only, and only in `ansi` — colour and weight, never a cursor move (ADR 0008).
     const paint = (line: string) => (format === "ansi" ? `${GREEN}${line}${RESET}` : line);
     return {
       pane_id: paneId,
       text: shown.map(paint).join("\n"),
-      // Herdr's own flag is ALWAYS false, even when a read demonstrably cut scrollback off. A fake
-      // that set it would let an adapter gate on a signal the real server never raises.
-      truncated: false,
+      truncated: omitted,
       revision: pane.revision,
     };
   }

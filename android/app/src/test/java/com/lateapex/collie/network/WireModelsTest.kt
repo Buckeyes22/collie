@@ -10,6 +10,21 @@ class WireModelsTest {
     private val json = Json { ignoreUnknownKeys = true }
 
     @Test
+    fun boundedStatusObjectCompatibilityDecodesItsState() {
+        val body = """{"bridge":"connected","agents":[{"paneId":"fixture:pane","workspaceId":"w1","workspaceLabel":"Owned HTTPS acceptance","workspaceNumber":1,"tabId":"t1","agent":"claude","status":{"state":"idle","label":"idle"},"cwd":"/tmp","focused":true}],"shellPanes":[],"workspaces":[],"tabs":[],"ts":42}"""
+        assertEquals(AgentStatus.IDLE, json.decodeFromString(SnapshotResponse.serializer(), body).agents.single().status)
+        assertEquals(AgentStatus.WORKING, json.decodeFromString(AgentStatus.serializer(), "\"working\""))
+        assertEquals(AgentStatus.UNKNOWN, json.decodeFromString(AgentStatus.serializer(), """{"state":"future-state","label":"future"}"""))
+    }
+
+    @Test
+    fun malformedStatusObjectsCannotInventAState() {
+        for (body in listOf("null", "[]", "42", "{}", """{"state":false}""", """{"label":"working"}""")) {
+            assertThrows(SerializationException::class.java) { json.decodeFromString(AgentStatus.serializer(), body) }
+        }
+    }
+
+    @Test
     fun snapshotToleratesAdditiveFieldsButKeepsRequiredIdentityStrict() {
         val body = """
             {
@@ -48,6 +63,22 @@ class WireModelsTest {
         assertEquals("ok", history.entries.single().parts.single().result?.text)
         assertEquals(true, worktree.alreadyOpen)
         assertEquals("w2", worktree.pane?.workspaceId)
+    }
+
+    @Test
+    fun transcriptWireDecodeKeepsStructuredQuestionAndIndependentResultFlags() {
+        val entry = json.decodeFromString(
+            TranscriptEntry.serializer(),
+            """{"uuid":"q1","ts":"2026-01-01","role":"assistant","parts":[{"kind":"tool","name":"question","summary":"Pick","id":"call-1","call":{"kind":"question","name":"question","summary":"Pick","questions":[{"header":"Color","question":"Which?","multiple":true,"options":[{"label":"Blue","description":"Cool"}]}],"answers":[["Blue"]]},"result":{"text":"Blue","denied":false,"isError":false,"truncated":true,"imageUrl":"https://example.test/result.png"}}]}""",
+        )
+        val part = entry.parts.single()
+
+        assertEquals("call-1", part.id)
+        assertEquals("question", part.call?.get("kind")?.let { (it as kotlinx.serialization.json.JsonPrimitive).content })
+        assertEquals(true, part.result?.truncated)
+        assertEquals(false, part.result?.denied)
+        assertEquals(false, part.result?.isError)
+        assertEquals("https://example.test/result.png", part.result?.imageUrl)
     }
 
     @Test
@@ -93,6 +124,29 @@ class WireModelsTest {
         assertEquals(false, mux.supports("createSpace"))
         assertEquals(true, mux.supports("createTab"))
         assertEquals(true, mux.supports("futureCapability"))
+    }
+
+    @Test
+    fun muxFreshnessAndReadLimitsAreOptionalAndUnknownKindsStayHarmless() {
+        val declared = json.decodeFromString(
+            MuxConfigResponse.serializer(),
+            """{"name":"zellij","topologyLatency":{"kind":"bounded","ms":12000},"readLimits":{"maxRequestedLines":10000}}""",
+        )
+        val unknown = json.decodeFromString(
+            MuxConfigResponse.serializer(),
+            """{"topologyLatency":{"kind":"future","ms":-1},"readLimits":{"maxRequestedLines":10001}}""",
+        )
+        val pane = json.decodeFromString(
+            PaneReadResponse.serializer(),
+            """{"paneId":"p","text":"a\\nb","truncated":true,"revision":1,"requestedLines":1000,"servedLines":2,"readableLines":1500,"limitReason":"adapter-ceiling"}""",
+        )
+
+        assertEquals(12_000L, declared.topologyLatency?.displayBoundMs())
+        assertEquals(10_000, declared.readLimits?.verifiedMaximum())
+        assertEquals(null, unknown.topologyLatency?.displayBoundMs())
+        assertEquals(null, unknown.readLimits?.verifiedMaximum())
+        assertEquals(2, pane.servedLines)
+        assertEquals("adapter-ceiling", pane.limitReason)
     }
 
     @Test

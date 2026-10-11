@@ -137,6 +137,12 @@ export class FakeTern implements TernExec {
     return this.recorded;
   }
 
+  /** Replace retained history for bounded pane-read fixtures. */
+  setScrollback(paneId: string, rows: readonly string[]): void {
+    const pane = this.panes.get(Number(paneId));
+    if (pane !== undefined) pane.history = [...rows];
+  }
+
   emit(event: string, pane?: number): void {
     const payload = pane !== undefined ? JSON.stringify({ event, pane }) : JSON.stringify({ event });
     for (const l of this.listeners) {

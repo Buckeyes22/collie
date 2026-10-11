@@ -5,6 +5,8 @@ import androidx.test.core.app.ApplicationProvider
 import com.lateapex.collie.network.TranscriptEntry
 import com.lateapex.collie.network.TranscriptPart
 import com.lateapex.collie.network.TranscriptResult
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -16,6 +18,27 @@ import java.util.Locale
 
 @RunWith(RobolectricTestRunner::class)
 class HistoryPresentationTest {
+    @Test
+    fun preservesCallIdentityTruncationAndImageReferenceForRendererOwner() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val entry = TranscriptEntry(
+            "u1", "2026-01-02T12:34:00Z", "assistant", listOf(
+                TranscriptPart(
+                    kind = "tool", name = "read", summary = "file", id = "call-7", truncated = true,
+                    call = Json.parseToJsonElement("""{"kind":"read","path":"src/Main.kt","range":[1,20]}""") as JsonObject,
+                    result = TranscriptResult("source", imageUrl = "https://private.example/media/1"),
+                ),
+            ),
+        )
+
+        val tool = HistoryPresentation.turn(entry, null, context.resources).parts.single() as HistoryPart.Tool
+        assertEquals("call-7", tool.callId)
+        assertTrue(tool.callTruncated)
+        assertEquals("src/Main.kt", (tool.call as ToolCallPresentation.Read).path)
+        assertEquals("source", tool.result)
+        assertEquals("https://private.example/media/1", tool.resultImageUrl)
+    }
+
     @Test
     fun datesAndTimesStayEnglishWhenTheDeviceLocaleIsNotEnglish() {
         val resources = ApplicationProvider.getApplicationContext<Context>().resources
@@ -67,7 +90,7 @@ class HistoryPresentationTest {
         assertTrue(prose.truncated)
         val tool = turn.parts[1] as HistoryPart.Tool
         assertEquals("rm -rf /", tool.result)
-        assertTrue(tool.resultIsError)
+        assertEquals(ToolResultStatus.FAILED, tool.resultStatus)
         assertTrue(tool.resultTruncated)
     }
 
