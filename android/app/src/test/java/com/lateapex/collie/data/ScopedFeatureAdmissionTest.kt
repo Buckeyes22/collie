@@ -23,6 +23,11 @@ class ScopedFeatureAdmissionTest {
         var protectedFailure: ApiFailure? = null
         var keys = 0
         var uploads = 0
+        var documentUploads = 0
+        var configReads = 0
+        override suspend fun config(connection: Connection, scope: Scope): ApiResult<BridgeConfigResponse> {
+            configReads++; return ApiResult.Success(BridgeConfigResponse(), 200)
+        }
         var readAuthority: ControlAuthority? = null
         var beforeRefresh: (suspend () -> Unit)? = null
         var refreshCalls = 0
@@ -40,6 +45,9 @@ class ScopedFeatureAdmissionTest {
         override suspend fun upload(connection: Connection, address: PaneAddress, upload: ImageUpload): ApiResult<UploadResponse> {
             uploads++; return ApiResult.Success(UploadResponse(true, "/image.png"), 200)
         }
+        override suspend fun upload(connection: Connection, address: PaneAddress, upload: UploadSource): ApiResult<UploadResponse> {
+            documentUploads++; return ApiResult.Success(UploadResponse(true, "/document.txt"), 200)
+        }
         override suspend fun health(connection: Connection): ApiResult<HealthResponse> = error("unused")
         override suspend fun pair(origin: CollieOrigin, code: String, label: String): ApiResult<PairResult> = error("unused")
         override suspend fun refresh(connection: Connection, scope: Scope): ApiResult<ActionResponse> {
@@ -48,6 +56,22 @@ class ScopedFeatureAdmissionTest {
         override suspend fun devices(connection: Connection): ApiResult<DevicesResponse> = error("unused")
         override suspend fun reply(connection: Connection, address: PaneAddress, text: String, submit: Boolean, expectedPrompt: String?): ApiResult<ActionResponse> = error("unused")
     }
+    @Test fun queuedDocumentPolicyReadCannotBorrowReplacementActor() = runTest {
+        val api = Api(); val store = Store(initial)
+        val repository = CollieRepository(api, store, OriginValidator())
+        val scope = Scope(host = "desk", session = "work")
+        repository.selectSubject(scope, "pane")
+        val picked = repository.readContext(scope, "pane")!!
+        val request = async { repository.config(scope, picked) }
+        store.save(Connection(initial.origin, initial.label, "replacement")) // Queue has not entered repository admission.
+        runCurrent()
+        assertTrue(request.await() is ApiResult.Failure)
+        assertEquals(0, api.configReads)
+        val replacement = repository.readContext(scope, "pane")!!
+        assertTrue(repository.config(scope, replacement) is ApiResult.Success)
+        assertEquals(1, api.configReads)
+    }
+
     @Test fun writesRequireTheExactHostSessionSubjectAndLiveGeneration() = runTest {
         val api = Api(); val repository = CollieRepository(api, Store(initial), OriginValidator())
         val desk = Scope(host = "desk", session = "work")
@@ -122,5 +146,24 @@ class ScopedFeatureAdmissionTest {
         prepared.complete(Unit)
         assertTrue(result.await() is ApiResult.Failure); assertEquals(0, api.uploads)
         assertFalse(captured.toString().contains("secret"))
+    }
+
+    @Test fun documentPreparedForAnOldConnectionIsDisposedWithoutCrossHostUpload() = runTest {
+        val api = Api(); val store = Store(initial); val repository = CollieRepository(api, store, OriginValidator())
+        val address = PaneAddress(paneId = "pane")
+        repository.selectSubject(address.scope, address.paneId); repository.snapshot()
+        val captured = repository.readContext(address.scope, address.paneId)!!
+        val spool = java.io.File.createTempFile("collie-upload-test-", ".part").apply { writeText("private") }
+        val source = UploadSource.Document("brief.txt", "text/plain", spool, spool.length())
+        store.save(Connection(CollieOrigin("https://other.example/mount/"), "phone", "newsecret"))
+        repository.snapshot()
+
+        assertTrue(repository.upload(address, source, captured) is ApiResult.Failure)
+        assertEquals(0, api.documentUploads)
+        assertFalse(spool.exists())
+        try {
+            source.openOnce()
+            fail("stale scoped source must remain unusable")
+        } catch (_: IllegalStateException) { }
     }
 }

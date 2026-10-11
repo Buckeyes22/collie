@@ -36,6 +36,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import android.widget.PopupMenu
 import androidx.appcompat.app.AppCompatActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.PickVisualMediaRequest
@@ -91,6 +92,9 @@ import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.job
 import kotlinx.coroutines.withContext
 
 class PaneActivity : AppCompatActivity() {
@@ -130,6 +134,10 @@ class PaneActivity : AppCompatActivity() {
     private var showingTranscriptBody = false
     private var lastRenderedState: PaneUiState? = null
     private var pendingAttachment: String? = null
+    private var pendingAttachmentLabel: String? = null
+    private var pendingAttachmentMime: String? = null
+    private var pendingAttachmentBytes: Long? = null
+    @Volatile private var documentJob: Job? = null
     /** A thumbnail of the picked image; the chip shows it and the word "Image", never a file name. */
     private var pendingAttachmentThumb: android.graphics.Bitmap? = null
     private var pickedImageThumb: android.graphics.Bitmap? = null
@@ -215,15 +223,19 @@ class PaneActivity : AppCompatActivity() {
     // External callbacks have one slot each. Keep this nonsecret ownership until the old result drains,
     // even when its sensitive actor context retires, so it cannot consume a replacement actor.
     private var imagePickerOutstanding = false
+    private var documentPickerContext: com.lateapex.collie.data.ScopedReadContext? = null
+    private var documentPickerOutstanding = false
     private var microphonePermissionOutstanding = false
     private var recordingContext: com.lateapex.collie.data.ScopedReadContext? = null
     private val imagePicker = registerForActivityResult(ActivityResultContracts.PickVisualMedia(), ::onImagePicked)
+    private val documentPicker = registerForActivityResult(ActivityResultContracts.OpenDocument(), ::onDocumentPicked)
     private val microphonePermission = registerForActivityResult(ActivityResultContracts.RequestPermission(), ::onMicrophonePermissionResult)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // A restored pending result is discarded: no credential/content context is restored with it.
         imagePickerOutstanding = savedInstanceState?.getBoolean(STATE_IMAGE_PICKER_OUTSTANDING) == true
+        documentPickerOutstanding = savedInstanceState?.getBoolean(STATE_DOCUMENT_PICKER_OUTSTANDING) == true
         microphonePermissionOutstanding = savedInstanceState?.getBoolean(STATE_MICROPHONE_PERMISSION_OUTSTANDING) == true
         window.prepareEdgeToEdgeContent()
         binding = ActivityPaneBinding.inflate(layoutInflater)
@@ -310,6 +322,10 @@ class PaneActivity : AppCompatActivity() {
             pickedImageThumb = null
             imagePickerContext = null
             microphonePermissionContext = null
+            documentPickerContext = null
+            val retiredDocumentJob = documentJob
+            documentJob = null
+            retiredDocumentJob?.cancel()
             recordingContext = null
             if (::speechRecorder.isInitialized) speechRecorder.cancel()
             if (reason in setOf(com.lateapex.collie.data.AuthorityInvalidation.PAIRING_RETIRED,
@@ -346,6 +362,9 @@ class PaneActivity : AppCompatActivity() {
         if (savedInstanceState?.getString(STATE_ATTACHMENT_ORIGIN) == origin &&
             savedInstanceState.getString(STATE_ATTACHMENT_CUSTODY) == attachmentCustody()) {
             pendingAttachment = savedInstanceState.getString(STATE_ATTACHMENT_PATH)
+            pendingAttachmentLabel = savedInstanceState.getString(STATE_ATTACHMENT_LABEL)
+            pendingAttachmentMime = savedInstanceState.getString(STATE_ATTACHMENT_MIME)
+            pendingAttachmentBytes = savedInstanceState.getLong(STATE_ATTACHMENT_BYTES).takeIf { it in 1..DocumentAttachment.NATIVE_MAX_BYTES }
             renderAttachmentChip()
         }
         restoringDraft = false
@@ -417,6 +436,10 @@ class PaneActivity : AppCompatActivity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putString(STATE_ATTACHMENT_PATH, pendingAttachment)
+        outState.putString(STATE_ATTACHMENT_LABEL, pendingAttachmentLabel)
+        outState.putString(STATE_ATTACHMENT_MIME, pendingAttachmentMime)
+        pendingAttachmentBytes?.let { outState.putLong(STATE_ATTACHMENT_BYTES, it) }
+        outState.putBoolean(STATE_DOCUMENT_PICKER_OUTSTANDING, documentPickerOutstanding)
         outState.putString(STATE_ATTACHMENT_ORIGIN, paneDraftKey.substringBefore('|'))
         outState.putString(STATE_ATTACHMENT_CUSTODY, attachmentCustody())
         outState.putBoolean(STATE_IMAGE_PICKER_OUTSTANDING, imagePickerOutstanding)
@@ -452,6 +475,9 @@ class PaneActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        val retiredDocumentJob = documentJob
+        documentJob = null
+        retiredDocumentJob?.cancel()
         authorityRegistration?.close()
         authorityRegistration = null
         binding.root.viewTreeObserver.removeOnPreDrawListener(keysViewportListener)
@@ -584,7 +610,7 @@ class PaneActivity : AppCompatActivity() {
             render(currentState)
             replyInput.requestFocus()
         }
-        attachImageButton.setOnClickListener { launchImagePicker() }
+        attachImageButton.setOnClickListener { showAttachmentMenu() }
         speechButton.setOnClickListener { toggleSpeechRecording() }
         keysModeButton.setOnClickListener { toggleDrawer(ComposerDrawer.KEYS) }
         quickModeButton.setOnClickListener { toggleDrawer(ComposerDrawer.QUICK) }
@@ -662,6 +688,9 @@ class PaneActivity : AppCompatActivity() {
         takenOverTerminalDraft = null
         terminalDraftTracker.observe(null)
         pendingAttachment = null
+        pendingAttachmentLabel = null
+        pendingAttachmentMime = null
+        pendingAttachmentBytes = null
         pendingAttachmentThumb = null
         pickedImageThumb = null
         pendingDestructiveSend = null
@@ -702,6 +731,104 @@ class PaneActivity : AppCompatActivity() {
             imagePickerOutstanding = false
             if (repository.isCurrent(context)) showComposerMediaMessage(composerMediaText.imageUnreadable)
         }
+    }
+
+    private fun showAttachmentMenu() {
+        if (!binding.attachImageButton.isEnabled) return
+        PopupMenu(this, binding.attachImageButton).apply {
+            menu.add(R.string.pane_attachment_choose_photo).setOnMenuItemClickListener { launchImagePicker(); true }
+            menu.add(R.string.pane_attachment_choose_file).setOnMenuItemClickListener { launchDocumentPicker(); true }
+            show()
+        }
+    }
+
+    private fun launchDocumentPicker() {
+        if (documentPickerOutstanding) return
+        val context = repository.readContext(address.scope, address.paneId) ?: return
+        documentPickerContext = context
+        documentPickerOutstanding = true
+        try {
+            documentPicker.launch(arrayOf("*/*"))
+        } catch (_: RuntimeException) {
+            documentPickerContext = null
+            documentPickerOutstanding = false
+            if (repository.isCurrent(context)) showComposerMediaMessage(getString(R.string.pane_attachment_unreadable))
+        }
+    }
+
+    private fun onDocumentPicked(uri: android.net.Uri?) {
+        val context = documentPickerContext
+        documentPickerContext = null
+        documentPickerOutstanding = false
+        if (uri != null && context != null && repository.isCurrent(context)) handleSelectedDocument(uri, context)
+    }
+
+    private fun handleSelectedDocument(uri: android.net.Uri, context: com.lateapex.collie.data.ScopedReadContext) {
+        if (composerMediaBusy || directTyping || terminalWriteBlock() != null || semanticSurface?.ownsKeyboard == true || noEchoPrompt != null) return
+        val job = lifecycleScope.launch(start = CoroutineStart.LAZY) {
+            val owner = currentCoroutineContext().job
+            try {
+                if (!repository.isCurrent(context)) return@launch
+                setComposerMediaBusy(true)
+                showComposerMediaMessage(getString(R.string.pane_attachment_preparing))
+                val config = repository.config(address.scope, context)
+                if (!repository.isCurrent(context)) return@launch
+                val capability = (config as? ApiResult.Success)?.value?.upload
+                if (capability == null) {
+                    showComposerMediaMessage(getString(R.string.pane_attachment_policy_unavailable))
+                    return@launch
+                }
+                DocumentAttachment.withSelection(read = {
+                    DocumentAttachment.import(
+                        contentResolver, uri, cacheDir, capability, "attachment",
+                        getString(R.string.pane_attachment_unreadable),
+                        getString(R.string.pane_attachment_unsupported),
+                        getString(R.string.pane_attachment_too_large),
+                        { sent, total -> runOnUiThread {
+                            if (!isFinishing && !isDestroyed && lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) && repository.isCurrent(context)) {
+                                showComposerMediaMessage(getString(R.string.pane_attachment_progress, sent, total))
+                            }
+                        } },
+                    )
+                }, consume = consume@{ selection ->
+                    if (!repository.isCurrent(context)) return@consume
+                    when (selection) {
+                        is DocumentSelection.Rejected -> showComposerMediaMessage(selection.reason)
+                        is DocumentSelection.Ready -> {
+                            showComposerMediaMessage(getString(R.string.pane_attachment_uploading, selection.source.fileName))
+                            val result = composerMediaActions.uploadDocument(selection.source) { repository.upload(address, it, context) }
+                            if (!repository.isCurrent(context)) return@consume
+                            when (result) {
+                                is ComposerMediaResult.Draft -> {
+                                    acceptDocumentUpload(result.insertion, selection.source.fileName, selection.source.contentType, selection.source.contentLength)
+                                    showComposerMediaMessage(getString(R.string.pane_attachment_added, selection.source.fileName))
+                                }
+                                is ComposerMediaResult.Failure -> showComposerMediaMessage(result.message)
+                                else -> showComposerMediaMessage(getString(R.string.pane_attachment_upload_failed))
+                            }
+                        }
+                    }
+                })
+            } finally {
+                if (documentJob === owner) {
+                    documentJob = null
+                    if (repository.isCurrent(context)) setComposerMediaBusy(false)
+                }
+            }
+        }
+        documentJob = job
+        job.start()
+    }
+
+    @VisibleForTesting
+    internal fun acceptDocumentUpload(path: String, filename: String, mime: String, bytes: Long) {
+        require(bytes in 1..DocumentAttachment.NATIVE_MAX_BYTES && mime.length <= 128 && mime.none { it.code < 32 })
+        pendingAttachment = path
+        pendingAttachmentLabel = DocumentAttachment.safeName(filename)
+        pendingAttachmentMime = mime
+        pendingAttachmentBytes = bytes
+        pendingAttachmentThumb = null
+        renderAttachmentChip()
     }
 
     private fun onImagePicked(uri: android.net.Uri?) {
@@ -849,6 +976,9 @@ class PaneActivity : AppCompatActivity() {
                     // The upload path is what the bridge needs on send; it is shown as a chip and
                     // never written into the draft (B.2).
                     pendingAttachment = guarded.insertion
+                    pendingAttachmentLabel = null
+                    pendingAttachmentMime = null
+                    pendingAttachmentBytes = null
                     pendingAttachmentThumb = pickedImageThumb
                     pickedImageThumb = null
                     renderAttachmentChip()
@@ -1653,6 +1783,9 @@ class PaneActivity : AppCompatActivity() {
             pendingReplyAttempt = null
             takenOverTerminalDraft = null
             pendingAttachment = null
+            pendingAttachmentLabel = null
+            pendingAttachmentMime = null
+            pendingAttachmentBytes = null
             pendingAttachmentThumb = null
             renderAttachmentChip()
             replyInput.text?.clear()
@@ -2330,15 +2463,32 @@ class PaneActivity : AppCompatActivity() {
             // The photo picker names a pick by its media id and the bridge renames the copy, so no
             // file name here means anything to the operator (S25 Ultra, 2026-09-10).
             composerAttachmentChip.text = getString(R.string.pane_attachment_image)
+            val filename = pendingAttachmentLabel
+            val mime = pendingAttachmentMime
+            val bytes = pendingAttachmentBytes
+            if (filename != null && mime != null && bytes != null) {
+                composerAttachmentChip.text = getString(R.string.pane_attachment_details, filename, mime, bytes)
+            }
+            composerAttachmentChip.contentDescription = composerAttachmentChip.text
+            composerAttachmentChip.closeIconContentDescription = getString(R.string.pane_attachment_remove, composerAttachmentChip.text)
             composerAttachmentChip.chipIcon = pendingAttachmentThumb
                 ?.let { android.graphics.drawable.BitmapDrawable(resources, it) }
                 ?: ContextCompat.getDrawable(this@PaneActivity, R.drawable.ic_pane_attach)
             composerAttachmentChip.isChipIconVisible = true
             composerAttachmentChip.setOnCloseIconClickListener {
                 pendingAttachment = null
+                pendingAttachmentLabel = null
+                pendingAttachmentMime = null
+                pendingAttachmentBytes = null
                 pendingAttachmentThumb = null
                 renderAttachmentChip()
             }
+        } else {
+            composerAttachmentChip.text = ""
+            composerAttachmentChip.contentDescription = null
+            composerAttachmentChip.closeIconContentDescription = null
+            composerAttachmentChip.chipIcon = null
+            composerAttachmentChip.setOnCloseIconClickListener(null)
         }
         renderComposerMediaControls()
     }
@@ -2346,6 +2496,9 @@ class PaneActivity : AppCompatActivity() {
     @VisibleForTesting
     internal fun acceptUploadForTest(path: String, thumbnail: android.graphics.Bitmap? = null) {
         pendingAttachment = path
+        pendingAttachmentLabel = null
+        pendingAttachmentMime = null
+        pendingAttachmentBytes = null
         pendingAttachmentThumb = thumbnail
         renderAttachmentChip()
     }
@@ -4313,6 +4466,10 @@ class PaneActivity : AppCompatActivity() {
         const val EXTRA_STATUS = "status"
         const val EXTRA_FRESH_PANE = "fresh_pane"
         private const val STATE_ATTACHMENT_PATH = "attachment_path"
+        private const val STATE_ATTACHMENT_LABEL = "attachment_label"
+        private const val STATE_ATTACHMENT_MIME = "attachment_mime"
+        private const val STATE_ATTACHMENT_BYTES = "attachment_bytes"
+        private const val STATE_DOCUMENT_PICKER_OUTSTANDING = "document_picker_outstanding"
         private const val STATE_ATTACHMENT_ORIGIN = "attachment_origin"
         private const val STATE_ATTACHMENT_CUSTODY = "attachment_custody"
         private const val STATE_IMAGE_PICKER_OUTSTANDING = "image_picker_outstanding"

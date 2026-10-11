@@ -18,6 +18,7 @@ import com.lateapex.collie.network.DevicesResponse
 import com.lateapex.collie.network.DeviceAuthorization
 import com.lateapex.collie.network.HealthResponse
 import com.lateapex.collie.network.ImageUpload
+import com.lateapex.collie.network.UploadSource
 import com.lateapex.collie.network.ImageBlob
 import com.lateapex.collie.network.LaunchersResponse
 import com.lateapex.collie.network.FoldersResponse
@@ -373,7 +374,8 @@ class CollieRepository(
         ))
     }
 
-    suspend fun config(scope: Scope = selectedScope.value): ApiResult<BridgeConfigResponse> = withConnection(scope) { api.config(it, scope) }
+    suspend fun config(scope: Scope = selectedScope.value, expectedContext: ScopedReadContext? = null): ApiResult<BridgeConfigResponse> =
+        withConnection(scope, expectedContext = expectedContext) { api.config(it, scope) }
 
     suspend fun refresh(
         scope: Scope = selectedScope.value,
@@ -1267,6 +1269,14 @@ class CollieRepository(
         withWritableConnection(address.scope, address.paneId) {
             if (context != null && (!isCurrent(context) || it !== context.connection)) staleScope() else api.upload(it, address, upload)
         }
+
+    suspend fun upload(address: PaneAddress, upload: UploadSource, context: ScopedReadContext? = null): ApiResult<UploadResponse> = try {
+        withWritableConnection(address.scope, address.paneId) {
+            if (context != null && (!isCurrent(context) || it !== context.connection)) staleScope() else api.upload(it, address, upload)
+        }
+    } finally {
+        upload.dispose()
+    }
 
     suspend fun transcribe(audio: AudioUpload, context: ScopedReadContext? = null): ApiResult<SttResponse> =
         withWritableConnection {

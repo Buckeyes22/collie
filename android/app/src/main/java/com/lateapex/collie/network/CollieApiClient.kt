@@ -191,6 +191,14 @@ interface CollieApi {
         address: PaneAddress,
         upload: ImageUpload,
     ): ApiResult<UploadResponse> = unavailable("Upload")
+    suspend fun upload(
+        connection: Connection,
+        address: PaneAddress,
+        upload: UploadSource,
+    ): ApiResult<UploadResponse> = when (upload) {
+        is UploadSource.Image -> this.upload(connection, address, upload.upload)
+        is UploadSource.Document -> unavailable("Document upload")
+    }
     suspend fun transcribe(connection: Connection, audio: AudioUpload): ApiResult<SttResponse> =
         unavailable("Speech to text")
     suspend fun notificationPreferences(connection: Connection): ApiResult<NotifyPreferences> = unavailable("Notification preferences")
@@ -1063,21 +1071,31 @@ class CollieApiClient(
         connection: Connection,
         address: PaneAddress,
         upload: ImageUpload,
+    ): ApiResult<UploadResponse> = upload(connection, address, UploadSource.Image(upload))
+
+    override suspend fun upload(
+        connection: Connection,
+        address: PaneAddress,
+        upload: UploadSource,
     ): ApiResult<UploadResponse> {
-        val body = MultipartBody.Builder()
-            .setType(MultipartBody.FORM)
-            .addFormDataPart(
-                "file",
-                upload.fileName,
-                upload.bytes.toRequestBody(upload.contentType.toMediaTypeOrNull()),
-            )
-            .build()
-        val url = scopedUrl(connection.origin, path("pane", address.paneId, "upload"), address.scope)
-        return requireContract(
-            executeJson(post(connection, url, body), UploadResponse.serializer(), UPLOAD_TIMEOUT_SECONDS),
-            "Malformed upload response",
-        ) { response ->
-            if (response.ok) !response.path.isNullOrBlank() else !response.error.isNullOrBlank()
+        try {
+            val body = MultipartBody.Builder()
+                .setType(MultipartBody.FORM)
+                .addFormDataPart(
+                    "file",
+                    safeUploadFilename(upload.fileName),
+                    UploadStreamRequestBody(upload),
+                )
+                .build()
+            val url = scopedUrl(connection.origin, path("pane", address.paneId, "upload"), address.scope)
+            return requireContract(
+                executeJson(post(connection, url, body), UploadResponse.serializer(), UPLOAD_TIMEOUT_SECONDS),
+                "Malformed upload response",
+            ) { response ->
+                if (response.ok) !response.path.isNullOrBlank() else !response.error.isNullOrBlank()
+            }
+        } finally {
+            upload.dispose()
         }
     }
 

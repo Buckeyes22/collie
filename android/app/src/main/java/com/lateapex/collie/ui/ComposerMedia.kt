@@ -10,6 +10,7 @@ import com.lateapex.collie.network.ApiFailure
 import com.lateapex.collie.network.ApiResult
 import com.lateapex.collie.network.BridgeConfigResponse
 import com.lateapex.collie.network.ImageUpload
+import com.lateapex.collie.network.UploadSource
 import com.lateapex.collie.network.SttCapability
 import com.lateapex.collie.network.SttResponse
 import com.lateapex.collie.network.UploadResponse
@@ -70,6 +71,10 @@ internal interface ComposerMediaText {
     val imageUnreadable: String
     val imageTooLarge: String
     val imageEmpty: String
+    val attachmentAdded: String
+    val attachmentUploadSubject: String
+    val attachmentUploadNoResult: String
+    val attachmentUploadRefused: String
     fun providerUnavailable(provider: String): String
     fun failure(subject: String, failure: ApiFailure): String
 }
@@ -89,6 +94,10 @@ internal class AndroidComposerMediaText(context: Context) : ComposerMediaText {
     override val imageUnreadable get() = resources.getString(com.lateapex.collie.R.string.composer_media_image_unreadable)
     override val imageTooLarge get() = resources.getString(com.lateapex.collie.R.string.composer_media_image_too_large)
     override val imageEmpty get() = resources.getString(com.lateapex.collie.R.string.composer_media_image_empty)
+    override val attachmentAdded get() = resources.getString(com.lateapex.collie.R.string.composer_media_attachment_added)
+    override val attachmentUploadSubject get() = resources.getString(com.lateapex.collie.R.string.composer_media_attachment_upload)
+    override val attachmentUploadNoResult get() = resources.getString(com.lateapex.collie.R.string.composer_media_attachment_no_result)
+    override val attachmentUploadRefused get() = resources.getString(com.lateapex.collie.R.string.composer_media_attachment_refused)
     override fun providerUnavailable(provider: String): String =
         resources.getString(com.lateapex.collie.R.string.composer_media_provider_unavailable, provider)
     override fun failure(subject: String, failure: ApiFailure): String = resources.getString(
@@ -130,6 +139,20 @@ internal class ComposerMediaActions(
             is ApiResult.Failure -> ComposerMediaResult.Failure(failureMessage(text.imageUploadSubject, result.error))
             is ApiResult.NotModified -> ComposerMediaResult.Failure(text.imageUploadNoResult)
         }
+
+    suspend fun uploadDocument(
+        selected: UploadSource,
+        dispatch: suspend (UploadSource) -> ApiResult<UploadResponse>,
+    ): ComposerMediaResult = when (val result = dispatch(selected)) {
+        is ApiResult.Success -> {
+            val path = result.value.path
+            if (!result.value.ok) ComposerMediaResult.Failure(text.attachmentUploadRefused)
+            else if (path.isNullOrBlank()) ComposerMediaResult.Failure(text.attachmentUploadNoResult)
+            else ComposerMediaResult.Draft(path, text.attachmentAdded)
+        }
+        is ApiResult.Failure -> ComposerMediaResult.Failure(failureMessage(text.attachmentUploadSubject, result.error))
+        is ApiResult.NotModified -> ComposerMediaResult.Failure(text.attachmentUploadNoResult)
+    }
 
     suspend fun transcribe(audio: AudioUpload, dispatch: suspend (AudioUpload) -> ApiResult<SttResponse> = transcribeRequest): ComposerMediaResult =
         when (val result = dispatch(audio)) {

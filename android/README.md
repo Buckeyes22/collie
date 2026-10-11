@@ -134,6 +134,14 @@ server revocation action.
 
 ## Implemented native surface
 
+Native pane attachments retain the Photo Picker for images and use Android's Storage Access
+Framework document picker for generic text and raster files. The app reads selected bytes through
+an owned, cancellable provider descriptor into a private cache spool, enforces the lower of the
+server-advertised byte limit and the native 10 MiB ceiling, and removes previous-process spools at
+process startup. Extension policy is operator-configured; provider MIME labels are advisory. The
+upload uses the existing pane multipart endpoint and remains one-shot. Refused, cancelled, and
+completed uploads do not persist the provider URI or its grant.
+
 - Dashboard triage mirrors the web hierarchy and adds Recent/Spaces collapse and sorting, Space
   filtering, server-approved launchers, workspace creation, and worktree list/create/open flows.
 - The New screen offers the selected machine's declared agent, shell and command rows. Its shared
@@ -338,3 +346,5 @@ Control receipts use GET `/api/control/operations/<id>` and never return secret 
 Launches, receipt-bound worktree creation and the launcher-add request seam keep an encrypted local copy of the exact request ID and body before sending. If the reply is uncertain, the app offers only a deliberate replay of that same request after refreshing the owning scope; the user may instead abandon it after a duplicate-risk warning. Workspace-branch requests also bind the workspace ID carried in the POST path. When the bridge does not positively advertise owner-bound receipts, the existing workspace-branch create remains a one-shot initial action and never gains an ambiguous retry.
 
 See [scoped control authority decision](../.adr/0096-control-authority-is-scoped-and-positive.md). Joint B02/B03 and live vendor/device acceptance are tracked in the B01 handoff.
+
+Document chips show the sanitized filename, detected MIME type, and actual byte count, including accessible text. Provider work has two process-wide ownership slots; blocked cancellation or close cannot stall the caller or create unlimited replacement workers. A cancelled import unlinks its registered private spool immediately, and its slot stays occupied until provider and asynchronous cleanup finish. No document upload is automatically replayed.

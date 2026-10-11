@@ -156,7 +156,7 @@
     <string name="pane_key_ctrl_z" translatable="false">Ctrl Z</string>
     <string name="pane_reply_hint">Reply…</string>
     <string name="pane_send">Send reply</string>
-    <string name="pane_attach_image">Attach image</string>
+    <string name="pane_attach_image">Attach photo or file</string>
     <string name="pane_record_speech">Record speech</string>
     <string name="pane_stop_recording">Stop recording and transcribe</string>
     <string name="pane_recording">Recording… tap the microphone to transcribe.</string>

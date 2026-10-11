@@ -11,6 +11,7 @@ import androidx.annotation.VisibleForTesting
 import com.lateapex.collie.diagnostics.AnrWatchdog
 import com.lateapex.collie.diagnostics.DiagnosticsExport
 import com.lateapex.collie.ui.NativePreferences
+import com.lateapex.collie.ui.DocumentAttachment
 
 class CollieApplication : Application() {
     lateinit var container: AppContainer
@@ -24,6 +25,7 @@ class CollieApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        DocumentAttachment.cleanupPreviousProcessSpools(cacheDir)
         NativePreferences(this).applyTheme()
         container = AppContainer(this)
         // Backstop for a process that died with the share sheet open: never leave a plaintext export behind.

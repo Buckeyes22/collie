@@ -345,6 +345,46 @@ data class SttResponse(
     val detail: JsonObject? = null,
 )
 
+sealed interface UploadSource {
+    val fileName: String
+    val contentType: String
+    val contentLength: Long
+    fun openOnce(): java.io.InputStream
+    fun reportProgress(bytesSent: Long) = Unit
+    fun dispose()
+
+    data class Image(val upload: ImageUpload) : UploadSource {
+        override val fileName get() = upload.fileName
+        override val contentType get() = upload.contentType
+        override val contentLength get() = upload.bytes.size.toLong()
+        private val consumed = java.util.concurrent.atomic.AtomicBoolean(false)
+        override fun openOnce(): java.io.InputStream {
+            check(consumed.compareAndSet(false, true)) { "Upload source already consumed" }
+            return upload.bytes.inputStream()
+        }
+        override fun dispose() = Unit
+    }
+
+    class Document(
+        override val fileName: String,
+        override val contentType: String,
+        private val file: java.io.File,
+        override val contentLength: Long,
+        private val progress: (Long, Long) -> Unit = { _, _ -> },
+    ) : UploadSource {
+        private val consumed = java.util.concurrent.atomic.AtomicBoolean(false)
+        private val disposed = java.util.concurrent.atomic.AtomicBoolean(false)
+        init { require(fileName.isNotBlank() && contentType.isNotBlank() && contentLength in 1..10L * 1024 * 1024 && file.length() == contentLength) }
+        override fun openOnce(): java.io.InputStream {
+            check(!disposed.get()) { "Upload source disposed" }
+            check(consumed.compareAndSet(false, true)) { "Upload source already consumed" }
+            return file.inputStream()
+        }
+        override fun reportProgress(bytesSent: Long) = progress(bytesSent, contentLength)
+        override fun dispose() { disposed.set(true); file.delete() }
+    }
+}
+
 data class ImageUpload(
     val fileName: String,
     val contentType: String,

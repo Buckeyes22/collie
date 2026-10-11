@@ -21,6 +21,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.fail
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -824,6 +825,32 @@ class CollieApiClientTest {
             assertTrue(request.body.readUtf8().contains("shot.png"))
         }
         Unit
+    }
+
+    @Test
+    fun documentUploadIsScopedOneShotAndDeletesItsPrivateSpoolAfter413() = runBlocking {
+        server.enqueue(okhttp3.mockwebserver.MockResponse().setResponseCode(413).setBody("too large"))
+        val spool = java.io.File.createTempFile("collie-upload-test-", ".part").apply { writeText("safe brief") }
+        val source = UploadSource.Document("brief.txt", "text/plain", spool, spool.length())
+
+        val result = api.upload(
+            Connection(origin, "phone", "token"),
+            PaneAddress(Scope(host = "desk", session = "main"), "w1:p1"),
+            source,
+        )
+
+        assertTrue(result is ApiResult.Failure)
+        assertFalse(spool.exists())
+        try {
+            source.openOnce()
+            fail("refused request must not become replayable")
+        } catch (_: IllegalStateException) { }
+        server.takeRequest().also { request ->
+            assertEquals("/api/pane/w1%3Ap1/upload?host=desk&session=main", request.path)
+            assertTrue(request.body.readUtf8().contains("brief.txt"))
+            assertTrue(request.body.readUtf8().isEmpty())
+        }
+        assertEquals(1, server.requestCount)
     }
 
     @Test

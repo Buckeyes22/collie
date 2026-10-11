@@ -34,6 +34,7 @@ import com.lateapex.collie.data.AndroidKeystoreCipher
 import com.lateapex.collie.data.ScopedImageLoader
 import com.lateapex.collie.domain.*
 import com.lateapex.collie.network.*
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
@@ -127,6 +128,71 @@ class NativeInteractionTest {
             Thread.sleep(500) // Material sheet dismissal finishes on the animation clock.
             onView(withId(R.id.switcher_handle)).check(matches(isDisplayed()))
         }
+    }
+
+    @Test fun visibleRunRecoveryReloadsWithoutReplayThenRetriesTheOriginalBody() {
+        api.recipeRunsEnabled = true
+        ActivityScenario.launch<LaunchRecipeActivity>(LaunchRecipeActivity.intent(app, Scope(), LaunchRecipeActivity.MODE_RUN)).use { scenario ->
+            val exact = "printf '%s' \"fixture value\""
+            onView(withHint(R.string.recipes_run_input)).perform(scrollTo(), typeText(exact), closeSoftKeyboard())
+            onView(withHint(R.string.recipes_run_cwd)).perform(scrollTo(), typeText("/fixture space"), closeSoftKeyboard())
+            awaitRecipeButton(scenario, R.string.recipes_run, true)
+            onView(allOf(withText(R.string.recipes_run), isAssignableFrom(com.google.android.material.button.MaterialButton::class.java))).perform(scrollTo(), click())
+            onView(withText(R.string.recipes_no_prompt_ack)).check(matches(isDisplayed()))
+            onView(withId(android.R.id.message)).check(matches(withText(org.hamcrest.Matchers.containsString(exact))))
+            assertTrue(api.recipeRunBodies.isEmpty())
+            onView(withText(R.string.recipes_no_prompt_ack)).perform(click())
+            awaitRecipeButton(scenario, R.string.recipes_retry_run, false)
+            assertEquals(1, api.recipeRunBodies.size)
+            val first = api.recipeRunBodies.single()
+            val body = Json.parseToJsonElement(first).jsonObject
+            assertEquals(exact, body.getValue("run").jsonPrimitive.content)
+            assertEquals("/fixture space", body.getValue("cwd").jsonPrimitive.content)
+            assertEquals(36, body.getValue("requestId").jsonPrimitive.content.length)
+            onView(withText(R.string.recipes_retry_run)).perform(scrollTo()).check(matches(allOf(isDisplayed(), org.hamcrest.Matchers.not(isEnabled()))))
+            awaitRecipeButton(scenario, R.string.recipes_reload, true)
+            onView(withText(R.string.recipes_reload)).perform(scrollTo(), click())
+            awaitRecipeButton(scenario, R.string.recipes_retry_run, true)
+            assertEquals("Read-only reload must not replay", 1, api.recipeRunBodies.size)
+            onView(withText(R.string.recipes_retry_run)).perform(scrollTo(), click())
+            onView(withId(android.R.id.message)).check(matches(withText(org.hamcrest.Matchers.containsString(exact))))
+            onView(allOf(withText(R.string.recipes_retry_run), withId(android.R.id.button1))).perform(click())
+            awaitRecipeButton(scenario, R.string.recipes_retry_run, false)
+            assertEquals(listOf(first, first), api.recipeRunBodies.toList())
+        }
+    }
+
+    @Test fun retiredRunConfirmationCannotDispatchItsReviewedCommand() {
+        api.recipeRunsEnabled = true
+        ActivityScenario.launch<LaunchRecipeActivity>(LaunchRecipeActivity.intent(app, Scope(), LaunchRecipeActivity.MODE_RUN)).use { scenario ->
+            onView(withHint(R.string.recipes_run_input)).perform(scrollTo(), typeText("printf retired-fixture"), closeSoftKeyboard())
+            awaitRecipeButton(scenario, R.string.recipes_run, true)
+            onView(allOf(withText(R.string.recipes_run), isAssignableFrom(com.google.android.material.button.MaterialButton::class.java))).perform(scrollTo(), click())
+            onView(withText(R.string.recipes_no_prompt_ack)).check(matches(isDisplayed()))
+            scenario.onActivity { runBlocking { app.container.repository.disconnect() } }
+            onView(withText(R.string.recipes_no_prompt_ack)).perform(click())
+            androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+            assertTrue(api.recipeRunBodies.isEmpty())
+            onView(withText(R.string.recipes_run)).check(matches(org.hamcrest.Matchers.not(isEnabled())))
+        }
+    }
+
+    private fun awaitRecipeButton(scenario: ActivityScenario<LaunchRecipeActivity>, label: Int, enabled: Boolean) {
+        val deadline = android.os.SystemClock.uptimeMillis() + 8000L
+        do {
+            var ready = false
+            scenario.onActivity { activity ->
+                fun walk(view: View): Boolean {
+                    if (view is com.google.android.material.button.MaterialButton && view.text == activity.getString(label) && view.isShown && view.isEnabled == enabled) return true
+                    if (view is android.view.ViewGroup) for (i in 0 until view.childCount) if (walk(view.getChildAt(i))) return true
+                    return false
+                }
+                ready = walk(activity.window.decorView)
+            }
+            if (ready) return
+            android.os.SystemClock.sleep(100L)
+        } while (android.os.SystemClock.uptimeMillis() < deadline)
+        fail("Visible recipe control must reach the expected enabled state")
     }
 
     @Test fun typedReplyAndSendReachTransportExactlyOnce() {
@@ -1158,6 +1224,8 @@ class NativeInteractionTest {
     }
 
     private class InteractionApi : CollieApi {
+        var recipeRunsEnabled = false
+        val recipeRunBodies = CopyOnWriteArrayList<String>()
         var folderRecent: List<String> = emptyList()
         var pairedDevice: String? = "Fixture"
         var speechAvailable = false
@@ -1189,6 +1257,7 @@ class NativeInteractionTest {
             AgentStatus.IDLE, "/fixture", false, kind = "shell", paneLabel = "Fixture shell")
         override suspend fun health(connection: Connection) = ok(HealthResponse(true, "1.5.1", false, "solo"))
         override suspend fun config(connection: Connection) = ok(BridgeConfigResponse(
+            receiptContextBound = recipeRunsEnabled,
             mux = MuxConfigResponse(name = "tmux"),
             stt = if (speechAvailable) SttCapability("fixture", true) else null,
             operatorCommands = listOf(OperatorCommand(agent = "shell", command = "/help", description = "Fixture help")),
@@ -1246,7 +1315,15 @@ class NativeInteractionTest {
         override suspend fun folders(connection: Connection, scope: Scope) =
             ok(FoldersResponse(recent = folderRecent, favourites = emptyList(), home = "/fixture"))
         override suspend fun launchers(connection: Connection, scope: Scope) =
-            ok(LaunchersResponse(listOf(Launcher("fixture-command", "Fixture launcher")), "/fixture"))
+            ok(LaunchersResponse(listOf(Launcher("fixture-command", "Fixture launcher")), "/fixture",
+                adding = if (recipeRunsEnabled) LaunchersAdding(true, true, true, "fixture-only.toml", 0, 20, emptyList()) else null))
+        override suspend fun checkRun(connection: Connection, scope: Scope, run: String) =
+            ok(LaunchCheckResponse(ok = true, noPrompts = true))
+        override suspend fun startRunFrozen(connection: Connection, scope: Scope, canonicalBody: String): ApiResult<CreateResponse> {
+            check(recipeRunsEnabled)
+            recipeRunBodies += canonicalBody
+            return ApiResult.Failure(ApiFailure.Network("Owned fixture lost run response"))
+        }
         override suspend fun launch(connection: Connection, scope: Scope, command: String, besidePaneId: String?): ApiResult<CreateResponse> {
             launched += command
             return ok(CreateResponse(true, created))

@@ -414,4 +414,23 @@ Command: %2$s</string>
     <string name="recipes_unknown_device">Unknown device</string>
     <string name="launch_recipe_agent">One-off command</string>
     <string name="recipes_reload">Reload recipes and run status</string>
+    <string name="pane_attachment_details">%1$s · %2$s · %3$d bytes</string>
+    <string name="pane_attachment_remove">Remove attachment: %1$s</string>
+    <string name="pane_attachment_choose_photo">Choose photo</string>
+    <string name="pane_attachment_choose_file">Choose document or text file</string>
+    <string name="pane_attachment_preparing">Checking attachment policy and reading the selected file…</string>
+    <string name="pane_attachment_policy_unavailable">Upload policy is unavailable; refresh the connection and try again.</string>
+    <string name="pane_attachment_unreadable">The selected file could not be read. Choose it again and check its access.</string>
+    <string name="pane_attachment_unsupported">This file type or content is not allowed by the server upload policy.</string>
+    <string name="pane_attachment_too_large">This file exceeds the server or 10 MiB phone upload limit.</string>
+    <string name="pane_attachment_uploading">Uploading %1$s…</string>
+    <string name="pane_attachment_progress">Uploading selected file: %1$d of %2$d bytes sent.</string>
+    <string name="pane_attachment_added">Attached %1$s. It will be included with your next reply.</string>
+    <string name="pane_attachment_upload_subject">Document upload</string>
+    <string name="pane_attachment_upload_failed">The server did not confirm the attachment. It was not retried.</string>
+    <string name="pane_attachment_missing_path">The server accepted the file without returning an attachment path.</string>
+    <string name="composer_media_attachment_added">File added to the next reply.</string>
+    <string name="composer_media_attachment_upload">Attachment upload</string>
+    <string name="composer_media_attachment_no_result">Attachment upload returned no result.</string>
+    <string name="composer_media_attachment_refused">The server refused this attachment.</string>
 </resources>

@@ -1632,6 +1632,40 @@ class PaneActivityTest {
     }
 
     @Test
+    fun acceptedDocumentChipShowsFilenameMimeAndActualBytesAccessiblyAcrossRecreation() {
+        val intent = paneIntent("attach:document")
+        val controller = Robolectric.buildActivity(PaneActivity::class.java, intent).create().start()
+        val path = "/fixture/accepted-document.txt"
+        val filename = "notes.txt"
+        val mime = "text/plain"
+        val bytes = 37L
+        val activity = controller.get()
+        activity.acceptDocumentUpload(path, filename, mime, bytes)
+        fun assertChip(target: PaneActivity) {
+            val chip = target.findViewById<com.google.android.material.chip.Chip>(R.id.composer_attachment_chip)
+            val expected = target.getString(R.string.pane_attachment_details, filename, mime, bytes)
+            assertEquals(View.VISIBLE, chip.visibility)
+            assertEquals(expected, chip.text.toString())
+            assertEquals(expected, chip.contentDescription.toString())
+            assertEquals(target.getString(R.string.pane_attachment_remove, expected), chip.closeIconContentDescription.toString())
+            assertEquals("$path\ndraft", target.outgoingReplyForTest("draft"))
+            assertEquals("", target.findViewById<EditText>(R.id.reply_input).text.toString())
+        }
+        assertChip(activity)
+        val saved = Bundle()
+        controller.saveInstanceState(saved).stop().destroy()
+        assertFalse(saved.keySet().any { it.contains("uri") })
+        val recreated = Robolectric.buildActivity(PaneActivity::class.java, intent).create(saved)
+        try {
+            assertChip(recreated.get())
+            recreated.get().acceptUploadForTest("/fixture/photo.png")
+            val image = recreated.get().findViewById<com.google.android.material.chip.Chip>(R.id.composer_attachment_chip)
+            assertEquals(recreated.get().getString(R.string.pane_attachment_image), image.text.toString())
+            assertEquals(image.text.toString(), image.contentDescription.toString())
+        } finally { recreated.destroy() }
+    }
+
+    @Test
     fun attachmentChipShowsAThumbnailAndSaysImageNotAFileName() {
         // S25 Ultra, 2026-09-10: the chip read the bridge copy's name, then the picker's media id
         // ("1000005957.png"). Neither means anything to the operator.
@@ -1965,6 +1999,26 @@ class PaneActivityTest {
         assertEquals(activity.getString(R.string.pane_body_showing_mirror_no_journal), activity.findViewById<TextView>(R.id.body_mode_label).text.toString())
         assertEquals(activity.getString(R.string.pane_body_switch_to_transcript), activity.findViewById<TextView>(R.id.body_mode_switch).text.toString())
     }
+
+    @Test
+    fun attachmentProgressSuccessAndRefusalUsePoliteAccessibleStatusRegion() {
+        val activity = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("attachment-status:pane")).create().get()
+        val status = activity.findViewById<TextView>(R.id.composer_media_status)
+        assertEquals(View.ACCESSIBILITY_LIVE_REGION_POLITE, status.accessibilityLiveRegion)
+        val announce = PaneActivity::class.java.getDeclaredMethod("showComposerMediaMessage", String::class.java).apply { isAccessible = true }
+        listOf(
+            activity.getString(R.string.pane_attachment_preparing),
+            activity.getString(R.string.pane_attachment_progress, 5, 10),
+            activity.getString(R.string.pane_attachment_added, "notes.txt"),
+            activity.getString(R.string.pane_attachment_unsupported),
+        ).forEach { message ->
+            announce.invoke(activity, message)
+            assertEquals(message, status.text.toString())
+            assertTrue(status.isVisibleForTest())
+        }
+    }
+
+    private fun View.isVisibleForTest() = visibility == View.VISIBLE
 }
 
 private fun setDiagnosticsForTest(app: CollieApplication, recorder: DiagnosticsRecorder) {

@@ -569,6 +569,7 @@
             android:paddingVertical="7dp"
             android:textColor="@color/collie_muted"
             android:textSize="12sp"
+            android:accessibilityLiveRegion="polite"
             android:visibility="gone" />
 
         <com.google.android.material.button.MaterialButton
@@ -844,6 +845,7 @@
 
         <TextView
             android:id="@+id/composer_media_status"
+            android:accessibilityLiveRegion="polite"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:paddingHorizontal="12dp"
