@@ -34,6 +34,7 @@ is refused. A mutation is attempted once; transport redirects and automatic writ
 | `/api/crew` | Use the renamed endpoint and `crew` field. A legacy 404 permits one `/api/pack` read fallback; a current `crew.not_lead` refusal does not. Legacy response aliases remain decodable. Native labels say Crew. |
 | `/api/devices`, `/api/devices/revoke` | Decode expiry fields and retain the existing confirmed revocation flow. |
 | `/api/launchers`, `/api/launch` | Decode harness discovery, richer launcher items, availability and recent runs. Existing command launchers remain supported. A legacy launch remains a one-shot initial request; ambiguous legacy outcomes do not gain a retry action. Owner-bound launch intents require the owning host's positive `receiptContextBound` declaration and retain the exact encrypted POST body/request ID for deliberate replay. Native confirmation is required for launchers marked `noPrompts`. |
+| `/api/folders`, `/api/folders/star` | Read recent and favourite folder strings from the selected machine/session. Star writes address a folder already supplied by that host; recent/favourite collections remain machine-owned and manual remote-folder entry remains available when an older bridge lacks these routes. |
 | Workspace worktree list/create/open | Decode default branch, launcher result and replay metadata. Carry a request ID on create. Allow the server's longer worktree execution budget. Workspace creation uses the same frozen owner-bound intent and positive capability gate when available; old/mixed servers permit only the legacy initial attempt, with no same-ID recovery retry after uncertainty. |
 | `/api/worktree/plan`, `/api/worktree` | Add scoped plan/create transport and repository methods. Encode `base.kind=default` or `ref` with its ref; encode `folder.kind=default` or `parent` with its parent. Folder worktree requests and retries preserve the exact caller-held request ID and frozen POST body, and deliberate replay is available only when the owning host positively declares bound receipts. |
 | Pane upload and `/api/stt` | Existing multipart image/audio contracts and draft insertion remain compatible. Server errors preserve their typed meaning. Native image selection keeps its 10 MiB memory limit; upload capabilities are decoded and the server enforces its configured limits/types. |
@@ -42,9 +43,10 @@ is refused. A mutation is attempted once; transport redirects and automatic writ
 
 ## Additive upstream features
 
-This sync imports all upstream bridge, CLI and PWA features. Native parity now includes the read-only
-Changes browser; it does not claim new native screen parity for Files browsers, machine resource charts and alerts, launcher recipe editing,
-free-text runs, folder pickers or PWA push. These APIs do not replace existing native calls.
+This sync imports all upstream bridge, CLI and PWA features. Native parity includes the read-only
+Changes browser and scoped folder favorites/recents through the native New, workspace and worktree
+folder picker. Files browsers, machine resource charts and alerts, launcher recipe editing, free-text
+runs and PWA push retain separate parity work. These APIs do not replace existing native calls.
 Native launch and worktree flows use frozen, owner-bound intents when the owning host advertises
 `receiptContextBound: true`; the receipt mode is saved with each intent and cannot be upgraded by a
 later config read. Old/mixed servers retain one-shot legacy initial creation without an ambiguous

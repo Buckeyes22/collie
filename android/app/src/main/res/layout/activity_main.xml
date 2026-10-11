@@ -291,6 +291,14 @@
                 android:text="@string/pane_action_changes"
                 android:textColor="@color/collie_on_background"
                 android:textSize="13sp" />
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/new_workflow_button"
+                style="@style/Widget.Collie.Button.Outlined"
+                android:layout_width="wrap_content"
+                android:layout_height="@dimen/collie_touch_target"
+                android:minWidth="0dp"
+                android:text="@string/new_title"
+                android:textAllCaps="false" />
             <ImageButton
                 android:id="@+id/settings_button"
                 style="@style/Widget.Collie.Header.IconButton"

@@ -20,6 +20,7 @@ import com.lateapex.collie.network.HealthResponse
 import com.lateapex.collie.network.ImageUpload
 import com.lateapex.collie.network.ImageBlob
 import com.lateapex.collie.network.LaunchersResponse
+import com.lateapex.collie.network.FoldersResponse
 import com.lateapex.collie.network.NotificationState
 import com.lateapex.collie.network.NotifyPreferences
 import com.lateapex.collie.network.NotifyPreferencesPatch
@@ -525,6 +526,38 @@ class CollieRepository(
         return dispatchLaunchIntent(context, reserved.record)
     }
 
+    /** One local durable attempt for an older declared launcher endpoint without owner receipts. */
+    suspend fun startLegacyLaunchInitial(
+        scope: Scope,
+        command: String,
+        requestId: String,
+        cwd: String? = null,
+        confirmedNoPrompts: Boolean,
+    ): ApiResult<CreateResponse> {
+        val context = readContext(scope) ?: return notConnected()
+        val store = launchIntentStore ?: return intentUnavailable()
+        if (command.isBlank() || requestId.isBlank() || !writesAllowed(scope) || !context.connection.isPaired) return notConnected()
+        if (unresolvedLaunchIntents(scope).isNotEmpty()) return unresolvedIntentFailure()
+        val body = intentJson.encodeToString(
+            StartLaunchRequest.serializer(),
+            StartLaunchRequest(requestId, cwd, command = command),
+        )
+        val intent = FrozenLaunchIntent(
+            requestId = requestId, origin = context.key.origin, mount = context.key.origin,
+            connectionGeneration = context.key.connectionGeneration, pairedDeviceIdentity = context.key.pairedDeviceIdentity,
+            leadEpoch = context.key.leadEpoch, host = context.key.host, session = context.key.session,
+            subjectIdentity = context.key.subjectIdentity, operation = "launch",
+            receiptMode = LaunchIntentReceiptMode.legacyInitialOnly,
+            confirmedNoPrompts = confirmedNoPrompts, canonicalBody = body,
+        )
+        val reserved = try { store.reserve(intent) } catch (_: Exception) { return intentUnavailable() }
+        if (reserved is ReserveIntentResult.Unresolved) return unresolvedIntentFailure()
+        if (reserved !is ReserveIntentResult.Reserved) {
+            return ApiResult.Failure(ApiFailure.Http(409, "This request ID is already bound to a saved intent", "launch.request_mismatch"))
+        }
+        return dispatchLaunchIntent(context, reserved.record)
+    }
+
     fun unresolvedLaunchIntents(scope: Scope = selectedScope.value): List<StoredLaunchIntent> = try {
         val context = readContext(scope) ?: return emptyList()
         launchIntentStore?.all().orEmpty().filter { record ->
@@ -596,12 +629,23 @@ class CollieRepository(
             context.key.subjectIdentity,
             mutation = true,
             expectedContext = context,
-        ) { api.startLaunchFrozen(it, context.key.scope, record.intent.canonicalBody) }
+        ) {
+            if (record.intent.receiptMode == LaunchIntentReceiptMode.legacyInitialOnly) {
+                if (record.state != LaunchIntentState.pending) return@withConnectionOf intentUnknown()
+                val frozen = intentJson.decodeFromString(StartLaunchRequest.serializer(), record.intent.canonicalBody)
+                if (frozen.requestId != record.intent.requestId || frozen.command.isNullOrBlank()) return@withConnectionOf intentUnknown()
+                api.launch(it, context.key.scope, frozen.command)
+            } else {
+                api.startLaunchFrozen(it, context.key.scope, record.intent.canonicalBody)
+            }
+        }
         if (!isCurrent(context)) {
             persistIntentState(record, LaunchIntentState.unknown)
             return staleScope()
         }
-        val state = launchDisposition(result)
+        val state = if (record.intent.receiptMode == LaunchIntentReceiptMode.legacyInitialOnly &&
+            result is ApiResult.Success && result.value.ok && result.value.pane == null
+        ) LaunchIntentState.unknown else launchDisposition(result)
         // A refusal from a replay cannot prove that the original uncertain attempt had no effect.
         // Keep the durable unknown row until a success receipt or explicit user abandonment.
         if (record.state == LaunchIntentState.unknown && state == LaunchIntentState.refused) return result
@@ -1014,6 +1058,12 @@ class CollieRepository(
 
     suspend fun launchers(scope: Scope = selectedScope.value): ApiResult<LaunchersResponse> =
         withConnection(scope) { api.launchers(it, scope) }
+
+    suspend fun folders(scope: Scope = selectedScope.value): ApiResult<FoldersResponse> =
+        withConnection(scope) { api.folders(it, scope) }
+
+    suspend fun starFolder(scope: Scope = selectedScope.value, folder: String, starred: Boolean): ApiResult<FoldersResponse> =
+        withWritableConnection(scope) { api.starFolder(it, scope, folder, starred) }
 
     /** `command` must be a value returned by [launchers], never caller-authored shell text. */
     suspend fun launch(

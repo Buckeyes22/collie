@@ -10,6 +10,7 @@ the first Android release from this fork.
 
 - Render structured history calls and question choices with distinct completed, denied and failed outcomes.
 - Show supported journal images in live and historical transcripts with scoped authenticated blob loading, bounded decoding, and clear failure states.
+- Add a native New workflow for declared agent, shell and launcher choices, with host-owned recent and favourite folders in New, workspace and worktree forms.
 - Persist encrypted, owner-bound launch, worktree and launcher-add intents; keep uncertain outcomes visible and require an explicit same-request retry only where the owning host advertises durable receipt support. Preserve the one-shot legacy workspace-branch create without offering an unverifiable retry, and add native launch choices plus worktree planning with base and parent-folder selection.
 - Add a scoped, device-authorized pane process details screen for foreground processes, runtime directory and restore diagnostics, with explicit unsupported and unavailable states.
 

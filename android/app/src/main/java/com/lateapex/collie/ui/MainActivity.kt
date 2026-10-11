@@ -138,6 +138,9 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(this, SettingsActivity::class.java))
         }
         binding.dashboardChangesButton.setOnClickListener { showChangesWorkspacePicker() }
+        binding.newWorkflowButton.setOnClickListener {
+            startActivity(NewActivity.intent(this, viewModel.currentScope))
+        }
         binding.hostSwitcher.setOnClickListener { showHostSwitcher() }
         binding.sessionSwitcher.setOnClickListener { showSessionSwitcher() }
         binding.setupSettingsButton.setOnClickListener {
@@ -974,8 +977,33 @@ class MainActivity : AppCompatActivity() {
         val body = sheetBody()
         val cwd = sheetTextField(R.string.space_directory_optional)
         val label = sheetTextField(R.string.space_label_optional)
+        val repository = (application as CollieApplication).container.repository
+        val readContext = repository.readContext(scope)
+        var folderResponse: com.lateapex.collie.network.FoldersResponse? = null
+        lateinit var folderPicker: FolderPickerView
+        folderPicker = FolderPickerView(this, onSelect = { cwd.setText(it.orEmpty()) }, onStar = { folder, starred ->
+            if (readContext != null) lifecycleScope.launch {
+                when (val result = repository.starFolder(scope, folder, starred)) {
+                    is ApiResult.Success -> if (repository.isCurrent(readContext)) {
+                        folderResponse = result.value
+                        folderPicker.render(folderResponse, cwd.valueOrNull(), repository.writesAllowed(scope))
+                    }
+                    is ApiResult.Failure -> if (repository.isCurrent(readContext)) viewModel.report(MainViewModel.describe(resources, result.error))
+                    is ApiResult.NotModified -> Unit
+                }
+            }
+        })
         body.addView(cwd, sheetRowParams(top = 4))
+        folderPicker.render(null, cwd.valueOrNull(), repository.writesAllowed(scope))
+        body.addView(folderPicker, sheetRowParams(top = 4))
         body.addView(label, sheetRowParams(top = 8))
+        if (readContext != null) lifecycleScope.launch {
+            val result = repository.folders(scope)
+            if (repository.isCurrent(readContext) && result is ApiResult.Success) {
+                folderResponse = result.value
+                folderPicker.render(folderResponse, cwd.valueOrNull(), repository.writesAllowed(scope))
+            }
+        }
         body.addView(sheetActionButton(getString(R.string.action_create)) {
             val target = revalidatedStructuralScope(scope) ?: return@sheetActionButton
             dialog.dismiss()
@@ -1113,10 +1141,36 @@ class MainActivity : AppCompatActivity() {
             id = View.generateViewId()
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
         } else null
+        var folderResponse: com.lateapex.collie.network.FoldersResponse? = null
+        lateinit var folderPicker: FolderPickerView
+        val folderContext = repository.readContext(scope)
+        folderPicker = FolderPickerView(this, onSelect = { folder -> folderParent?.setText(folder.orEmpty()) }, onStar = { folder, starred ->
+            if (folderContext != null) lifecycleScope.launch {
+                when (val result = repository.starFolder(scope, folder, starred)) {
+                    is ApiResult.Success -> if (repository.isCurrent(folderContext)) {
+                        folderResponse = result.value
+                        folderPicker.render(folderResponse, folderParent?.valueOrNull(), repository.writesAllowed(scope))
+                    }
+                    is ApiResult.Failure -> if (repository.isCurrent(folderContext)) viewModel.report(MainViewModel.describe(resources, result.error))
+                    is ApiResult.NotModified -> Unit
+                }
+            }
+        })
         body.addView(baseCaption, sheetRowParams(top = 6))
         body.addView(branch, sheetRowParams(top = 4))
         baseRef?.let { body.addView(it, sheetRowParams(top = 4)) }
         folderParent?.let { body.addView(it, sheetRowParams(top = 4)) }
+        if (folderParent != null) {
+            folderPicker.render(null, folderParent.valueOrNull(), repository.writesAllowed(scope))
+            body.addView(folderPicker, sheetRowParams(top = 4))
+            if (folderContext != null) lifecycleScope.launch {
+                val result = repository.folders(scope)
+                if (repository.isCurrent(folderContext) && result is ApiResult.Success) {
+                    folderResponse = result.value
+                    folderPicker.render(folderResponse, folderParent.valueOrNull(), repository.writesAllowed(scope))
+                }
+            }
+        }
         body.addView(sheetActionButton(getString(R.string.action_create)) {
             val name = branch.text.toString().trim()
             if (name.isEmpty()) return@sheetActionButton

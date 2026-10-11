@@ -55,6 +55,17 @@ data class RecentRun(
     val reason: String? = null,
 )
 
+/** Folder strings reported by the selected host's bridge; they are labels/launch inputs, not local paths. */
+@Serializable
+data class FoldersResponse(
+    val recent: List<String>,
+    val favourites: List<String>,
+    val home: String,
+)
+
+@Serializable
+internal data class StarFolderRequest(val folder: String, val starred: Boolean)
+
 @Serializable
 internal data class StartLaunchRequest(
     val requestId: String,

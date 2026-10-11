@@ -71,6 +71,15 @@
             android:textSize="13sp" />
 
         <ImageButton
+            android:id="@+id/new_workflow_button"
+            android:layout_width="@dimen/collie_touch_target"
+            android:layout_height="@dimen/collie_touch_target"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/new_title"
+            android:padding="8dp"
+            android:src="@drawable/ic_collie_add" />
+
+        <ImageButton
             android:id="@+id/settings_button"
             android:layout_width="@dimen/collie_touch_target"
             android:layout_height="@dimen/collie_touch_target"

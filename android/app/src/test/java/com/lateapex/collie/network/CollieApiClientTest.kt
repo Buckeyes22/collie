@@ -810,6 +810,26 @@ class CollieApiClientTest {
     }
 
     @Test
+    fun folderReadsAndStarWritesStayOnTheSelectedMachineAndValidateBounds() = runBlocking {
+        val connection = Connection(origin, "phone", "token")
+        server.enqueue(jsonResponse("""{"home":"/srv/peer","recent":["/srv/peer/project"],"favourites":[]}"""))
+        val folders = api.folders(connection, Scope(host = "peer", session = "work")) as ApiResult.Success
+        assertEquals("/srv/peer", folders.value.home)
+        assertEquals("/api/folders?host=peer&session=work", server.takeRequest().path)
+
+        server.enqueue(jsonResponse("""{"home":"/srv/peer","recent":[],"favourites":["/srv/peer/project"]}"""))
+        assertTrue(api.starFolder(connection, Scope(host = "peer"), "/srv/peer/project", true) is ApiResult.Success)
+        val star = server.takeRequest()
+        assertEquals("POST", star.method)
+        assertEquals("/api/folders/star?host=peer", star.path)
+        assertEquals(origin.headerValue, star.getHeader("Origin"))
+        assertEquals("{\"folder\":\"/srv/peer/project\",\"starred\":true}", Json.parseToJsonElement(star.body.readUtf8()).toString())
+
+        server.enqueue(jsonResponse("""{"home":"/srv/peer","recent":["/same"],"favourites":["/same"]}"""))
+        assertTrue(api.folders(connection, Scope(host = "peer")) is ApiResult.Failure)
+    }
+
+    @Test
     fun legacyCrewFallbackIsReadOnlyAndDoesNotHideCurrentRoleRefusals() = runBlocking {
         val connection = Connection(origin, "phone", "token")
         server.enqueue(MockResponse().setResponseCode(404).setBody("not found"))

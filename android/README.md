@@ -116,6 +116,9 @@ server revocation action.
 
 - Dashboard triage mirrors the web hierarchy and adds Recent/Spaces collapse and sorting, Space
   filtering, server-approved launchers, workspace creation, and worktree list/create/open flows.
+- The New screen offers the selected machine's declared agent, shell and command rows. Its shared
+  folder picker reads that machine's recent and favourite folders; folders and stars do not cross
+  host boundaries, and unsupported older bridges leave manual remote-folder entry available.
 - Space browsing exposes tabs and panes plus capability-gated tab/workspace creation, rename, and
   close actions. Pane switching retains the active host/session scope.
 - Pane viewing supports ANSI-styled inert text, semantic dialogs/actions, raw-terminal display,

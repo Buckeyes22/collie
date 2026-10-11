@@ -28,6 +28,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.google.android.material.button.MaterialButton
+import com.lateapex.collie.CollieApplication
 import com.lateapex.collie.R
 import com.lateapex.collie.databinding.ActivitySpaceBinding
 import com.lateapex.collie.domain.Scope
@@ -99,6 +100,7 @@ class SpaceActivity : AppCompatActivity() {
             startActivity(ChangesActivity.intentForWorkspace(this, workspaceId, scope, intent.getStringExtra(EXTRA_TITLE)))
         }
         binding.settingsButton.setOnClickListener { startActivity(Intent(this, SettingsActivity::class.java)) }
+        binding.newWorkflowButton.setOnClickListener { startActivity(NewActivity.intent(this, scope)) }
         binding.spaceList.layoutManager = LinearLayoutManager(this)
         binding.spaceList.adapter = adapter
         binding.swipeRefresh.setOnRefreshListener { viewModel.refresh() }
@@ -390,8 +392,37 @@ class SpaceActivity : AppCompatActivity() {
         val body = sheetBody()
         val label = textField(R.string.space_label_optional)
         val cwd = textField(R.string.space_directory_optional)
+        val repository = (application as CollieApplication).container.repository
+        val folderContext = repository.readContext(scope, workspaceId)
+        var folderResponse: com.lateapex.collie.network.FoldersResponse? = null
+        lateinit var picker: FolderPickerView
+        picker = FolderPickerView(this, onSelect = { cwd.setText(it.orEmpty()) }, onStar = { folder, starred ->
+            if (folderContext != null) lifecycleScope.launch {
+                when (val result = repository.starFolder(scope, folder, starred)) {
+                    is ApiResult.Success -> if (repository.isCurrent(folderContext)) {
+                        folderResponse = result.value
+                        picker.render(folderResponse, cwd.valueOrNull(), repository.writesAllowed(scope))
+                    }
+                    is ApiResult.Failure -> if (repository.isCurrent(folderContext)) {
+                        binding.errorText.text = MainViewModel.describe(resources, result.error)
+                    }
+                    is ApiResult.NotModified -> if (repository.isCurrent(folderContext)) {
+                        binding.errorText.setText(R.string.folder_star_failed_unknown)
+                    }
+                }
+            }
+        })
         body.addView(label, matchRow(top = 4))
         body.addView(cwd, matchRow(top = 8))
+        picker.render(null, cwd.valueOrNull(), repository.writesAllowed(scope))
+        body.addView(picker, matchRow(top = 4))
+        if (folderContext != null) lifecycleScope.launch {
+            val result = repository.folders(scope)
+            if (repository.isCurrent(folderContext) && result is ApiResult.Success) {
+                folderResponse = result.value
+                picker.render(folderResponse, cwd.valueOrNull(), repository.writesAllowed(scope))
+            }
+        }
         body.addView(sheetActionButton(getString(R.string.action_create)) {
             dialog.dismiss()
             creatingSpace = true

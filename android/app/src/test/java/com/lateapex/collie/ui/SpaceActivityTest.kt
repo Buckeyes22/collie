@@ -86,6 +86,27 @@ class SpaceActivityTest {
     }
 
     @Test
+    fun spaceHeaderOpensNewWorkflowWithTheSameHostAndSession() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val workspace = WorkspaceSummary(
+            workspaceId = "w1", number = 1, label = "Project", focused = true,
+            activeTabId = "t1", tabCount = 1, paneCount = 0, host = "build-machine",
+        )
+        val controller = Robolectric.buildActivity(SpaceActivity::class.java, SpaceActivity.intent(context, workspace, "review"))
+            .create().start().resume()
+        try {
+            val activity = controller.get()
+            activity.findViewById<View>(R.id.new_workflow_button).performClick()
+            val opened = shadowOf(activity).nextStartedActivity
+            assertEquals(NewActivity::class.java.name, opened.component?.className)
+            assertEquals("build-machine", opened.getStringExtra("host"))
+            assertEquals("review", opened.getStringExtra("session"))
+        } finally {
+            controller.destroy()
+        }
+    }
+
+    @Test
     fun actionAvailabilityRequiresPairingAndHonoursExplicitCapabilityDenials() {
         val limited = MuxConfigResponse(
             capabilities = mapOf(

@@ -370,6 +370,40 @@ class CollieRepositoryTest {
     }
 
     @Test
+    fun legacyLaunchLostResponseRemainsDurableUnknownAndCannotBeReplayedOrReplaced() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        context.getSharedPreferences("collie_launch_intents", Context.MODE_PRIVATE).edit().clear().commit()
+        val intentApi = FakeApi().apply {
+            snapshotDevice = DeviceAuthorization(enforced = true, device = "phone", authorized = true)
+            legacyLaunchResponse = ApiResult.Failure(ApiFailure.Network("response lost after dispatch"))
+        }
+        val requestId = "91919191-9191-4191-8191-919191919191"
+        val firstStore = LaunchIntentStore(context, TestCipher(), Json)
+        val firstRepository = CollieRepository(intentApi, store, OriginValidator(), launchIntentStore = firstStore)
+        assertTrue(firstRepository.snapshot(Scope(host = "builder", session = "review")) is ApiResult.Success)
+
+        val first = firstRepository.startLegacyLaunchInitial(
+            Scope(host = "builder", session = "review"), "codex --resume", requestId, "/srv/repo", false,
+        )
+
+        assertTrue(first is ApiResult.Failure)
+        assertEquals(1, intentApi.legacyLaunchCalls)
+        assertEquals(listOf("codex --resume"), intentApi.legacyLaunchCommands)
+        assertEquals(LaunchIntentState.unknown, firstStore.get(requestId)?.state)
+        assertEquals(LaunchIntentReceiptMode.legacyInitialOnly, firstStore.get(requestId)?.intent?.receiptMode)
+
+        val recreatedStore = LaunchIntentStore(context, TestCipher(), Json)
+        val recreatedRepository = CollieRepository(intentApi, store, OriginValidator(), launchIntentStore = recreatedStore)
+        assertTrue(recreatedRepository.snapshot(Scope(host = "builder", session = "review")) is ApiResult.Success)
+        assertEquals(1, recreatedRepository.unresolvedLaunchIntents(Scope(host = "builder", session = "review")).size)
+        assertTrue(recreatedRepository.retryLaunchIntent(Scope(host = "builder", session = "review"), requestId) is ApiResult.Failure)
+        assertTrue(recreatedRepository.startLegacyLaunchInitial(
+            Scope(host = "builder", session = "review"), "codex --resume", "92929292-9292-4292-8292-929292929292", "/srv/repo", false,
+        ) is ApiResult.Failure)
+        assertEquals("The legacy endpoint is never retried with a new identity", 1, intentApi.legacyLaunchCalls)
+    }
+
+    @Test
     fun workspaceBranchIntentSurvivesRepositoryRecreationAndReplaysExactTargetBody() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
         context.getSharedPreferences("collie_launch_intents", Context.MODE_PRIVATE).edit().clear().commit()
@@ -1219,6 +1253,9 @@ class CollieRepositoryTest {
         var simulatedEffects = 0
         val launchBodies = mutableListOf<String>()
         val launchTokens = mutableListOf<String?>()
+        var legacyLaunchCalls = 0
+        var legacyLaunchResponse: ApiResult<CreateResponse> = ApiResult.Failure(ApiFailure.Network("unused"))
+        val legacyLaunchCommands = mutableListOf<String>()
         var worktreeCalls = 0
         var worktreeAtCalls = 0
         var worktreeAtEffects = 0
@@ -1254,6 +1291,11 @@ class CollieRepositoryTest {
             launchEntered?.complete(Unit)
             launchGate?.await()
             return if (launchCalls == 1) firstLaunchResponse else replayLaunchResponse
+        }
+        override suspend fun launch(connection: Connection, scope: Scope, command: String, besidePaneId: String?): ApiResult<CreateResponse> {
+            legacyLaunchCalls++
+            legacyLaunchCommands += command
+            return legacyLaunchResponse
         }
         override suspend fun addLauncherFrozen(connection: Connection, scope: Scope, canonicalBody: String): ApiResult<AddedLauncherResponse> {
             launcherAddCalls++
