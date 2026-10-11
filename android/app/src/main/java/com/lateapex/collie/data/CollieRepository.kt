@@ -318,7 +318,8 @@ class CollieRepository(
         synchronized(readAdmissionLock) {
             ReadTarget(
                 scope ?: expectedContext.requestScope, expectedContext,
-                if (useSelectedSubject) activeSubject else subjectIdentity,
+                // An expected actor already resolved its subject, including an explicit null.
+                if (useSelectedSubject) expectedContext.key.subjectIdentity else subjectIdentity,
             )
         }
     } else captureReadTarget(scope, subjectIdentity, useSelectedSubject)
@@ -360,6 +361,9 @@ class CollieRepository(
             if (leadEpoch == epoch) false else { leadEpoch = epoch; true }
         })
     }
+
+    /** Identity login does not authorize terminal writes; demand a fresh owning snapshot. */
+    fun proxyIdentityChanged() = invalidateAuthority(AuthorityInvalidation.ACCESS_FROZEN)
 
     fun showSavedCopy(capturedAt: Long) {
         invalidateAuthority(AuthorityInvalidation.SAVED_COPY, settled = {
@@ -570,7 +574,7 @@ class CollieRepository(
     }
 
     suspend fun controlOperation(scope: Scope, requestId: String, expectedContext: ScopedReadContext? = null): ApiResult<ControlOperationResponse> {
-        val subject = expectedContext?.key?.subjectIdentity ?: activeSubject
+        val subject = (if (expectedContext != null) expectedContext.key.subjectIdentity else activeSubject)
         val context = expectedContext ?: readContext(scope, subject) ?: return notConnected()
         if (!isCurrent(context) || context.key.host != scope.host || context.key.session != scope.session || context.key.subjectIdentity != subject) return staleScope()
         val capability = config(scope, context)
@@ -602,7 +606,7 @@ class CollieRepository(
 
 
     suspend fun planPaneLayout(address: PaneAddress, action: kotlinx.serialization.json.JsonObject, expectedContext: ScopedReadContext? = null): ApiResult<com.lateapex.collie.network.PaneLayoutPlanResponse> {
-        val subject = expectedContext?.key?.subjectIdentity ?: activeSubject
+        val subject = (if (expectedContext != null) expectedContext.key.subjectIdentity else activeSubject)
         val context = expectedContext ?: readContext(address.scope, subject) ?: return notConnected()
         if (!isCurrent(context) || context.key.host != address.scope.host || context.key.session != address.scope.session || context.key.subjectIdentity != subject) return staleScope()
         val config = config(address.scope, context)
@@ -631,7 +635,7 @@ class CollieRepository(
     }
 
     suspend fun applyPaneLayout(address: PaneAddress, requestId: String, planToken: String, action: kotlinx.serialization.json.JsonObject, expectedContext: ScopedReadContext? = null): ApiResult<com.lateapex.collie.network.PaneLayoutOperationResponse> {
-        val subject = expectedContext?.key?.subjectIdentity ?: activeSubject
+        val subject = (if (expectedContext != null) expectedContext.key.subjectIdentity else activeSubject)
         val context = expectedContext ?: readContext(address.scope, subject) ?: return notConnected()
         if (!isCurrent(context) || context.key.host != address.scope.host || context.key.session != address.scope.session || context.key.subjectIdentity != subject) return staleScope()
         val config = config(address.scope, context)
@@ -1715,7 +1719,7 @@ class CollieRepository(
 
         // Capability negotiation is part of this one captured actor. Process its authority headers
         // through the same repository path as every other response before considering a write.
-        val rawConfig = api.config(connection, address.scope)
+        val rawConfig = com.lateapex.collie.network.RequestActorCustody.withActor(actor) { api.config(connection, address.scope) }
         if (!isCurrent(actor)) return staleScope()
         val config = processConnectionResult(actor, rawConfig)
         if (config !is ApiResult.Success) return when (config) {
@@ -1733,7 +1737,7 @@ class CollieRepository(
         if (!writesAllowed(address.scope, actor.key.subjectIdentity)) {
             return ApiResult.Failure(ApiFailure.Http(403, "device not authorised", "device.not_authorised"))
         }
-        val result = api.queuedSendNow(connection, address, keys, expectedPrompt, guard)
+        val result = com.lateapex.collie.network.RequestActorCustody.withActor(actor) { api.queuedSendNow(connection, address, keys, expectedPrompt, guard) }
         if (!isCurrent(actor)) return staleScope()
         return processConnectionResult(actor, result)
     }
@@ -1803,7 +1807,7 @@ class CollieRepository(
         target ?: return notConnected()
         val context = target.context
         if (!isCurrent(context) || context.key.host != target.scope.host || context.key.session != target.scope.session ||
-            (target.subjectIdentity != null && context.key.subjectIdentity != target.subjectIdentity)) return staleScope()
+            context.key.subjectIdentity != target.subjectIdentity) return staleScope()
         return withConnectionOf(context.connection, target.scope, context.key.subjectIdentity, expectedContext = context, block = block)
     }
 
@@ -1833,7 +1837,7 @@ class CollieRepository(
         expectedContext: ScopedReadContext?,
         block: suspend (Connection) -> ApiResult<T>,
     ): ApiResult<T> {
-        val subject = expectedContext?.key?.subjectIdentity ?: activeSubject
+        val subject = (if (expectedContext != null) expectedContext.key.subjectIdentity else activeSubject)
         val context = expectedContext ?: readContext(scope, subject) ?: return notConnected()
         if (!isCurrent(context) || context.key.host != scope.host || context.key.session != scope.session || context.key.subjectIdentity != subject) return staleScope()
         return withConnection(scope, subject, context, block)
@@ -1915,7 +1919,7 @@ class CollieRepository(
             coroutineContext.ensureActive()
         }
         try {
-            val result = block(configured)
+            val result = com.lateapex.collie.network.RequestActorCustody.withActor(context) { block(configured) }
             if (!isCurrent(context)) return@coroutineScope staleScope()
             processConnectionResult(context, result, job)
         } finally { synchronized(readAdmissionLock) { scopeJobs.remove(job) } }

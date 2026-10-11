@@ -103,3 +103,5 @@ the separate [Android workflow](.github/workflows/android-release.yml).
 Collie is released under the [MIT license](LICENSE), with the original upstream copyright notice
 preserved. See [Acknowledgments](ACKNOWLEDGMENTS.md) for the upstream project and the native app's
 bundled asset notices. Product names and marks belong to their respective owners.
+
+Native access through browser SSO requires an explicitly configured [OIDC/PKCE/DPoP identity gateway](docs/native-identity-gateway.md). Native Tailscale access remains unchanged; arbitrary cookie-only proxies are not claimed supported.

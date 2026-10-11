@@ -1,3 +1,4 @@
+import { nativeAccessFor } from "./native-access/config.ts";
 import { existsSync, readFileSync, readlinkSync, statSync } from "node:fs";
 import { mkdir, readFile as readFileAsync, realpath as realpathAsync, stat as statAsync, statfs as statfsAsync, writeFile } from "node:fs/promises";
 import { cpus, freemem, homedir, hostname, loadavg, totalmem } from "node:os";
@@ -607,8 +608,20 @@ function crewStoreChanged(): void {
 }
 
 // ── Process-global services, shared across every session ─────────────────────
-const push = new Push(cfg);
+const nativeAccess = nativeAccessFor(cfg.stateDir);
+if (nativeAccess && (cfg.deviceHeader !== nativeAccess.config.deviceHeader || !cfg.skipServe || cfg.basePath === "/" || cfg.basePath === new URL(nativeAccess.config.publicBase).pathname || !cfg.trustedUser || cfg.trustedUser !== nativeAccess.config.mappedLogin)) {
+  throw new Error("Native gateway requires matching device/login gates, separate retained browser and native mounts, and the explicitly configured proxy front door (COLLIE_SKIP_SERVE=1).");
+}
+const push = new Push(cfg, undefined, nativeAccess?.bindings);
 await push.init();
+// A configured native gateway has a durable cross-process retirement outbox. This consumer drops
+// exact local registrations even without an alert; signed offline clears are a separate B22 ACK.
+let nativeRetirementRunning = false;
+const nativeRetirementTimer = nativeAccess ? setInterval(() => {
+  if (nativeRetirementRunning) return;
+  nativeRetirementRunning = true;
+  void push.refreshNativeBindings().catch(() => console.warn("[native-access] enrollment retirement deferred")).finally(() => { nativeRetirementRunning = false; });
+}, 1000) : null;
 
 const snooze = new Snooze(cfg);
 await snooze.load();
@@ -1987,7 +2000,9 @@ if (standbyServer !== null && standbyDoor !== null) {
   );
 }
 
+
 const server = await startServer({
+  nativeIngress: nativeAccess ? { ingress: nativeAccess.ingress, mappedLogin: nativeAccess.config.mappedLogin } : undefined,
   cfg,
   registry,
   push,
@@ -2124,6 +2139,7 @@ const shutdown = async () => {
   stt.close();
   // Writes are debounced, so the last few seconds of "you looked at this" live only in memory —
   // persist them before exiting, or every restart quietly resurrects alerts you'd already cleared.
+  if (nativeRetirementTimer) clearInterval(nativeRetirementTimer);
   activity.stop();
   await activity.flush();
   // The day of minutes is saved every five minutes from the tick; the last few go to disk here.

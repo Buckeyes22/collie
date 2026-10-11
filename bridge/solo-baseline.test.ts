@@ -1025,6 +1025,11 @@ const STATE_DIR_ENTRIES = [
   // and a bridge only started and stopped does not. Both are driven in "the machine files appear …".
   "machine-alerts.json",
   "machine-history.json",
+  // ADR 0098: operator-opted native gateway only. Absent profile reads never create any file.
+  "native-access.json",
+  "native-device-bindings.json",
+  "native-ingress-replay.json",
+  "native-proof-replay.json",
   "notify-prefs.json",
   // Device pairing. Both are absent until the operator runs `collie pair`, and an install that
   // never does keeps writing exactly the six entries above it.

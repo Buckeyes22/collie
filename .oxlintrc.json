@@ -160,6 +160,11 @@
       }
     },
     {
+      // R02: each listed module is a closed JSON/JWT/disk I/O validator, not a feature dispatch. Runtime checks establish field contracts before signature, binding or persistence authority; ADR0019 parse-boundary rule applies.
+      "files": ["**/bridge/native-access/contracts.ts", "**/bridge/native-access/jose.ts", "**/bridge/native-access/device-bindings.ts", "**/bridge/native-access/replay.ts", "**/bridge/native-access/config.ts", "**/bridge/native-access/ingress.ts"],
+      "rules": { "anti-slop/no-runtime-typeof": "off" }
+    },
+    {
       // The Cloudflare Access gate (#341, ADR 0081) parses an untrusted JWT off a request header and a JWKS document off the network. Every `typeof` sits inside `verifyAccessToken` or `importAccessKeys`, the module's own parse of those two inputs.
       "files": [
         "**/bridge/access-jwt.ts"

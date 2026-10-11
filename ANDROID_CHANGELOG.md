@@ -6,6 +6,8 @@ the first Android release from this fork.
 
 ## Unreleased
 
+- Accept an exact OIDC root issuer without a trailing slash while preserving literal discovery, callback and signed-token issuer checks.
+
 - Open current, bridge-listed Changes source in native Files with the original scoped read actor; explain historical and deleted diffs and preserve Files device-read refusals.
 
 - Keep focus, rename and close actions near the top of the pane sheet so they remain visible on narrow screens and at large font sizes.
@@ -18,6 +20,9 @@ the first Android release from this fork.
 - Remove printed links when Files access changes, and require fresh confirmations before restored access can open a path.
 
 - Keep failed Files discovery inert during authority redraws, preventing recursive reads from freezing the pane screen.
+- Reject malformed gateway refusal fields without throwing or retiring valid pairing and identity custody; require exact string provenance before admitting a refusal.
+- Fence native identity requests to their original admitted connection and scope through refresh and nonce waits; discard retired publication, clear stopped profile confirmations, preserve enrollment across token expiry, and retain legitimate external-browser callback completion without automatically replaying writes.
+- Add native operator-profile review and external OIDC/PKCE/DPoP sign-in with a fixed one-shot callback, a Keystore proof key, separate encrypted identity custody and factor-bound gateway refusals. Prepare identity before terminal writes and never replay a refused mutation automatically. Resolve the fixed authority-free callback through the exported native dispatcher and validate its exact path before sign-in.
 
 - Add bounded native document and text attachments with a scoped picker, private temporary storage, and one-shot uploads.
 - Show sourced cache timing, model and Git facts with lead-owned cache watches and shared machine/cache notification preferences.
@@ -83,6 +88,8 @@ the first Android release from this fork.
 
 - Align the Kotlin compiler, serialization plugin and application Kotlin libraries on 2.2.21; update Android Gradle Plugin to 8.10.1 for its compatible release shrinker while retaining Gradle 8.11.1.
 - Add a reachable workspace and tab organizer with reviewed rename, close, focus and ordering actions, a complete owner-bound whole-tab transfer with one confirmed pane move per step, linked-worktree process previews, capability-based refusal and unknown-outcome reconciliation.
+
+- Preserve an explicitly captured null or pane subject through configuration and folder reads; never substitute the currently selected pane for an admitted actor.
 
 ## 1.5.2 - 2026-10-08
 

@@ -103,8 +103,12 @@ class EncryptedConnectionPublicationTest {
             try {
                 assertTrue(enterCas.await(2, TimeUnit.SECONDS))
                 val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2)
-                while (worker.state != Thread.State.BLOCKED && System.nanoTime() < deadline) Thread.yield()
-                assertEquals("off-main old refusal has entered the actual storage CAS", Thread.State.BLOCKED, worker.state)
+                var observed = worker.state
+                while (observed != Thread.State.BLOCKED && System.nanoTime() < deadline) {
+                    Thread.yield()
+                    observed = worker.state
+                }
+                assertEquals("off-main old refusal has entered the actual storage CAS", Thread.State.BLOCKED, observed)
             } catch (error: Throwable) { coordinatorFailure.set(error) }
             finally { releaseCipher.countDown() }
         }

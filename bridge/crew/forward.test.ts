@@ -1153,3 +1153,12 @@ describe("scoped foundation Crew reads", () => {
     expect(crewRouteFor("/api/pane/w1:p1/layout/arbitrary")).toBeNull();
   });
 });
+
+test("native identity credentials and private ingress terminate at the lead across ordinary read, Files device-read and one-shot writes",async()=>{
+ for(const [path,method] of [["/api/pane/p1?host=laptop&session=work","GET"],["/api/pane/p1/files?host=laptop&session=work","GET"],["/api/pane/p1/keys?host=laptop&session=work","POST"]]) {
+  const headers={authorization:"Bearer pairing-private","Collie-Proxy-Authorization":"DPoP identity-private",DPoP:"proof-private","X-Collie-Native-Ingress":"mac-private","X-Collie-Native-Request-Id":"private-correlation","X-Device":"phone-spoof","Tailscale-User-Login":"phone-spoof"};
+  const [req,url]=method==="GET"?get(path!,headers):post(path!,JSON.stringify({keys:["Enter"]}),headers);
+  const {transport,calls}=transportOf(()=>ok(new Response("bounded answer")));const response=await forward(req,url,{transport,device:"approved",pairedIdentity:"1".repeat(64)});expect(response.status).toBe(200);expect(calls).toHaveLength(1);
+  const passed=new Headers(calls[0]!.init.headers);for(const name of Object.keys(headers))expect(passed.get(name)).toBeNull();expect(passed.get("x-crew-device")).toBe("approved");expect(passed.get("x-crew-paired-identity")).toBe("1".repeat(64));expect(calls[0]!.params.session).toBe("work");
+ }
+});

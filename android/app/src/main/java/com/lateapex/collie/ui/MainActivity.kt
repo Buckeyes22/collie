@@ -521,8 +521,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun openProxySignIn() {
-        val origin = viewModel.state.value.origin ?: return
-        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("${origin.trimEnd('/')}/auth/")))
+        if (viewModel.state.value.origin == null) return
+        startActivity(Intent(this, ProxySignInActivity::class.java))
     }
 
     private fun renderScopeSwitchers(state: MainUiState) = with(binding) {

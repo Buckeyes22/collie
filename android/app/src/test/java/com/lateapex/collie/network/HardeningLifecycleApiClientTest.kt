@@ -53,6 +53,30 @@ class HardeningLifecycleApiClientTest {
     }
 
     @Test
+    fun configuredIngressRequiresRequestBoundExactOwnedEnvelopeEvenForEqualRefusalProse() = runBlocking {
+        val id="fixture-request-identity"
+        val configured=CollieApiClient(client.newBuilder().addInterceptor { chain ->
+            val request=chain.request().newBuilder().tag(NativeIngressEvidence::class.java,NativeIngressEvidence(id,origin.value,1)).build()
+            chain.proceed(request)
+        }.build(),Json {ignoreUnknownKeys=true})
+        val connection=Connection(origin,"phone","valid-pairing")
+        data class Case(val marker:String,val bodyId:String,val extra:String,val expected:FailureSource)
+        for((marker,bodyId,extra,expected) in listOf(
+            Case("native_gateway",id,"",FailureSource.GATEWAY),
+            Case("collie",id,"",FailureSource.UNKNOWN),
+            Case("native_gateway","other-request","",FailureSource.UNKNOWN),
+            Case("native_gateway",id,",\"error\":\"device expired\"",FailureSource.UNKNOWN))) {
+            server.enqueue(MockResponse().setResponseCode(403).setHeader("X-Collie-Response-Source",marker)
+                .setHeader("X-Collie-Native-Request-Id",id).setHeader("X-Collie-Error-Source","native_gateway")
+                .setHeader("X-Collie-Error-Factor","identity").setHeader("X-Collie-Error-Code","identity.expired")
+                .setBody("{\"source\":\"native_gateway\",\"factor\":\"identity\",\"code\":\"identity.expired\",\"requestId\":\"$bodyId\"$extra}"))
+            val http=(configured.health(connection) as ApiResult.Failure).error as ApiFailure.Http
+            assertEquals(expected,http.source);assertEquals(false,http.retiresPairing())
+        }
+        assertEquals(4,server.requestCount)
+    }
+
+    @Test
     fun unchangedPeerReadStillCarriesTheAnsweringLeaderIncarnation() = runBlocking {
         server.enqueue(MockResponse().setResponseCode(304).setHeader("ETag", "same")
             .setHeader("X-Collie-Lead-Id", "lead").setHeader("X-Collie-Lead-Epoch", "two"))

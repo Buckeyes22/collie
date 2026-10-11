@@ -26,6 +26,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
@@ -417,7 +418,10 @@ class CollieApiClient(
         }
     }
     override suspend fun health(connection: Connection): ApiResult<HealthResponse> =
-        executeJson(request(connection, path("health")), HealthResponse.serializer(), READ_TIMEOUT_SECONDS)
+        executeJson(request(connection, path("health")).let { request ->
+            if (connection.token == null) request.newBuilder().tag(NativeBootstrapAdmission::class.java,
+                NativeBootstrapAdmission(connection, "GET", request.url.toString())).build() else request
+        }, HealthResponse.serializer(), READ_TIMEOUT_SECONDS)
 
     override suspend fun config(connection: Connection): ApiResult<BridgeConfigResponse> =
         executeJson(request(connection, path("config")), BridgeConfigResponse.serializer(), READ_TIMEOUT_SECONDS)
@@ -518,7 +522,9 @@ class CollieApiClient(
 
     override suspend fun pair(origin: CollieOrigin, code: String, label: String): ApiResult<PairResult> {
         val bootstrap = Connection(origin, label, null)
-        val request = post(bootstrap, url(origin, path("pair")), json.encodeToString(PairRequest(code, label)))
+        val candidate = post(bootstrap, url(origin, path("pair")), json.encodeToString(PairRequest(code, label)))
+        val request = candidate.newBuilder().tag(NativeBootstrapAdmission::class.java,
+            NativeBootstrapAdmission(bootstrap, "POST", candidate.url.toString())).build()
         return executeResponse(request, MUTATION_TIMEOUT_SECONDS) {
             if (it.code in REDIRECT_CODES) return@executeResponse ApiResult.Failure(ApiFailure.Redirect(it.code))
             val body = it.body?.string().orEmpty()
@@ -1764,9 +1770,16 @@ class CollieApiClient(
 
     private fun failure(response: Response, body: String): ApiResult.Failure {
         val status = response.code
-        val source = when (response.header("x-collie-error-source")) {
-            "collie" -> FailureSource.COLLIE
-            "gateway" -> FailureSource.GATEWAY
+        val ingress = response.request.tag(NativeIngressEvidence::class.java)
+        val ingressMatches = ingress != null && response.header("x-collie-native-request-id") == ingress.requestId
+        val marker = response.header("x-collie-response-source")
+        val source = when {
+            ingress != null && (!ingressMatches || marker !in setOf("collie", "native_gateway")) -> FailureSource.UNKNOWN
+            response.header("x-collie-error-source") == "native_gateway" -> {
+                if (NativeGatewayError.verified(response, body, ingress?.requestId)) FailureSource.GATEWAY else FailureSource.UNKNOWN
+            }
+            response.header("x-collie-error-source") == "collie" && (ingress == null || marker == "collie") -> FailureSource.COLLIE
+            response.header("x-collie-error-source") == "gateway" && ingress == null -> FailureSource.GATEWAY
             else -> FailureSource.UNKNOWN
         }
         val factor = if (source == FailureSource.UNKNOWN) FailureFactor.UNKNOWN else when (response.header("x-collie-error-factor")) {
@@ -1811,6 +1824,8 @@ class CollieApiClient(
 
     private fun requestBuilder(connection: Connection, url: HttpUrl): Request.Builder =
         Request.Builder()
+            .tag(Connection::class.java, connection)
+            .tag(com.lateapex.collie.data.ScopedReadContext::class.java, RequestActorCustody.actor())
             .url(url)
             .header("Accept", JSON_MEDIA_TYPE.toString())
             .header("X-Requested-With", "XMLHttpRequest")

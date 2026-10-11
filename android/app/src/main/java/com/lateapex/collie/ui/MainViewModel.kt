@@ -619,6 +619,8 @@ class MainViewModel @JvmOverloads constructor(
         fun describe(resources: Resources, failure: ApiFailure): String = when (failure) {
             is ApiFailure.Redirect -> resources.getString(R.string.error_proxy_sign_in, failure.status)
             is ApiFailure.Http -> when {
+                failure.source == com.lateapex.collie.network.FailureSource.GATEWAY && failure.factor == com.lateapex.collie.network.FailureFactor.IDENTITY -> resources.getString(R.string.proxy_identity_required)
+                failure.source == com.lateapex.collie.network.FailureSource.GATEWAY && failure.factor == com.lateapex.collie.network.FailureFactor.DEVICE -> resources.getString(R.string.proxy_identity_binding_required)
                 failure.retiresPairing() -> resources.getString(R.string.error_device_not_paired)
                 failure.message == "device not authorised" -> resources.getString(R.string.error_device_unauthorised)
                 else -> failure.message ?: resources.getString(R.string.error_http, failure.status)

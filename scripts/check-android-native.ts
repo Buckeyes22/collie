@@ -257,8 +257,11 @@ function validateManifest(text: string, label: string, merged: boolean, errors: 
   const exported = components.filter((match) => attribute(match[2] ?? "", "android:exported") === "true");
   const exportedNames = exported.map((match) => attribute(match[2] ?? "", "android:name") ?? "unnamed");
   const mainAliases = new Set([".ui.MainActivity", "ui.MainActivity", EXPECTED_ACTIVITY]);
-  if (exported.length !== 1 || !mainAliases.has(exportedNames[0] ?? "")) {
-    errors.push(`${label} must export only ${EXPECTED_ACTIVITY}; found ${exportedNames.length === 0 ? "none" : exportedNames.join(", ")}`);
+  // ADR 0098: one constrained native OAuth dispatcher may be exported beside the launcher.
+  const callbackAliases = new Set([".ui.OpenLinkActivity", "ui.OpenLinkActivity", `${EXPECTED_APPLICATION_ID}.ui.OpenLinkActivity`]);
+  const callbackExport = exported.filter((match) => callbackAliases.has(attribute(match[2] ?? "", "android:name") ?? ""));
+  if (exported.some((match) => !mainAliases.has(attribute(match[2] ?? "", "android:name") ?? "") && !callbackAliases.has(attribute(match[2] ?? "", "android:name") ?? "")) || exported.filter((match) => mainAliases.has(attribute(match[2] ?? "", "android:name") ?? "")).length !== 1 || callbackExport.length > 1 || callbackExport.some((match) => match[1] !== "activity")) {
+    errors.push(`${label} must export only ${EXPECTED_ACTIVITY} and the constrained native OpenLinkActivity; found ${exportedNames.length === 0 ? "none" : exportedNames.join(", ")}`);
   }
 
   const mainBlock = text.match(
@@ -276,8 +279,16 @@ function validateManifest(text: string, label: string, merged: boolean, errors: 
     }
   }
 
-  if (/android\.intent\.action\.VIEW|android\.intent\.category\.BROWSABLE|android:autoVerify/.test(text)) {
-    errors.push(`${label} must not register browser or verified-link intent filters`);
+  const callbackBlock = text.match(/<activity\b([^>]*android:name\s*=\s*["'](?:\.ui\.OpenLinkActivity|ui\.OpenLinkActivity|com\.lateapex\.collie\.ui\.OpenLinkActivity)["'][^>]*)>([\s\S]*?)<\/activity>/);
+  const callbackBody = callbackBlock?.[2] ?? "";
+  const outsideCallback = callbackBlock ? text.replace(callbackBlock[0], "") : text;
+  if (/android\.intent\.action\.VIEW|android\.intent\.category\.BROWSABLE|android:autoVerify/.test(outsideCallback)) errors.push(`${label} must not register browser or verified-link intent filters outside the native callback`);
+  if (callbackExport.length === 1) {
+    const filters = Array.from(callbackBody.matchAll(/<intent-filter\b[^>]*>([\s\S]*?)<\/intent-filter>/g));
+    const actions = Array.from(callbackBody.matchAll(/<action\b([^>]*)\/?>/g));
+    const categories = Array.from(callbackBody.matchAll(/<category\b([^>]*)\/?>/g));
+    const data = Array.from(callbackBody.matchAll(/<data\b([^>]*)\/?>/g));
+    if (actions.length !== 1 || attribute(actions[0]?.[1] ?? "", "android:name") !== "android.intent.action.VIEW" || categories.length !== 2 || new Set(categories.map((match) => attribute(match[1] ?? "", "android:name"))).size !== 2 || filters.length !== 1 || data.length !== 1 || attribute(data[0]?.[1] ?? "", "android:scheme") !== "com.lateapex.collie" || Array.from((data[0]?.[1] ?? "").matchAll(/([\w:.-]+)\s*=/g)).some((match) => match[1] !== "android:scheme") || /android:(?:host|port|path\w*|mimeType)|android:autoVerify/.test(callbackBody) || !callbackBody.includes("android.intent.action.VIEW") || !callbackBody.includes("android.intent.category.DEFAULT") || !callbackBody.includes("android.intent.category.BROWSABLE")) errors.push(`${label} native callback must accept only com.lateapex.collie:/oauth2redirect`);
   }
   const forbidden = text.match(FORBIDDEN_ANDROID_PATTERN)?.[0];
   if (forbidden !== undefined) {

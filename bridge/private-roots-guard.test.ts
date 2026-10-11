@@ -31,6 +31,7 @@ interface Elsewhere {
 }
 
 const ELSEWHERE: readonly Elsewhere[] = [
+  { file: "bridge/native-access/private-io.ts", count: 3, why: "fixed operator files and their temp/lease siblings are handed stateDir paths by native-access/config.ts and cli/native-access.ts; each owner-only parent and Windows ACL is validated before IO" },
   { file: "bridge/activity.ts", count: 2, why: "`this.dir` is `cfg.stateDir`, set in the constructor" },
   { file: "bridge/audit.ts", count: 1, why: "the appender is handed `<stateDir>/audit.log` by index.ts and cli/crew.ts" },
   { file: "bridge/config.ts", count: 1, why: "the POSIX mode rule tightens a config file in place; Windows reads its access list instead" },

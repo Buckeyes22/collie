@@ -9,6 +9,9 @@ import { makeNotifySink, NotificationCoordinator, type NotifyClock } from "./not
 import { pushTitle } from "./push-titles.ts";
 import type { AgentStatus, AgentView } from "./types.ts";
 import type { PushSender, PushSubscription } from "./push.ts";
+import { DeviceBindings } from "./native-access/device-bindings.ts";
+import { privateJsonIo } from "./native-access/private-io.ts";
+import { drainBindingRetirements } from "./native-access/enrollment.ts";
 import { loadConfig } from "./config.ts";
 import { HOST } from "./host.ts";
 import { ensureOwnerOnlyDir, isOwnerOnly, privateRoot } from "./owner-only.ts";
@@ -677,4 +680,20 @@ describe("Push — redact and the operator's label", () => {
     clock.fireAll();
     expect(JSON.parse(payloads.at(-1)!).body).toBe("claude, backend");
   });
+});
+
+describe("Push native gateway binding custody", () => {
+ test("exact binding retirement drops only that enrollment before content and does not ACK unsigned offline clear", async()=>{
+  const cfg=await tempCfg();const bindings=new DeviceBindings(privateJsonIo(join(cfg.stateDir,"native-device-bindings.json")));
+  const first=bindings.enroll({issuer:"https://issuer.example/",subject:"operator",thumbprint:"A".repeat(43)},"1".repeat(64),"phone");
+  const other=bindings.enroll({issuer:"https://issuer.example/",subject:"other",thumbprint:"B".repeat(43)},"2".repeat(64),"tablet");
+  const delivered:string[]=[];const push=new Push(cfg,async(row)=>{delivered.push(row.endpoint);},bindings);enable(push,[]);
+  await push.addSubscription(sub("first"),{nativeIngress:true,nativeBinding:first});await push.addSubscription(sub("other"),{nativeIngress:true,nativeBinding:other});
+  await push.addSubscription(sub("browser"));
+  bindings.revoke(first.id);await push.notify("safe","current content");expect(delivered).toEqual(["other","browser"]);expect(await fileEndpoints(cfg.stateDir)).toEqual(["other","browser"]);expect(bindings.pendingRetirements()).toHaveLength(1);
+  expect(await drainBindingRetirements(bindings,{retire:async()=>false})).toBe(0);expect(bindings.pendingRetirements()).toHaveLength(1);
+  const replay=new DeviceBindings(privateJsonIo(join(cfg.stateDir,"native-device-bindings.json")));expect(replay.pendingRetirements()).toHaveLength(1);
+  expect(await drainBindingRetirements(replay,{retire:async(event)=>event.bindingId===first.id&&event.pairedDeviceId===first.pairedDeviceId})).toBe(1);expect(replay.pendingRetirements()).toHaveLength(0);
+  await expect(push.addSubscription(sub("retired"),{nativeBinding:first})).rejects.toThrow();await expect(push.addSubscription(sub("missing"),{nativeIngress:true})).rejects.toThrow();
+ });
 });

@@ -3220,3 +3220,14 @@ guarded `pane.move` plan and durable operation receipt; no replacement shell, ba
 automatic continuation is sent. The transfer plan stays a read on both lead and peer, while each
 final pane move is a write forwarded to the exact owning peer. An older peer refuses this route and
 cannot fall back to an unbound move.
+### Configured native identity ingress (ADR 0098)
+
+Native OAuth access/refresh tokens, DPoP proofs and private gateway MACs end at the configured lead front door. They never cross the Crew wire. After current local identity/binding and ordinary pairing/device admission, existing Crew routing derives only the approved device decision and opaque paired incarnation through its pinned TLS/secret surface; peer read/device-read/write gates remain independent. The native gateway does not exempt a Crew handler or convert identity login into terminal authority. Actual configured-gateway three-node acceptance remains pending.
+
+For configured native ingress, immediately before an awaited route hands its named request to Crew,
+the lead rechecks the original MAC-covered bounded seconds lease (never later than verified access
+expiry), binding revision, paired incarnation, current device gate and role. A replacement map
+cannot adopt the pending request. The only reconstructed phone `X-Collie-*` read intent is
+`X-Collie-Seen: 1` on pane/history/chat GETs; it grants no authority and does not convey native
+identity claims. Final local checks do not assert peer/vendor atomic compare-and-send; uncertain
+responses retain the existing no-automatic-retry policy.

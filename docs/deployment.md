@@ -751,3 +751,7 @@ Post-recovery:
 ---
 
 [← back to the README](../README.md)
+
+## Opt-in native identity profile
+
+For Variant C/B identity-aware deployments, use the explicit [native OIDC/PKCE/DPoP gateway profile](native-identity-gateway.md). It retains one HTTPS front door with separately authenticated browser and native mounts, preserves Collie pairing and device gates, and requires actual conforming issuer/gateway/device acceptance. Browser cookies alone do not authenticate native HTTP.

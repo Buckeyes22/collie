@@ -1,3 +1,6 @@
+import { withNativeFinalAdmission } from "./native-access/final-effect.ts";
+import type { GatewayIngress, VerifiedIngressActor } from "./native-access/ingress.ts";
+import { gatewayRefusal } from "./native-access/ingress.ts";
 import { controlScope, refusal, refusalResponse } from "./control/contracts.ts";
 import { OperationStore } from "./control/operations.ts";
 import { executeBoundIntent, ownerBoundCallerReady, ownerBoundOperationReady, type IntentOwnerContext } from "./intent-operation-binding.ts";
@@ -186,7 +189,7 @@ import { selectHostFrom, type HostSelector } from "./crew/registry.ts";
 import type { CrewHandler, CrewSurface } from "./crew/router.ts";
 import type { CrewTlsOptions } from "./crew/transport.ts";
 import { createSttAdmission, MAX_STT_AUDIO_BYTES, sttCapability, transcribeRequest } from "./stt/http.ts";
-import type { SttProvider } from "./stt/provider.ts";
+import { SttCancelledError, type SttProvider } from "./stt/provider.ts";
 import { uploadTooLarge } from "./uploads.ts";
 import { agentCapabilities } from "./agent-capabilities.ts";
 import { MUX_LOGO_PATH, OPERATOR_FONTS_PATH, journalAgentOf, toPaneWire } from "./types.ts";
@@ -1012,6 +1015,8 @@ export interface UpdateActionDeps {
 
 export async function startServer(opts: {
   cfg: Config;
+  /** Explicit operator native gateway only; absent preserves direct Tailscale/browser ingress. */
+  nativeIngress?: { ingress: GatewayIngress; mappedLogin: string };
   registry: SessionRegistry;
   push: Push;
   snooze: Snooze;
@@ -1954,7 +1959,7 @@ export async function startServer(opts: {
         return afterPaneInput(rt.engine, await keysPane(
           herdr, cfg, paneId, req, audit_, device, session, live, journals, rt.engine, queuedSendLedger,
         ));
-      if (action === "upload" && req.method === "POST") return uploadPane(cfg, paneId, req, audit_, device, session);
+      if (action === "upload" && req.method === "POST") return uploadPane(cfg, paneId, req, audit_, device, session, () => caller.gate("write"));
       if (action === "close" && req.method === "POST") return closePane(herdr, rt.engine, paneId, req, audit_, device, session);
       if (action === "rename" && req.method === "POST") return renamePane(herdr, rt.engine, paneId, req, audit_, device, session);
       if (action === "focus" && req.method === "POST") return focusPane(herdr, rt.engine, paneId, req, audit_, device, session);
@@ -2133,6 +2138,7 @@ export async function startServer(opts: {
     tls: listenerTls,
 
     fetch: withAccessLog(withHsts(withControlAuthority(async (req: Request) => {
+      let nativeBinding: VerifiedIngressActor | undefined;
       const url = new URL(req.url);
       // A mounted collie (`COLLIE_BASE_PATH`, ADR 0052) is normally reached through a proxy that
       // strips the mount before it forwards — `tailscale serve` does, `http.StripPrefix` on the
@@ -2140,6 +2146,8 @@ export async function startServer(opts: {
       // `/collie/api/health`, so an inbound path that still carries the mount is read as if it had
       // been stripped. Before the crew surface and every gate, because all of them read the path.
       if (cfg.basePath !== "/") url.pathname = stripMount(url.pathname, cfg.basePath);
+      const browserIngress = opts.nativeIngress !== undefined && cfg.basePath !== "/" && new URL(req.url).pathname.startsWith(cfg.basePath);
+      if (opts.nativeIngress) url.pathname = stripMount(url.pathname, new URL(opts.nativeIngress.ingress.publicBase).pathname);
       const { pathname } = url;
 
       // The federated surface, before anything else. It answers only the prefix it owns and returns
@@ -2167,6 +2175,27 @@ export async function startServer(opts: {
         return text("non-loopback peer rejected", 403);
       }
 
+      // The browser mount is retained ONLY by the separately authenticated existing front door.
+      // Native gateway targets are stripped and carry a current MAC. Native phone paths cannot
+      // select the browser branch through the gateway; public browser routing retains its SSO gate.
+      if (opts.nativeIngress && browserIngress && pathname.startsWith("/api/") &&
+          (cfg.basePath === new URL(opts.nativeIngress.ingress.publicBase).pathname || !cfg.trustedUser || req.headers.get("tailscale-user-login") !== cfg.trustedUser || req.headers.has("x-collie-native-ingress"))) {
+        return gatewayRefusal("identity", "identity.browser_ingress", 403);
+      }
+      if (opts.nativeIngress && !browserIngress && pathname.startsWith("/api/")) {
+        const identity = pairedIdentityOf(req, pairingGate);
+        const binding = opts.nativeIngress.ingress.verify(req, identity, pathname);
+        if (!binding) return gatewayRefusal("device", "device.ingress_required", 403);
+        nativeBinding = binding;
+        const currentBinding = opts.nativeIngress.ingress.bindings.current(binding);
+        if (!currentBinding) return gatewayRefusal("device", "device.binding_revoked", 403);
+        // Only the locally validated store, not an injected phone header, supplies either identity.
+        const headers = new Headers(req.headers);
+        headers.set("Tailscale-User-Login", opts.nativeIngress.mappedLogin);
+        if (cfg.deviceHeader) headers.set(cfg.deviceHeader, currentBinding.deviceName);
+        req = new Request(req, { headers });
+      }
+
       // The Access gate: after the crew surface (its own admission) and the peer check, before the
       // deposed page and every route. `/api/health` and local callers are exempt inside it.
       if (accessGate) {
@@ -2181,6 +2210,34 @@ export async function startServer(opts: {
       // deposed collie has none.
       const deposedAnswer = opts.deposed?.(req, url);
       if (deposedAnswer) return secure(deposedAnswer);
+
+      // Original ingress custody remains mandatory after every observable route await. Never
+      // replace it with a newly enrolled map or retain trust in an earlier injected device name.
+      const currentCallerGate = (level: GateLevel): Response | null => {
+        if (nativeBinding && opts.nativeIngress) {
+          if (!opts.nativeIngress.ingress.identityCurrent(nativeBinding)) return gatewayRefusal("identity", "identity.expired", 401, nativeBinding.requestId);
+          if (req.signal.aborted) return gatewayRefusal("device", "device.request_retired", 403);
+          const currentBinding = opts.nativeIngress.ingress.bindings.current(nativeBinding);
+          if (!currentBinding || pairedIdentityOf(req, pairingGate) !== nativeBinding.pairedDeviceId) return gatewayRefusal("device", "device.binding_revoked", 403);
+          // Reconstruct trusted values on this handler-owned Request; its body and original
+          // immutable target remain intact even after parsing. No await separates this gate.
+          req.headers.set("Tailscale-User-Login", opts.nativeIngress.mappedLogin);
+          if (cfg.deviceHeader) req.headers.set(cfg.deviceHeader, currentBinding.deviceName);
+          const roleDenied = opts.deposed?.(req, url);
+          if (roleDenied) return secure(roleDenied);
+          return guard(req, cfg, level, pairingGate);
+        }
+        return guard(req, cfg, level, pairingGate);
+      };
+      const nativeGate = (level: GateLevel): Response | null => nativeBinding ? currentCallerGate(level) : null;
+      let finalNativeRefusal: Response | null = null;
+      const boundRuntime = (runtime: SessionRuntime | Response): SessionRuntime | Response =>
+        runtime instanceof Response || !nativeBinding ? runtime : { ...runtime,
+          herdr: withNativeFinalAdmission(runtime.herdr, () => {
+            const denied = currentCallerGate("write");
+            if (denied) finalNativeRefusal = denied;
+            return denied === null;
+          }) };
 
       // ── The health check (M15/04) ────────────────────────────────────────
       // `GET /api/health`: is this collie up, and WHICH BUILD is answering? The detached updater
@@ -2317,6 +2374,8 @@ export async function startServer(opts: {
             // The lead's own record of the forward (§12): one line, the same `action` the peer will
             // write, plus the target host — two independent logs of one event, neither depending on
             // the other machine's disk.
+            const finalDenied = currentCallerGate(/\/(?:files(?:\/(?:image|exist))?|processes)$/.test(pathname) ? "device-read" : req.method === "GET" || pathname === "/api/refresh" ? "read" : "write");
+            if (finalDenied) return finalDenied;
             const forwarded = secure(
               await crewLead!.forward(req, url, resolved, {
                 device: whois(req).device,
@@ -2343,9 +2402,9 @@ export async function startServer(opts: {
             const own = registry.get()?.engine;
             return input && own !== undefined ? afterPaneInput(own, forwarded) : forwarded;
           }
-          return resolved.runtime;
+          return boundRuntime(resolved.runtime);
         }
-        return localRuntime(sessionName, req.headers.get("accept-encoding"));
+        return boundRuntime(localRuntime(sessionName, req.headers.get("accept-encoding")));
       };
 
       // ── Live state (polled by the client) ────────────────────────────────
@@ -2353,7 +2412,7 @@ export async function startServer(opts: {
         // Through `guard` like every other read since reads need the pairing token (ADR 0086). It
         // was a bare `checkAccess` while reads were open, and a bare one here would be the one read
         // an unpaired browser could still make.
-        const denied = guard(req, cfg, "read", pairingGate);
+        const denied = guard(req, cfg, "read", pairingGate) ?? nativeGate("read");
         if (denied) return denied;
         const device = whois(req);
         // A BROWSER poll is a phone looking; the lead's own sweep of a peer is not, which is why
@@ -2403,7 +2462,7 @@ export async function startServer(opts: {
       // SAME closure, passed to both, never a second call that agrees today. Two authorisation
       // checks meant to be identical drift the moment one of them is edited, so there is only one
       // (spec M15/05; `server.test.ts` → "same device auth as pane input").
-      const browserGate = (level: GateLevel): Response | null => guard(req, cfg, level, pairingGate);
+      const browserGate = (level: GateLevel) => currentCallerGate(level);
       // The crew's forget is never a browser route, on this machine or forwarded to a member.
       if (pathname === FORGET_DEVICE_PATH) {
         const denied = browserGate("read");
@@ -2418,14 +2477,14 @@ export async function startServer(opts: {
         intentReceiptKey: opts.intentReceiptKey,
         audit,
       });
-      if (sessionRouted) return sessionRouted;
+      if (sessionRouted) return finalNativeRefusal ?? sessionRouted;
 
       // ── Misc API ─────────────────────────────────────────────────────────
       // The rule catalog behind the cache chips, and the overrides this host applies. Gated exactly as
       // `/api/config` is — read-level, and through `guard` so COLLIE_PUBLIC_HOSTS covers it — because
       // it is the same kind of payload: Collie's own facts plus operator-authored text.
       if (pathname === "/api/cache-rules" && req.method === "GET") {
-        const denied = guard(req, cfg, "read", pairingGate);
+        const denied = guard(req, cfg, "read", pairingGate) ?? nativeGate("read");
         if (denied) return denied;
         return cacheRulesRoute(
           operatorCacheRules,
@@ -2442,7 +2501,7 @@ export async function startServer(opts: {
         // didn't cover it and a rebound DNS name could still read the build id. The client only ever
         // calls this same-origin, and a refusal can't be mistaken for an outage: ConnectionBanner
         // short-circuits to AuthErrorBanner before its red-state probe runs. Noted in #32.
-        const denied = guard(req, cfg, "read", pairingGate);
+        const denied = guard(req, cfg, "read", pairingGate) ?? nativeGate("read");
         if (denied) return denied;
         // Re-read per request behind an mtime check, like buildId() — editing commands.toml is live,
         // with no restart. The path is cfg's, never the request's.
@@ -2544,7 +2603,7 @@ export async function startServer(opts: {
         // where it is (writes), so a read-only device still sees the mark. The pairing token is
         // needed like on every read (ADR 0086), so the phone fetches the bytes with it and draws them
         // from an object URL: an `<img src>` cannot carry an `Authorization` header.
-        const denied = guard(req, cfg, "read", pairingGate);
+        const denied = guard(req, cfg, "read", pairingGate) ?? nativeGate("read");
         if (denied) return denied;
         // The PRIMARY session's adapter, for the reason `/api/config` gives: one collie drives one
         // multiplexer, so which runtime answers is not a choice.
@@ -2563,7 +2622,7 @@ export async function startServer(opts: {
         // it is set to — a picker whose choice cannot render is worse than no picker. The pairing
         // token is needed like on every read (ADR 0086), so the phone loads the bytes with `fetch`
         // and hands them to `FontFace`: a CSS `url()` cannot carry an `Authorization` header.
-        const denied = guard(req, cfg, "read", pairingGate);
+        const denied = guard(req, cfg, "read", pairingGate) ?? nativeGate("read");
         if (denied) return denied;
         // `decodeURIComponent` is undone here and NOWHERE ELSE, because what comes back is only ever
         // used as a Map key. It is looked UP in the rows theme.toml declared; a name nobody declared
@@ -2586,7 +2645,7 @@ export async function startServer(opts: {
       if (pathname === "/api/subscribe" && req.method === "POST") {
         // Read-level: registering for push isn't terminal-driving, so a read-only device may still
         // subscribe to notifications.
-        const denied = guard(req, cfg, "read", pairingGate);
+        const denied = guard(req, cfg, "read", pairingGate) ?? nativeGate("read");
         if (denied) return denied;
         let body: JsonValue;
         try {
@@ -2597,7 +2656,10 @@ export async function startServer(opts: {
           return text("bad subscription", 400);
         }
         if (!isPushSubscription(body)) return text("bad subscription", 400);
+        const finalDenied = currentCallerGate("read"); if (finalDenied) return finalDenied;
         await push.addSubscription(body, {
+          nativeIngress: opts.nativeIngress !== undefined && !browserIngress,
+          nativeBinding,
           replaces: supersededEndpoint(body),
           userAgent: req.headers.get("user-agent") ?? undefined,
         });
@@ -2605,7 +2667,7 @@ export async function startServer(opts: {
       }
       if (pathname === "/api/notifications/snooze" && req.method === "POST") {
         // Managing your own notification quiet-hours isn't terminal-driving — read-level, like subscribe.
-        const denied = guard(req, cfg, "read", pairingGate);
+        const denied = guard(req, cfg, "read", pairingGate) ?? nativeGate("read");
         if (denied) return denied;
         let body: JsonValue;
         try {
@@ -2617,6 +2679,7 @@ export async function startServer(opts: {
         }
         const parsed = parseSnoozeRequest(body);
         if (!parsed.ok) return text("bad snoozedUntil", 400);
+        const finalDenied = currentCallerGate("read"); if (finalDenied) return finalDenied;
         await snooze.set(parsed.until);
         // Snoozing should also clear whatever's already on the lock screen — across every session,
         // since snooze is bridge-wide. Each session owns its own notification slot (tag).
@@ -2636,12 +2699,12 @@ export async function startServer(opts: {
         // Which agent statuses push (bridge-wide). Read-level like snooze — managing your own
         // notification preferences isn't terminal-driving.
         if (req.method === "GET") {
-          const denied = guard(req, cfg, "read", pairingGate);
+          const denied = guard(req, cfg, "read", pairingGate) ?? nativeGate("read");
           if (denied) return denied;
           return json(notifyPrefs.current(), req.headers.get("accept-encoding"));
         }
         if (req.method === "POST") {
-          const denied = guard(req, cfg, "read", pairingGate);
+          const denied = guard(req, cfg, "read", pairingGate) ?? nativeGate("read");
           if (denied) return denied;
           let body: JsonValue;
           try {
@@ -2653,7 +2716,8 @@ export async function startServer(opts: {
           }
           const patch = parseNotifyPrefsPatch(body);
           if (!patch) return text("bad prefs", 400);
-          const updated = await notifyPrefs.set(patch);
+          const finalDenied = currentCallerGate("read"); if (finalDenied) return finalDenied;
+        const updated = await notifyPrefs.set(patch);
           // Prefs may have just disabled a kind — retract any pending/outstanding alerts of it, in
           // every live session (prefs are bridge-wide; each session has its own coordinator).
           for (const rt of registry.all()) rt.notifications.applyPrefs();
@@ -2672,22 +2736,22 @@ export async function startServer(opts: {
       // that is the only machine holding a push subscription (CREW_PROTOCOL.md §5). A segment on
       // `PANE_ROUTE` would have been forwarded to the peer and stored there, where nothing can send.
       if (pathname === "/api/notifications/cache-watch") {
-        const denied = guard(req, cfg, "read", pairingGate);
+        const denied = guard(req, cfg, "read", pairingGate) ?? nativeGate("read");
         if (denied) return denied;
         const watch = opts.cacheWatch;
         if (!watch) return text("not found", 404);
         return serveCacheWatchRoute(req, url, watch, (paneId) => watchTargetFor(paneId, host, sessionName),
-          () => notifyPrefs.current().cache, cfg.cacheWarnSeconds);
+          () => notifyPrefs.current().cache, cfg.cacheWarnSeconds, () => currentCallerGate("read"));
       }
       if (pathname === "/api/notifications/cache-watch/list" && req.method === "GET") {
-        const denied = guard(req, cfg, "read", pairingGate);
+        const denied = guard(req, cfg, "read", pairingGate) ?? nativeGate("read");
         if (denied) return denied;
         const watch = opts.cacheWatch;
         if (!watch) return text("not found", 404);
         return json(cacheWatchListBody(watch), req.headers.get("accept-encoding"));
       }
       if (pathname === "/api/notifications/cache-watch/forget" && req.method === "POST") {
-        const denied = guard(req, cfg, "read", pairingGate);
+        const denied = guard(req, cfg, "read", pairingGate) ?? nativeGate("read");
         if (denied) return denied;
         const watch = opts.cacheWatch;
         if (!watch) return text("not found", 404);
@@ -2702,6 +2766,7 @@ export async function startServer(opts: {
         if (id === null) return text("bad id", 400);
         // An id naming no entry is NOT an error: removing something already gone is the outcome the
         // operator asked for, and the answer is the list either way.
+        const finalDenied = currentCallerGate("read"); if (finalDenied) return finalDenied;
         await watch.forget(id);
         return json(cacheWatchListBody(watch), req.headers.get("accept-encoding"));
       }
@@ -2709,7 +2774,7 @@ export async function startServer(opts: {
         // Force an immediate upstream check (the "check for updates" button), instead of waiting for
         // the periodic timer. Read-level — checking a version isn't terminal-driving — and idempotent
         // (the monitor de-dupes concurrent checks). Returns the fresh status the client revalidates on.
-        const denied = guard(req, cfg, "read", pairingGate);
+        const denied = guard(req, cfg, "read", pairingGate) ?? nativeGate("read");
         if (denied) return denied;
         await updateMonitor.checkRelease();
         return json(updateMonitor.status(), req.headers.get("accept-encoding"));
@@ -2718,7 +2783,7 @@ export async function startServer(opts: {
         // "Remind me next digest" — dismisses the CURRENT update push without touching the `updates`
         // pref, which stays the only off switch. Read-level like the notification snooze: managing
         // your own notifications isn't terminal-driving. The banner keeps showing; only the push waits.
-        const denied = guard(req, cfg, "read", pairingGate);
+        const denied = guard(req, cfg, "read", pairingGate) ?? nativeGate("read");
         if (denied) return denied;
         await updateMonitor.snoozeDigest();
         return json(updateMonitor.status(), req.headers.get("accept-encoding"));
@@ -2732,7 +2797,7 @@ export async function startServer(opts: {
         // Read-level, exactly like the snooze beside it: declining a notification about your own
         // machine isn't terminal-driving. Not a mute either — `updatesEnabled()` stays the only off
         // switch, and a NEWER release raises the band again.
-        const denied = guard(req, cfg, "read", pairingGate);
+        const denied = guard(req, cfg, "read", pairingGate) ?? nativeGate("read");
         if (denied) return denied;
         let body: JsonValue;
         try {
@@ -2753,12 +2818,12 @@ export async function startServer(opts: {
         if (scope !== undefined && scope !== "offer" && scope !== "crew") {
           return text("bad scope", 400);
         }
+        const finalDenied = currentCallerGate("read"); if (finalDenied) return finalDenied;
         await updateMonitor.dismiss(version, scope ?? "offer");
         return json(updateMonitor.status(), req.headers.get("accept-encoding"));
       }
       if (pathname === "/api/update/check" && req.method === "GET") {
-        // The card's own read: everything `POST /api/update/check` answers, plus the PREFLIGHT that
-        // decides whether the update button is live and what it says when it is not (M15/05).
+        // Read the update status and the preflight that explains whether Update is available (M15/05).
         //
         // A GET because it is a read in the strictest sense — it starts nothing, takes no upstream
         // look and mutates no state — and read-gated for the same reason the snapshot is. It is safe
@@ -2768,7 +2833,7 @@ export async function startServer(opts: {
         // It is deliberately NOT folded into the snapshot. The snapshot is polled by every open
         // client on a burst cadence, and the preflight shells out to git and to `doctor`; paying that
         // on every poll for a card nobody has opened is the wrong trade.
-        const denied = guard(req, cfg, "read", pairingGate);
+        const denied = guard(req, cfg, "read", pairingGate) ?? nativeGate("read");
         if (denied) return denied;
         // Right after a restart `latest` is null until the monitor's own first poll — deliberately
         // delayed so the bridge never probes the network mid-boot (bridge/index.ts). A card opened in
@@ -2862,6 +2927,8 @@ export async function startServer(opts: {
         // ONE id per confirm, minted here and nowhere else. It is what the peers' turns carry and
         // what a member that rolled back keys its "not twice" memory on — so a fresh confirm, and
         // only a fresh confirm, permits one further attempt at the same tag.
+        const finalDenied = browserGate("write");
+        if (finalDenied) return finalDenied;
         const runId = action.newRunId();
         // ── A PEERS-ONLY RUN MOVES NOTHING HERE ────────────────────────────
         // The lead is already current. It starts no updater, spawns nothing and restarts nothing:
@@ -2918,16 +2985,25 @@ export async function startServer(opts: {
         // WRITE-gated, exactly like typing into a pane — and for the same reason. This route's whole
         // purpose is to put words in the composer, and the audio leaves the host for an
         // operator-configured endpoint. A read-only device watches; it does not speak.
-        const denied = guard(req, cfg, "write", pairingGate);
+        const denied = guard(req, cfg, "write", pairingGate) ?? nativeGate("write");
         if (denied) return denied;
         // Deliberately NOT session- or pane-scoped: the transcript is text handed back to the
         // phone, which then decides what to do with it. Nothing here touches a terminal, so there is
         // no pane to attribute it to and no `x-collie-seen` meaning to claim.
-        const { response, attempt } = await transcribeRequest(await stt(), req, sttAdmission);
+        const provider = await stt();
+        const capturedProvider: SttProvider | null = provider === null || !nativeBinding ? provider : {
+          id: provider.id, status: () => provider.status(),
+          transcribe: (audio, signal) => {
+            const finalDenied = currentCallerGate("write");
+            if (finalDenied) { finalNativeRefusal = finalDenied; throw new SttCancelledError(); }
+            return provider.transcribe(audio, signal);
+          },
+        };
+        const { response, attempt } = await transcribeRequest(capturedProvider, req, sttAdmission);
         // One line per attempt, and route metadata only: the recording, the transcript and the
         // provider's own words never reach the audit log.
         audit.record({ action: "stt", device: whois(req).device, detail: { ...attempt } });
-        return secure(response);
+        return finalNativeRefusal ?? secure(response);
       }
 
       // ── Device pairing (bridge/pairing.ts) ───────────────────────────────
@@ -2980,6 +3056,7 @@ export async function startServer(opts: {
         }
         let claimed: Awaited<ReturnType<PairingStore["claim"]>>;
         try {
+          if (nativeBinding) { const finalDenied = currentCallerGate("write"); if (finalDenied) return finalDenied; }
           claimed = await pairing.claim(parsed.code, parsed.label);
         } catch (err) {
           // The registry is there and unreadable: enrolling now would write this one device over the
@@ -3021,7 +3098,7 @@ export async function startServer(opts: {
         // Read-level, exactly like `/api/devices` and `/api/config`: this is a report about machines
         // the operator already owns, and it drives nothing. Every field is a fact this process was
         // already holding — the route reads no disk, dials no member, and cannot start a call.
-        const denied = guard(req, cfg, "read", pairingGate);
+        const denied = guard(req, cfg, "read", pairingGate) ?? nativeGate("read");
         if (denied) return denied;
         // 404 for a solo instance AND for a peer, from one closure. A peer is not a front door
         // (ADR 0013), and a solo instance has no crew to describe — the phone's move is the same in
@@ -3038,7 +3115,7 @@ export async function startServer(opts: {
         req,
         pathname,
         {
-          gate: (level) => guard(req, cfg, level, pairingGate),
+          gate: currentCallerGate,
           device: () => whois(req).device,
           audit: (entry) => audit.record(entry),
         },
@@ -3051,7 +3128,7 @@ export async function startServer(opts: {
         // device learns that it is unpaired from the 403 itself. Labels are the operator's own names
         // for their own phones; the token hashes never reach this shape (see toDeviceWire).
         // `enforced` is always true now and stays on the wire for older phones.
-        const denied = guard(req, cfg, "read", pairingGate);
+        const denied = guard(req, cfg, "read", pairingGate) ?? nativeGate("read");
         if (denied) return denied;
         const token = bearerToken(req.headers);
         let body: DevicesResponseBody;
@@ -3080,7 +3157,7 @@ export async function startServer(opts: {
         // paired device (and the header gate, if configured). Revoking YOURSELF is allowed — that is
         // how a device un-pairs. Revoking the last device leaves a bridge that refuses every route
         // but health and pair (ADR 0086); `collie pair` on the host is the way back in.
-        const denied = guard(req, cfg, "write", pairingGate);
+        const denied = guard(req, cfg, "write", pairingGate) ?? nativeGate("write");
         if (denied) return denied;
         let body: unknown;
         try {
@@ -3096,7 +3173,8 @@ export async function startServer(opts: {
         }
         let revoked: boolean;
         try {
-          revoked = await pairing.revoke(label);
+          const finalDenied = currentCallerGate("write"); if (finalDenied) return finalDenied;
+        revoked = await pairing.revoke(label);
         } catch {
           // An unreadable registry is not "no such device", and revoking from it would write a torn
           // reading back. Nothing was changed; the phone retries.
@@ -3126,7 +3204,7 @@ export async function startServer(opts: {
       // caller never gets here now (`apiFrontGate` refused it before routing, ADR 0086); the read
       // gate stays so this branch is closed on its own too, and a paired caller gets an honest 404.
       if (pathname.startsWith("/api/")) {
-        const denied = guard(req, cfg, "read", pairingGate);
+        const denied = guard(req, cfg, "read", pairingGate) ?? nativeGate("read");
         if (denied) return denied;
         return text("not found", 404);
       }
@@ -3156,7 +3234,7 @@ export async function startServer(opts: {
       `[bridge] per-device auth ON: trusting '${cfg.deviceHeader}', ${cfg.deviceAllowlist.length} device(s) allowlisted`,
     );
   }
-  for (const w of startupWarnings(cfg)) console.warn(w);
+  for (const w of startupWarnings(cfg, opts.nativeIngress !== undefined)) console.warn(w);
 
   return server;
 }
@@ -3170,7 +3248,7 @@ export async function startServer(opts: {
  * COLLIE_DEVICE_HEADER instead), whereas under `tailscale serve` an empty trustedUser is the open
  * door Variant A closes.
  */
-export function startupWarnings(cfg: Config): string[] {
+export function startupWarnings(cfg: Config, nativeIngressConfigured = false): string[] {
   const warnings: string[] = [];
   if (!isLoopbackBindHost(cfg.host)) {
     warnings.push(
@@ -3185,7 +3263,7 @@ export function startupWarnings(cfg: Config): string[] {
   if (cfg.skipServe) {
     // Reverse-proxy mode: no tailscale serve injects Tailscale-User-Login, so checkAccess never has
     // an identity to enforce — trustedUser is dead config. Only nag when it's set (a likely mistake).
-    if (cfg.trustedUser) {
+    if (cfg.trustedUser && !nativeIngressConfigured) {
       warnings.push(
         `[bridge] WARNING: COLLIE_TRUSTED_USER has no effect under COLLIE_SKIP_SERVE=1 — without tailscale serve in front, the Tailscale-User-Login header is never injected. Use COLLIE_DEVICE_HEADER for per-device auth (see docs/deployment.md → Variant C).`,
       );
@@ -5698,6 +5776,7 @@ export async function serveAddedLauncherRoute(
   } catch {
     return text("bad body", 400);
   }
+  const finalDenied = caller.gate("write"); if (finalDenied) return finalDenied;
   const answer: RouteAnswer = await act(body, {
     sources,
     device: caller.device(),
@@ -5737,6 +5816,7 @@ export async function serveRecentRunRoute(
   } catch {
     return text("bad body", 400);
   }
+  const finalDenied = caller.gate("write"); if (finalDenied) return finalDenied;
   const answer: RecentRouteAnswer = await act(body, { recent, device: caller.device(), audit: caller.audit, session: rt.name });
   return json(answer.body, req.headers.get("accept-encoding"), answer.status);
 }
@@ -5929,6 +6009,7 @@ export async function serveMachinesRoute(
   }
   const alerts = parseMachineAlerts(raw);
   if (alerts === null) return text("bad alerts", 400);
+  const finalDenied = caller.gate("write"); if (finalDenied) return finalDenied;
   const stored = await machines.setAlerts(id, alerts);
   if (stored === null) return unknownMachine();
   // The machine rides the envelope's `host`, absent for this collie's own machine as on every other
@@ -6398,6 +6479,7 @@ async function uploadPane(
   audit: AuditLog,
   device: string | null,
   session: string,
+  finalAdmission: () => Response | null = () => null,
 ): Promise<Response> {
   const ae = req.headers.get("accept-encoding");
   // Reject an oversize upload by its declared Content-Length BEFORE buffering — req.formData()
@@ -6444,10 +6526,12 @@ async function uploadPane(
     const dir = join(cfg.stateDir, "uploads");
     // 0700 — uploads (and the state dir they live under) may hold sensitive images; keep them
     // owner-only. recursive:true applies the mode to any intermediate dirs it creates too.
+    const beforeDirectory = finalAdmission(); if (beforeDirectory) return beforeDirectory;
     await mkdir(dir, { recursive: true, mode: 0o700 });
     const safePane = paneId.replace(/[^A-Za-z0-9_-]/g, "_");
     const filename = `${safePane}-${Date.now().toString(36)}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
     const fullPath = join(dir, filename);
+    const beforePublication = finalAdmission(); if (beforePublication) return beforePublication;
     await Bun.write(fullPath, file);
     audit.record({
       action: "upload",
@@ -7482,6 +7566,7 @@ export async function serveCacheWatchRoute(
   resolve: (paneId: string) => { pane: CacheWarnPane; error?: undefined } | { pane?: undefined; error: ErrorCode },
   global: () => boolean,
   warnSeconds: number,
+  currentCallerGate: () => Response | null = () => null,
 ): Promise<Response> {
   const paneId = url.searchParams.get("pane");
   if (paneId === null || paneId === "") return text("bad request", 400);
@@ -7496,6 +7581,8 @@ export async function serveCacheWatchRoute(
     if (parsed === null) return text("bad on", 400);
     on = parsed.on;
   } else if (req.method !== "GET") return text("method not allowed", 405);
+  const finalDenied = currentCallerGate();
+  if (finalDenied) return finalDenied;
   // Resolve after body consumption so a suspended POST cannot use an earlier swept target.
   const found = resolve(paneId);
   if (found.error !== undefined) {
@@ -7508,6 +7595,8 @@ export async function serveCacheWatchRoute(
     }
     await watch.set(found.pane, found.pane.label, on);
   }
+  const publicationDenied = currentCallerGate();
+  if (publicationDenied) return publicationDenied;
   return json({ on: watch.has(found.pane.key), global: global(), watchable: cacheWatchable(found.pane), warnSeconds },
     req.headers.get("accept-encoding"));
 }

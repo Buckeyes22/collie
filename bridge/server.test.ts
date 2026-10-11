@@ -2308,6 +2308,10 @@ describe("parseSnoozeRequest — absence is not null", () => {
 describe("startupWarnings — security-posture nags", () => {
   const has = (ws: string[], needle: string) => ws.some((w) => w.includes(needle));
 
+  test("configured native/browser ingress actually enforces the trusted login and does not print a dead-config warning",()=>{
+    expect(startupWarnings(cfg({skipServe:true,trustedUser:"operator@example"}),true).some(message=>message.includes("has no effect"))).toBe(false);
+  });
+
   test("skipServe + trustedUser: warns the identity gate is inert and points at the device header", () => {
     const ws = startupWarnings(cfg({ skipServe: true, trustedUser: "me@example.com" }));
     expect(has(ws, "COLLIE_TRUSTED_USER has no effect")).toBe(true);

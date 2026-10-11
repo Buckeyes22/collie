@@ -49,7 +49,11 @@ interface Allowed {
 
 /** Sites Windows never reaches: URLs and routes, tmux and zellij, systemd, test-only helpers. */
 const NOT_REACHED_BY_WINDOWS: readonly Allowed[] = [
-  { file: "bridge/server.ts", pattern: "urlPathname", count: 1, why: "access logging parses an HTTP request URL, never a file URL" },
+  { file: "bridge/native-access/contracts.ts", pattern: "startsWithSlash", count: 1, why: "canonical public HTTP target path, never a host filesystem path" },
+  { file: "bridge/native-access/gateway.ts", pattern: "urlPathname", count: 1, why: "configured public HTTPS mount, never a file URL" },
+  { file: "bridge/native-access/ingress.ts", pattern: "urlPathname", count: 4, why: "exact public/stripped HTTP target and mount for the gateway MAC, never file URLs" },
+  { file: "bridge/index.ts", pattern: "urlPathname", count: 1, why: "operator-declared native HTTPS mount comparison, never a file URL" },
+  { file: "bridge/server.ts", pattern: "urlPathname", count: 4, why: "access logging and declared native/browser ingress parse HTTP request/mount URLs, never file URLs" },
   { file: "bridge/mux/tmux/exec.ts", pattern: "startsWithSlash", count: 1, why: "tmux has no Windows build" },
   { file: "bridge/mux/zellij/exec.ts", pattern: "startsWithSlash", count: 1, why: "zellij has no Windows build" },
   { file: "bridge/mux/tmux/adapter.ts", pattern: "splitOnSlash", count: 1, why: "tmux session path, tmux has no Windows build" },

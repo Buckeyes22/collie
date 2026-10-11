@@ -235,6 +235,16 @@ describe("check-android-native validation", () => {
     expect(output).toContain("must export only com.lateapex.collie.ui.MainActivity");
   });
 
+  test("allows only the fixed exported transaction callback and retains unrelated export/browser refusals", () => {
+    const callback = `<activity android:name=".ui.OpenLinkActivity" android:exported="true"><intent-filter><action android:name="android.intent.action.VIEW"/><category android:name="android.intent.category.DEFAULT"/><category android:name="android.intent.category.BROWSABLE"/><data android:scheme="com.lateapex.collie"/></intent-filter></activity>`;
+    const manifest = validManifest.replace("</application>", `${callback}</application>`);
+    expect(messages({ androidManifestText: manifest })).toBe("");
+    for (const changed of [callback.replace("com.lateapex.collie", "https"), callback.replace('<data ', '<data android:path="/oauth2redirect" '), callback.replace('<data ', '<data android:pathAdvancedPattern=".*" '), callback.replace('<data ', '<data android:port="443" '), callback.replace('<data ', '<data android:mimeType="text/plain" '), callback.replace('<data ', '<data android:host="foreign.example" '), callback.replace('</intent-filter>', '<action android:name="android.intent.action.SEND"/></intent-filter>')]) {
+      expect(messages({ androidManifestText: validManifest.replace("</application>", `${changed}</application>`) })).toContain("native callback must accept only");
+    }
+    expect(messages({ androidManifestText: manifest.replace("</application>", '<service android:name=".Extra" android:exported="true"/></application>') })).toContain("must export only");
+  });
+
   test("requires RECORD_AUDIO but continues to reject broad media access", () => {
     expect(
       messages({

@@ -26,6 +26,8 @@ Running a crew? Update the lead first; members follow on their own. Details:
 
 ### Added
 
+- **Opt in to native identity through a configured DPoP gateway.** Add an operator-owned public OIDC profile, independent pairing/device enrollment, bounded replay-protected loopback ingress, final binding/role/access-expiry dispatch fences and durable exact binding-retirement custody. Preserve visible pane read intent without trusting injected phone identity headers. Preserve authenticated browser routing on a separate retained mount; actual issuer/device/Crew and signed retirement acceptance remain pending. Keep ordinary startup unchanged when the optional gateway configuration is absent.
+
 - **Review repository history without leaving Changes.** Expose bounded first-parent commit pages through the scoped read and Crew routes, pin later pages to the first page's HEAD, and read selected commits plus their listed file diffs without enabling Git writes. Stop at 10,000 commits and show truncation separately from the end of history. Bound displayed author names and serialized pages to the native transport envelope, and refuse malformed cap metadata.
 - **Inspect an agent's current identity without guessing its authority.** Add bounded pane/session diagnostics and optional Crew forwarding; validate registered custom reporter intents but refuse lifecycle writes until the upstream runtime can compare-and-set the current occupant atomically.
 - **Launch, worktree and launcher-add intents keep durable owner-bound tombstones.** The shared operation journal reserves each frozen effect before dispatch and never evicts those reservations; bounded success-response caches may replay a known result, while a lost or evicted body stays unknown and cannot trigger a second effect. The bridge advertises readiness only when its protected receipt key and durable journal are available.
@@ -46,6 +48,8 @@ Running a crew? Update the lead first; members follow on their own. Details:
 - **The Android fork follows the current upstream server contract.** Merge Collie 1.19.0 while retaining native Kotlin screens, English-only UI, Android release isolation, transcript caching, and request trace correlation. Android handles scoped sessions, Crew, paired reads, mounted origins and live chat.
 
 ### Fixed
+
+- **Native identity profiles accept exact root issuers without a slash.** Preserve the operator’s literal issuer in discovery, callback, token and device-binding verification while keeping other HTTPS endpoints canonical.
 
 - **Printed file discovery carries its owning device read admission.** Pane responses bind the current Files verdict into their ETag, and Crew preserves the owning declaration without borrowing the lead’s support.
 

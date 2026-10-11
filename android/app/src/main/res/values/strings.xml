@@ -717,4 +717,25 @@ Command: %2$s</string>
     <string name="agent_catalog_not_probed">not probed</string>
 
     <string name="pane_refresh">Refresh pane</string>
+    <string name="proxy_identity_explanation">Native identity access uses the operator’s configured issuer and a separate device key. Browser cookies do not authorize native requests. Your Collie pairing remains separate.</string>
+    <string name="proxy_identity_profile">Paste the operator’s native identity profile JSON</string>
+    <string name="proxy_identity_import">Review and configure profile</string>
+    <string name="proxy_identity_sign_in">Sign in with external browser</string>
+    <string name="proxy_identity_invalid">The identity profile is invalid or does not match this connection.</string>
+    <string name="proxy_identity_review">Configure native identity access?</string>
+    <string name="proxy_identity_review_details">Collie: %1$s
+Issuer: %2$s
+Public client: %3$s
+Only the declared issuer receives this authorization exchange. Pairing is retained.</string>
+    <string name="proxy_identity_profile_ready">Profile configured. Sign in to authorize native access.</string>
+    <string name="proxy_identity_waiting">Checking the configured identity transaction…</string>
+    <string name="proxy_identity_not_connected">Configure a Collie connection first.</string>
+    <string name="proxy_identity_complete">Identity sign-in completed. Refresh the current connection before sending actions.</string>
+    <string name="proxy_identity_refused">Identity sign-in was refused, expired, or belongs to an earlier connection. Start a new sign-in.</string>
+    <string name="proxy_identity_copy_key">Copy public device key</string>
+    <string name="proxy_identity_key_label">Native device key thumbprint</string>
+    <string name="proxy_identity_key_copied">Public key copied. Ask your operator to enroll this key for paired device %1$s.</string>
+    <string name="proxy_identity_actor_changed">Access or screen changed. Refresh Collie or sign in again.</string>
+    <string name="proxy_identity_required">Native identity sign-in is required. Your Collie pairing is retained.</string>
+    <string name="proxy_identity_binding_required">The native device binding is unavailable or revoked. Ask your operator to verify this device.</string>
 </resources>

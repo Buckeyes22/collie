@@ -13,6 +13,15 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Collie"
         android:usesCleartextTraffic="false">
+        <activity android:name=".ui.ProxySignInActivity" android:exported="false" />
+        <activity android:name=".ui.OpenLinkActivity" android:exported="true" android:noHistory="true" android:excludeFromRecents="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="com.lateapex.collie" />
+            </intent-filter>
+        </activity>
         <activity
             android:name=".ui.MainActivity"
             android:exported="true"

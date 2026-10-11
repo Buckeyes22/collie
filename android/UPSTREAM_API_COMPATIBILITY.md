@@ -45,7 +45,7 @@ results; neither settlement nor notification automatically retries a POST.
 
 | Contract | Native adaptation |
 | --- | --- |
-| `/api/health`, `/api/pair` | Health remains the open connectivity probe. Pairing request and response bodies stay excluded from diagnostics. |
+| `/api/health`, `/api/pair` | Direct Collie health remains the open connectivity probe. Exact candidate-bound health/pair calls carry no borrowed credentials; a configured DPoP gateway authenticates both and returns its typed refusal. Pairing must precede explicit gateway enrollment through an already supported route; fresh gateway-only first pairing is unsupported. Pairing request and response bodies stay excluded from diagnostics. |
 | All other `/api/*` reads and writes | Send the paired bearer and `X-Requested-With`; only a typed authoritative Collie/pairing refusal with a known expired/revoked/unpaired code clears the credential and sensitive custody. Bare or proxy-origin 401/403 freezes writes and retains pairing. Upstream now requires pairing for reads too. |
 | Mounted deployment URLs | Preserve the HTTPS mount when constructing routes. Write `Origin` names only scheme and authority. Reject ambiguous paths, embedded credentials, query strings and fragments. |
 | `/api/config` | Request the pane or space's actual host/session. Decode upload limits, allowed extensions, redact and STT capabilities alongside operator commands, keys and replies. |
@@ -172,3 +172,28 @@ Withdrawal retires mirror confirmations without reading Files. Transcript callba
 Native scoped read admission is unavailable while a target, connection or lead transition awaits retirement acknowledgements. The selected target is published inside that closed admission window. A concurrent or reentrant selection cannot overwrite it; a deliberate retry may reselect its screen target after the transition settles. Repository/admission locks are released across job cancellation and UI wipe acknowledgements. This local custody rule supplies no vendor mutation CAS.
 
 Implicit native repository reads and actions resolve their selected host/session/subject together with the navigation generation under the canonical admission lock. The same capture supplies the API request scope, including dashboard `viewAll` breadth; an already captured actor is refused after replacement. Explicit scoped reads and deliberate reselection remain supported.
+
+## Optional configured native identity ingress
+
+The original canonical read actor, including explicit null/viewAll scope dimensions and subject,
+is copied into immutable API request tags across child dispatchers, issuer refresh and nonce waits.
+Configuration and folder helpers retain that actor’s original subject, including explicit null;
+only reads without an expected actor resolve the selected defaults. An explicitly supplied different
+subject or retired navigation generation still fails before transport.
+The interceptor validates that captured actor before the single protected dispatch; it never
+samples a replacement default scope to manufacture authority. The current B18 canonical transition settlement is retained by this source join;
+fresh combined gates, independent review and actual acceptance remain required.
+
+`Authorization` remains Collie pairing. `Collie-Proxy-Authorization` and DPoP end at the configured
+gateway; neither tokens nor private ingress stamps cross Crew. Collie verifies a MAC over the
+original native mount, full stripped path/query, method, bearer hash, profile, exact binding/revision,
+request correlation and a bounded integer seconds lease no later than verified access expiry.
+Final named adapter/Crew dispatch rechecks that lease and current pairing, binding, role and gate
+after observable preflight awaits. This does not assert an upstream atomic compare-and-send API.
+
+Only `X-Collie-Seen: 1` on pane/history/chat GETs is reconstructed as existing read intent. Spoofed
+identity/device/native/provenance/Crew headers are removed. Correlated gateway identity refusal
+preserves pairing; only authoritative Collie pairing refusal retires it. Same-identity refresh and
+expiry retain a stable enrollment witness. Exact authenticated enrollment retirement commits the
+encrypted outbox with custody publication; a listener alone is not a durable B22 ACK. All genuine
+issuer/device/Windows/Crew and B22/B23 consumer acceptance remains open.

@@ -229,9 +229,12 @@ describe("the dispatcher's wiring, pinned by source", () => {
     const gateAt = SERVER_CODE.indexOf("apiFrontGate(req, pathname, cfg, pairingGate)", fetchStart);
     expect(fetchStart).toBeGreaterThan(0);
     expect(gateAt).toBeGreaterThan(fetchStart);
-    // The only `/api/` literal the fetch handler reads before the gate is the health route's own.
+    // ADR 0098 adds only two configured-ingress refusal predicates before pairing.
+    // Neither predicate dispatches a resource; the health exception remains the sole route.
     const before = [...SERVER_CODE.slice(fetchStart, gateAt).matchAll(/"(\/api\/[^"]*)"/g)].map((m) => m[1]);
-    expect(before).toEqual(["/api/health"]);
+    expect(before).toEqual(["/api/", "/api/", "/api/health"]);
+    expect(SERVER_CODE.slice(fetchStart, gateAt)).toContain("opts.nativeIngress.ingress.verify(req, identity, pathname)");
+    expect(SERVER_CODE.slice(fetchStart, gateAt)).toContain('gatewayRefusal("device", "device.ingress_required", 403)');
     // Nothing before the gate dispatches into the shared route block or a route regex.
     const head = SERVER_CODE.slice(fetchStart, gateAt);
     expect(head).not.toContain("serveSessionRoute(");

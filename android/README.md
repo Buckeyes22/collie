@@ -62,10 +62,11 @@ screen keeps an outcome check and disables further changes until the operator re
 - Public builds start with an empty server field. Diagnostic capture is opt-in for new installs,
   and pairing request and response bodies are excluded from capture.
 - Backups and cleartext traffic are disabled. The source manifest requests network access plus the
-  narrowly scoped runtime microphone permission used by speech transcription, and exports only its
-  launcher Activity.
-- There is no browser-helper, WebView, JavaScript bridge, Firebase, analytics, or crash-reporting
-  dependency.
+  narrowly scoped runtime microphone permission used by speech transcription, and exports its
+  launcher and the narrowly validated native link/callback dispatcher.
+- There is no WebView, JavaScript bridge, Firebase, analytics, or crash-reporting dependency.
+  Optional identity sign-in opens the system external browser with ACTION_VIEW; it does not embed
+  the web application or import browser cookies.
 
 Pane Details can show foreground process, foreground directory, and restore-error diagnostics when
 the owning runtime positively declares process inspection. These fields can contain credentials:
@@ -93,6 +94,32 @@ Update notices offer separate actions to dismiss that version or request a remin
 digest. Dismissals persist on the server and apply independently to an update offer and a settled
 Crew failure notice. New versions and active progress remain visible; Settings shows the server's
 current acknowledgements. An uncertain dismissal refreshes state without automatically retrying.
+
+## Optional native identity sign-in
+
+Direct native Tailscale access remains the default. A configured native DPoP gateway requires the
+operator's public OIDC profile and an existing paired-device incarnation explicitly mapped to the
+issuer subject and this installation's public proof key. Pair through an already supported route
+before enrollment: first pairing through the gateway-only mount is not supported. Candidate health
+and pair probes reach that exact origin once and report its refusal without borrowing another
+saved connection's credentials. See the [gateway setup](../docs/native-identity-gateway.md).
+
+Review the profile for the selected HTTPS origin in the native sign-in screen, confirm import,
+and open the external browser. Only the fixed `com.lateapex.collie:/oauth2redirect` callback may
+complete its encrypted expiring, process- and credential-bound one-shot transaction. Issuer requests
+never receive Collie pairing. Identity tokens and enrollment retirement custody use separate
+Keystore encryption; the proof key's public thumbprint can be copied explicitly.
+
+Leaving the screen clears the profile editor and modal copy and cancels pending UI work. A
+legitimate external-browser callback can resume on a started screen while stopped dialogs and
+retired requests remain inert. Same-identity refresh or expiry preserves the exact enrollment
+witness and pairing. Authenticated exact enrollment retirement emits a durable event whose signed
+B22 consumer must commit before ACK. A current snapshot still gates terminal writes after sign-in;
+identity login does not enable an unsupported or read-only pane.
+
+Source fixtures do not establish genuine issuer, front-door, Keystore/external-browser,
+Windows, Crew, TalkBack or signed-push acceptance. Those runtime checks and the B18/B22/B23 shared
+joins remain required before the optional workflow can be considered complete.
 
 ## Pinned toolchain
 
