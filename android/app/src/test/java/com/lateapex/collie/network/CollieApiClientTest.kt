@@ -5,6 +5,7 @@ import com.lateapex.collie.domain.Connection
 import com.lateapex.collie.domain.PaneAddress
 import com.lateapex.collie.domain.Scope
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import okhttp3.ConnectionPool
 import okhttp3.OkHttpClient
@@ -589,6 +590,30 @@ class CollieApiClientTest {
     }
 
     @Test
+    fun updateDismissalUsesMountedReadRouteAndDistinctOfferAndCrewScopes(): Unit = runBlocking {
+        val mounted = Connection(CollieOrigin(server.url("/mount/").toString()), "phone", "token")
+        server.enqueue(jsonResponse(updateInfoResponse(dismissed = "1.6.0")))
+        server.enqueue(jsonResponse(updateInfoResponse(dismissedCrew = "1.7.0")))
+
+        assertEquals("1.6.0", (api.dismissUpdate(mounted, "1.6.0", UpdateDismissalScope.OFFER) as ApiResult.Success).value.dismissedVersion)
+        assertEquals("1.7.0", (api.dismissUpdate(mounted, "1.7.0", UpdateDismissalScope.CREW) as ApiResult.Success).value.dismissedCrewVersion)
+
+        server.takeRequest().also { request ->
+            assertEquals("POST", request.method)
+            assertEquals("/mount/api/update/dismiss", request.path)
+            assertEquals("{\"version\":\"1.6.0\",\"scope\":\"offer\"}", request.body.readUtf8())
+            assertEquals("Bearer token", request.getHeader("Authorization"))
+            assertEquals(mounted.origin.headerValue, request.getHeader("Origin"))
+        }
+        server.takeRequest().also { request ->
+            assertEquals("/mount/api/update/dismiss", request.path)
+            assertEquals("{\"version\":\"1.7.0\",\"scope\":\"crew\"}", request.body.readUtf8())
+            assertEquals(mounted.origin.headerValue, request.getHeader("Origin"))
+        }
+        Unit
+    }
+
+    @Test
     fun standbyUpdateReadsThePublicFailoverRouteWithoutThePairingCredential() = runBlocking {
         server.enqueue(jsonResponse(updateRunResponse("restarting")))
 
@@ -999,6 +1024,22 @@ class CollieApiClientTest {
 
     private fun updateStartResponse(): String =
         """{"ok":true,"to":"1.6.0","major":false,"run":null}"""
+
+    private fun updateInfoResponse(dismissed: String? = null, dismissedCrew: String? = null): String =
+        Json.encodeToString(
+            UpdateInfo(
+                current = "1.5.0",
+                latest = "1.8.0",
+                latestUrl = null,
+                releaseAvailable = true,
+                majorAvailable = null,
+                majorUrl = null,
+                bridgeStale = false,
+                checkedAt = 1,
+                dismissedVersion = dismissed,
+                dismissedCrewVersion = dismissedCrew,
+            ),
+        )
 
     private fun updateRunResponse(state: String): String =
         """{"schema":1,"state":"$state","from":"1.5.0","to":"1.6.0","startedAt":1,"updatedAt":2,"pid":7,"attempt":1}"""

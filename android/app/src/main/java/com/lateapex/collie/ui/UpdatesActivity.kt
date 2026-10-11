@@ -27,6 +27,7 @@ import com.lateapex.collie.data.DeviceWriteAuthorization
 import com.lateapex.collie.network.ApiResult
 import com.lateapex.collie.network.PreflightCheck
 import com.lateapex.collie.network.UpdateCheckResponse
+import com.lateapex.collie.network.UpdateDismissalScope
 import com.lateapex.collie.network.UpdateRun
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -54,13 +55,18 @@ class UpdatesActivity : AppCompatActivity() {
     private lateinit var confirmationCancel: MaterialButton
     private lateinit var start: MaterialButton
     private lateinit var major: MaterialButton
-    private lateinit var dismiss: MaterialButton
+    private lateinit var remind: MaterialButton
+    private lateinit var dismissOffer: MaterialButton
+    private lateinit var dismissCrew: MaterialButton
     private lateinit var error: TextView
     private var latestState: UpdateCheckResponse? = null
     private var busy = false
     private var checking = false
     private var checkFailed = false
-    private var dismissed = false
+    private var dismissalPending: Pair<String, UpdateDismissalScope>? = null
+    private var remindPending = false
+    private var dismissalError: String? = null
+    private var remindError: String? = null
     private var preflightOpen = false
     private var preflightInitialized = false
     private var logOpen = false
@@ -201,8 +207,16 @@ class UpdatesActivity : AppCompatActivity() {
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                 ))
-                dismiss = outlinedButton(R.id.updates_snooze_button, getString(R.string.updates_native_dismiss)) { snooze() }
-                addView(dismiss, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)).apply { topMargin = dp(4) })
+                dismissOffer = outlinedButton(R.id.updates_native_offer_dismiss_button, "") {
+                    latestState?.let(UpdateNativePresentation::dismissibleOfferVersion)?.let { dismiss(it, UpdateDismissalScope.OFFER) }
+                }
+                addView(dismissOffer, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)).apply { topMargin = dp(4) })
+                dismissCrew = outlinedButton(R.id.updates_native_crew_dismiss_button, "") {
+                    latestState?.let(UpdateNativePresentation::dismissibleCrewVersion)?.let { dismiss(it, UpdateDismissalScope.CREW) }
+                }
+                addView(dismissCrew, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)).apply { topMargin = dp(4) })
+                remind = outlinedButton(R.id.updates_snooze_button, getString(R.string.updates_native_dismiss)) { snooze() }
+                addView(remind, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)).apply { topMargin = dp(4) })
             }
             addView(standardActions)
             confirmation = LinearLayout(this@UpdatesActivity).apply {
@@ -266,7 +280,7 @@ class UpdatesActivity : AppCompatActivity() {
     }
 
     private suspend fun load() {
-        if (busy || checking) return
+        if (busy || checking || dismissalPending != null || remindPending) return
         if (repository.deviceWriteAuthorization.value == DeviceWriteAuthorization.UNVERIFIED) repository.snapshot()
         when (val result = repository.updateState()) {
             is ApiResult.Success -> render(withRetainedRun(result.value))
@@ -506,13 +520,14 @@ class UpdatesActivity : AppCompatActivity() {
     }
 
     private fun renderActions(value: UpdateCheckResponse) {
-        val running = value.run?.state in UpdateNativePresentation.activeStates
+        val running = UpdateNativePresentation.hasActiveRun(value)
         if (running) confirmationAction = null
         val confirming = confirmationAction != null
         val action = UpdateNativePresentation.action(value)
         val target = UpdateNativePresentation.actionTarget(value, action)
         actions.visibility = if (
-            running || (!confirming && action == NativeUpdateAction.NONE && value.majorAvailable == null)
+            running || (!confirming && action == NativeUpdateAction.NONE && value.majorAvailable == null &&
+                UpdateNativePresentation.dismissibleCrewVersion(value) == null)
         ) View.GONE else View.VISIBLE
         standardActions.visibility = if (confirming) View.GONE else View.VISIBLE
         confirmation.visibility = if (confirming) View.VISIBLE else View.GONE
@@ -531,7 +546,28 @@ class UpdatesActivity : AppCompatActivity() {
         major.visibility = if (value.majorAvailable == null) View.GONE else View.VISIBLE
         major.text = value.majorAvailable?.let { getString(R.string.updates_native_major_action, it) }.orEmpty()
         major.isEnabled = UpdateNativePresentation.canStartMajor(value, busy, repository.writesAllowed())
-        dismiss.visibility = if (!dismissed && (value.releaseAvailable || value.majorAvailable != null)) View.VISIBLE else View.GONE
+        val offerVersion = UpdateNativePresentation.dismissibleOfferVersion(value)
+        val offerDismissed = offerVersion != null && value.dismissedVersion == offerVersion
+        val crewVersion = UpdateNativePresentation.dismissibleCrewVersion(value)
+        val crewDismissed = crewVersion != null && value.dismissedCrewVersion == crewVersion
+        val pending = dismissalPending
+        dismissOffer.visibility = if (offerVersion != null && !offerDismissed) View.VISIBLE else View.GONE
+        dismissOffer.text = if (pending?.second == UpdateDismissalScope.OFFER && pending.first == offerVersion) {
+            getString(R.string.updates_native_dismiss_pending)
+        } else {
+            getString(R.string.updates_native_dismiss_offer, offerVersion.orEmpty())
+        }
+        dismissOffer.isEnabled = pending == null
+        dismissCrew.visibility = if (crewVersion != null && !crewDismissed) View.VISIBLE else View.GONE
+        dismissCrew.text = if (pending?.second == UpdateDismissalScope.CREW && pending.first == crewVersion) {
+            getString(R.string.updates_native_dismiss_pending)
+        } else {
+            getString(R.string.updates_native_dismiss_crew, crewVersion.orEmpty())
+        }
+        dismissCrew.isEnabled = pending == null
+        remind.visibility = if (value.releaseAvailable) View.VISIBLE else View.GONE
+        remind.isEnabled = !remindPending
+        remind.text = getString(if (remindPending) R.string.updates_native_remind_pending else R.string.updates_native_dismiss)
         val redCount = value.preflight?.checks?.count { it.verdict == "red" } ?: 0
         val preflightUnavailable = getString(R.string.updates_preflight_unavailable).takeIf { value.preflight == null }
         val actionBlocked = (redCount > 0 || preflightUnavailable != null) && action != NativeUpdateAction.RETRY_PACK
@@ -539,8 +575,11 @@ class UpdatesActivity : AppCompatActivity() {
         blockedReason.visibility = if (!running && !confirming && redCount > 0) View.VISIBLE else View.GONE
         error.text = listOfNotNull(
             actionError,
+            dismissalError,
+            remindError,
             preflightUnavailable?.takeIf { actionBlocked },
-            getString(R.string.updates_native_dismissed).takeIf { dismissed },
+            getString(R.string.updates_native_dismissed_offer, offerVersion.orEmpty()).takeIf { offerDismissed },
+            getString(R.string.updates_native_dismissed_crew, crewVersion.orEmpty()).takeIf { crewDismissed },
             value.majorAvailable?.let { getString(R.string.updates_native_major_note, it) },
         ).joinToString("\n")
         error.setTextColor(color(if (actionBlocked) R.color.collie_blocked else R.color.collie_muted))
@@ -565,10 +604,51 @@ class UpdatesActivity : AppCompatActivity() {
         }
     }
 
-    private fun snooze() {
-        dismissed = true
+    private fun dismiss(version: String, scope: UpdateDismissalScope) {
+        if (version.isBlank() || dismissalPending != null || UpdateNativePresentation.hasActiveRun(latestState)) return
+        val current = latestState ?: return
+        val expected = when (scope) {
+            UpdateDismissalScope.OFFER -> UpdateNativePresentation.dismissibleOfferVersion(current)
+            UpdateDismissalScope.CREW -> UpdateNativePresentation.dismissibleCrewVersion(current)
+        }
+        if (expected != version) return
+        dismissalError = null
+        dismissalPending = version to scope
         latestState?.let(::renderActions)
-        lifecycleScope.launch { repository.snoozeUpdate() }
+        lifecycleScope.launch {
+            val state = latestState
+            val result = repository.dismissUpdate(version, scope)
+            if (state != null) {
+                val reconciled = UpdateNativePresentation.reconcileDismissal(state, version, scope, result)
+                latestState = reconciled.state
+                if (reconciled.failed) dismissalError = getString(R.string.updates_native_dismiss_failed)
+            }
+            dismissalPending = null
+            latestState?.let(::renderActions)
+            load()
+            val refreshed = latestState
+            val acknowledged = refreshed != null && when (scope) {
+                UpdateDismissalScope.OFFER -> refreshed.dismissedVersion == version
+                UpdateDismissalScope.CREW -> refreshed.dismissedCrewVersion == version
+            }
+            if (acknowledged && dismissalError != null) {
+                dismissalError = null
+                latestState?.let(::renderActions)
+            }
+        }
+    }
+
+    private fun snooze() {
+        if (remindPending) return
+        remindPending = true
+        remindError = null
+        latestState?.let(::renderActions)
+        lifecycleScope.launch {
+            val result = repository.snoozeUpdate()
+            remindPending = false
+            if (result !is ApiResult.Success) remindError = getString(R.string.updates_native_remind_failed)
+            latestState?.let(::renderActions)
+        }
     }
 
     private fun confirmRoutine() {

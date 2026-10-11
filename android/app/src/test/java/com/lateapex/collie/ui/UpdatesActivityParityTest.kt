@@ -90,11 +90,135 @@ class UpdatesActivityParityTest {
     fun remindIsAButtonAndBlockedReasonIsOneLine() {
         val activity = launchUpdates(preflightRed = 3)
         assertTrue(activity.findViewById<View>(R.id.updates_snooze_button) is com.google.android.material.button.MaterialButton)
+        assertEquals("Remind me next digest", activity.findViewById<TextView>(R.id.updates_snooze_button).text.toString())
         assertEquals(
             "Blocked by 3 preflight checks",
             activity.findViewById<TextView>(R.id.updates_native_blocked_reason).text.toString(),
         )
     }
+
+    @Test
+    fun dismissalAcknowledgementIsServerBackedVersionAndScopeSpecific() {
+        val activity = Robolectric.buildActivity(UpdatesActivity::class.java).create().get()
+        activity.renderForTest(updateState(latest = "1.8.0", dismissedOffer = "1.8.0", dismissedCrew = "1.8.0"))
+        assertEquals(View.GONE, activity.findViewById<View>(R.id.updates_native_offer_dismiss_button).visibility)
+        assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.updates_snooze_button).visibility)
+        assertTrue(activity.findViewById<TextView>(R.id.updates_native_error).text.contains("Offer for 1.8.0"))
+
+        // A new version is a new notice, even when this activity/client restored an old acknowledgement.
+        activity.renderForTest(updateState(latest = "1.9.0", dismissedOffer = "1.8.0", dismissedCrew = "1.8.0"))
+        assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.updates_native_offer_dismiss_button).visibility)
+        assertEquals("Hide offer for 1.9.0", activity.findViewById<TextView>(R.id.updates_native_offer_dismiss_button).text.toString())
+        assertEquals(View.GONE, activity.findViewById<View>(R.id.updates_native_crew_dismiss_button).visibility)
+
+        activity.renderForTest(updateState(major = "2.0.0", dismissedOffer = "1.9.0"))
+        assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.updates_native_offer_dismiss_button).visibility)
+        assertEquals("Hide offer for 2.0.0", activity.findViewById<TextView>(R.id.updates_native_offer_dismiss_button).text.toString())
+    }
+
+    @Test
+    fun crewDismissalIsIndependentAndOnlyForSettledFailedCrewNotice() {
+        val activity = Robolectric.buildActivity(UpdatesActivity::class.java).create().get()
+        activity.renderForTest(updateState(crewTarget = "1.8.0", dismissedCrew = "1.8.0"))
+        assertEquals(View.GONE, activity.findViewById<View>(R.id.updates_native_crew_dismiss_button).visibility)
+        assertTrue(activity.findViewById<TextView>(R.id.updates_native_error).text.contains("Crew notice for 1.8.0"))
+
+        activity.renderForTest(updateState(crewTarget = "1.8.0", dismissedCrew = null))
+        assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.updates_native_crew_dismiss_button).visibility)
+        assertEquals("Hide crew notice for 1.8.0", activity.findViewById<TextView>(R.id.updates_native_crew_dismiss_button).text.toString())
+        assertEquals(View.GONE, activity.findViewById<View>(R.id.updates_native_offer_dismiss_button).visibility)
+
+        activity.renderForTest(updateState(crewTarget = "1.8.0", runState = "staging", dismissedCrew = null))
+        assertEquals(View.GONE, activity.findViewById<View>(R.id.updates_native_crew_dismiss_button).visibility)
+    }
+
+    @Test
+    fun offerAndCrewAcknowledgementsNeverHideTheOtherScope() {
+        val activity = Robolectric.buildActivity(UpdatesActivity::class.java).create().get()
+        activity.renderForTest(updateState(latest = "1.8.0", crewTarget = "1.8.0", dismissedOffer = "1.8.0"))
+        assertEquals(View.GONE, activity.findViewById<View>(R.id.updates_native_offer_dismiss_button).visibility)
+        assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.updates_native_crew_dismiss_button).visibility)
+
+        activity.renderForTest(updateState(latest = "1.8.0", crewTarget = "1.8.0", dismissedCrew = "1.8.0"))
+        assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.updates_native_offer_dismiss_button).visibility)
+        assertEquals(View.GONE, activity.findViewById<View>(R.id.updates_native_crew_dismiss_button).visibility)
+    }
+
+    @Test
+    fun digestReminderDoesNotLocallyDismissTheOffer() {
+        val activity = Robolectric.buildActivity(UpdatesActivity::class.java).create().get()
+        activity.renderForTest(updateState(latest = "1.8.0"))
+        activity.findViewById<View>(R.id.updates_snooze_button).performClick()
+        assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.updates_native_offer_dismiss_button).visibility)
+        assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.updates_snooze_button).visibility)
+    }
+
+    @Test
+    fun refusalRetainsNoticeAndOnlyExactServerAcknowledgementHidesIt() {
+        val activity = Robolectric.buildActivity(UpdatesActivity::class.java).create().get()
+        val current = updateState(latest = "1.8.0")
+        val refused = UpdateNativePresentation.reconcileDismissal(
+            current,
+            "1.8.0",
+            com.lateapex.collie.network.UpdateDismissalScope.OFFER,
+            com.lateapex.collie.network.ApiResult.Failure(
+                com.lateapex.collie.network.ApiFailure.Http(400, "bad version", null),
+            ),
+        )
+        assertTrue(refused.failed)
+        assertFalse(refused.acknowledged)
+        assertEquals(current, refused.state)
+        activity.renderForTest(refused.state)
+        assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.updates_native_offer_dismiss_button).visibility)
+
+        val confirmed = UpdateNativePresentation.reconcileDismissal(
+            current,
+            "1.8.0",
+            com.lateapex.collie.network.UpdateDismissalScope.OFFER,
+            com.lateapex.collie.network.ApiResult.Success(
+                com.lateapex.collie.network.UpdateInfo(
+                    current = "1.7.0", latest = "1.8.0", latestUrl = null, releaseAvailable = true,
+                    majorAvailable = null, majorUrl = null, bridgeStale = false, checkedAt = 1,
+                    dismissedVersion = "1.8.0",
+                ),
+                200,
+            ),
+        )
+        assertTrue(confirmed.acknowledged)
+        activity.renderForTest(confirmed.state)
+        assertEquals(View.GONE, activity.findViewById<View>(R.id.updates_native_offer_dismiss_button).visibility)
+    }
+
+    private fun updateState(
+        latest: String? = null,
+        major: String? = null,
+        dismissedOffer: String? = null,
+        dismissedCrew: String? = null,
+        crewTarget: String? = null,
+        runState: String? = null,
+    ) = com.lateapex.collie.network.UpdateCheckResponse(
+        current = "1.7.0",
+        latest = latest,
+        latestUrl = null,
+        releaseAvailable = latest != null,
+        majorAvailable = major,
+        majorUrl = null,
+        peersTo = crewTarget,
+        settledAt = 1L.takeIf { crewTarget != null },
+        peers = listOfNotNull("peer".takeIf { crewTarget != null }?.let {
+            com.lateapex.collie.network.UpdatePeerLeg(it, "stuck", version = "1.7.0")
+        }),
+        run = runState?.let {
+            com.lateapex.collie.network.UpdateRun(
+                schema = 1, state = it, from = "1.6.0", to = crewTarget, startedAt = 1, updatedAt = 2,
+                pid = 1, attempt = 1,
+            )
+        },
+        bridgeStale = false,
+        checkedAt = 1,
+        dismissedVersion = dismissedOffer,
+        dismissedCrewVersion = dismissedCrew,
+    )
 
     private fun launchUpdates(
         running: String = "1.5.1",

@@ -40,6 +40,7 @@ is refused. A mutation is attempted once; transport redirects and automatic writ
 | Pane upload and `/api/stt` | Existing multipart image/audio contracts and draft insertion remain compatible. Server errors preserve their typed meaning. Native image selection keeps its 10 MiB memory limit; upload capabilities are decoded and the server enforces its configured limits/types. |
 | Notification preferences and snooze | Preserve existing patches; decode machine/cache preference fields without overwriting them when editing older switches. Native background delivery remains unimplemented. |
 | Update check/state/start/snooze and standby status | Decode Crew census, top-level peer-only progress, package-manager instructions, restart requirements, urgent/link metadata and settled times. Active peer legs block duplicate starts. Packaged installs show their package command and cannot invoke the source updater. Packaged peers do not count as source-update retry targets. |
+| `/api/update/dismiss` | Paired-read POST sends the exact displayed version with `scope=offer` or `scope=crew`. Decode server-persisted `dismissedVersion` and `dismissedCrewVersion`; hide only the acknowledged version/scope. Reconcile an uncertain response through a state read without repeating the POST. Active update progress and newer versions remain visible. Digest snooze is separate. |
 
 ## Additive upstream features
 

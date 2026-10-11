@@ -41,6 +41,11 @@ foreground polling and server notification preference/snooze controls, but not n
 delivery. Background notifications remain pending an independently reviewed provider, delivery,
 registration, deduplication, and deep-link contract.
 
+Update notices offer separate actions to dismiss that version or request a reminder in the next
+digest. Dismissals persist on the server and apply independently to an update offer and a settled
+Crew failure notice. New versions and active progress remain visible; Settings shows the server's
+current acknowledgements. An uncertain dismissal refreshes state without automatically retrying.
+
 ## Pinned toolchain
 
 | Component | Version |

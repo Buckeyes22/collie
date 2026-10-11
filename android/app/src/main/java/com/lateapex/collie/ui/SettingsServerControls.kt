@@ -605,6 +605,18 @@ internal class SettingsServerControls(
         updateSummary.text = when (result) {
             is ApiResult.Success -> when {
                 UpdateNativePresentation.hasActiveRun(result.value) -> text(R.string.settings_update_running)
+                UpdateNativePresentation.dismissibleOfferVersion(result.value)?.let {
+                    result.value.dismissedVersion == it
+                } == true -> text(
+                    R.string.settings_update_offer_dismissed,
+                    UpdateNativePresentation.dismissibleOfferVersion(result.value).orEmpty(),
+                )
+                UpdateNativePresentation.dismissibleCrewVersion(result.value)?.let {
+                    result.value.dismissedCrewVersion == it
+                } == true -> text(
+                    R.string.settings_update_crew_dismissed,
+                    UpdateNativePresentation.dismissibleCrewVersion(result.value).orEmpty(),
+                )
                 UpdateNativePresentation.peersBehind(result.value) > 0 -> {
                     val count = UpdateNativePresentation.peersBehind(result.value)
                     activity.resources.getQuantityString(R.plurals.settings_update_peers_behind, count, count)

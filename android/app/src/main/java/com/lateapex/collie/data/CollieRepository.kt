@@ -43,6 +43,7 @@ import com.lateapex.collie.network.SnapshotResponse
 import com.lateapex.collie.network.SttResponse
 import com.lateapex.collie.network.StandbyUpdateResponse
 import com.lateapex.collie.network.UpdateCheckResponse
+import com.lateapex.collie.network.UpdateDismissalScope
 import com.lateapex.collie.network.UpdateInfo
 import com.lateapex.collie.network.UpdateStartResponse
 import com.lateapex.collie.network.UploadResponse
@@ -1139,6 +1140,15 @@ class CollieRepository(
     }
 
     suspend fun snoozeUpdate(): ApiResult<UpdateInfo> = withDeviceOwnedConnection(block = api::snoozeUpdate)
+
+    suspend fun dismissUpdate(version: String, scope: UpdateDismissalScope): ApiResult<UpdateInfo> =
+        withDeviceOwnedConnection {
+            require(version.isNotBlank())
+            if (!it.isPaired) return@withDeviceOwnedConnection ApiResult.Failure(
+                ApiFailure.Protocol("Pair this device before dismissing an update notice"),
+            )
+            api.dismissUpdate(it, version, scope)
+        }
 
     suspend fun readPane(
         address: PaneAddress,

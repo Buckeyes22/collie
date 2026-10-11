@@ -205,6 +205,11 @@ interface CollieApi {
         peersOnly: Boolean = false,
     ): ApiResult<UpdateStartResponse> = unavailable("Update start")
     suspend fun snoozeUpdate(connection: Connection): ApiResult<UpdateInfo> = unavailable("Update snooze")
+    suspend fun dismissUpdate(
+        connection: Connection,
+        version: String,
+        scope: UpdateDismissalScope,
+    ): ApiResult<UpdateInfo> = unavailable("Update dismissal")
     suspend fun reply(
         connection: Connection,
         address: PaneAddress,
@@ -1071,6 +1076,23 @@ class CollieApiClient(
             UpdateInfo.serializer(),
             MUTATION_TIMEOUT_SECONDS,
         )
+
+    override suspend fun dismissUpdate(
+        connection: Connection,
+        version: String,
+        scope: UpdateDismissalScope,
+    ): ApiResult<UpdateInfo> {
+        require(version.isNotBlank())
+        return executeJson(
+            post(
+                connection,
+                url(connection.origin, path("update", "dismiss")),
+                json.encodeToString(UpdateDismissRequest(version, scope)),
+            ),
+            UpdateInfo.serializer(),
+            MUTATION_TIMEOUT_SECONDS,
+        )
+    }
 
     override suspend fun reply(
         connection: Connection,

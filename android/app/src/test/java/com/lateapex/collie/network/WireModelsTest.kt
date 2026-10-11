@@ -89,11 +89,13 @@ class WireModelsTest {
         )
         val update = json.decodeFromString(
             UpdateCheckResponse.serializer(),
-            """{"current":"1.5.0","latest":"1.6.0","latestUrl":"https://example.invalid/release","releaseAvailable":true,"majorAvailable":null,"majorUrl":null,"installKind":"binary","bridgeStale":false,"checkedAt":12,"preflight":{"schema":1,"verdict":"green","checks":[]}}""",
+            """{"current":"1.5.0","latest":"1.6.0","latestUrl":"https://example.invalid/release","releaseAvailable":true,"majorAvailable":null,"majorUrl":null,"installKind":"binary","bridgeStale":false,"checkedAt":12,"dismissedVersion":"1.5.8","dismissedCrewVersion":"1.5.9","preflight":{"schema":1,"verdict":"green","checks":[]}}""",
         )
 
         assertEquals("lead", pack.members.single().id)
         assertEquals("green", update.preflight?.verdict)
+        assertEquals("1.5.8", update.dismissedVersion)
+        assertEquals("1.5.9", update.dismissedCrewVersion)
     }
 
     @Test

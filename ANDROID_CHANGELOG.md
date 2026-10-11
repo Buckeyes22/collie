@@ -15,6 +15,7 @@ the first Android release from this fork.
 - Add a scoped, device-authorized pane process details screen for foreground processes, runtime directory and restore diagnostics, with explicit unsupported and unavailable states.
 
 - Add a read-only Changes browser from pane actions and Space headers, with bounded nested-repository listings, file diffs and latest-commit views.
+- Persist version- and scope-specific update dismissals while keeping digest reminders separate.
 - Bind reads, terminal actions and media to the current server, Crew leader, host, session and pane; freeze unverified access without discarding a valid pairing, and retire sensitive content for authoritative pairing refusal.
 - Keep restored History images inert until a reachable fresh read admits their turns; carry the same captured authority through live and legacy older-page reads.
 - Make Space Look now refresh its owning session before reloading, with an ordinary-reload explanation for older peers.

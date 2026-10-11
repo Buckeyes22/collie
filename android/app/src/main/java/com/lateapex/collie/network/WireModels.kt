@@ -571,6 +571,8 @@ data class UpdateInfo(
     val checkedAt: Long?,
     val newerVersions: List<String>? = null,
     val run: UpdateRun? = null,
+    val dismissedVersion: String? = null,
+    val dismissedCrewVersion: String? = null,
 )
 
 @Serializable
@@ -622,6 +624,8 @@ data class UpdateCheckResponse(
     val run: UpdateRun? = null,
     val preflight: PreflightReport? = null,
     @JsonNames("pack") val crew: List<UpdateCrewMember>? = null,
+    val dismissedVersion: String? = null,
+    val dismissedCrewVersion: String? = null,
 )
 
 @Serializable
@@ -755,6 +759,15 @@ internal data class WorktreePathRequest(val path: String)
 
 @Serializable
 internal data class SnoozeRequest(val snoozedUntil: Long?)
+
+@Serializable
+enum class UpdateDismissalScope {
+    @SerialName("offer") OFFER,
+    @SerialName("crew") CREW,
+}
+
+@Serializable
+internal data class UpdateDismissRequest(val version: String, val scope: UpdateDismissalScope)
 
 @Serializable
 internal data class RevokeDeviceRequest(val label: String)

@@ -37,6 +37,8 @@ import com.lateapex.collie.network.PaneProcessesResponse
 import com.lateapex.collie.network.SnapshotResponse
 import com.lateapex.collie.network.SttResponse
 import com.lateapex.collie.network.UpdateStartResponse
+import com.lateapex.collie.network.UpdateDismissalScope
+import com.lateapex.collie.network.UpdateInfo
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.CompletableDeferred
@@ -227,6 +229,24 @@ class CollieRepositoryTest {
         assertEquals(1, fake.snoozeCalls)
         assertEquals(0, fake.updateCalls)
         assertEquals(0, fake.revokeCalls)
+    }
+
+    @Test
+    fun updateDismissalUsesPairedDeviceAdmissionAndPreservesExactScope() = runBlocking {
+        val result = repository.dismissUpdate("1.8.0", UpdateDismissalScope.CREW)
+        assertEquals("1.8.0", (result as ApiResult.Success).value.dismissedCrewVersion)
+        assertEquals("1.8.0", api.dismissedVersion)
+        assertEquals(UpdateDismissalScope.CREW, api.dismissedScope)
+        assertEquals(1, api.dismissCalls)
+
+        val unpairedApi = FakeApi()
+        val unpaired = CollieRepository(
+            unpairedApi,
+            FakeStore(Connection(connection.origin, "phone", null)),
+            OriginValidator(),
+        )
+        assertTrue(unpaired.dismissUpdate("1.8.0", UpdateDismissalScope.OFFER) is ApiResult.Failure)
+        assertEquals(0, unpairedApi.dismissCalls)
     }
 
     @Test
@@ -1229,6 +1249,9 @@ class CollieRepositoryTest {
         var replyExpectedPrompt: String? = null
         var keysExpectedPrompt: String? = null
         var snoozeCalls = 0
+        var dismissCalls = 0
+        var dismissedVersion: String? = null
+        var dismissedScope: UpdateDismissalScope? = null
         var updateCalls = 0
         var revokeCalls = 0
         var transcribeCalls = 0
@@ -1455,6 +1478,24 @@ class CollieRepositoryTest {
         ): ApiResult<NotificationState> {
             snoozeCalls += 1
             return ApiResult.Success(NotificationState(snoozedUntil), 200)
+        }
+        override suspend fun dismissUpdate(
+            connection: Connection,
+            version: String,
+            scope: UpdateDismissalScope,
+        ): ApiResult<UpdateInfo> {
+            dismissCalls += 1
+            dismissedVersion = version
+            dismissedScope = scope
+            return ApiResult.Success(
+                UpdateInfo(
+                    current = "1.5.0", latest = "1.8.0", latestUrl = null, releaseAvailable = true,
+                    majorAvailable = null, majorUrl = null, bridgeStale = false, checkedAt = 1,
+                    dismissedVersion = version.takeIf { scope == UpdateDismissalScope.OFFER },
+                    dismissedCrewVersion = version.takeIf { scope == UpdateDismissalScope.CREW },
+                ),
+                200,
+            )
         }
         override suspend fun startUpdate(
             connection: Connection,

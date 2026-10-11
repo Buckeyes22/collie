@@ -10,6 +10,8 @@
     <item name="updates_native_log_tail" type="id" />
     <item name="updates_native_retry_button" type="id" />
     <item name="updates_native_major_button" type="id" />
+    <item name="updates_native_offer_dismiss_button" type="id" />
+    <item name="updates_native_crew_dismiss_button" type="id" />
     <item name="updates_native_error" type="id" />
     <item name="updates_native_standard_actions" type="id" />
     <item name="updates_native_confirmation" type="id" />
@@ -74,7 +76,14 @@
     <string name="updates_native_major_action">Cross to %1$s</string>
     <string name="updates_native_starting">Starting…</string>
     <string name="updates_native_dismiss">Remind me next digest</string>
-    <string name="updates_native_dismissed">Dismissed until the next digest.</string>
+    <string name="updates_native_remind_pending">Saving reminder…</string>
+    <string name="updates_native_dismiss_offer">Hide offer for %1$s</string>
+    <string name="updates_native_dismiss_crew">Hide crew notice for %1$s</string>
+    <string name="updates_native_dismiss_pending">Hiding…</string>
+    <string name="updates_native_dismissed_offer">Offer for %1$s is hidden on this server.</string>
+    <string name="updates_native_dismissed_crew">Crew notice for %1$s is hidden on this server.</string>
+    <string name="updates_native_dismiss_failed">Couldn’t save this dismissal. The notice is still shown.</string>
+    <string name="updates_native_remind_failed">Couldn’t schedule the next update digest reminder.</string>
     <string name="updates_native_major_note">%1$s is a new major.</string>
     <string name="updates_native_confirm_title">Update to %1$s?</string>
     <string name="updates_native_confirm_body">Your terminal session stays alive. The phone view drops for up to 30 seconds.</string>
@@ -115,4 +124,6 @@
     <string name="updates_native_peer_stuck">stuck</string>
     <string name="updates_native_peer_interrupted">stopped</string>
     <string name="updates_native_peer_idle">waiting</string>
+    <string name="settings_update_offer_dismissed">Offer %1$s hidden on this server</string>
+    <string name="settings_update_crew_dismissed">Crew notice %1$s hidden on this server</string>
 </resources>
