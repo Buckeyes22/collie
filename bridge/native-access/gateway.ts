@@ -62,7 +62,9 @@ export class NativeIdentityGateway {
       abort.signal.addEventListener("abort", cleanup, {once:true});
       try {
         if (!opt.bindings.current(binding)) { cleanup(); transferred = true; return gatewayRefusal("device", "device.binding_revoked", 403, requestId); }
-        const answer = await abortable((opt.forward ?? ((request) => fetch(request, { redirect: "manual" })))(forwarded), abort.signal);
+        // Forward the wire body with its matching Content-Encoding/Length. Bun's default
+        // decompression retains those headers, which would mislabel the decoded bytes.
+        const answer = await abortable((opt.forward ?? ((request) => fetch(request, { redirect: "manual", decompress: false })))(forwarded), abort.signal);
         if (answer.status >= 300 && answer.status < 400 || !opt.bindings.current(binding) || identity.expiresAt <= Math.floor(this.now() / 1000)) { await answer.body?.cancel(); cleanup(); transferred = true; return identity.expiresAt <= Math.floor(this.now() / 1000) ? gatewayRefusal("identity", "identity.expired", 401, requestId) : gatewayRefusal("device", "device.binding_changed", 403, requestId); }
         const responseHeaders = new Headers(answer.headers);
         const responseNames = Array.from(responseHeaders.keys());

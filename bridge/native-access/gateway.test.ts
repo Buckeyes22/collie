@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { gzipSync, brotliCompressSync } from "node:zlib";
 import { generateKeyPairSync, sign, randomUUID, createHmac } from "node:crypto";
 import { NATIVE_REDIRECT, parseProfile, isObject, type EcPublicJwk, type NativeAccessProfile } from "./contracts.ts";
 import { digest, strictJson, thumbprint } from "./jose.ts";
@@ -9,7 +10,7 @@ import { NativeIdentityGateway } from "./gateway.ts";
 import type { PrivateJsonIo } from "./private-io.ts";
 import type { JsonObject, JsonValue } from "../json.ts";
 function memory(): PrivateJsonIo { let value: JsonValue | null = null; return { read: () => structuredClone(value), write: (v) => { value = structuredClone(v); }, exclusive: (op) => op() }; }
-function setup(options: {forward?: (request: Request) => Promise<Response>; requestBudgetMs?: number; issuer?: string} = {}) {
+function setup(options: {forward?: (request: Request) => Promise<Response>; requestBudgetMs?: number; issuer?: string; upstream?: string; network?: boolean} = {}) {
   const issuer = generateKeyPairSync("ec", { namedCurve: "prime256v1" }); const phone = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
   // SAFETY: node exports the generated P-256 public key, never its private key; profile parser validates the full JWK.
   const jwk = phone.publicKey.export({ format: "jwk" }) as EcPublicJwk;
@@ -20,7 +21,7 @@ function setup(options: {forward?: (request: Request) => Promise<Response>; requ
   const jwt = (header: FixtureJoseHeader, body: JsonValue, key = issuer.privateKey) => { const input = `${Buffer.from(JSON.stringify(header)).toString("base64url")}.${Buffer.from(JSON.stringify(body)).toString("base64url")}`; return `${input}.${sign("sha256", Buffer.from(input), { key, dsaEncoding: "ieee-p1363" }).toString("base64url")}`; };
   const token = (fields: JsonObject = {}) => jwt({ alg: "ES256", typ: "at+jwt", kid: "issuer-1" }, { iss: profile.issuer, aud: profile.audience, sub: "operator", client_id: profile.clientId, iat: 90, exp: 400, cnf: { jkt: thumbprint(jwk) }, ...fields });
   const access = token(); let calls = 0; let forwarded: Request | null = null;
-  const gateway = new NativeIdentityGateway({ profile, publicBase: ingress.publicBase, upstream: "http://127.0.0.1:8787/", identityHeader: "Tailscale-User-Login", deviceHeader: "X-Device", mappedLogin: "operator@example", bindings, ingress, replay, nonceKey: Buffer.alloc(32, 2), requestBudgetMs: options.requestBudgetMs, now: () => now, forward: options.forward ?? (async (req) => { calls++; forwarded = req; const owner = ingress.verify(req, paired); if (!owner) return new Response("refused", { status: 403 }); return new Response("paired response", { headers: { "x-collie-error-source": "collie", "x-collie-native-ingress": "hostile", "set-cookie": "never" } }); }) });
+  const gateway = new NativeIdentityGateway({ profile, publicBase: ingress.publicBase, upstream: options.upstream ?? "http://127.0.0.1:8787/", identityHeader: "Tailscale-User-Login", deviceHeader: "X-Device", mappedLogin: "operator@example", bindings, ingress, replay, nonceKey: Buffer.alloc(32, 2), requestBudgetMs: options.requestBudgetMs, now: () => now, forward: options.network ? undefined : options.forward ?? (async (req) => { calls++; forwarded = req; const owner = ingress.verify(req, paired); if (!owner) return new Response("refused", { status: 403 }); return new Response("paired response", { headers: { "x-collie-error-source": "collie", "x-collie-native-ingress": "hostile", "set-cookie": "never" } }); }) });
   const request = (proof?: string, bearer = "pairing-bearer", credential = access, method = "GET", path = "/mounted/api/files?pane=p1") => { const headers = new Headers({ authorization: `Bearer ${bearer}`, "collie-proxy-authorization": `DPoP ${credential}`, "X-Device": "spoofed", "Tailscale-User-Login": "spoofed", "Forwarded": "host=evil.example", "x-collie-response-source": "collie", "x-crew-paired-identity": "spoof" }); if (proof) headers.set("dpop", proof); return new Request(`https://collie.example${path}`, { method, headers }); };
   const proof = (nonce: string, fields: JsonObject = {}) => jwt({ alg: "ES256", typ: "dpop+jwt", jwk }, { jti: randomUUID(), htm: "GET", htu: "https://collie.example/mounted/api/files", iat: Math.floor(now / 1000), ath: digest(access), nonce, ...fields }, phone.privateKey);
   return { gateway, request, proof, token, freshIngress: (profileId = digest(JSON.stringify(profile))) => new GatewayIngress(Buffer.alloc(32,1),bindings,new ProofReplayStore(memory(),()=>now),ingress.publicBase,profileId,()=>now), bindings, bindingsIo, binding, access, paired, profile, ingress, advance: (ms: number) => { now += ms; }, calls: () => calls, forwarded: () => forwarded, replayIo };
@@ -137,4 +138,33 @@ test("issuer slash exception does not relax other endpoint or canonical authorit
   }
   const local = profileFromDocument({ ...s.profile, issuer: "https://127.0.0.1:46817", authorizationEndpoint: "https://127.0.0.1:46817/authorize", tokenEndpoint: "https://127.0.0.1:46817/token", jwksEndpoint: "https://127.0.0.1:46817/jwks" });
   expect(local.issuer).toBe("https://127.0.0.1:46817");
+});
+
+
+test("default gateway forwarding preserves compressed wire bytes and real downstream decoding", async () => {
+ const plain = Buffer.from(JSON.stringify({ available: true, text: "bounded protected response" }));
+ for (const [encoding, compressed] of [["gzip", gzipSync(plain)], ["br", brotliCompressSync(plain)]] as const) {
+  let calls = 0;
+  const upstream = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(req) {
+   calls++;
+   expect(new URL(req.url).pathname).toBe("/api/files");
+   expect(req.headers.get("authorization")).toBe("Bearer pairing-bearer");
+   return new Response(compressed, { headers: { "content-type": "application/json", "content-encoding": encoding, "content-length": String(compressed.length) } });
+  }});
+  const s = setup({ network: true, upstream: `http://127.0.0.1:${upstream.port}/` });
+  const front = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: req => s.gateway.fetch(req) });
+  try {
+   const nonce = (await s.gateway.fetch(s.request())).headers.get("dpop-nonce")!;
+   const forwarded = await s.gateway.fetch(s.request(s.proof(nonce)));
+   expect(forwarded.status).toBe(200);
+   expect(forwarded.headers.get("content-encoding")).toBe(encoding);
+   expect(forwarded.headers.get("content-length")).toBe(String(compressed.length));
+   expect(Buffer.from(await forwarded.arrayBuffer())).toEqual(compressed);
+   const original = s.request(s.proof(nonce));
+   const decoded = await fetch(`http://127.0.0.1:${front.port}/mounted/api/files?pane=p1`, { headers: original.headers });
+   expect(decoded.status).toBe(200);
+   expect(await decoded.json()).toEqual({ available: true, text: "bounded protected response" });
+   expect(calls).toBe(2);
+  } finally { front.stop(true); upstream.stop(true); }
+ }
 });

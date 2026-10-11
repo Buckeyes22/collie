@@ -58,6 +58,7 @@ Running a crew? Update the lead first; members follow on their own. Details:
 - **Cache watches preserve each peer session’s exact pane identity.** Ambiguous old peer watches remain removable orphan rows, and current cache details retire their copied facts and catalog validators with their actor.
 
 - **Gemini journal drift canaries follow structural Part fields.** Count unknown field names without recording their payloads, including appended patches and replacement snapshots.
+- **Native gateway responses retain their matching compressed wire encoding.** Forward gzip and other encoded upstream bodies without decoding them under the original encoding headers, preserving bounded streams and current identity checks.
 
 ## [1.19.0] - 2026-10-09
 
