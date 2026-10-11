@@ -106,6 +106,27 @@ The HTTP layer plans each exact action against current pane/terminal incarnation
 | `pushPaneEvents` | `bridge/event-poker.ts` | `pane.agent_status_changed`, pane-scoped (**API** § Event stream) | **no** (**TN**) | `%output`, but only for the panes of the session a control client is ATTACHED to (**T**) — so the adapter attaches one per watched session, capped, and a 5-second listing is the floor | `subscribe --ansi --format json --pane-id <id> …` — several panes per stream, newline-delimited JSON `pane_update` frames (**Z**). It also emits one `pane_closed`, the single topology fact zellij does push, which shortens the census rather than replacing it | `agent-state`, `attention`, `bell`, `notification` and `output`, routed to the watched panes (**TU**: `send-text` produced an `output` callback in **3 ms**, `tuios set-agent-state` an `agent-state` callback in **20 ms**, CLI start-up included). `output` is subscribed only while a pane is watched |
 | `listSessions` | `bridge/sessions.ts` `SessionRegistry.refresh()`, the snapshot's `sessions` list and `?session=<name>` | **yes** (**API**): a Herdr install keeps its sessions at `<configRoot>/herdr.sock` and `<configRoot>/sessions/<name>/herdr.sock`, and a cleanly stopped session removes its socket, so the whole answer is one directory listing and a few `exists` calls, off the socket entirely (`bridge/mux/herdr/sessions.ts`). One bridge fronts them all, which is the behaviour multi-session has always had | **no** (**TN**) — every session of the daemon is a space; separate daemons are not listed | **no**, probed 2026-09-08 on tmux 3.6b: every session of this server is already a Collie space, so the only other instance is another SERVER, and tmux has no verb that lists servers (`tmux list-servers` answers `unknown command`, and `list-sessions` needs a server to ask in). A scan of `/tmp/tmux-<uid>` is not an answer either: it misses every `-S /path` server, and `tmux -L probe kill-server` left the socket file on disk, so the scan cannot tell a live server from a dead one. A second tmux server is fronted by a second collie | **no**, and NOT because zellij cannot list. Probed 2026-09-08 on zellij 0.44.2: `list-sessions --no-formatting` names every session on this machine and marks the stopped ones `(EXITED - attach to resurrect)`, a detached session still answers `action list-panes --all --json`, and a session name IS this adapter's endpoint, so the list and the endpoints are both real. What is declined is the price: zellij has no socket, so every read is a process (two per census, per session), and one collie fronting five sessions would spawn ten processes per poll interval for panes nobody asked to see. One collie drives one zellij session, which is the shape zellij takes anyway, and it is the same fact that declines `createSpace` | **no** (**TU**). Every session of this daemon is already a space. Another daemon lives under another `XDG_RUNTIME_DIR`, and tuios has no verb that lists daemons |
 
+## Workspace and tab organization
+
+The additive organization routes are explicit capabilities, not assumptions from ordinary snapshot
+support. Herdr's schema-22 methods back workspace rename/close/move/block reorder/focus and
+same-workspace tab move/focus. The existing tab rename/close methods remain in place for older
+callers; the reviewed native flow uses the owner-scoped plan and operation form. Other adapters
+declare these new capabilities false until they can implement and verify the corresponding method.
+The UI preserves Herdr's ordering rules: workspace and tab insertion indices are measured against
+the pre-removal list, and tab display follows the snapshot array because tab numbers stay stable.
+`tab.move` cannot transfer a tab to another workspace. A separate `tabTransfer` capability exposes
+`POST /api/tab/:id/transfer/plan` as a read-only complete-roster and deterministic-reflow review. The
+native flow then uses the existing guarded layout move one pane at a time, with an explicit fresh-plan
+confirmation and durable owner-bound receipt before the next step. The guard binds every remaining
+source process and every already moved destination process; the receipt carries only bounded created,
+closed and target aliases plus an opaque process witness. An unknown or unreconciled result never
+continues or replays automatically. The flow preserves existing processes according to the owning
+layout service but is not an atomic tab transfer and does not promise a vendor-side compare-and-move.
+Closing a linked-worktree group previews its exact spaces and
+panes; close does not delete the repository checkouts. See the B13 route tests and the upstream API contract recorded in
+`HERDR_API.md` § Move methods.
+
 ### Deliberately not capabilities
 
 - **Image upload** (`POST /api/pane/:id/upload`). Read the route: `uploadPane` takes the config and

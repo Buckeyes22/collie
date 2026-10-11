@@ -91,7 +91,10 @@ interface CollieApi {
     suspend fun paneLayout(connection: Connection, address: PaneAddress): ApiResult<PaneLayoutReadResponse> = unavailable("Pane layout")
     suspend fun paneLayoutRead(connection: Connection, address: PaneAddress, kind: String, direction: String? = null): ApiResult<PaneLayoutReadResponse> = unavailable("Pane layout inspection")
     suspend fun planPaneLayout(connection: Connection, address: PaneAddress, action: kotlinx.serialization.json.JsonObject): ApiResult<PaneLayoutPlanResponse> = unavailable("Pane layout plan")
+    suspend fun planTabTransfer(connection: Connection, scope: Scope, tabId: String, body: kotlinx.serialization.json.JsonObject): ApiResult<PaneTransferPlanResponse> = unavailable("Whole-tab transfer plan")
     suspend fun applyPaneLayout(connection: Connection, address: PaneAddress, requestId: String, planToken: String, action: kotlinx.serialization.json.JsonObject): ApiResult<PaneLayoutOperationResponse> = unavailable("Pane layout action")
+    suspend fun planOrganization(connection: Connection, scope: Scope, action: OrganizationAction): ApiResult<OrganizationPlanResponse> = unavailable("Workspace organization plan")
+    suspend fun applyOrganization(connection: Connection, scope: Scope, requestId: String, planToken: String, action: OrganizationAction): ApiResult<OrganizationOperationResponse> = unavailable("Workspace organization action")
     suspend fun devices(connection: Connection): ApiResult<DevicesResponse>
     suspend fun revokeDevice(connection: Connection, label: String): ApiResult<DevicesResponse> = unavailable("Device revoke")
     suspend fun crew(connection: Connection): ApiResult<CrewStatusResponse> = unavailable("Crew status")
@@ -1539,6 +1542,14 @@ class CollieApiClient(
         return requireContract(result, "Malformed pane layout plan") { it.action == expectedKind && it.validForPane(address.paneId, action) }
     }
 
+    override suspend fun planTabTransfer(connection: Connection, scope: Scope, tabId: String, body: kotlinx.serialization.json.JsonObject): ApiResult<PaneTransferPlanResponse> {
+        require(tabId.matches(Regex("[A-Za-z0-9_.:-]{1,128}")))
+        val encoded = json.encodeToString(kotlinx.serialization.json.JsonObject.serializer(), body)
+        val url = scopedUrl(connection.origin, path("tab", tabId, "transfer", "plan"), scope)
+        val result = executeJson(post(connection, url, encoded), PaneTransferPlanResponse.serializer(), READ_TIMEOUT_SECONDS, maxResponseBytes = MAX_LAYOUT_RESPONSE_BYTES)
+        return requireContract(result, "Malformed whole-tab transfer plan") { it.validForTab(tabId) }
+    }
+
     override suspend fun applyPaneLayout(connection: Connection, address: PaneAddress, requestId: String, planToken: String, action: kotlinx.serialization.json.JsonObject): ApiResult<PaneLayoutOperationResponse> {
         require(requestId.matches(Regex("[A-Za-z0-9_-]{1,128}")))
         require(planToken.matches(Regex("[A-Za-z0-9_.:-]{1,128}")))
@@ -1557,6 +1568,27 @@ class CollieApiClient(
             } else response.move == null && operation.result == null
             else operation.state in setOf("unknown", "pending") && response.code == "layout.outcome_unknown" && response.move == null && operation.result == null
         }
+    }
+
+    override suspend fun planOrganization(connection: Connection, scope: Scope, action: OrganizationAction): ApiResult<OrganizationPlanResponse> {
+        require(action.path.size in 2..3 && action.path.all { it.isNotBlank() && it.length <= 128 })
+        val url = scopedUrl(connection.origin, path(*(action.path + "plan").toTypedArray()), scope)
+        val body = json.encodeToString(kotlinx.serialization.json.JsonObject.serializer(), action.payload)
+        val result = executeJson(post(connection, url, body), OrganizationPlanResponse.serializer(), READ_TIMEOUT_SECONDS, maxResponseBytes = MAX_LAYOUT_RESPONSE_BYTES)
+        return requireContract(result, "Malformed workspace organization plan") { it.validFor(action) }
+    }
+
+    override suspend fun applyOrganization(connection: Connection, scope: Scope, requestId: String, planToken: String, action: OrganizationAction): ApiResult<OrganizationOperationResponse> {
+        require(requestId.matches(Regex("[A-Za-z0-9_-]{1,128}")))
+        require(planToken.matches(Regex("[A-Za-z0-9_.:-]{1,128}")))
+        require(action.path.size in 2..3 && action.path.all { it.isNotBlank() && it.length <= 128 })
+        val body = json.encodeToString(kotlinx.serialization.json.JsonObject.serializer(), kotlinx.serialization.json.buildJsonObject {
+            put("requestId", JsonPrimitive(requestId)); put("planToken", JsonPrimitive(planToken))
+            for ((key, value) in action.payload) put(key, value)
+        })
+        val url = scopedUrl(connection.origin, path(*action.path.toTypedArray()), scope)
+        val result = executeJson(post(connection, url, body), OrganizationOperationResponse.serializer(), MUTATION_TIMEOUT_SECONDS, maxResponseBytes = MAX_LAYOUT_RESPONSE_BYTES)
+        return requireContract(result, "Malformed workspace organization operation") { it.validFor(requestId, action) }
     }
 
     private suspend fun executeAction(request: Request): ApiResult<ActionResponse> =

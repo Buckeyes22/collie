@@ -349,12 +349,21 @@ export interface MuxLayoutFinalEvidence {
 }
 /** Internal synchronous admission fence. It is never serialized or accepted from a phone request. */
 export type MuxLayoutFinalAdmission = (prepared: MuxLayoutAction, runtimeIdentity: string, evidence: MuxLayoutFinalEvidence) => boolean;
+export interface MuxTransferMember { readonly paneId: string; readonly witness: string }
+export interface MuxTransferGuard {
+  readonly schema: 1;
+  readonly transferId: string;
+  readonly sourceWorkspaceId: string;
+  readonly sourceTabId: string;
+  readonly remainingSource: readonly MuxTransferMember[];
+  readonly destination: null | { readonly workspaceId: string; readonly tabId: string; readonly members: readonly MuxTransferMember[] };
+}
 export type MuxLayoutAction =
   | { readonly kind: "split"; readonly paneId: string; readonly direction: MuxSplitDirection; readonly ratio: number | null; readonly targetPaneId: string | null; readonly workspaceId: string | null; readonly resolvedTargetPaneId?: string; readonly resolvedWorkspaceId?: string; readonly resolvedSourceTabId?: string; readonly resolvedSourceWorkspaceId?: string; readonly resolvedSourceCwd?: string | null; readonly cwdDevice?: string | null; readonly cwdInode?: string | null; readonly cwdCatalogPath?: string | null; readonly cwdSelectedPath?: string | null; readonly cwdChoice?: MuxSplitCwdChoice; readonly cwd?: string | null; readonly env?: Readonly<Record<string, string>>; readonly focus: false }
   | { readonly kind: "resize"; readonly paneId: string; readonly direction: MuxPaneDirection; readonly amount: number | null }
   | { readonly kind: "zoom"; readonly paneId: string; readonly mode: "toggle" | "on" | "off" }
   | { readonly kind: "swap"; readonly paneId: string; readonly direction: MuxPaneDirection | null; readonly sourcePaneId: string | null; readonly targetPaneId: string | null; readonly resolvedTargetPaneId?: string }
-  | { readonly kind: "move"; readonly paneId: string; readonly destination: MuxMoveDestination; readonly focus: false; readonly resolvedSourceTabId?: string; readonly resolvedSourceWorkspaceId?: string; readonly resolvedTargetPaneId?: string; readonly resolvedTargetTabId?: string; readonly resolvedTargetWorkspaceId?: string }
+  | { readonly kind: "move"; readonly paneId: string; readonly destination: MuxMoveDestination; readonly focus: false; readonly transfer?: MuxTransferGuard; readonly resolvedSourceTabId?: string; readonly resolvedSourceWorkspaceId?: string; readonly resolvedTargetPaneId?: string; readonly resolvedTargetTabId?: string; readonly resolvedTargetWorkspaceId?: string }
   | { readonly kind: "focus-direction"; readonly paneId: string; readonly direction: MuxPaneDirection; readonly resolvedTargetPaneId?: string };
 export type MuxMoveDestination =
   | { readonly type: "tab"; readonly tabId: string; readonly split: MuxSplitDirection; readonly targetPaneId: string; readonly ratio: number | null }
@@ -365,7 +374,7 @@ export type MuxLayoutMutation =
   | { readonly kind: "resize"; readonly changed: boolean; readonly layout: MuxLayoutSnapshot }
   | { readonly kind: "zoom"; readonly changed: boolean; readonly zoomed: boolean; readonly layout: MuxLayoutSnapshot }
   | { readonly kind: "swap"; readonly changed: boolean; readonly layout: MuxLayoutSnapshot }
-  | { readonly kind: "move"; readonly changed: boolean; readonly paneId: string; readonly previousPaneId: string; readonly previousTabId: string; readonly previousWorkspaceId: string; readonly layout: MuxLayoutSnapshot }
+  | { readonly kind: "move"; readonly changed: boolean; readonly paneId: string; readonly previousPaneId: string; readonly previousTabId: string; readonly previousWorkspaceId: string; readonly layout: MuxLayoutSnapshot; readonly createdTabId?: string; readonly createdWorkspaceId?: string; readonly closedTabId?: string; readonly closedWorkspaceId?: string }
   | { readonly kind: "focus-direction"; readonly changed: boolean; readonly paneId: string; readonly layout: MuxLayoutSnapshot };
 
 // ── Reading a pane ────────────────────────────────────────────────────────────
@@ -628,6 +637,9 @@ export interface MuxSubscription {
  * remote machine is reached by talking to the Collie that runs on it, never by dialling its
  * multiplexer across a machine boundary (ADR 0011).
  */
+/** Synchronous authority check after adapter preflight and immediately before its named RPC. */
+export type MuxOrganizationFinalAdmission = () => boolean;
+
 export interface MuxAdapter {
   /** Registry key of the multiplexer behind this adapter. For display and support, never a branch. */
   readonly mux: string;
@@ -741,10 +753,20 @@ export interface MuxAdapter {
   createTab(request: MuxTabRequest): Promise<MuxOutcome<MuxCreatedPane>>;
 
   /** Set a tab's label. Needs `renameTab`. */
-  renameTab(tabId: string, label: string): Promise<MuxAck>;
+  renameTab(tabId: string, label: string, finalAdmission?: MuxOrganizationFinalAdmission): Promise<MuxAck>;
 
   /** Close a tab and every pane in it. Needs `closeTab`. */
-  closeTab(tabId: string): Promise<MuxAck>;
+  closeTab(tabId: string, finalAdmission?: MuxOrganizationFinalAdmission): Promise<MuxAck>;
+
+  /** Explicit workspace/tab organization. Every operation is independently capability-gated. */
+  renameSpace?(spaceId: string, label: string, finalAdmission: MuxOrganizationFinalAdmission): Promise<MuxAck>;
+  closeSpace?(spaceId: string, closeGroup: boolean, finalAdmission: MuxOrganizationFinalAdmission): Promise<MuxAck>;
+  moveSpace?(spaceId: string, insertIndex: number, finalAdmission: MuxOrganizationFinalAdmission): Promise<MuxAck>;
+  moveSpaceBlock?(spaceIds: readonly string[], beforeSpaceId: string | null, finalAdmission: MuxOrganizationFinalAdmission): Promise<MuxAck>;
+  focusSpace?(spaceId: string, finalAdmission: MuxOrganizationFinalAdmission): Promise<MuxAck>;
+  /** Herdr tab.move is scoped to its existing workspace; it never transfers a tab across spaces. */
+  moveTab?(tabId: string, insertIndex: number, finalAdmission: MuxOrganizationFinalAdmission): Promise<MuxAck>;
+  focusTab?(tabId: string, finalAdmission: MuxOrganizationFinalAdmission): Promise<MuxAck>;
 
   /** New space, opening a fresh shell. Needs `createSpace`. */
   createSpace(request: MuxSpaceRequest): Promise<MuxOutcome<MuxCreatedPane>>;
@@ -818,18 +840,35 @@ export function muxDataFields(adapter: MuxAdapter): Pick<MuxAdapter, "logo" | "h
  * A decorator spreads this rather than conditionally spreading inline, so a multiplexer that cannot
  * unwrap (tmux) never comes out of a decorator appearing to offer the read: absent stays absent.
  */
-type MuxOptionalMethodFields = Pick<MuxAdapter, "readLogicalText" | "processInfo" | "readLayout" | "applyLayout" | "layoutRuntimeIdentity">;
+type MuxOptionalMethodFields = Pick<MuxAdapter,
+  | "readLogicalText" | "processInfo" | "readLayout" | "applyLayout" | "layoutRuntimeIdentity"
+  | "renameSpace" | "closeSpace" | "moveSpace" | "moveSpaceBlock" | "focusSpace" | "moveTab" | "focusTab"
+>;
 export function muxOptionalMethods(adapter: MuxAdapter): MuxOptionalMethodFields {
   const readLogicalText = adapter.readLogicalText?.bind(adapter);
   const processInfo = adapter.processInfo?.bind(adapter);
   const readLayout = adapter.readLayout?.bind(adapter);
   const applyLayout = adapter.applyLayout?.bind(adapter);
   const layoutRuntimeIdentity = adapter.layoutRuntimeIdentity?.bind(adapter);
+  const renameSpace = adapter.renameSpace?.bind(adapter);
+  const closeSpace = adapter.closeSpace?.bind(adapter);
+  const moveSpace = adapter.moveSpace?.bind(adapter);
+  const moveSpaceBlock = adapter.moveSpaceBlock?.bind(adapter);
+  const focusSpace = adapter.focusSpace?.bind(adapter);
+  const moveTab = adapter.moveTab?.bind(adapter);
+  const focusTab = adapter.focusTab?.bind(adapter);
   const methods: MuxOptionalMethodFields = {};
   if (readLogicalText !== undefined) methods.readLogicalText = readLogicalText;
   if (processInfo !== undefined) methods.processInfo = processInfo;
   if (readLayout !== undefined) methods.readLayout = readLayout;
   if (applyLayout !== undefined) methods.applyLayout = applyLayout;
   if (layoutRuntimeIdentity !== undefined) methods.layoutRuntimeIdentity = layoutRuntimeIdentity;
+  if (renameSpace !== undefined) methods.renameSpace = renameSpace;
+  if (closeSpace !== undefined) methods.closeSpace = closeSpace;
+  if (moveSpace !== undefined) methods.moveSpace = moveSpace;
+  if (moveSpaceBlock !== undefined) methods.moveSpaceBlock = moveSpaceBlock;
+  if (focusSpace !== undefined) methods.focusSpace = focusSpace;
+  if (moveTab !== undefined) methods.moveTab = moveTab;
+  if (focusTab !== undefined) methods.focusTab = focusTab;
   return methods;
 }

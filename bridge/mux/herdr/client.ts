@@ -358,6 +358,13 @@ export type HerdrRpc = Pick<
   | "createTab"
   | "renameTab"
   | "closeTab"
+  | "focusWorkspace"
+  | "renameWorkspace"
+  | "moveWorkspace"
+  | "moveWorkspaceBlock"
+  | "closeWorkspace"
+  | "focusTab"
+  | "moveTab"
   | "createWorkspace"
   | "listWorktrees"
   | "workspaceWorktrees"
@@ -783,6 +790,29 @@ export class HerdrClient {
       tabId: p.tab_id,
       cwd: p.cwd,
     };
+  }
+
+  /** Exact schema-22 organization methods. Ordering indices are Herdr's pre-removal indices. */
+  focusWorkspace(workspaceId: string): Promise<void> {
+    return this.request<void>("workspace.focus", { workspace_id: workspaceId });
+  }
+  renameWorkspace(workspaceId: string, label: string): Promise<void> {
+    return this.request<void>("workspace.rename", { workspace_id: workspaceId, label });
+  }
+  moveWorkspace(workspaceId: string, insertIndex: number): Promise<void> {
+    return this.request<void>("workspace.move", { workspace_id: workspaceId, insert_index: insertIndex });
+  }
+  moveWorkspaceBlock(workspaceIds: readonly string[], beforeWorkspaceId: string | null): Promise<void> {
+    return this.request<void>("workspace.move_block", { workspace_ids: [...workspaceIds], before_workspace_id: beforeWorkspaceId });
+  }
+  closeWorkspace(workspaceId: string, closeGroup: boolean): Promise<void> {
+    return this.request<void>("workspace.close", { workspace_id: workspaceId, close_group: closeGroup });
+  }
+  focusTab(tabId: string): Promise<void> {
+    return this.request<void>("tab.focus", { tab_id: tabId });
+  }
+  moveTab(tabId: string, insertIndex: number): Promise<void> {
+    return this.request<void>("tab.move", { tab_id: tabId, insert_index: insertIndex });
   }
 
   /**

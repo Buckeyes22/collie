@@ -78,8 +78,12 @@ const FORWARDABLE: readonly RegExp[] = [
   /^pane\/[^/]+\/files\/exist$/,
   /^workspace\/[^/]+\/files\/exist$/,
   /^tab$/,
-  /^tab\/[^/]+\/(?:rename|close)$/,
+  /^tab\/[^/]+\/(?:rename|close)(?:\/plan)?$/,
+  /^tab\/[^/]+\/transfer\/plan$/,
+  /^tab\/[^/]+\/(?:move|focus)(?:\/plan)?$/,
   /^workspace$/,
+  /^workspace\/[^/]+\/(?:rename|close|move|focus)(?:\/plan)?$/,
+  /^workspaces\/reorder(?:\/plan)?$/,
   // The Changes view asked by workspace (ADR 0065): read-only git over the folder of a space that
   // lives on ONE member, so a `?host=` call is proxied like `pane/:id/changes`. Mirrors
   // `WORKSPACE_CHANGES_ROUTE` in bridge/server.ts one-for-one.
@@ -220,6 +224,7 @@ export function forwardPaneId(route: string): string | undefined {
  */
 export function forwardAuditAction(route: string): string | null {
   if (route === "refresh" || route.startsWith("control/operations/")) return null;
+  if (route.endsWith("/plan")) return null;
   if (route === "tab") return "tab.create";
   if (route === "workspace") return "workspace.create";
   // `launch` writes either `workspace.launch` or `tab.launch`, decided by the body a route string
@@ -233,6 +238,11 @@ export function forwardAuditAction(route: string): string | null {
   if (route === "folders" || route === "folders/star") return null; // a read, and a preference
   if (route.startsWith("blobs/")) return null; // a read
   if (isWorkspaceRead(route)) return null; // a read
+  if (route.startsWith("workspaces/reorder")) return "workspace.reorder";
+  const tabOrganization = /^tab\/[^/]+\/(move|focus|rename|close)(?:\/plan)?$/.exec(route);
+  if (tabOrganization) return `tab.${tabOrganization[1]}`;
+  const workspaceOrganization = /^workspace\/[^/]+\/(rename|close|move|focus)(?:\/plan)?$/.exec(route);
+  if (workspaceOrganization) return `workspace.${workspaceOrganization[1]}`;
   if (route.startsWith("tab/")) return route.endsWith("/close") ? "tab.close" : "tab.rename";
   const action = route.split("/")[2];
   if (isPaneRead(action)) return null; // reads, and a read is audited on neither side

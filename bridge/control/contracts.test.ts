@@ -22,12 +22,30 @@ describe("scoped control contracts", () => {
     expect(controlGate("/api/control/operations/intent1", "GET")).toBe("read");
     expect(controlGate("/api/pane/w1:p1/layout", "GET")).toBe("read");
     expect(controlGate("/api/pane/w1:p1/layout/plan", "POST")).toBe("read");
+    expect(controlGate("/api/tab/t1/transfer/plan", "POST")).toBe("read");
     expect(controlGate("/api/pane/w1:p1/layout/move", "POST")).toBe("write");
     expect(controlGate("/api/pane/w1:p1/layout/plan", "GET")).toBeNull();
     expect(controlGate("/api/control/arbitrary-rpc", "POST")).toBeNull();
     expect(payloadHash({ a: 1, b: 2 })).toBe(payloadHash({ b: 2, a: 1 }));
     const absent: (Record<string, boolean> | undefined)[] = [undefined, {}, { movePane: false }];
     for (const map of absent) expect(supportsNew(map, "movePane")).toBe(false);
+  });
+  test("workspace and tab plans are scoped reads while every execution route is a write", () => {
+    const routes = [
+      ["/api/workspace/w1/rename/plan", "read"], ["/api/workspace/w1/rename", "write"],
+      ["/api/workspace/w1/close/plan", "read"], ["/api/workspace/w1/close", "write"],
+      ["/api/workspace/w1/move/plan", "read"], ["/api/workspace/w1/move", "write"],
+      ["/api/workspace/w1/focus/plan", "read"], ["/api/workspace/w1/focus", "write"],
+      ["/api/workspaces/reorder/plan", "read"], ["/api/workspaces/reorder", "write"],
+      ["/api/tab/t1/move/plan", "read"], ["/api/tab/t1/move", "write"],
+      ["/api/tab/t1/focus/plan", "read"], ["/api/tab/t1/focus", "write"],
+      ["/api/tab/t1/rename/plan", "read"], ["/api/tab/t1/rename", "write"],
+      ["/api/tab/t1/close/plan", "read"], ["/api/tab/t1/close", "write"],
+      ["/api/tab/t1/transfer/plan", "read"],
+    ] as const;
+    for (const [path, expected] of routes) expect(controlGate(path, "POST")).toBe(expected);
+    expect(controlGate("/api/tab/t1/move/plan", "GET")).toBeNull();
+    expect(controlGate("/api/workspaces/reorder/extra", "POST")).toBeNull();
   });
   test("malformed and irrelevant selectors fail before runtime resolution", () => {
     for (const query of ["session=one&session=two", "host=", "sessions=all", "session=%00"]) expect(controlScope(new URL(`https://collie/api/refresh?${query}`), "session")).toBeNull();
@@ -101,6 +119,9 @@ describe("scoped control contracts", () => {
     const growth = Buffer.byteLength(JSON.stringify(terminal), "utf8") - Buffer.byteLength(JSON.stringify(pending), "utf8");
     expect(growth).toBeGreaterThan(0);
     expect(growth).toBeLessThanOrEqual(OPERATION_COMPLETION_HEADROOM_BYTES);
+    const transferTerminal = { ...terminal, result: { ...terminal.result, transfer: { schema: 1, changed: true, targetTabId: "t".repeat(128), targetWorkspaceId: "w".repeat(128), processWitness: "a".repeat(64), createdTabId: "c".repeat(128), createdWorkspaceId: "d".repeat(128), closedTabId: "e".repeat(128), closedWorkspaceId: "f".repeat(128) } } };
+    const transferGrowth = Buffer.byteLength(JSON.stringify(transferTerminal), "utf8") - Buffer.byteLength(JSON.stringify(pending), "utf8");
+    expect(transferGrowth).toBeLessThanOrEqual(OPERATION_COMPLETION_HEADROOM_BYTES);
   });
 
   test("pane-move receipts preserve only bounded aliases across restart and reject malformed stored results", async () => {

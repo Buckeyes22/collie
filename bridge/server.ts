@@ -3,6 +3,7 @@ import { OperationStore } from "./control/operations.ts";
 import { executeBoundIntent, ownerBoundCallerReady, ownerBoundOperationReady, type IntentOwnerContext } from "./intent-operation-binding.ts";
 import { PlanStore } from "./control/plans.ts";
 import { servePaneLayoutRoute } from "./control/layout.ts";
+import { serveOrganizationRoute } from "./control/organization.ts";
 import { serveControlRoute } from "./control/routes.ts";
 import { servePaneProcesses } from "./control/processes.ts";
 import { hostControlForMux } from "./mux/registry.ts";
@@ -694,7 +695,7 @@ const launchIntentMismatch = (): CreateResponse => ({ ok: false, ...apiError("la
  * operator (Herdr ships one, about how its scrollback depth is known), and shipping it would put
  * developer prose on the wire for every page load of the reference adapter.
  */
-export function muxConfigBody(mux: MuxPublication): MuxConfig {
+export function muxConfigBody(mux: MuxPublication, tabTransferReady = true): MuxConfig {
   const decl = mux.capabilities;
   const notes: Partial<Record<MuxCapability, string>> = {};
   for (const cap of MUX_CAPABILITIES) {
@@ -704,7 +705,7 @@ export function muxConfigBody(mux: MuxPublication): MuxConfig {
   }
   const wire: MuxConfig = {
     name: mux.mux,
-    capabilities: { ...decl.supports },
+    capabilities: { ...decl.supports, tabTransfer: decl.supports.tabTransfer === true && tabTransferReady },
     unsupportedKeys: [...decl.unsupportedKeys],
     notes,
     // Unconditional, like `capabilities`: the declaration is total, so there is nothing to omit and
@@ -890,6 +891,7 @@ export function bridgeConfigBody(opts: {
    * always passes it.
    */
   mux?: MuxPublication;
+  muxTabTransferReady?: boolean;
   /**
    * A MEMBER's own block, already in wire shape, for `/api/config?host=<member>` (M22/03).
    *
@@ -956,7 +958,7 @@ export function bridgeConfigBody(opts: {
   // phone (an older bridge, read as fully capable), so a Herdr bridge staying silent here would be
   // indistinguishable from one that cannot answer.
   if (opts.muxWire !== undefined) wire.mux = opts.muxWire;
-  else if (opts.mux !== undefined) wire.mux = muxConfigBody(opts.mux);
+  else if (opts.mux !== undefined) wire.mux = muxConfigBody(opts.mux, opts.muxTabTransferReady ?? true);
   // Appended after the mux block, and omit-when-absent for the reason `mode` is: no key means no
   // microphone, which is precisely true of a collie with no provider configured.
   if (opts.stt !== undefined) wire.stt = opts.stt;
@@ -1571,6 +1573,21 @@ export async function startServer(opts: {
     }, { plans: controlPlans, operations: controlOperations });
     if (layoutControlled) return layoutControlled;
 
+    const organizationControlled = await serveOrganizationRoute(req, url, {
+      gate: (level) => caller.gate(level),
+      pairedIdentity: () => caller.pairedIdentity?.() ?? null,
+      audit: (action, target, host, session, outcome) => audit.record({
+        action, paneId: target, host, session: session ?? undefined, device: whois(req).device,
+        detail: { outcome },
+      }),
+      resolve: async () => {
+        const runtime = await caller.resolve();
+        if (runtime instanceof Response) return runtime;
+        return { host: controlHostId, session: runtime.name, mux: runtime.herdr };
+      },
+    }, { plans: controlPlans, operations: controlOperations });
+    if (organizationControlled) return organizationControlled;
+
     // ── "Look now" ────────────────────────────────────────────────────────
     // A READ, and gated as one. It changes nothing — `mux.refresh()` takes a listing and moves a
     // timer (mux/types.ts) — so gating it behind a device would refuse the one thing a read-only
@@ -1953,7 +1970,7 @@ export async function startServer(opts: {
     receiptContextBound: ownerBoundReady,
     mux: () => {
       const active = registry.get();
-      return active === undefined ? null : muxConfigBody(active.herdr);
+      return active === undefined ? null : muxConfigBody(active.herdr, ownerBoundReady());
     },
     dispatch: async (req, url, from) => {
       const session = url.searchParams.get("session") ?? undefined;
@@ -2446,6 +2463,16 @@ export async function startServer(opts: {
         // "use the lead's" — which is byte for byte the reading the phone gives every pane today.
         // The lead's own entry resolves `local`, so it takes its own branch and its own adapter.
         const memberMux = scoped?.kind === "peer" ? crewLead?.muxFor(scoped.link.memberId) : null;
+        const scopedControlCapabilities = scoped?.kind === "peer"
+          ? crewLead?.controlFor(scoped.link.memberId) ?? {}
+          : { controlOperations: ownerBoundCallerReady(opts.intentReceiptKey, controlOperations.isReady(), pairedIdentityOf(req, pairingGate)), filesDiscovery: true };
+        const muxWire = memberMux == null ? undefined : {
+          ...memberMux,
+          capabilities: {
+            ...memberMux.capabilities,
+            tabTransfer: memberMux.capabilities.tabTransfer === true && scopedControlCapabilities.controlOperations === true,
+          },
+        };
         // Re-resolved per request for the same reason `commands.toml` is: `collie stt setup` is
         // live, and this is where the phone learns whether to draw a microphone at all. `?? undefined`
         // because "no provider" must OMIT the key, never send a null one (CREW_PROTOCOL.md §11).
@@ -2461,12 +2488,13 @@ export async function startServer(opts: {
             operatorQuickReplies: myReplies,
             operatorFonts: myFonts,
             mux: activeMux?.herdr,
+            muxTabTransferReady: scoped?.kind === "peer" ? false : scopedControlCapabilities.controlOperations === true,
             // Peer support must be positively negotiated; the lead never lends its declarations.
-            control: { capabilities: scoped?.kind === "peer" ? crewLead?.controlFor(scoped.link.memberId) ?? {} : { controlOperations: ownerBoundCallerReady(opts.intentReceiptKey, controlOperations.isReady(), pairedIdentityOf(req, pairingGate)), filesDiscovery: true } },
+            control: { capabilities: scopedControlCapabilities },
             hostControl: scoped?.kind === "peer" ? undefined : hostControlConfig(opts.hostControl ?? hostControlForMux(cfg.mux)),
             // Assigned through `?? undefined` rather than conditionally, so the no-`host=` request
             // builds the byte-identical body it always did (CREW_PROTOCOL.md §11).
-            muxWire: memberMux ?? undefined,
+            muxWire,
             stt: sttWire,
             // This host's own limits, read from cfg on every request like everything else here.
             // A crew member answers with ITS number, which is the number that will judge the bytes.

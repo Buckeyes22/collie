@@ -8,7 +8,7 @@ import { type PlanBinding, sameBinding } from "./plans.ts";
 /** Per pending row: worst-case 256-code-point UTF-8 code plus closed 4×128-byte move aliases,
  * discriminant/key overhead and state growth stays below 2 KiB. Held once per pending row so
  * concurrent completions cannot consume one another's terminal-result space. */
-export const OPERATION_COMPLETION_HEADROOM_BYTES = 2048;
+export const OPERATION_COMPLETION_HEADROOM_BYTES = 4096;
 
 export type OperationState = "pending" | "succeeded" | "refused" | "unknown";
 export interface OperationReceipt {
@@ -28,6 +28,17 @@ export interface OperationResult {
   readonly previousPaneId: string;
   readonly previousTabId: string;
   readonly previousWorkspaceId: string;
+  readonly transfer?: {
+    readonly schema: 1;
+    readonly changed: boolean;
+    readonly targetTabId: string;
+    readonly targetWorkspaceId: string;
+    readonly processWitness: string;
+    readonly createdTabId: string | null;
+    readonly createdWorkspaceId: string | null;
+    readonly closedTabId: string | null;
+    readonly closedWorkspaceId: string | null;
+  };
 }
 export interface OperationOutcome { readonly state: "succeeded" | "refused" | "unknown"; readonly code?: string; readonly result?: OperationResult }
 export interface OperationView {
@@ -69,7 +80,15 @@ function validOperationResult(value: unknown): value is OperationResult {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
   // SAFETY: null and arrays are excluded; the key set and every value are checked before the guard returns true.
   const r = value as Record<string, unknown>;
-  return Object.keys(r).length === 5 && r.kind === "pane-move" && validOperationResultId(r.paneId) && validOperationResultId(r.previousPaneId) && validOperationResultId(r.previousTabId) && validOperationResultId(r.previousWorkspaceId);
+  if (!(Object.keys(r).length === 5 || Object.keys(r).length === 6) || !Object.keys(r).every((key) => ["kind", "paneId", "previousPaneId", "previousTabId", "previousWorkspaceId", "transfer"].includes(key)) ||
+      r.kind !== "pane-move" || !validOperationResultId(r.paneId) || !validOperationResultId(r.previousPaneId) || !validOperationResultId(r.previousTabId) || !validOperationResultId(r.previousWorkspaceId)) return false;
+  if (r.transfer === undefined) return true;
+  if (r.transfer === null || typeof r.transfer !== "object" || Array.isArray(r.transfer)) return false;
+  // SAFETY: null and arrays were rejected; exact closed result fields and their values are checked below.
+  const t = r.transfer as Record<string, unknown>;
+  return Object.keys(t).length === 9 && Object.keys(t).every((key) => ["schema", "changed", "targetTabId", "targetWorkspaceId", "processWitness", "createdTabId", "createdWorkspaceId", "closedTabId", "closedWorkspaceId"].includes(key)) &&
+    t.schema === 1 && typeof t.changed === "boolean" && validOperationResultId(t.targetTabId) && validOperationResultId(t.targetWorkspaceId) && typeof t.processWitness === "string" && /^[a-f0-9]{64}$/.test(t.processWitness) &&
+    [t.createdTabId, t.createdWorkspaceId, t.closedTabId, t.closedWorkspaceId].every((id) => id === null || validOperationResultId(id));
 }
 /* eslint-enable anti-slop/no-unknown-parameters, anti-slop/no-runtime-typeof, anti-slop/no-unsafe-dictionary-type */
 /**

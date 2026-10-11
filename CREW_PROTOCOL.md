@@ -3201,3 +3201,20 @@ Each final action carries a caller-held request ID, exact action, and short-live
 ### Optional automatic Files discovery admission
 
 Under §7.1, an owning bridge may advertise `controlCapabilities.filesDiscovery=true` in hello; the lead publishes only that member’s stored declaration in host-scoped config. Absence or false never enables automatic discovery. A pane read may carry `filesReadReady` as a strict boolean, computed after its grid read from the owning caller’s device-read gate. It is included in the response ETag and preserved by lead masking; a lead never substitutes its own verdict. Clients require both positive declarations under the same captured host/session/pane, connection and navigation actor. This adds no route, config forwarding, bypass or filesystem read. Existing Files endpoints still enforce both factors at dispatch.
+
+## Workspace and tab organization control routes
+
+The B13 organization family crosses the existing allowlist under `workspace/:id/{rename,close,move,focus}`,
+`workspaces/reorder`, `tab/:id/{rename,close,move,focus}`, and `POST tab/:id/transfer/plan`.
+Plans are POST requests classified and admitted as reads; final requests are writes and retain the
+member's own device policy, paired-device identity, host and session. Only the closed action body,
+plan token and request ID cross the link; vendor RPC names never do. An older peer that does not
+implement the additive routes or positive mux capability refuses them as unsupported. Existing
+one-step tab rename/close callers remain accepted at the peer while the native organizer uses the
+planned operation form. A timed-out operation stays unknown and is not replayed. The supported
+`tab.move` is same-workspace only. Whole-tab transfer is a separate additive route that returns the
+owner-scoped complete roster and deterministic reflow. Each existing pane then moves through the B12
+guarded `pane.move` plan and durable operation receipt; no replacement shell, batch write, or
+automatic continuation is sent. The transfer plan stays a read on both lead and peer, while each
+final pane move is a write forwarded to the exact owning peer. An older peer refuses this route and
+cannot fall back to an unbound move.

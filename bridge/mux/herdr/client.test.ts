@@ -136,6 +136,23 @@ describe("HerdrClient exact ping mapping", () => {
   }
 });
 
+describe("HerdrClient workspace and tab organization wire mapping", () => {
+  test("uses the shipped schema-22 method names and exact scoped parameter fields", async () => {
+    const client = new HerdrClient(await lateHerdr({}), 1_000);
+    const check = async (run: () => Promise<void>, method: string, params: JsonObject) => {
+      await run();
+      expect(lastRequest).toEqual({ method, params });
+    };
+    await check(() => client.renameWorkspace("w1", "Review"), "workspace.rename", { workspace_id: "w1", label: "Review" });
+    await check(() => client.closeWorkspace("w1", true), "workspace.close", { workspace_id: "w1", close_group: true });
+    await check(() => client.moveWorkspace("w1", 3), "workspace.move", { workspace_id: "w1", insert_index: 3 });
+    await check(() => client.moveWorkspaceBlock(["w2", "w3"], "w4"), "workspace.move_block", { workspace_ids: ["w2", "w3"], before_workspace_id: "w4" });
+    await check(() => client.focusWorkspace("w1"), "workspace.focus", { workspace_id: "w1" });
+    await check(() => client.moveTab("t1", 2), "tab.move", { tab_id: "t1", insert_index: 2 });
+    await check(() => client.focusTab("t1"), "tab.focus", { tab_id: "t1" });
+  });
+});
+
 describe("HerdrClient pane.process_info", () => {
   test("sends an explicit pane id and decodes the named success result", async () => {
     const result = {

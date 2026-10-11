@@ -29,6 +29,20 @@ a real end stays distinct. Display subjects are capped at 500 characters and aut
 1,024 characters. Each bridge history page is bounded below 1 MiB; native transport keeps its
 5 MiB streaming ceiling and refuses malformed page offsets or truncation metadata.
 
+The dashboard's **Organize** action lists the selected connection's workspaces and tabs. It offers
+only operations positively declared by the owner: rename, explicit focus, pre-removal ordering and
+close. Reordering a block preserves its selected order and requires an anchor outside the block.
+`tab.move` only reorders within its current workspace. The separate **Transfer entire tab** flow
+reviews the complete owner-bound roster and a deterministic destination reflow, then moves one
+existing process per explicit confirmation. Each move uses a fresh plan, opaque process witness and
+durable receipt; an unknown result blocks every later step until the exact outcome is reconciled.
+The workflow does not start replacement shells or claim atomicity, and source-tab close/focus effects
+are disclosed by the plan. Closing a linked-worktree group first names the affected workspaces and
+panes; closing any workspace leaves its repository checkout on disk. Old servers and
+multiplexers without the additive organization capabilities remain available for ordinary browsing
+and report these controls as unsupported. A timed-out action is never repeated automatically; the
+screen keeps an outcome check and disables further changes until the operator reconciles it.
+
 ## Architecture and security boundary
 
 - Native screens render immutable ViewModel state with View Binding. The bridge's rendered pane

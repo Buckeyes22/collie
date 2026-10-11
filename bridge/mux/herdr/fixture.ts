@@ -107,6 +107,25 @@ export class FakeHerdr implements HerdrRpc {
     return this.recorded;
   }
 
+  /** Deterministic close-group fixture: a root checkout and one linked checkout remain on disk. */
+  async addWorktreeGroup(sourceWorkspaceId: string, repoRoot: string): Promise<string> {
+    this.workspace("fixture.worktree_group", sourceWorkspaceId);
+    const linked = await this.createWorkspace({ cwd: `${repoRoot}/.worktrees/b13-fixture`, label: "b13-fixture" });
+    const existing = this.worktreesByRepo.get(repoRoot) ?? [
+      { path: repoRoot, is_linked_worktree: false, is_prunable: false, is_bare: false, is_detached: false, open_workspace_id: sourceWorkspaceId },
+    ];
+    this.worktreesByRepo.set(repoRoot, [...existing, {
+      path: `${repoRoot}/.worktrees/b13-fixture-${linked.workspaceId}`,
+      branch: `b13-fixture-${linked.workspaceId}`,
+      is_linked_worktree: true,
+      is_prunable: false,
+      is_bare: false,
+      is_detached: false,
+      open_workspace_id: linked.workspaceId,
+    }]);
+    return linked.workspaceId;
+  }
+
   /**
    * The connection drops and comes back.
    *
@@ -415,7 +434,8 @@ export class FakeHerdr implements HerdrRpc {
     }
     this.minted += 1;
     const nextPaneId = `${destinationTab.workspace_id}:p${String(this.minted)}`;
-    const moved: WirePane = { ...source, pane_id: nextPaneId, terminal_id: `term${String(this.minted)}`, workspace_id: destinationTab.workspace_id, tab_id: destinationTab.tab_id, focused: false };
+    // pane.move changes the pane identity while carrying the existing terminal process.
+    const moved: WirePane = { ...source, pane_id: nextPaneId, workspace_id: destinationTab.workspace_id, tab_id: destinationTab.tab_id, focused: false };
     this.panes = this.panes.filter((pane) => pane.pane_id !== source.pane_id);
     const oldTab = this.tabs.find((tab) => tab.tab_id === source.tab_id);
     if (oldTab) oldTab.pane_count = Math.max(0, oldTab.pane_count - 1);
@@ -452,6 +472,76 @@ export class FakeHerdr implements HerdrRpc {
     this.tabs = this.tabs.filter((tab) => tab.tab_id !== tabId);
   }
 
+  async focusWorkspace(workspaceId: string): Promise<void> {
+    const workspace = this.workspace("workspace.focus", workspaceId);
+    const tab = this.tabs.find((candidate) => candidate.tab_id === workspace.active_tab_id);
+    if (!tab) throw new Error("herdr workspace.focus: active tab missing");
+    this.focusTabState(tab);
+  }
+  async renameWorkspace(workspaceId: string, label: string): Promise<void> { this.workspace("workspace.rename", workspaceId).label = label; }
+  async moveWorkspace(workspaceId: string, insertIndex: number): Promise<void> {
+    this.workspace("workspace.move", workspaceId);
+    if (!Number.isSafeInteger(insertIndex) || insertIndex < 0 || insertIndex > this.workspaces.length) throw new Error("herdr workspace.move: invalid_insert_index");
+    const [selected] = this.workspaces.splice(this.workspaces.findIndex((row) => row.workspace_id === workspaceId), 1);
+    this.workspaces.splice(insertIndex, 0, selected!);
+    this.renumberWorkspaces();
+  }
+  async moveWorkspaceBlock(workspaceIds: readonly string[], beforeWorkspaceId: string | null): Promise<void> {
+    this.assertConnected("workspace.move_block");
+    if (workspaceIds.length === 0 || new Set(workspaceIds).size !== workspaceIds.length || (beforeWorkspaceId !== null && workspaceIds.includes(beforeWorkspaceId)) || !workspaceIds.every((id) => this.workspaces.some((row) => row.workspace_id === id)) || (beforeWorkspaceId !== null && !this.workspaces.some((row) => row.workspace_id === beforeWorkspaceId))) throw new Error("herdr workspace.move_block: invalid_workspace_order");
+    const selected = workspaceIds.map((id) => this.workspaces.find((row) => row.workspace_id === id)!);
+    const selectedIds = new Set(workspaceIds);
+    const remainder = this.workspaces.filter((row) => !selectedIds.has(row.workspace_id));
+    const index = beforeWorkspaceId === null ? remainder.length : remainder.findIndex((row) => row.workspace_id === beforeWorkspaceId);
+    this.workspaces = [...remainder.slice(0, index), ...selected, ...remainder.slice(index)];
+    this.renumberWorkspaces();
+  }
+  async closeWorkspace(workspaceId: string, closeGroup: boolean): Promise<void> {
+    this.workspace("workspace.close", workspaceId);
+    const group = this.worktreeGroup(workspaceId);
+    if (!closeGroup && group.length > 1) throw new Error("herdr workspace.close: workspace_group_close_required");
+    const closing = new Set(closeGroup ? group : [workspaceId]);
+    for (const pane of this.panes.filter((candidate) => closing.has(candidate.workspace_id))) this.screens.delete(pane.pane_id);
+    const tabIds = new Set(this.tabs.filter((tab) => closing.has(tab.workspace_id)).map((tab) => tab.tab_id));
+    this.panes = this.panes.filter((pane) => !closing.has(pane.workspace_id));
+    this.tabs = this.tabs.filter((tab) => !tabIds.has(tab.tab_id));
+    this.workspaces = this.workspaces.filter((workspace) => !closing.has(workspace.workspace_id));
+    for (const worktrees of this.worktreesByRepo.values()) for (const worktree of worktrees) if (worktree.open_workspace_id && closing.has(worktree.open_workspace_id)) delete worktree.open_workspace_id;
+    this.renumberWorkspaces();
+  }
+  async focusTab(tabId: string): Promise<void> { this.focusTabState(this.tab("tab.focus", tabId)); }
+  async moveTab(tabId: string, insertIndex: number): Promise<void> {
+    const tab = this.tab("tab.move", tabId);
+    const siblings = this.tabs.filter((row) => row.workspace_id === tab.workspace_id);
+    if (!Number.isSafeInteger(insertIndex) || insertIndex < 0 || insertIndex > siblings.length) throw new Error("herdr tab.move: invalid_insert_index");
+    const current = siblings.findIndex((row) => row.tab_id === tabId);
+    siblings.splice(current, 1);
+    siblings.splice(insertIndex, 0, tab);
+    let next = 0;
+    this.tabs = this.tabs.map((row) => row.workspace_id === tab.workspace_id ? siblings[next++]! : row);
+    // Herdr tab numbers are stable metadata; array order is the authoritative display order.
+    const workspace = this.workspace("tab.move", tab.workspace_id);
+    if (workspace.active_tab_id === tabId) workspace.active_tab_id = tabId;
+  }
+
+  private focusTabState(tab: WireTab): void {
+    const workspace = this.workspace("tab.focus", tab.workspace_id);
+    workspace.active_tab_id = tab.tab_id;
+    for (const pane of this.panes) pane.focused = pane.tab_id === tab.tab_id && pane.focused;
+    const current = this.panes.find((pane) => pane.tab_id === tab.tab_id);
+    if (current) for (const pane of this.panes) pane.focused = pane.pane_id === current.pane_id;
+    for (const row of this.tabs) row.focused = row.tab_id === tab.tab_id;
+    for (const row of this.workspaces) row.focused = row.workspace_id === workspace.workspace_id;
+  }
+  private renumberWorkspaces(): void { this.workspaces.forEach((workspace, index) => { workspace.number = index + 1; }); }
+  private worktreeGroup(workspaceId: string): string[] {
+    for (const rows of this.worktreesByRepo.values()) {
+      const members = rows.flatMap((row) => row.open_workspace_id ? [row.open_workspace_id] : []);
+      if (members.includes(workspaceId)) return [...new Set(members)];
+    }
+    return [workspaceId];
+  }
+
   async createWorkspace(opts: { cwd: string; label?: string }): Promise<CreatedShell> {
     const workspace = this.newWorkspace(opts.label ?? `space ${String(this.workspaces.length + 1)}`);
     const tab = this.newTab(workspace, "1");
@@ -476,6 +566,7 @@ export class FakeHerdr implements HerdrRpc {
   async listWorktrees(cwd: string): Promise<WireWorktree[]> {
     this.assertConnected("worktree.list");
     const repo = this.worktreesByRepo.get(cwd) ?? [];
+    if (repo.some((worktree) => !worktree.is_linked_worktree)) return [...repo];
     return [
       {
         path: cwd,

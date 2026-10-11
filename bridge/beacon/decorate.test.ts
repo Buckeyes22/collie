@@ -72,6 +72,13 @@ class StubAdapter implements MuxAdapter {
   readLayout?: MuxAdapter["readLayout"];
   applyLayout?: MuxAdapter["applyLayout"];
   layoutRuntimeIdentity?: MuxAdapter["layoutRuntimeIdentity"];
+  renameSpace?: MuxAdapter["renameSpace"];
+  closeSpace?: MuxAdapter["closeSpace"];
+  moveSpace?: MuxAdapter["moveSpace"];
+  moveSpaceBlock?: MuxAdapter["moveSpaceBlock"];
+  focusSpace?: MuxAdapter["focusSpace"];
+  moveTab?: MuxAdapter["moveTab"];
+  focusTab?: MuxAdapter["focusTab"];
   capabilities = declareCapabilities({
     supports: ["paneGrid", "typeText", "sendKeys"],
     notes: { agentDetection: "the adapter's own note", closePane: "untouched" },
@@ -281,6 +288,13 @@ describe("a decorator preserves the adapter's whole surface", () => {
     createTab: true,
     renameTab: true,
     closeTab: true,
+    renameSpace: true,
+    closeSpace: true,
+    moveSpace: true,
+    moveSpaceBlock: true,
+    focusSpace: true,
+    moveTab: true,
+    focusTab: true,
     createSpace: true,
     listWorktrees: true,
     createWorktree: true,
@@ -314,6 +328,13 @@ describe("a decorator preserves the adapter's whole surface", () => {
     stub.readLayout = async () => muxOk({ kind: "layout", layout } satisfies MuxLayoutRead);
     stub.applyLayout = async () => muxOk({ kind: "focus-direction", changed: false, paneId: "%1", layout } satisfies MuxLayoutMutation);
     stub.layoutRuntimeIdentity = () => "fixture-runtime-1";
+    stub.renameSpace = async () => ({ ok: true, value: undefined });
+    stub.closeSpace = async () => ({ ok: true, value: undefined });
+    stub.moveSpace = async () => ({ ok: true, value: undefined });
+    stub.moveSpaceBlock = async () => ({ ok: true, value: undefined });
+    stub.focusSpace = async () => ({ ok: true, value: undefined });
+    stub.moveTab = async () => ({ ok: true, value: undefined });
+    stub.focusTab = async () => ({ ok: true, value: undefined });
     return stub;
   }
 

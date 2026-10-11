@@ -78,6 +78,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import com.lateapex.collie.network.retiresPairing
 import com.lateapex.collie.network.ControlOperationResponse
+import com.lateapex.collie.network.OrganizationAction
+import com.lateapex.collie.network.OrganizationPlanResponse
+import com.lateapex.collie.network.OrganizationOperationResponse
 import com.lateapex.collie.network.ChangeCommitAnswer
 import com.lateapex.collie.network.ChangeCommitDiffAnswer
 import com.lateapex.collie.network.ChangeCommitHistoryAnswer
@@ -482,6 +485,19 @@ class CollieRepository(
         }
         if (capability.isEmpty() || config.value.control?.supportsNew("controlOperations") != true || muxCapabilities?.supportsNew("paneLayout") != true || muxCapabilities?.supportsNew(capability) != true) return ApiResult.Failure(ApiFailure.Http(404, "This pane layout action is unsupported on this server", "capability.unsupported"))
         return withScopedLayoutRead(address.scope, context) { api.planPaneLayout(it, address, action) }
+    }
+
+    suspend fun planTabTransfer(scope: Scope, tabId: String, body: kotlinx.serialization.json.JsonObject, expectedContext: ScopedReadContext? = null): ApiResult<com.lateapex.collie.network.PaneTransferPlanResponse> {
+        val subject = expectedContext?.key?.subjectIdentity ?: activeSubject
+        val context = expectedContext ?: readContext(scope, subject) ?: return notConnected()
+        if (!isCurrent(context) || context.key.host != scope.host || context.key.session != scope.session || context.key.subjectIdentity != subject) return staleScope()
+        val config = config(scope, context)
+        if (!isCurrent(context)) return staleScope()
+        if (config !is ApiResult.Success) return configFailure(config)
+        val mux = config.value.mux ?: return ApiResult.Failure(ApiFailure.Http(404, "Whole-tab transfer is unsupported on this server", "capability.unsupported"))
+        if (config.value.control?.supportsNew("controlOperations") != true || mux.supportsNew("tabTransfer") != true ||
+            mux.supportsNew("paneLayout") != true || mux.supportsNew("paneMove") != true) return ApiResult.Failure(ApiFailure.Http(404, "Whole-tab transfer is unsupported on this server", "capability.unsupported"))
+        return withScopedLayoutRead(scope, context) { api.planTabTransfer(it, scope, tabId, body) }
     }
 
     suspend fun applyPaneLayout(address: PaneAddress, requestId: String, planToken: String, action: kotlinx.serialization.json.JsonObject, expectedContext: ScopedReadContext? = null): ApiResult<com.lateapex.collie.network.PaneLayoutOperationResponse> {
@@ -1309,6 +1325,18 @@ class CollieRepository(
         require(tabId.isNotBlank())
         api.closeTab(it, scope, tabId)
     }
+
+    suspend fun planOrganization(scope: Scope, action: OrganizationAction, expectedContext: ScopedReadContext? = null): ApiResult<OrganizationPlanResponse> {
+        val context = expectedContext ?: readContext(scope) ?: return notConnected()
+        if (!isCurrent(context) || context.key.scope != scope || !context.connection.isPaired) return staleScope()
+        val result = withConnectionOf(context.connection, scope, context.key.subjectIdentity, expectedContext = context) {
+            api.planOrganization(it, scope, action)
+        }
+        return if (isCurrent(context)) result else staleScope()
+    }
+
+    suspend fun applyOrganization(scope: Scope, action: OrganizationAction, requestId: String, planToken: String, expectedContext: ScopedReadContext? = null): ApiResult<OrganizationOperationResponse> =
+        withWritableConnection(scope, expectedContext = expectedContext) { api.applyOrganization(it, scope, requestId, planToken, action) }
 
     suspend fun createTab(
         scope: Scope,

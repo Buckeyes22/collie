@@ -48,12 +48,20 @@ export const MUX_CAPABILITIES = [
   "pushPaneEvents",
   "listSessions",
   "paneLayout",
+  "tabTransfer",
   "paneSplit",
   "paneResize",
   "paneZoom",
   "paneSwap",
   "paneMove",
   "paneDirectionalFocus",
+  "workspaceRename",
+  "workspaceClose",
+  "workspaceMove",
+  "workspaceMoveBlock",
+  "workspaceFocus",
+  "tabMove",
+  "tabFocus",
 ] as const;
 
 /** One declarable capability. */
@@ -126,12 +134,20 @@ export const MUX_CAPABILITY_ROUTES = {
   listSessions:
     "bridge/sessions.ts `SessionRegistry.refresh()`, the OTHER instances of this multiplexer on this machine, each with the endpoint to dial it, so one bridge can front them all. It fills the snapshot's `sessions` list and what `?session=<name>` can select. ABSENT IS THE DEFAULT AND IT IS THE HARMLESS DIRECTION: the registry pins to the primary, the phone sees the one session it saw before this capability existed, and nothing scans anything. Stated here rather than left implicit, because the absence of this key decides whether a filesystem or a process listing is walked at all (M22 counsel).",
   paneLayout: "GET /api/pane/:id/layout, /neighbor and /edges — inspect the current layout and adjacent panes without moving focus.",
+  tabTransfer: "POST /api/tab/:id/transfer/plan and guarded pane.move — transfer an entire existing tab through owner-bound per-pane receipts without creating replacement shells.",
   paneSplit: "POST /api/pane/:id/layout/split — split the selected pane without changing operator focus by default.",
   paneResize: "POST /api/pane/:id/layout/resize — resize a pane using a fresh target plan.",
   paneZoom: "POST /api/pane/:id/layout/zoom — zoom or restore the selected pane using a fresh target plan.",
   paneSwap: "POST /api/pane/:id/layout/swap — swap panes in one tab using a fresh target plan.",
   paneMove: "POST /api/pane/:id/layout/move — move a pane to a validated tab or workspace destination.",
   paneDirectionalFocus: "POST /api/pane/:id/layout/focus-direction — move focus only after an explicit operator action.",
+  workspaceRename: "POST /api/workspace/:id/rename — rename the selected workspace.",
+  workspaceClose: "POST /api/workspace/:id/close — close one workspace or a confirmed linked-worktree group; checkouts remain on disk.",
+  workspaceMove: "POST /api/workspace/:id/move — move one workspace using the mux pre-removal index.",
+  workspaceMoveBlock: "POST /api/workspaces/reorder — move a unique ordered block before an explicit workspace anchor.",
+  workspaceFocus: "POST /api/workspace/:id/focus — explicitly focus a workspace in the owning terminal.",
+  tabMove: "POST /api/tab/:id/move — reorder a tab only within its owning workspace.",
+  tabFocus: "POST /api/tab/:id/focus — explicitly focus a tab in the owning terminal.",
 } satisfies Record<MuxCapability, string>;
 
 /**
@@ -251,12 +267,20 @@ export function declareCapabilities(input: MuxCapabilityInput): MuxCapabilityDec
     pushPaneEvents: claimed.has("pushPaneEvents"),
     listSessions: claimed.has("listSessions"),
     paneLayout: claimed.has("paneLayout"),
+    tabTransfer: claimed.has("tabTransfer"),
     paneSplit: claimed.has("paneSplit"),
     paneResize: claimed.has("paneResize"),
     paneZoom: claimed.has("paneZoom"),
     paneSwap: claimed.has("paneSwap"),
     paneMove: claimed.has("paneMove"),
     paneDirectionalFocus: claimed.has("paneDirectionalFocus"),
+    workspaceRename: claimed.has("workspaceRename"),
+    workspaceClose: claimed.has("workspaceClose"),
+    workspaceMove: claimed.has("workspaceMove"),
+    workspaceMoveBlock: claimed.has("workspaceMoveBlock"),
+    workspaceFocus: claimed.has("workspaceFocus"),
+    tabMove: claimed.has("tabMove"),
+    tabFocus: claimed.has("tabFocus"),
   } satisfies Record<MuxCapability, boolean>;
   return {
     supports,

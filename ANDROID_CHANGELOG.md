@@ -69,6 +69,7 @@ the first Android release from this fork.
 - Recheck microphone guards after permission prompts, cancel held keys when the pane stops, and dismiss launcher confirmations for already-cancelled callers.
 
 - Align the Kotlin compiler, serialization plugin and application Kotlin libraries on 2.2.21; update Android Gradle Plugin to 8.10.1 for its compatible release shrinker while retaining Gradle 8.11.1.
+- Add a reachable workspace and tab organizer with reviewed rename, close, focus and ordering actions, a complete owner-bound whole-tab transfer with one confirmed pane move per step, linked-worktree process previews, capability-based refusal and unknown-outcome reconciliation.
 
 ## 1.5.2 - 2026-10-08
 

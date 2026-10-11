@@ -131,6 +131,30 @@ describe("which routes cross a link", () => {
     expect(crewRouteFor("/api/workspace")).toBe("workspace");
   });
 
+  test("organization plans are reads and their exact final routes remain writes over Crew", () => {
+    const routes = [
+      ["workspace/w1/rename/plan", "read"], ["workspace/w1/rename", "write"],
+      ["workspace/w1/close/plan", "read"], ["workspace/w1/close", "write"],
+      ["workspace/w1/move/plan", "read"], ["workspace/w1/move", "write"],
+      ["workspace/w1/focus/plan", "read"], ["workspace/w1/focus", "write"],
+      ["workspaces/reorder/plan", "read"], ["workspaces/reorder", "write"],
+      ["tab/t1/move/plan", "read"], ["tab/t1/move", "write"],
+      ["tab/t1/focus/plan", "read"], ["tab/t1/focus", "write"],
+      ["tab/t1/rename/plan", "read"], ["tab/t1/rename", "write"],
+      ["tab/t1/close/plan", "read"], ["tab/t1/close", "write"],
+    ] as const;
+    for (const [route, kind] of routes) {
+      expect(crewRouteFor(`/api/${route}`)).toBe(route);
+      expect(apiPathFor(route)).toBe(`/api/${route}`);
+      expect(forwardKind(route, "POST")).toBe(kind);
+    }
+    expect(forwardAuditAction("workspace/w1/focus")).toBe("workspace.focus");
+    expect(forwardAuditAction("tab/t1/move")).toBe("tab.move");
+    expect(forwardAuditAction("tab/t1/close/plan")).toBeNull();
+    expect(crewRouteFor("/api/workspaces/reorder/extra")).toBeNull();
+    expect(crewRouteFor("/api/tab/t1/move/other")).toBeNull();
+  });
+
   test("launch and its rows cross the link too — rows must come from the host that runs them", () => {
     expect(crewRouteFor("/api/launch")).toBe("launch");
     expect(crewRouteFor("/api/launchers")).toBe("launchers");
@@ -1105,6 +1129,7 @@ describe("scoped foundation Crew reads", () => {
       ["pane/w1:p1/layout/neighbor", "GET", "read"],
       ["pane/w1:p1/layout/edges", "GET", "read"],
       ["pane/w1:p1/layout/plan", "POST", "read"],
+      ["tab/t1/transfer/plan", "POST", "read"],
       ["pane/w1:p1/layout/split", "POST", "write"],
       ["pane/w1:p1/layout/resize", "POST", "write"],
       ["pane/w1:p1/layout/zoom", "POST", "write"],

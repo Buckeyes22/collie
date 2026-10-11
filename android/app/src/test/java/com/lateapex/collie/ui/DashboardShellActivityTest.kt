@@ -90,6 +90,7 @@ class DashboardShellActivityTest {
             R.id.dashboard_connection_retry,
             R.id.dashboard_connection_reload,
             R.id.dashboard_idle_resume,
+            R.id.dashboard_organize_button,
             R.id.host_switcher,
             R.id.session_switcher,
         ).forEach { id ->
@@ -98,6 +99,8 @@ class DashboardShellActivityTest {
         }
         assertTrue(activity.findViewById<View>(R.id.dashboard_connection_reload).layoutParams.width >= floor)
         assertTrue(activity.findViewById<View>(R.id.dashboard_connection_banner).layoutParams.height >= floor)
+        assertEquals(activity.getString(R.string.organization_open_accessibility),
+            activity.findViewById<View>(R.id.dashboard_organize_button).contentDescription)
     }
 
     @Test

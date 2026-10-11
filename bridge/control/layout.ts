@@ -1,9 +1,10 @@
 import { layoutSnapshotAuthority } from "../mux/layout-evidence.ts";
 import { realpath, stat } from "node:fs/promises";
 import { realpathSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
 import type { JsonObject, JsonValue } from "../json.ts";
 import { askedFolder, type FolderSurface } from "../folders.ts";
-import type { MuxAdapter, MuxLayoutAction, MuxLayoutFinalAdmission, MuxLayoutMutation, MuxLayoutRead, MuxLayoutReadRequest, MuxPane, MuxPaneDirection, MuxSnapshot, MuxSplitCwdChoice } from "../mux/types.ts";
+import type { MuxAdapter, MuxLayoutAction, MuxLayoutFinalAdmission, MuxLayoutMutation, MuxLayoutRead, MuxLayoutReadRequest, MuxPane, MuxPaneDirection, MuxSnapshot, MuxSplitCwdChoice, MuxSplitDirection, MuxTransferGuard, MuxTransferMember } from "../mux/types.ts";
 import { controlRoute, controlScope, payloadHash, refusal, refusalResponse, type ControlRoute } from "./contracts.ts";
 import { executePlannedOperation, PlanStore, type ControlPlan, type PlanBinding } from "./plans.ts";
 import { OperationStore, type OperationOutcome } from "./operations.ts";
@@ -83,6 +84,39 @@ function parseSplitCwd(value: JsonValue | undefined): MuxSplitCwdChoice | null |
   if (row.kind === "advertised-folder" && exactKeys(row, ["kind", "path"]) && typeof row.path === "string" && new TextEncoder().encode(row.path).byteLength <= 4096) return { kind: "advertised-folder", path: row.path };
   return false;
 }
+function parseTransferGuard(value: JsonValue | undefined): MuxTransferGuard | null {
+  const row = record(value);
+  if (!row || !exactKeys(row, ["schema", "transferId", "sourceWorkspaceId", "sourceTabId", "remainingSource", "destination"]) ||
+      row.schema !== 1 || !validRequestId(row.transferId) || !boundedId(row.sourceWorkspaceId) || !boundedId(row.sourceTabId) || !Array.isArray(row.remainingSource) || row.remainingSource.length < 1 || row.remainingSource.length > 64) return null;
+  const members = (memberValue: JsonValue): MuxTransferMember | null => {
+    const member = record(memberValue);
+    if (!member || !exactKeys(member, ["paneId", "witness"]) || !boundedId(member.paneId) || typeof member.witness !== "string" || !/^[a-f0-9]{64}$/.test(member.witness)) return null;
+    return { paneId: member.paneId, witness: member.witness };
+  };
+  const source = row.remainingSource.map(members);
+  if (!source.every(isTransferMember)) return null;
+  const destinationValue = row.destination;
+  let destination: MuxTransferGuard["destination"] = null;
+  if (destinationValue !== null) {
+    const destinationRow = record(destinationValue);
+    if (!destinationRow || !exactKeys(destinationRow, ["workspaceId", "tabId", "members"]) || !boundedId(destinationRow.workspaceId) ||
+        !boundedId(destinationRow.tabId) || !Array.isArray(destinationRow.members) || destinationRow.members.length < 1 || destinationRow.members.length > 63) return null;
+    const destinationMembers = destinationRow.members.map(members);
+    if (!destinationMembers.every(isTransferMember)) return null;
+    destination = { workspaceId: destinationRow.workspaceId, tabId: destinationRow.tabId, members: destinationMembers.filter(isTransferMember) };
+  }
+  if (source.length + (destination?.members.length ?? 0) > 64) return null;
+  // SAFETY: both mapped arrays have passed the MuxTransferMember predicate above.
+  const sourceRows = source.filter(isTransferMember);
+  const all = [...sourceRows, ...(destination?.members ?? [])];
+  if (new Set(all.map((member) => member.paneId)).size !== all.length || new Set(all.map((member) => member.witness)).size !== all.length) return null;
+  return {
+    schema: 1, transferId: row.transferId, sourceWorkspaceId: row.sourceWorkspaceId, sourceTabId: row.sourceTabId,
+    remainingSource: sourceRows,
+    destination,
+  };
+}
+function isTransferMember(member: MuxTransferMember | null): member is MuxTransferMember { return member !== null; }
 function ratio(value: JsonValue | undefined): value is number | null {
   return value === null || (typeof value === "number" && Number.isFinite(value) && value > 0 && value < 1 && Math.fround(value) > 0 && Math.fround(value) < 1);
 }
@@ -92,6 +126,11 @@ function amount(value: JsonValue | undefined): value is number | null {
 }
 function label(value: JsonValue | undefined): value is string | null {
   return value === null || (typeof value === "string" && value.length <= 128 && !Array.from(value).some((char) => char.charCodeAt(0) < 32));
+}
+type MoveDestination = Extract<MuxLayoutAction, { kind: "move" }>["destination"];
+function parsedMove(paneId: string, destination: MoveDestination, transfer: MuxTransferGuard | null): Extract<MuxLayoutAction, { kind: "move" }> {
+  const action = { kind: "move" as const, paneId, destination, focus: false as const };
+  return transfer ? { ...action, transfer } : action;
 }
 function parseAction(value: JsonValue | undefined, paneId: string): MuxLayoutAction | null {
   const row = record(value);
@@ -124,20 +163,26 @@ function parseAction(value: JsonValue | undefined, paneId: string): MuxLayoutAct
     // SAFETY: the directional/explicit exclusivity checks above leave only the declared union.
     return { kind: "swap", paneId, direction: row.direction as MuxPaneDirection | null, sourcePaneId: row.sourcePaneId, targetPaneId: row.targetPaneId };
   }
-  if (row.kind === "move" && exactKeys(row, ["kind", "destination"])) {
+  if (row.kind === "move" && (exactKeys(row, ["kind", "destination"]) || exactKeys(row, ["kind", "destination", "transfer"]))) {
     const destination = record(row.destination);
     if (!destination || typeof destination.type !== "string") return null;
     if (destination.type === "tab" && exactKeys(destination, ["type", "tabId", "split", "targetPaneId", "ratio"])) {
       if (!boundedId(destination.tabId) || (destination.split !== "right" && destination.split !== "down") || !boundedId(destination.targetPaneId) || !ratio(destination.ratio)) return null;
-      return { kind: "move", paneId, destination: { type: "tab", tabId: destination.tabId, split: destination.split, targetPaneId: destination.targetPaneId, ratio: destination.ratio }, focus: false };
+      const transfer = row.transfer === undefined ? undefined : parseTransferGuard(row.transfer);
+      if (row.transfer !== undefined && (!transfer || !transfer.remainingSource.some((member) => member.paneId === paneId))) return null;
+      return parsedMove(paneId, { type: "tab", tabId: destination.tabId, split: destination.split, targetPaneId: destination.targetPaneId, ratio: destination.ratio }, transfer ?? null);
     }
     if (destination.type === "new_tab" && exactKeys(destination, ["type", "workspaceId", "label"])) {
       if (!boundedId(destination.workspaceId) || !label(destination.label)) return null;
-      return { kind: "move", paneId, destination: { type: "new_tab", workspaceId: destination.workspaceId, label: destination.label }, focus: false };
+      const transfer = row.transfer === undefined ? undefined : parseTransferGuard(row.transfer);
+      if (row.transfer !== undefined && (!transfer || !transfer.remainingSource.some((member) => member.paneId === paneId) || transfer.destination !== null)) return null;
+      return parsedMove(paneId, { type: "new_tab", workspaceId: destination.workspaceId, label: destination.label }, transfer ?? null);
     }
     if (destination.type === "new_workspace" && exactKeys(destination, ["type", "label", "tabLabel"])) {
       if (!label(destination.label) || !label(destination.tabLabel)) return null;
-      return { kind: "move", paneId, destination: { type: "new_workspace", label: destination.label, tabLabel: destination.tabLabel }, focus: false };
+      const transfer = row.transfer === undefined ? undefined : parseTransferGuard(row.transfer);
+      if (row.transfer !== undefined && (!transfer || !transfer.remainingSource.some((member) => member.paneId === paneId) || transfer.destination !== null)) return null;
+      return parsedMove(paneId, { type: "new_workspace", label: destination.label, tabLabel: destination.tabLabel }, transfer ?? null);
     }
   }
   if (row.kind === "focus-direction" && exactKeys(row, ["kind", "direction"])) {
@@ -196,7 +241,10 @@ function externalAction(action: MuxLayoutAction): JsonValue {
   if (action.kind === "split") return jsonValue({ kind: "split", direction: action.direction, ratio: action.ratio, targetPaneId: action.targetPaneId ?? null,
     workspaceId: action.workspaceId ?? null, cwd: action.cwdChoice ?? null, env: action.env ?? {} });
   if (action.kind === "swap") return jsonValue({ kind: action.kind, direction: action.direction, sourcePaneId: action.sourcePaneId, targetPaneId: action.targetPaneId });
-  if (action.kind === "move") return jsonValue({ kind: action.kind, destination: action.destination });
+  if (action.kind === "move") {
+    const body = { kind: action.kind, destination: action.destination };
+    return action.transfer ? jsonValue({ ...body, transfer: action.transfer }) : jsonValue(body);
+  }
   // The resolved neighbor is private plan evidence, never part of the phone's immutable body.
   if (action.kind === "focus-direction") return jsonValue({ kind: action.kind, paneId: action.paneId, direction: action.direction });
   return jsonValue(action);
@@ -263,6 +311,34 @@ function opaquePane(pane: MuxPane | undefined): string | null {
   if (!pane?.terminalIncarnation) return null;
   return `${pane.paneId}:${pane.terminalIncarnation}`;
 }
+function transferWitness(owner: string, runtime: PaneLayoutRuntime, runtimeIdentity: string, pane: MuxPane): string | null {
+  if (!pane.terminalIncarnation) return null;
+  return createHash("sha256").update("collie/tab-transfer-process/v1\0", "utf8")
+    .update(JSON.stringify([owner, runtime.host, runtime.session, runtimeIdentity, pane.terminalIncarnation]), "utf8").digest("hex");
+}
+function sameTransferMembers(snapshot: MuxSnapshot, workspaceId: string, tabId: string, members: readonly MuxTransferMember[], owner: string, runtime: PaneLayoutRuntime, runtimeIdentity: string): boolean {
+  const actual = snapshot.panes.filter((pane) => pane.spaceId === workspaceId && pane.tabId === tabId);
+  if (actual.length !== members.length || actual.length < 1 || actual.length > 64) return false;
+  const expectedById = new Map(members.map((member) => [member.paneId, member.witness]));
+  if (expectedById.size !== members.length) return false;
+  return actual.every((pane) => expectedById.get(pane.paneId) === transferWitness(owner, runtime, runtimeIdentity, pane));
+}
+function transferGuardCurrent(snapshot: MuxSnapshot, action: Extract<MuxLayoutAction, { kind: "move" }>, owner: string, runtime: PaneLayoutRuntime, runtimeIdentity: string): boolean {
+  const guard = action.transfer;
+  if (!guard || !snapshot.tabs.some((tab) => tab.tabId === guard.sourceTabId && tab.spaceId === guard.sourceWorkspaceId) ||
+      !sameTransferMembers(snapshot, guard.sourceWorkspaceId, guard.sourceTabId, guard.remainingSource, owner, runtime, runtimeIdentity)) return false;
+  const selected = snapshot.panes.find((pane) => pane.paneId === action.paneId);
+  const selectedMember = guard.remainingSource.find((member) => member.paneId === action.paneId);
+  if (!selected || !selectedMember || transferWitness(owner, runtime, runtimeIdentity, selected) !== selectedMember.witness) return false;
+  if (guard.destination === null) return action.destination.type !== "tab";
+  const destination = guard.destination;
+  if (!snapshot.tabs.some((tab) => tab.tabId === destination.tabId && tab.spaceId === destination.workspaceId) ||
+      !sameTransferMembers(snapshot, destination.workspaceId, destination.tabId, destination.members, owner, runtime, runtimeIdentity)) return false;
+  const target = action.destination;
+  if (target.type !== "tab" || target.tabId !== destination.tabId) return false;
+  const targetPaneId = target.targetPaneId;
+  return destination.members.some((member) => member.paneId === targetPaneId);
+}
 function paneById(snapshot: MuxSnapshot, id: string): MuxPane | undefined { return snapshot.panes.find((pane) => pane.paneId === id); }
 function routePaneId(url: URL, contract: ControlRoute): string | null {
   const raw = contract.pattern.exec(url.pathname)?.[1];
@@ -272,7 +348,67 @@ function routePaneId(url: URL, contract: ControlRoute): string | null {
     return /^[A-Za-z0-9_.:-]{1,128}$/.test(decoded) ? decoded : null;
   } catch { return null; }
 }
-async function authoritative(runtime: PaneLayoutRuntime, paneId: string, action: MuxLayoutAction): Promise<{ binding: PlanBinding; layout: MuxLayoutRead; destinationLayouts: MuxLayoutRead[]; snapshot: MuxSnapshot; action: MuxLayoutAction; runtimeIdentity: string } | null> {
+interface TransferRecipeStep { readonly direction: MuxSplitDirection; readonly ratio: number }
+type TransferDestination = {
+  readonly type: "new_tab"; readonly workspaceId: string; readonly label: string | null;
+} | {
+  readonly type: "new_workspace"; readonly label: string | null; readonly tabLabel: string | null;
+}
+function parseTransferPlan(value: JsonObject): { destination: TransferDestination; recipe: readonly TransferRecipeStep[] } | null {
+  if (!exactKeys(value, ["destination", "recipe"]) || !Array.isArray(value.recipe) || value.recipe.length > 63) return null;
+  const destination = record(value.destination);
+  if (!destination) return null;
+  let parsedDestination: TransferDestination;
+  if (destination.type === "new_tab" && exactKeys(destination, ["type", "workspaceId", "label"]) && boundedId(destination.workspaceId) && label(destination.label)) {
+    parsedDestination = { type: "new_tab", workspaceId: destination.workspaceId, label: destination.label };
+  } else if (destination.type === "new_workspace" && exactKeys(destination, ["type", "label", "tabLabel"]) && label(destination.label) && label(destination.tabLabel)) {
+    parsedDestination = { type: "new_workspace", label: destination.label, tabLabel: destination.tabLabel };
+  } else return null;
+  const recipe: TransferRecipeStep[] = [];
+  for (const item of value.recipe) {
+    const step = record(item);
+    if (!step || !exactKeys(step, ["direction", "ratio"]) || (step.direction !== "right" && step.direction !== "down") || !ratio(step.ratio) || step.ratio === null) return null;
+    recipe.push({ direction: step.direction, ratio: step.ratio });
+  }
+  return { destination: parsedDestination, recipe };
+}
+function transferWitnessRoster(snapshot: MuxSnapshot, layout: MuxLayoutRead, owner: string, runtime: PaneLayoutRuntime, runtimeIdentity: string): MuxTransferMember[] | null {
+  if (layout.kind !== "layout") return null;
+  const paneIds = layout.layout.panes.map((pane) => pane.paneId);
+  const snapshotRows = snapshot.panes.filter((pane) => pane.tabId === layout.layout.tabId && pane.spaceId === layout.layout.workspaceId);
+  if (paneIds.length < 1 || paneIds.length > 64 || new Set(paneIds).size !== paneIds.length || snapshotRows.length !== paneIds.length ||
+      snapshotRows.some((pane) => !paneIds.includes(pane.paneId))) return null;
+  const rows = paneIds.map((paneId) => {
+    const pane = snapshotRows.find((row) => row.paneId === paneId);
+    const witness = pane && transferWitness(owner, runtime, runtimeIdentity, pane);
+    return pane && witness ? { paneId, witness } : null;
+  });
+  if (!rows.every(isTransferMember)) return null;
+  return rows.filter(isTransferMember);
+}
+function feasibleTransferReflow(width: number, height: number, steps: readonly TransferRecipeStep[]): boolean {
+  if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1) return false;
+  const leaves: { width: number; height: number }[] = [{ width, height }];
+  for (const step of steps) {
+    let anchorIndex = 0;
+    for (let index = 1; index < leaves.length; index++) {
+      const current = leaves[index]!; const best = leaves[anchorIndex]!;
+      if (current.width * current.height > best.width * best.height) anchorIndex = index;
+    }
+    const anchor = leaves[anchorIndex]!;
+    const extent = step.direction === "right" ? anchor.width : anchor.height;
+    const first = Math.floor(extent * step.ratio);
+    const second = extent - first;
+    if (first < 1 || second < 1) return false;
+    leaves.splice(anchorIndex, 1, ...(step.direction === "right" ? [
+      { width: first, height: anchor.height }, { width: second, height: anchor.height },
+    ] : [
+      { width: anchor.width, height: first }, { width: anchor.width, height: second },
+    ]));
+  }
+  return leaves.length <= 64;
+}
+async function authoritative(runtime: PaneLayoutRuntime, paneId: string, action: MuxLayoutAction, owner?: string): Promise<{ binding: PlanBinding; layout: MuxLayoutRead; destinationLayouts: MuxLayoutRead[]; snapshot: MuxSnapshot; action: MuxLayoutAction; runtimeIdentity: string } | null> {
   if (!runtime.mux.readLayout || !runtime.mux.capabilities.supports.paneLayout || !runtime.mux.layoutRuntimeIdentity) return null;
   const runtimeIdentity = await runtime.mux.layoutRuntimeIdentity();
   if (!runtimeIdentity) return null;
@@ -360,6 +496,7 @@ async function authoritative(runtime: PaneLayoutRuntime, paneId: string, action:
       destinationPaneIds.some((id) => opaquePane(paneById(finalSnapshot, id)) !== opaquePane(paneById(snapshot, id)))) return null;
   snapshot = finalSnapshot;
   if (await runtime.mux.layoutRuntimeIdentity() !== runtimeBefore) return null;
+  if (routeAction.kind === "move" && routeAction.transfer && (!owner || !transferGuardCurrent(finalSnapshot, routeAction, owner, runtime, runtimeIdentity))) return null;
   const current = jsonValue({ runtimeIdentity, layout: layout.layout, destinationLayouts, targetIds: targets, cwdEvidence, tab: snapshot.tabs.find((tab) => tab.tabId === source.tabId) ?? null });
   const binding: PlanBinding = {
     device: "", // Set by the route after the current paired caller is validated.
@@ -379,6 +516,7 @@ function operationResponse(action: MuxLayoutAction, view: import("./operations.t
   if (view.state === "unknown" || view.state === "pending") return Response.json({ ok: false, code: "layout.outcome_unknown", operation: view }, { status: 202, headers: { "cache-control": "no-store" } });
   if (view.state === "refused") return refusalResponse(refusal(view.code ?? "layout.refused", "The layout action was refused", "operation"), 409);
   if (action.kind === "move" && view.result?.kind !== "pane-move") return Response.json({ ok: false, code: "layout.outcome_unknown", operation: view }, { status: 202, headers: { "cache-control": "no-store" } });
+  if (action.kind === "move" && action.transfer && (!view.result?.transfer || view.result.transfer.schema !== 1 || !view.result.transfer.changed)) return Response.json({ ok: false, code: "tab.transfer.outcome_unknown", operation: view }, { status: 202, headers: { "cache-control": "no-store" } });
   const response: JsonObject = { ok: true, operation: jsonValue(view) };
   if (view.result?.kind === "pane-move") response.move = jsonValue(view.result);
   return Response.json(response, { headers: { "cache-control": "no-store" } });
@@ -396,7 +534,7 @@ function effectSummary(action: MuxLayoutAction, snapshot: MuxSnapshot): JsonValu
 
 export async function servePaneLayoutRoute(req: Request, url: URL, caller: PaneLayoutCaller, stores: PaneLayoutStores): Promise<Response | null> {
   const contract = controlRoute(url.pathname, req.method);
-  if (!contract || !contract.name.startsWith("pane-layout") && !contract.name.startsWith("pane-neighbor") && !contract.name.startsWith("pane-edges")) return null;
+  if (!contract || !contract.name.startsWith("pane-layout") && !contract.name.startsWith("pane-neighbor") && !contract.name.startsWith("pane-edges") && contract.name !== "tab-transfer-plan") return null;
   const denied = caller.gate(contract.gate);
   if (denied) return denied;
   if (!controlScope(url, "session")) return refusalResponse(refusal("scope.malformed", "Malformed layout scope", "scope"), 400);
@@ -404,7 +542,11 @@ export async function servePaneLayoutRoute(req: Request, url: URL, caller: PaneL
   if (!paneId) return refusalResponse(refusal("pane.target_invalid", "Invalid pane identity", "scope"), 400);
   let postedBody: JsonObject | null = null;
   let postedAction: MuxLayoutAction | null = null;
-  if (contract.name === "pane-layout-plan" || contract.name.startsWith("pane-layout-") && contract.name !== "pane-layout") {
+  let transferRequest: ReturnType<typeof parseTransferPlan> = null;
+  if (contract.name === "tab-transfer-plan") {
+    postedBody = record(await readBody(req, contract.maxBodyBytes));
+    if (!postedBody || !(transferRequest = parseTransferPlan(postedBody))) return refusalResponse(refusal("tab.transfer.request_invalid", "Malformed whole-tab transfer plan", "operation"), 400);
+  } else if (contract.name === "pane-layout-plan" || contract.name.startsWith("pane-layout-") && contract.name !== "pane-layout") {
     postedBody = record(await readBody(req, contract.maxBodyBytes));
     if (!postedBody) return refusalResponse(refusal("layout.request_invalid", "Malformed pane layout request", "operation"), 400);
     if (contract.name === "pane-layout-plan") {
@@ -419,6 +561,44 @@ export async function servePaneLayoutRoute(req: Request, url: URL, caller: PaneL
   }
   const runtime = await caller.resolve();
   if (runtime instanceof Response) return runtime;
+  if (contract.name === "tab-transfer-plan") {
+    const owner = caller.pairedIdentity();
+    if (!owner || !/^[a-f0-9]{64}$/.test(owner)) return refusalResponse(refusal("device.identity_required", "Transfer plans require an identified paired device", "device"), 403);
+    if (!stores.operations.isDurable) return refusalResponse(refusal("tab.transfer.unavailable", "Durable transfer receipts are unavailable on this runtime", "capability"), 501);
+    if (runtime.mux.capabilities.supports.tabTransfer !== true || !runtime.mux.capabilities.supports.paneLayout || !runtime.mux.capabilities.supports.paneMove || !runtime.mux.readLayout || !runtime.mux.layoutRuntimeIdentity) return refusalResponse(refusal("tab.transfer.unavailable", "Whole-tab transfer is unavailable on this runtime", "capability"), 501);
+    const tabId = paneId;
+    const runtimeIdentity = await runtime.mux.layoutRuntimeIdentity();
+    if (!runtimeIdentity) return refusalResponse(refusal("tab.transfer.unavailable", "Whole-tab transfer is unavailable on this runtime", "capability"), 501);
+    const before = await runtime.mux.snapshot();
+    const sourceTab = before.tabs.find((row) => row.tabId === tabId);
+    const sourcePanes = before.panes.filter((row) => row.tabId === tabId);
+    if (!sourceTab || sourcePanes.length < 1 || sourcePanes.length > 64 || sourcePanes.some((row) => row.spaceId !== sourceTab.spaceId)) return refusalResponse(refusal("tab.transfer.source_invalid", "The complete source tab is unavailable", "scope"), 409);
+    const transferPlan = transferRequest;
+    if (!transferPlan) return refusalResponse(refusal("tab.transfer.request_invalid", "Malformed whole-tab transfer plan", "operation"), 400);
+    const selectedDestination = transferPlan.destination;
+    if (selectedDestination.type === "new_tab" && (!before.spaces.some((space) => space.spaceId === selectedDestination.workspaceId) || selectedDestination.workspaceId === sourceTab.spaceId)) return refusalResponse(refusal("tab.transfer.destination_invalid", "Choose another workspace in this host and session", "scope"), 409);
+    if (transferPlan.destination.type === "new_workspace" && (transferPlan.destination.label === null || transferPlan.destination.tabLabel === null)) return refusalResponse(refusal("tab.transfer.destination_invalid", "Workspace and tab names are required", "operation"), 400);
+    const firstPane = sourcePanes[0]!;
+    const sourceLayout = await runtime.mux.readLayout(firstPane.paneId, { kind: "layout" });
+    if (!sourceLayout.ok || sourceLayout.value.kind !== "layout" || sourceLayout.value.layout.tabId !== tabId || sourceLayout.value.layout.workspaceId !== sourceTab.spaceId) return refusalResponse(refusal("tab.transfer.layout_unavailable", "The complete source layout could not be read", "capability"), 501);
+    const after = await runtime.mux.snapshot();
+    const currentTab = after.tabs.find((row) => row.tabId === tabId);
+    const roster = currentTab ? transferWitnessRoster(after, sourceLayout.value, owner, runtime, runtimeIdentity) : null;
+    if (!currentTab || currentTab.spaceId !== sourceTab.spaceId || !roster || after.panes.filter((row) => row.tabId === tabId).length !== sourcePanes.length ||
+        await runtime.mux.layoutRuntimeIdentity() !== runtimeIdentity || caller.pairedIdentity() !== owner || transferPlan.recipe.length !== roster.length - 1) return refusalResponse(refusal("tab.transfer.source_changed", "The tab changed or the reflow does not cover every pane", "scope"), 409);
+    const layoutVerified = await runtime.mux.readLayout(firstPane.paneId, { kind: "layout" });
+    const finalSnapshot = await runtime.mux.snapshot();
+    const finalTab = finalSnapshot.tabs.find((row) => row.tabId === tabId);
+    const finalRoster = finalTab ? transferWitnessRoster(finalSnapshot, layoutVerified.ok && layoutVerified.value.kind === "layout" ? layoutVerified.value : sourceLayout.value, owner, runtime, runtimeIdentity) : null;
+    if (!layoutVerified.ok || layoutVerified.value.kind !== "layout" || payloadHash(jsonValue(layoutVerified.value.layout)) !== payloadHash(jsonValue(sourceLayout.value.layout)) ||
+        !finalTab || finalTab.spaceId !== sourceTab.spaceId || !finalRoster || payloadHash(jsonValue(finalRoster)) !== payloadHash(jsonValue(roster)) ||
+        await runtime.mux.layoutRuntimeIdentity() !== runtimeIdentity || caller.pairedIdentity() !== owner) return refusalResponse(refusal("tab.transfer.source_changed", "The tab changed while its complete plan was being read", "scope"), 409);
+    if (!feasibleTransferReflow(sourceLayout.value.layout.area.width, sourceLayout.value.layout.area.height, transferPlan.recipe)) return refusalResponse(refusal("tab.transfer.reflow_infeasible", "The requested split recipe does not fit the available terminal cells", "operation"), 409);
+    return Response.json({ ok: true, schema: 1, source: { workspaceId: sourceTab.spaceId, tabId, layout: sourceLayout.value.layout, members: roster }, destination: transferPlan.destination,
+      recipe: transferPlan.recipe, effects: { createsDestinationWithFirstExistingPane: true, preservesExistingProcesses: true, reflow: true,
+        mayCloseEmptySourceTab: roster.length === 1, mayCloseEmptySourceWorkspace: false, mayChangeFocusWhenSourceEmpties: true, createsNoReplacementShell: true,
+        closesNoBranchOrWorkspaceGroup: true } }, { headers: { "cache-control": "no-store" } });
+  }
   const getRead = async (request: MuxLayoutReadRequest): Promise<Response> => {
     if (!runtime.mux.capabilities.supports.paneLayout || !runtime.mux.readLayout) return refusalResponse(refusal("pane.layout_unavailable", "Pane layout is unavailable on this runtime", "capability"), 501);
     const result = await runtime.mux.readLayout(paneId, request);
@@ -438,8 +618,9 @@ export async function servePaneLayoutRoute(req: Request, url: URL, caller: PaneL
     const owner = caller.pairedIdentity();
     if (!owner || !/^[a-f0-9]{64}$/.test(owner)) return refusalResponse(refusal("device.identity_required", "Layout plans require an identified paired device", "device"), 403);
     if (!stores.operations.isDurable) return refusalResponse(refusal("layout.receipts_unavailable", "Durable layout operation custody is unavailable", "operation"), 503);
+    if (action.kind === "move" && action.transfer && runtime.mux.capabilities.supports.tabTransfer !== true) return refusalResponse(refusal("tab.transfer.unavailable", "Whole-tab transfer is unavailable on this runtime", "capability"), 501);
     if (!runtime.mux.capabilities.supports["paneLayout"] || !runtime.mux.capabilities.supports[requiredCapability(action)]) return refusalResponse(refusal("layout.capability_unavailable", "This layout action is not supported by the current runtime", "capability"), 501);
-    const observed = await authoritative(runtime, paneId, action);
+    const observed = await authoritative(runtime, paneId, action, owner);
     if (!observed) return refusalResponse(refusal("layout.target_stale", "The pane or destination changed; refresh the layout before planning", "scope"), 409);
     const canonicalAction = observed.action;
     const binding = { ...observed.binding, device: owner };
@@ -462,6 +643,7 @@ export async function servePaneLayoutRoute(req: Request, url: URL, caller: PaneL
   const owner = caller.pairedIdentity();
   if (!owner || !/^[a-f0-9]{64}$/.test(owner)) return refusalResponse(refusal("device.identity_required", "Layout operations require an identified paired device", "device"), 403);
   if (!stores.operations.isDurable) return refusalResponse(refusal("layout.receipts_unavailable", "Durable layout operation custody is unavailable", "operation"), 503);
+  if (action.kind === "move" && action.transfer && runtime.mux.capabilities.supports.tabTransfer !== true) return refusalResponse(refusal("tab.transfer.unavailable", "Whole-tab transfer is unavailable on this runtime", "capability"), 501);
   const bodyHash = payloadHash(externalAction(action));
   const existing = await stores.operations.inspectIntent(requestId, owner, runtime.host, runtime.session, capabilityOf(action), bodyHash, planToken);
   if (existing.kind === "match") return operationResponse(action, existing.operation);
@@ -484,7 +666,7 @@ export async function servePaneLayoutRoute(req: Request, url: URL, caller: PaneL
         dispatchAction = null;
         return { ...plan.binding, device: owner === "0".repeat(64) ? "1".repeat(64) : "0".repeat(64) };
       }
-      const current = await authoritative(fresh, paneId, action);
+      const current = await authoritative(fresh, paneId, action, owner);
       if (!current || !fresh.mux.capabilities.supports[requiredCapability(action)] || !fresh.mux.applyLayout) {
         dispatchMux = null;
         dispatchAction = null;
@@ -528,6 +710,7 @@ export async function servePaneLayoutRoute(req: Request, url: URL, caller: PaneL
           if (evidence.destinationLayout !== undefined) return false;
         } else if (!evidence.destinationLayout ||
             payloadHash(jsonValue(evidence.destinationLayout)) !== payloadHash(jsonValue(expectedDestinationLayout))) return false;
+        if (prepared.kind === "move" && prepared.transfer && !transferGuardCurrent(evidence.snapshot, prepared, owner, finalRuntime, runtimeIdentity)) return false;
         if (evidence.neighborLayout && payloadHash(jsonValue(evidence.neighborLayout)) !== payloadHash(jsonValue(expectedSourceLayout))) return false;
         if (prepared.kind === "split" && !finalSplitCwdCurrent(finalRuntime, prepared)) return false;
         // Same PlanStore clock as issue/consume; after all awaits and synchronous filesystem
@@ -543,7 +726,16 @@ export async function servePaneLayoutRoute(req: Request, url: URL, caller: PaneL
       }
       const mutation: MuxLayoutMutation = result.value;
       if (mutation.kind !== action.kind) return { state: "unknown", code: "layout.protocol_mismatch" };
-      if (mutation.kind === "move") return { state: "succeeded", result: { kind: "pane-move", paneId: mutation.paneId, previousPaneId: mutation.previousPaneId, previousTabId: mutation.previousTabId, previousWorkspaceId: mutation.previousWorkspaceId } };
+      if (mutation.kind === "move") {
+        const preparedMove = preparedAction.kind === "move" ? preparedAction : null;
+        const base = { kind: "pane-move" as const, paneId: mutation.paneId, previousPaneId: mutation.previousPaneId, previousTabId: mutation.previousTabId, previousWorkspaceId: mutation.previousWorkspaceId };
+        if (!preparedMove?.transfer) return { state: "succeeded", result: base };
+        const selected = preparedMove.transfer.remainingSource.find((member) => member.paneId === preparedMove.paneId);
+        if (!mutation.changed || !selected || !mutation.layout.tabId || !mutation.layout.workspaceId) return { state: "unknown", code: "tab.transfer.result_invalid" };
+        return { state: "succeeded", result: { ...base, transfer: { schema: 1, changed: mutation.changed, targetTabId: mutation.layout.tabId,
+          targetWorkspaceId: mutation.layout.workspaceId, processWitness: selected.witness, createdTabId: mutation.createdTabId ?? null,
+          createdWorkspaceId: mutation.createdWorkspaceId ?? null, closedTabId: mutation.closedTabId ?? null, closedWorkspaceId: mutation.closedWorkspaceId ?? null } } };
+      }
       return { state: "succeeded" };
     });
     caller.audit(`pane.layout.${action.kind}`, paneId, runtime.host, runtime.session, view.state);

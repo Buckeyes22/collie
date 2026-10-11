@@ -313,6 +313,26 @@
             android:background="@color/collie_rule" />
 
         <TextView
+            android:id="@+id/dashboard_organize_button"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/collie_touch_target"
+            android:background="?attr/selectableItemBackground"
+            android:clickable="true"
+            android:contentDescription="@string/organization_open_accessibility"
+            android:focusable="true"
+            android:gravity="center_vertical"
+            android:minHeight="@dimen/collie_touch_target"
+            android:paddingHorizontal="16dp"
+            android:text="@string/organization_open_description"
+            android:textColor="@color/collie_on_background"
+            android:textSize="13sp" />
+
+        <View
+            android:layout_width="match_parent"
+            android:layout_height="1dp"
+            android:background="@color/collie_rule" />
+
+        <TextView
             android:id="@+id/dashboard_read_only_banner"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

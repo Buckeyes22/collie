@@ -17,6 +17,7 @@ function request(pathValue: string, body?: JsonValue): Request {
 function path(paneId: string, action = ""): string {
   return `/api/pane/${encodeURIComponent(paneId)}/layout${action}`;
 }
+function transferPath(tabId: string): string { return `/api/tab/${encodeURIComponent(tabId)}/transfer/plan`; }
 function caller(mux: HerdrMux) {
   return {
     gate: () => null,
@@ -27,6 +28,228 @@ function caller(mux: HerdrMux) {
 }
 
 describe("pane layout scoped routes", () => {
+  test("a 64-member transfer guard plus maximum route identity fits the 16 KiB envelope", () => {
+    const id = (suffix: number) => `x`.repeat(120) + String(suffix).padStart(8, "0");
+    const witness = "a".repeat(64);
+    const transfer = {
+      schema: 1, transferId: "r".repeat(128), sourceWorkspaceId: id(1), sourceTabId: id(2),
+      remainingSource: [{ paneId: id(3), witness }],
+      destination: { workspaceId: id(4), tabId: id(5), members: Array.from({ length: 63 }, (_, index) => ({ paneId: id(index + 6), witness })) },
+    };
+    const action = { kind: "move", destination: { type: "tab", tabId: id(5), split: "right", targetPaneId: id(6), ratio: 0.5 }, transfer };
+    const body = { requestId: "r".repeat(128), planToken: "t".repeat(128), action };
+    const bytes = Buffer.byteLength(JSON.stringify(body), "utf8");
+    expect(bytes).toBeLessThanOrEqual(16 * 1024);
+    expect(bytes).toBeGreaterThan(15 * 1024);
+  });
+
+  test("two-step whole-tab transfer preserves each process and records exact created/closed IDs", async () => {
+    const fake = new FakeHerdr();
+    const mux = new HerdrMux(fake, () => []);
+    await mux.reachable();
+    let before = await mux.snapshot();
+    const source = before.panes.find((pane) => before.panes.filter((row) => row.tabId === pane.tabId).length === 1)!;
+    const destinationWorkspace = before.spaces.find((space) => space.spaceId !== source.spaceId)!;
+    await fake.splitPane({ direction: "right", ratio: 0.5, target_pane_id: source.paneId, workspace_id: source.spaceId, env: {}, focus: false, right_click: "herdr" });
+    before = await mux.snapshot();
+    const sourceMembers = before.panes.filter((pane) => pane.tabId === source.tabId);
+    expect(sourceMembers).toHaveLength(2);
+    const dir = await mkdtemp(join(tmpdir(), "collie-layout-transfer-"));
+    try {
+    const stores = { plans: new PlanStore(), operations: new OperationStore(dir) };
+    const planUrl = transferPath(source.tabId);
+    const transferRead = await servePaneLayoutRoute(request(planUrl, { destination: { type: "new_tab", workspaceId: destinationWorkspace.spaceId, label: "moved" }, recipe: [{ direction: "right", ratio: 0.5 }] }), new URL(`https://collie${planUrl}`), caller(mux), stores);
+    expect(transferRead?.status).toBe(200);
+    // SAFETY: the planner status assertion above proves this is the expected successful JSON response.
+    const preview = await transferRead!.json() as { source: { members: { paneId: string; witness: string }[] }; effects: { createsDestinationWithFirstExistingPane: boolean; createsNoReplacementShell: boolean } };
+    expect(preview.source.members.map((member) => member.paneId).toSorted()).toEqual(sourceMembers.map((pane) => pane.paneId).toSorted());
+    expect(preview.source.members.every((member) => /^[a-f0-9]{64}$/.test(member.witness))).toBe(true);
+    expect(preview.effects).toMatchObject({ createsDestinationWithFirstExistingPane: true, createsNoReplacementShell: true });
+
+      let members = [...preview.source.members];
+      let destination: { workspaceId: string; tabId: string; members: { paneId: string; witness: string }[] } | null = null;
+      for (let index = 0; index < 2; index++) {
+        const selected = members[0]!;
+        const action = index === 0 ? { kind: "move", destination: { type: "new_tab", workspaceId: destinationWorkspace.spaceId, label: "moved" }, transfer: {
+          schema: 1, transferId: "transfer-one", sourceWorkspaceId: source.spaceId, sourceTabId: source.tabId, remainingSource: members, destination,
+        } } : { kind: "move", destination: { type: "tab", tabId: destination!.tabId, split: "right", targetPaneId: destination!.members.at(-1)!.paneId, ratio: 0.5 }, transfer: {
+          schema: 1, transferId: "transfer-one", sourceWorkspaceId: source.spaceId, sourceTabId: source.tabId, remainingSource: members, destination,
+        } };
+        const planUrlForPane = path(selected.paneId, "/plan");
+        const planResponse = await servePaneLayoutRoute(request(planUrlForPane, { action }), new URL(`https://collie${planUrlForPane}`), caller(mux), stores);
+        expect(planResponse?.status).toBe(200);
+        // SAFETY: the asserted 200 plan response has a plan token for this exact request.
+        const plan = await planResponse!.json() as { planToken: string };
+        const applyPath = path(selected.paneId, "/move");
+        const applyBody = { requestId: `transfer-step-${index + 1}`, planToken: plan.planToken, action };
+        const moved = await servePaneLayoutRoute(request(applyPath, applyBody), new URL(`https://collie${applyPath}`), caller(mux), stores);
+        if (moved?.status !== 200) throw new Error(await moved!.clone().text());
+        expect(moved?.status).toBe(200);
+        // SAFETY: the asserted successful operation uses the closed pane-move receipt shape.
+        const body = await moved!.json() as { operation: { result: { paneId: string; transfer: { changed: boolean; targetTabId: string; targetWorkspaceId: string; processWitness: string; createdTabId: string | null; createdWorkspaceId: string | null; closedTabId: string | null; closedWorkspaceId: string | null } } } };
+        expect(body.operation.result.transfer.changed).toBe(true);
+        if (index === 0) {
+          expect(body.operation.result.transfer.createdTabId).not.toBeNull();
+          // SAFETY: the assertion immediately above proves the optional created tab is present.
+          expect(body.operation.result.transfer.targetTabId).toBe(body.operation.result.transfer.createdTabId as string);
+        } else expect(body.operation.result.transfer.targetTabId).toBe(destination!.tabId);
+        expect(body.operation.result.transfer.processWitness).toBe(selected.witness);
+        if (index === 0) {
+          expect(body.operation.result.transfer.createdTabId).toBe(body.operation.result.transfer.targetTabId);
+          expect(body.operation.result.transfer.createdWorkspaceId).toBeNull();
+          destination = { workspaceId: body.operation.result.transfer.targetWorkspaceId, tabId: body.operation.result.transfer.targetTabId, members: [{ paneId: body.operation.result.paneId, witness: selected.witness }] };
+        } else {
+          expect(body.operation.result.transfer.createdTabId).toBeNull();
+          expect(body.operation.result.transfer.closedTabId === null || body.operation.result.transfer.closedTabId === source.tabId).toBe(true);
+        }
+        members = members.slice(1);
+      }
+      const after = await mux.snapshot();
+      expect(after.panes.some((pane) => pane.tabId === source.tabId)).toBe(false);
+      expect(after.panes.filter((pane) => pane.tabId === destination!.tabId)).toHaveLength(2);
+      expect(after.panes.find((pane) => pane.paneId === destination!.members[0]!.paneId)?.terminalIncarnation).toBe(sourceMembers[0]!.terminalIncarnation);
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
+  test("the first whole-tab step creates the selected workspace and tab with the existing process", async () => {
+    const fake = new FakeHerdr();
+    const mux = new HerdrMux(fake, () => []);
+    await mux.reachable();
+    const snapshot = await mux.snapshot();
+    const source = snapshot.panes.find((pane) => snapshot.panes.filter((row) => row.tabId === pane.tabId).length === 1)!;
+    const dir = await mkdtemp(join("/var/tmp", "collie-transfer-new-workspace-"));
+    try {
+      const stores = { plans: new PlanStore(), operations: new OperationStore(dir) };
+      const readPath = transferPath(source.tabId);
+      const read = await servePaneLayoutRoute(request(readPath, {
+        destination: { type: "new_workspace", label: "Destination", tabLabel: "Moved" }, recipe: [],
+      }), new URL(`https://collie${readPath}`), caller(mux), stores);
+      expect(read?.status).toBe(200);
+      // SAFETY: the asserted 200 planner response contains the closed source member roster.
+      const preview = await read!.json() as { source: { members: { paneId: string; witness: string }[] } };
+      const member = preview.source.members[0]!;
+      const action = { kind: "move", destination: { type: "new_workspace", label: "Destination", tabLabel: "Moved" }, transfer: {
+        schema: 1, transferId: "transfer-new-workspace", sourceWorkspaceId: source.spaceId, sourceTabId: source.tabId,
+        remainingSource: preview.source.members, destination: null,
+      } };
+      const planPath = path(source.paneId, "/plan");
+      const planResponse = await servePaneLayoutRoute(request(planPath, { action }), new URL(`https://collie${planPath}`), caller(mux), stores);
+      expect(planResponse?.status).toBe(200);
+      // SAFETY: the asserted 200 plan response has a token for the same move action.
+      const plan = await planResponse!.json() as { planToken: string };
+      const movePath = path(source.paneId, "/move");
+      const result = await servePaneLayoutRoute(request(movePath, { requestId: "transfer-new-workspace-step", planToken: plan.planToken, action }), new URL(`https://collie${movePath}`), caller(mux), stores);
+      expect(result?.status).toBe(200);
+      // SAFETY: the asserted successful operation returns the typed transfer receipt.
+      const body = await result!.json() as { operation: { result: { paneId: string; transfer: { targetWorkspaceId: string; targetTabId: string; processWitness: string; createdTabId: string; createdWorkspaceId: string } } } };
+      expect(body).toMatchObject({ operation: { state: "succeeded", result: { transfer: {
+        schema: 1, changed: true, processWitness: member.witness, createdTabId: expect.any(String), createdWorkspaceId: expect.any(String),
+      } } } });
+      const after = await mux.snapshot();
+      const moved = after.panes.find((pane) => pane.paneId === body.operation.result.paneId);
+      expect(moved?.spaceId).toBe(body.operation.result.transfer.targetWorkspaceId);
+      expect(moved?.tabId).toBe(body.operation.result.transfer.targetTabId);
+      expect(moved?.terminalIncarnation).toBe(source.terminalIncarnation);
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
+  test("an unselected transfer member replaced during final runtime admission produces zero pane.move calls", async () => {
+    const fake = new FakeHerdr();
+    const mux = new HerdrMux(fake, () => []);
+    await mux.reachable();
+    let snapshot = await mux.snapshot();
+    const source = snapshot.panes[0]!;
+    await fake.splitPane({ direction: "right", ratio: 0.5, target_pane_id: source.paneId, workspace_id: source.spaceId, env: {}, focus: false, right_click: "herdr" });
+    snapshot = await mux.snapshot();
+    const sourceMembers = snapshot.panes.filter((pane) => pane.tabId === source.tabId);
+    expect(sourceMembers).toHaveLength(3);
+    const targetWorkspace = snapshot.spaces.find((space) => space.spaceId !== source.spaceId)!;
+    const dir = await mkdtemp(join("/var/tmp", "collie-transfer-member-race-"));
+    try {
+    const stores = { plans: new PlanStore(), operations: new OperationStore(dir) };
+    const planPath = transferPath(source.tabId);
+    const previewResponse = await servePaneLayoutRoute(request(planPath, {
+      destination: { type: "new_tab", workspaceId: targetWorkspace.spaceId, label: "Moved" },
+      recipe: [{ direction: "right", ratio: 0.5 }, { direction: "down", ratio: 0.5 }],
+    }), new URL(`https://collie${planPath}`), caller(mux), stores);
+    expect(previewResponse?.status).toBe(200);
+    // SAFETY: the asserted 200 planner response contains the closed source member roster.
+    const preview = await previewResponse!.json() as { source: { members: { paneId: string; witness: string }[] } };
+    const selected = sourceMembers[0]!;
+    const replaced = sourceMembers[1]!;
+    const transfer = { schema: 1, transferId: "transfer-race", sourceWorkspaceId: source.spaceId, sourceTabId: source.tabId,
+      remainingSource: preview.source.members, destination: null };
+    const action = { kind: "move", destination: { type: "new_tab", workspaceId: targetWorkspace.spaceId, label: "Moved" }, transfer };
+    const planForPane = path(selected.paneId, "/plan");
+      const planResponse = await servePaneLayoutRoute(request(planForPane, { action }), new URL(`https://collie${planForPane}`), caller(mux), stores);
+      expect(planResponse?.status).toBe(200);
+      // SAFETY: the asserted 200 plan response has a token for this guarded move.
+      const plan = await planResponse!.json() as { planToken: string };
+      let armed = false;
+      let changed = false;
+      let effects = 0;
+      let entered!: () => void;
+      let release!: () => void;
+      const reached = new Promise<void>((resolve) => { entered = resolve; });
+      const blocked = new Promise<void>((resolve) => { release = resolve; });
+      const originalApply = mux.applyLayout.bind(mux);
+      mux.applyLayout = (prepared, admission) => { armed = true; return originalApply(prepared, admission); };
+      const originalHandshake = fake.handshake.bind(fake);
+      fake.handshake = async () => {
+        if (armed && !changed) { entered(); await blocked; changed = true; }
+        return originalHandshake();
+      };
+      const originalSnapshot = fake.sessionSnapshot.bind(fake);
+      fake.sessionSnapshot = async () => {
+        const current = await originalSnapshot();
+        return { ...current, panes: current.panes.map((pane) => changed && pane.pane_id === replaced.paneId ? Object.assign({}, pane, { terminal_id: "replaced-unselected-process" }) : pane) };
+      };
+      const originalMove = fake.movePane.bind(fake);
+      fake.movePane = (...args) => { effects++; return originalMove(...args); };
+      const applyPath = path(selected.paneId, "/move");
+      const requestBody = { requestId: "transfer-member-race", planToken: plan.planToken, action };
+      const pending = servePaneLayoutRoute(request(applyPath, requestBody), new URL(`https://collie${applyPath}`), caller(mux), stores);
+      await reached;
+      release();
+      const refused = await pending;
+      expect(refused?.status).toBe(409);
+      expect(effects).toBe(0);
+      expect((await stores.operations.inspect(requestBody.requestId, owner, "host-one", "work"))?.state).toBe("refused");
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
+  test("whole-tab planning refuses a layout change between the first and final full-roster reads", async () => {
+    const fake = new FakeHerdr();
+    const mux = new HerdrMux(fake, () => []);
+    await mux.reachable();
+    const snapshot = await mux.snapshot();
+    const source = snapshot.panes.find((pane) => snapshot.panes.filter((row) => row.tabId === pane.tabId).length === 1)!;
+    const destination = snapshot.spaces.find((space) => space.spaceId !== source.spaceId)!;
+    const originalRead = fake.readPaneLayout.bind(fake);
+    let reads = 0;
+    fake.readPaneLayout = async (paneId) => {
+      const raw = await originalRead(paneId);
+      reads++;
+      if (reads !== 2) return raw;
+      // SAFETY: FakeHerdr returns the just-read pane_layout wire variant.
+      // SAFETY: FakeHerdr returns the just-read pane_layout wire variant.
+      const response = raw as { type: string; layout: import("../json.ts").JsonObject };
+      // SAFETY: the pane_layout variant above contains the documented area object.
+      const layout = response.layout as { area: import("../json.ts").JsonObject };
+      return { ...response, layout: { ...response.layout, area: { ...layout.area, width: 79 } } };
+    };
+    const dir = await mkdtemp(join("/var/tmp", "collie-transfer-layout-read-race-"));
+    try {
+      const url = transferPath(source.tabId);
+      const result = await servePaneLayoutRoute(request(url, {
+        destination: { type: "new_tab", workspaceId: destination.spaceId, label: "Moved" }, recipe: [],
+      }), new URL(`https://collie${url}`), caller(mux), { plans: new PlanStore(), operations: new OperationStore(dir) });
+      expect(reads).toBe(2);
+      expect(result?.status).toBe(409);
+      expect((await result!.json()).code).toBe("tab.transfer.source_changed");
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
   test("read, plan and mutation are closed, owner-bound and focus-off", async () => {
     const fake = new FakeHerdr();
     const mux = new HerdrMux(fake, () => []);

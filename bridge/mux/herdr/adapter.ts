@@ -150,7 +150,8 @@ const HERDR_BASE_CAPABILITIES = [
 const HERDR_CAPABILITIES = declareCapabilities({
   supports: [
     ...HERDR_BASE_CAPABILITIES,
-    "paneLayout", "paneSplit", "paneResize", "paneZoom", "paneSwap", "paneMove", "paneDirectionalFocus",
+    "paneLayout", "tabTransfer", "paneSplit", "paneResize", "paneZoom", "paneSwap", "paneMove", "paneDirectionalFocus",
+    "workspaceRename", "workspaceClose", "workspaceMove", "workspaceMoveBlock", "workspaceFocus", "tabMove", "tabFocus",
   ],
   unsupportedKeys: HERDR_UNSENDABLE_KEYS,
   // Herdr announces every structure change on `events.subscribe`, so there is no census and no
@@ -282,7 +283,9 @@ const GONE_CODES: readonly string[] = ["pane_not_found", "tab_not_found", "works
 /** Which refusal an exception off the socket is: a dead pane/tab, or a multiplexer that did not answer. */
 function transportRefusal<T>(err: T): MuxRefusalOutcome {
   const detail = reason(err);
-  return GONE_CODES.some((code) => detail.includes(code)) ? muxGone(detail) : muxUnreachable(detail);
+  if (GONE_CODES.some((code) => detail.includes(code))) return muxGone(detail);
+  if (["workspace_group_close_required", "confirmation_required", "invalid_workspace_order", "invalid_insert_index"].some((code) => detail.includes(code))) return muxRefused(detail);
+  return muxUnreachable(detail);
 }
 
 /**
@@ -703,6 +706,10 @@ export class HerdrMux implements MuxAdapter {
         if (!dispatchIdentity || dispatchIdentity !== identity) return muxUnreachable("The Herdr runtime changed before layout dispatch.");
         const evidence = await this.finalLayoutEvidence(action, dispatchIdentity);
         if (!evidence || !finalAdmission(action, dispatchIdentity, evidence)) return muxRefused("Layout authority or target evidence changed before dispatch.");
+        const selectedIncarnation = action.transfer ? evidence.snapshot.panes.find((item) => item.paneId === action.paneId)?.terminalIncarnation : undefined;
+        if (action.transfer && !selectedIncarnation) return muxRefused("The selected process identity is unavailable.");
+        const beforeTabIds = new Set(evidence.snapshot.tabs.map((item) => item.tabId));
+        const beforeWorkspaceIds = new Set(evidence.snapshot.spaces.map((item) => item.spaceId));
         const response = object(await movePane.call(this.client, { pane_id: action.paneId, destination: moveDestinationWire(action.destination), focus: false }));
         if (response.type !== "pane_move") throw new Error("layout.protocol: invalid pane move variant");
         const row = object(field(response, "move_result"));
@@ -717,11 +724,25 @@ export class HerdrMux implements MuxAdapter {
             (action.resolvedSourceTabId !== undefined && previousTabId !== action.resolvedSourceTabId) ||
             (action.resolvedSourceWorkspaceId !== undefined && previousWorkspaceId !== action.resolvedSourceWorkspaceId) ||
             (changed ? paneId === previousPaneId || !layout.panes.some((item) => item.paneId === paneId) : paneId !== previousPaneId) ||
-            paneIdField(pane, "tab_id") !== layout.tabId || paneIdField(pane, "workspace_id") !== layout.workspaceId || paneIdField(row, "focused_pane_id") !== layout.focusedPaneId) throw new Error("layout.protocol: move result does not match source or target layout");
+            paneIdField(pane, "tab_id") !== layout.tabId || paneIdField(pane, "workspace_id") !== layout.workspaceId || (!action.transfer && paneIdField(row, "focused_pane_id") !== layout.focusedPaneId)) throw new Error("layout.protocol: move result does not match source or target layout");
         const destination = action.destination;
         if (destination.type === "tab" && (layout.tabId !== destination.tabId || !layout.panes.some((item) => item.paneId === destination.targetPaneId))) throw new Error("layout.protocol: move destination tab mismatch");
         if (action.destination.type === "new_tab" && layout.workspaceId !== action.destination.workspaceId) throw new Error("layout.protocol: move destination workspace mismatch");
-        const value = { kind: "move" as const, changed, paneId, previousPaneId, previousTabId, previousWorkspaceId, layout };
+        const afterSnapshot = action.transfer ? await this.layoutSourceSnapshot(action) : undefined;
+        const movedPane = afterSnapshot?.panes.find((item) => item.paneId === paneId);
+        const reportedFocus = paneIdField(row, "focused_pane_id");
+        if (action.transfer && (!changed || !movedPane || movedPane.terminalIncarnation !== selectedIncarnation ||
+            movedPane.tabId !== layout.tabId || movedPane.spaceId !== layout.workspaceId ||
+            afterSnapshot?.panes.some((item) => item.paneId === action.paneId) ||
+            afterSnapshot?.panes.some((item) => item.focused) && afterSnapshot.panes.find((item) => item.focused)?.paneId !== reportedFocus ||
+            (!afterSnapshot?.panes.some((item) => item.focused) && reportedFocus !== layout.focusedPaneId))) throw new Error("layout.protocol: transferred process identity did not survive pane.move");
+        const transferResult = action.transfer && afterSnapshot ? {
+          createdTabId: beforeTabIds.has(layout.tabId) ? undefined : layout.tabId,
+          createdWorkspaceId: beforeWorkspaceIds.has(layout.workspaceId) ? undefined : layout.workspaceId,
+          closedTabId: afterSnapshot.tabs.some((item) => item.tabId === previousTabId) ? undefined : previousTabId,
+          closedWorkspaceId: afterSnapshot.spaces.some((item) => item.spaceId === previousWorkspaceId) ? undefined : previousWorkspaceId,
+        } : {};
+        const value = { kind: "move" as const, changed, paneId, previousPaneId, previousTabId, previousWorkspaceId, layout, ...transferResult };
         if (await this.layoutRuntimeIdentity() !== identity) throw new Error("layout runtime changed after dispatch");
         return muxOk(value);
       }
@@ -991,12 +1012,50 @@ export class HerdrMux implements MuxAdapter {
     }
   }
 
-  async renameTab(tabId: string, label: string): Promise<MuxAck> {
+  async renameTab(tabId: string, label: string, finalAdmission?: () => boolean): Promise<MuxAck> {
+    if (finalAdmission) return this.organizationAttempt("renameTab", finalAdmission, () => this.client.renameTab(tabId, label));
     return this.attempt(() => this.client.renameTab(tabId, label));
   }
 
-  async closeTab(tabId: string): Promise<MuxAck> {
+  async closeTab(tabId: string, finalAdmission?: () => boolean): Promise<MuxAck> {
+    if (finalAdmission) return this.organizationAttempt("closeTab", finalAdmission, () => this.client.closeTab(tabId));
     return this.attempt(() => this.client.closeTab(tabId));
+  }
+
+  async renameSpace(spaceId: string, label: string, finalAdmission: () => boolean): Promise<MuxAck> {
+    return this.organizationAttempt("workspaceRename", finalAdmission, () => this.client.renameWorkspace(spaceId, label));
+  }
+  async closeSpace(spaceId: string, closeGroup: boolean, finalAdmission: () => boolean): Promise<MuxAck> {
+    return this.organizationAttempt("workspaceClose", finalAdmission, () => this.client.closeWorkspace(spaceId, closeGroup));
+  }
+  async moveSpace(spaceId: string, insertIndex: number, finalAdmission: () => boolean): Promise<MuxAck> {
+    return this.organizationAttempt("workspaceMove", finalAdmission, () => this.client.moveWorkspace(spaceId, insertIndex));
+  }
+  async moveSpaceBlock(spaceIds: readonly string[], beforeSpaceId: string | null, finalAdmission: () => boolean): Promise<MuxAck> {
+    return this.organizationAttempt("workspaceMoveBlock", finalAdmission, () => this.client.moveWorkspaceBlock(spaceIds, beforeSpaceId));
+  }
+  async focusSpace(spaceId: string, finalAdmission: () => boolean): Promise<MuxAck> {
+    return this.organizationAttempt("workspaceFocus", finalAdmission, () => this.client.focusWorkspace(spaceId));
+  }
+  async moveTab(tabId: string, insertIndex: number, finalAdmission: () => boolean): Promise<MuxAck> {
+    return this.organizationAttempt("tabMove", finalAdmission, () => this.client.moveTab(tabId, insertIndex));
+  }
+  async focusTab(tabId: string, finalAdmission: () => boolean): Promise<MuxAck> {
+    return this.organizationAttempt("tabFocus", finalAdmission, () => this.client.focusTab(tabId));
+  }
+
+  /** Organization calls are absent until the existing schema-22 runtime witness is current. */
+  private async organizationAttempt(capability: import("../capabilities.ts").MuxCapability, finalAdmission: () => boolean, action: () => Promise<void>): Promise<MuxAck> {
+    const identity = await this.layoutRuntimeIdentity();
+    if (!identity) return muxUnsupported(capability, "This Herdr runtime has not proved the organization API contract.");
+    if (!finalAdmission()) return muxRefused("Organization write authority changed before dispatch.");
+    try {
+      await action();
+      if (await this.layoutRuntimeIdentity() !== identity) return muxUnreachable("Herdr runtime changed during organization action");
+      return muxAck();
+    } catch (err) {
+      return transportRefusal(err);
+    }
   }
 
   /** A new space with a fresh shell pane. Herdr returns the workspace record, so its label is real. */

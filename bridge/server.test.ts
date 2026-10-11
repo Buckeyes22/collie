@@ -2839,6 +2839,11 @@ describe("muxConfigBody — the capability declaration, as the phone reads it", 
     expect(wire.readLimits).toEqual({ maxRequestedLines: 1_000 });
   });
 
+  test("whole-tab capability requires durable move receipts", () => {
+    expect(muxConfigBody({ mux: "reference", capabilities: everything }, false).capabilities.tabTransfer).toBe(false);
+    expect(muxConfigBody({ mux: "reference", capabilities: everything }, true).capabilities.tabTransfer).toBe(true);
+  });
+
   test("an adapter missing capabilities says false, never omits the key", () => {
     const wire = muxConfigBody({ mux: "partial", capabilities: partial });
     expect(wire.capabilities.agentSessionRef).toBe(false);
@@ -3246,9 +3251,9 @@ describe("the host gate — `?host=` selects among enrolled members and nothing 
     // three writes on a phone's own launcher rows, served by one function (ADR 0094), and the two
     // writes on this machine's one-off command history, served by one function (ADR 0095), and the
     // read that checks a typed line before it runs (ADR 0095, amendment), and the
-    // owning workspace's Source read and the scoped agent capability inventory) reach
+    // owning workspace's Source read, scoped agent inventory and workspace/tab organization) reach
     // their runtime through the caller's resolver and nothing else.
-    expect([...src.matchAll(/await caller\.resolve\(\);/g)]).toHaveLength(24);
+    expect([...src.matchAll(/await caller\.resolve\(\);/g)]).toHaveLength(25);
     // Exactly eight `registry.get(` calls remain, and each is a sanctioned one, named here rather
     // than exempted: assembling THIS collie's own snapshot body; `localRuntime`, the single
     // "(session) → runtime, or 404" helper both callers share; `/api/config`, which reports THIS

@@ -138,6 +138,10 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(this, SettingsActivity::class.java))
         }
         binding.dashboardChangesButton.setOnClickListener { showChangesWorkspacePicker() }
+        binding.dashboardOrganizeButton.setOnClickListener {
+            if (viewModel.currentScope.viewAll) showSessionSwitcher()
+            else startActivity(OrganizeSpacesActivity.intent(this, viewModel.currentScope))
+        }
         binding.newWorkflowButton.setOnClickListener {
             startActivity(NewActivity.intent(this, viewModel.currentScope))
         }

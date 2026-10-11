@@ -76,6 +76,14 @@
             android:exported="false"
             android:parentActivityName=".ui.MainActivity" />
         <activity
+            android:name=".ui.OrganizeSpacesActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.MainActivity" />
+        <activity
+            android:name=".ui.TabTransferActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.MainActivity" />
+        <activity
             android:name=".ui.NewActivity"
             android:exported="false"
             android:parentActivityName=".ui.MainActivity"
