@@ -37,7 +37,7 @@ internal object FilesReadHandoff {
             pending[token] = entry
         }
         // Registration/removal never invokes repository code while holding the custody lock.
-        val registration = repository.onReadContextInvalidated { retire(token) }
+        val registration = repository.onFilesActorRetired(context) { retire(token) }
         val kept = synchronized(lock) {
             if (pending[token] === entry) { entry.registration = registration; true } else false
         }

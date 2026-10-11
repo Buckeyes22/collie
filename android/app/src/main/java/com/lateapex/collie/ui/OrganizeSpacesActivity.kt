@@ -19,6 +19,7 @@ import com.lateapex.collie.CollieApplication
 import com.lateapex.collie.R
 import com.lateapex.collie.data.CollieRepository
 import com.lateapex.collie.data.ScopedReadContext
+import com.lateapex.collie.data.custodyOwner
 import com.lateapex.collie.domain.Scope
 import com.lateapex.collie.network.ApiFailure
 import com.lateapex.collie.network.ApiResult
@@ -46,6 +47,7 @@ class OrganizeSpacesActivity : AppCompatActivity() {
     private var expandedWorkspaceId: String? = null
     private var busy = false
     private var uncertainRequestId: String? = null
+    private var uncertainOwnerIdentity: String? = null
     private var authorityRegistration: AutoCloseable? = null
     private val planActors = linkedMapOf<String, ScopedReadContext>()
     private val layoutLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -62,6 +64,7 @@ class OrganizeSpacesActivity : AppCompatActivity() {
             viewAll = intent.getBooleanExtra(EXTRA_VIEW_ALL, false),
         )
         uncertainRequestId = savedInstanceState?.getString(STATE_UNCERTAIN_ID)
+        uncertainOwnerIdentity = savedInstanceState?.getString(STATE_UNCERTAIN_OWNER)
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(12), dp(16), dp(24))
@@ -95,15 +98,23 @@ class OrganizeSpacesActivity : AppCompatActivity() {
             setTextColor(getColor(R.color.collie_muted))
             setPadding(0, dp(16), 0, 0)
         }, fullWidth())
-        authorityRegistration = repository.onReadContextInvalidated {
-            runOnUiThread {
-                busy = false
-                context = null
-                snapshot = null
-                capabilities = emptyMap()
-                planActors.clear()
-                notice.text = getString(R.string.organization_scope_changed)
-                render()
+        authorityRegistration = repository.onReadContextRetired { event ->
+            withRetirementOnMain(event, { context }) {
+                runOnUiThread {
+                    busy = false
+                    if (event.reason in setOf(com.lateapex.collie.data.AuthorityInvalidation.CONNECTION_CHANGED,
+                        com.lateapex.collie.data.AuthorityInvalidation.DISCONNECTED, com.lateapex.collie.data.AuthorityInvalidation.PAIRING_RETIRED) &&
+                        uncertainOwnerIdentity == event.owner?.storageIdentity) {
+                        uncertainRequestId = null
+                        uncertainOwnerIdentity = null
+                    }
+                    context = null
+                    snapshot = null
+                    capabilities = emptyMap()
+                    planActors.clear()
+                    notice.text = getString(R.string.organization_scope_changed)
+                    render()
+                }
             }
         }
         if (scope.viewAll) {
@@ -113,7 +124,7 @@ class OrganizeSpacesActivity : AppCompatActivity() {
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
-        uncertainRequestId?.let { outState.putString(STATE_UNCERTAIN_ID, it) }
+        uncertainRequestId?.let { outState.putString(STATE_UNCERTAIN_ID, it); outState.putString(STATE_UNCERTAIN_OWNER, uncertainOwnerIdentity) }
         super.onSaveInstanceState(outState)
     }
 
@@ -128,8 +139,8 @@ class OrganizeSpacesActivity : AppCompatActivity() {
         busy = true
         notice.text = getString(R.string.organization_loading)
         render()
+        val actor = repository.readContext(scope)
         lifecycleScope.launch {
-            val actor = repository.readContext(scope)
             if (actor == null) {
                 busy = false
                 context = null
@@ -139,8 +150,16 @@ class OrganizeSpacesActivity : AppCompatActivity() {
                 render()
                 return@launch
             }
+            if (context != null && (context?.connection !== actor.connection || context?.connectionIncarnation != actor.connectionIncarnation)) {
+                snapshot = null; capabilities = emptyMap(); planActors.clear(); uncertainRequestId = null; rows.removeAllViews()
+            }
+            if (uncertainRequestId != null) {
+                if (uncertainOwnerIdentity == null && !actor.committedStore) uncertainOwnerIdentity = actor.custodyOwner.storageIdentity
+                else if (uncertainOwnerIdentity != actor.custodyOwner.storageIdentity) { uncertainRequestId = null; uncertainOwnerIdentity = null }
+            }
             context = actor
             val response = repository.paneSnapshot(scope, actor)
+            if (context !== actor) return@launch
             if (!repository.isCurrent(actor)) {
                 context = null
                 snapshot = null
@@ -153,10 +172,10 @@ class OrganizeSpacesActivity : AppCompatActivity() {
             when (response) {
                 is ApiResult.Success -> {
                     snapshot = response.value
-                    when (val config = repository.config(scope, actor)) {
-                        is ApiResult.Success -> capabilities = config.value.mux?.capabilities.orEmpty()
-                        else -> capabilities = emptyMap()
-                    }
+                    val config = repository.config(scope, actor)
+                    if (context !== actor) return@launch
+                    if (repository.isCurrent(actor)) capabilities = (config as? ApiResult.Success)?.value?.mux?.capabilities.orEmpty()
+                    if (context !== actor) return@launch
                     if (!repository.isCurrent(actor)) {
                         context = null
                         snapshot = null
@@ -232,9 +251,9 @@ class OrganizeSpacesActivity : AppCompatActivity() {
             actions.addView(button(R.string.organization_close, "closeTab") { planCloseTab(tab.tabId, tab.label, tab.paneCount) }, weightWidth())
             line.addView(actions, fullWidth())
             if (capabilities["tabTransfer"] == true) {
-                line.addView(button(R.string.tab_transfer_open, disabled = context?.let(repository::isCurrent) != true) {
-                    val actor = context ?: return@button
-                    if (!repository.isCurrent(actor)) return@button
+                line.addView(button(R.string.tab_transfer_open, disabled = context?.let(repository::isCurrent) != true) openTransfer@{
+                    val actor = context ?: return@openTransfer
+                    if (context !== actor || !repository.isCurrent(actor)) return@openTransfer
                     transferLauncher.launch(TabTransferActivity.intent(this, scope, tab.tabId, workspace.workspaceId))
                 }, fullWidth())
             }
@@ -260,9 +279,9 @@ class OrganizeSpacesActivity : AppCompatActivity() {
                         textSize = 13f
                         contentDescription = text
                     }, LinearLayout.LayoutParams(0, dp(48), 1f))
-                    paneLine.addView(button(R.string.organization_move_pane, disabled = capabilities["paneMove"] != true || context?.let(repository::isCurrent) != true) {
-                        val actor = context ?: return@button
-                        if (!repository.isCurrent(actor)) return@button
+                    paneLine.addView(button(R.string.organization_move_pane, disabled = capabilities["paneMove"] != true || context?.let(repository::isCurrent) != true) openLayout@{
+                        val actor = context ?: return@openLayout
+                        if (context !== actor || !repository.isCurrent(actor)) return@openLayout
                         layoutLauncher.launch(android.content.Intent(this, LayoutActivity::class.java).apply {
                             putExtra(LayoutActivity.EXTRA_PANE_ID, pane.paneId)
                             putExtra(LayoutActivity.EXTRA_HOST, scope.host)
@@ -361,6 +380,7 @@ class OrganizeSpacesActivity : AppCompatActivity() {
         render()
         lifecycleScope.launch {
             val result = repository.planOrganization(scope, action, actor)
+            if (context !== actor) return@launch
             if (!repository.isCurrent(actor)) { busy = false; notice.text = getString(R.string.organization_scope_changed); return@launch }
             busy = false
             when (result) {
@@ -388,7 +408,8 @@ class OrganizeSpacesActivity : AppCompatActivity() {
         render()
         lifecycleScope.launch {
             val result = repository.applyOrganization(scope, action, requestId, plan.planToken, actor)
-            if (!repository.isCurrent(actor)) { uncertainRequestId = requestId; busy = false; notice.text = getString(R.string.organization_unknown_notice); render(); return@launch }
+            if (context !== actor) return@launch
+            if (!repository.isCurrent(actor)) { uncertainRequestId = requestId; uncertainOwnerIdentity = actor.custodyOwner.storageIdentity; busy = false; notice.text = getString(R.string.organization_unknown_notice); render(); return@launch }
             busy = false
             when (result) {
                 is ApiResult.Success -> {
@@ -396,7 +417,7 @@ class OrganizeSpacesActivity : AppCompatActivity() {
                         notice.text = getString(R.string.organization_succeeded)
                         refreshAfterMutation(actor)
                     } else {
-                        uncertainRequestId = requestId
+                        uncertainRequestId = requestId; uncertainOwnerIdentity = actor.custodyOwner.storageIdentity
                         notice.text = getString(R.string.organization_unknown_notice)
                         render()
                     }
@@ -406,13 +427,13 @@ class OrganizeSpacesActivity : AppCompatActivity() {
                         notice.text = getString(R.string.organization_refused)
                         refresh()
                     } else {
-                        uncertainRequestId = requestId
+                        uncertainRequestId = requestId; uncertainOwnerIdentity = actor.custodyOwner.storageIdentity
                         notice.text = getString(R.string.organization_unknown_notice)
                         render()
                     }
                 }
                 is ApiResult.NotModified -> {
-                    uncertainRequestId = requestId
+                    uncertainRequestId = requestId; uncertainOwnerIdentity = actor.custodyOwner.storageIdentity
                     notice.text = getString(R.string.organization_unknown_notice)
                     render()
                 }
@@ -423,7 +444,7 @@ class OrganizeSpacesActivity : AppCompatActivity() {
     private suspend fun refreshAfterMutation(actor: ScopedReadContext) {
         if (!repository.isCurrent(actor)) return
         val result = repository.paneSnapshot(scope, actor)
-        if (!repository.isCurrent(actor)) return
+        if (context !== actor || !repository.isCurrent(actor)) return
         if (result is ApiResult.Success) snapshot = result.value
         render()
     }
@@ -438,7 +459,8 @@ class OrganizeSpacesActivity : AppCompatActivity() {
         render()
         lifecycleScope.launch {
             val receipt = repository.controlOperation(scope, requestId, actor)
-            if (context !== actor || !repository.isCurrent(actor)) {
+            if (context !== actor) return@launch
+            if (!repository.isCurrent(actor)) {
                 busy = false
                 notice.text = getString(R.string.organization_scope_changed)
                 render()
@@ -450,7 +472,8 @@ class OrganizeSpacesActivity : AppCompatActivity() {
                         "succeeded", "refused" -> {
                             val state = receipt.value.operation.state
                             val refreshed = repository.paneSnapshot(scope, actor)
-                            if (context !== actor || !repository.isCurrent(actor)) {
+                            if (context !== actor) return@launch
+                            if (!repository.isCurrent(actor)) {
                                 busy = false
                                 notice.text = getString(R.string.organization_scope_changed)
                                 render()
@@ -541,6 +564,7 @@ class OrganizeSpacesActivity : AppCompatActivity() {
         private const val EXTRA_SESSION = "organization_session"
         private const val EXTRA_VIEW_ALL = "organization_view_all"
         private const val STATE_UNCERTAIN_ID = "organization_uncertain_request"
+        private const val STATE_UNCERTAIN_OWNER = "organization_uncertain_owner"
         fun intent(context: Context, scope: Scope): Intent = Intent(context, OrganizeSpacesActivity::class.java).apply {
             putExtra(EXTRA_HOST, scope.host)
             putExtra(EXTRA_SESSION, scope.session)

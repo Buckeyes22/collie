@@ -197,3 +197,29 @@ preserves pairing; only authoritative Collie pairing refusal retires it. Same-id
 expiry retain a stable enrollment witness. Exact authenticated enrollment retirement commits the
 encrypted outbox with custody publication; a listener alone is not a durable B22 ACK. All genuine
 issuer/device/Windows/Crew and B22/B23 consumer acceptance remains open.
+
+Native connection custody now carries an encrypted durable incarnation ID alongside the existing bearer envelope. Original read actors, Files handoffs and shared image work compare that witness after awaits and at final transport dispatch, so a coalesced same-object clear/re-save cannot revive retired custody. Store callbacks remain bounded and run outside mutation/admission/UI locks; same-live-instance recommits keep their ID. Production lifecycle CAS requires a committed snapshot; the original reference-only API remains test compatibility and is not a production fallback. Legacy envelopes without ID require deliberate reconnect. This local change adds no HTTP/Crew field, permission or vendor mutation CAS. Fresh canonical joined review and actual acceptance remain open; it does not close full B18 H11/R1.
+
+The local committed-incarnation admission fence belongs to the generation being retired,
+not to a subsequently configured successor. Genuine same-generation and unsupported-store
+pending acknowledgements refuse new actor capture; held original custody remains temporarily
+fenced. A distinct committed successor is detected first and remains independently admissible.
+Original-owner retirement events and atomic selective encrypted-journal cleanup preserve B
+state and its uncertain-operation barrier while delayed A callbacks are acknowledged.
+The final HTTP gate also carries the original declared operation predicate, including current
+write authority for terminal/structural mutations and the existing paired-read exception for
+device-owned preferences. This changes no HTTP route, Crew classification, permission or retry
+contract. Fresh native and independent whole validation and the canonical B18/B22/B23/B24
+shared-source join remain required; B18 H11/R1 and actual acceptance remain OPEN.
+
+### Joined native retirement ownership (B10 corrective26)
+
+The joined repository retains both the original request tag (`RequestActorCustody`) and the declared-operation final dispatch predicate (`OriginalReadActor`). A delayed request cannot acquire a replacement connection or send a mutation after its original write verdict is withdrawn. Device-owned paired read preferences keep their declared exception. A genuine same-incarnation pending acknowledgement refuses new actors; a distinct committed incarnation can be admitted independently of old cleanup.
+
+Proxy identity custody adds optional encrypted local ownership metadata: durable owner/incarnation, process identity, and connection/navigation generation. These are not profile fields, headers, bearer grants, or server protocol changes. Only admission of the original current actor may promote a same-owner record to its current process/navigation. An older same-process actor cannot downgrade that stamp. A nonpermanent event from another/unknown process cannot erase a known freshly adopted copy; permanent retirement selects the exact durable original incarnation. Legacy unstamped copies grant no new authority and retain their existing closed origin/identity checks. Exact-owner removal persists the bounded binding-retirement journal in the same commit before callbacks run outside its monitor. Failed persistence preserves disk bytes and makes the live journal unavailable.
+
+Actual AppContainer, identity coordinator, interceptor, callback handoff and profile Activity carry copied original owners. Issuer calls and protected requests cancel outside all custody/store/admission locks. Nonce entries retain their original actor, stay capped at 16, and an old response cannot remove a fresh entry with the same key. Four callback entries, 60-second expiry and the 8,192-character bound remain unchanged; the browser transaction remains encrypted and one-shot. Scope cleanup compares its original navigation and cannot globally retire an admitted successor. Stopping the profile Activity still wipes private editor/review text while retaining its owned encrypted browser transaction.
+
+Local acknowledged terminal input is neither vendor transcript nor an automatic resend queue. Production caches key the committed incarnation and selectively erase retired entries, including same-object ABA; harmless current-instance recommits preserve acknowledgements. Unsupported stores retain the established in-memory origin/pairing-token fallback, with explicit disconnection/pairing retirement still selective. No acknowledgement enters persistent storage, Bundle state, logs, or dispatch authority.
+
+The original corrective26 checkpoint2 native attempt remains failed (1,156 tests, three failures) and immutable. Two new read-only consumer fixtures lacked explicit snapshot/device authority; their setup now obtains a successful B snapshot before the no-extra-read baseline, preserving every assertion and deadline. The original acknowledged-input test remains byte-identical. New tests exercise actual encrypted connection/store transitions, a preexisting container/profile Activity, pinned HTTPS counted nonce/mutation traffic, durable failed-persistence behavior, process-stamp recreation, and original-owner cleanup. They are source fixtures until ROOT runs the joined native gates. Prior isolated B10/B24 approvals do not approve this combined source. Joined native, independent whole review, B18 H11/R1, B22/B23/B26 reconciliation and actual platform/device/vendor acceptance remain OPEN.

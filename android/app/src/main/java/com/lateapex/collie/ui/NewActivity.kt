@@ -117,23 +117,31 @@ class NewActivity : AppCompatActivity() {
     private fun observeRepositoryAuthority() {
         authoritySubscription?.close()
         connectionObservation?.cancel()
-        authoritySubscription = repository.onAuthorityInvalidated { reason ->
-            runOnUiThread {
-                val contextIsStale = contextKey?.let { !repository.isCurrent(it) } == true
-                if (reason == AuthorityInvalidation.SCOPE_CHANGED && scopeSelectionInProgress) return@runOnUiThread
-                if (reason == AuthorityInvalidation.SCOPE_CHANGED && !contextIsStale) return@runOnUiThread
-                uiOperation++
-                running = false
-                scopedSnapshotReady = false
-                progress.isVisible = false
-                launchButton.isEnabled = false
-                folderPicker.render(folders, cwd.text.toString().ifBlank { null }, allowStar = false)
-                status.setText(R.string.new_authority_unavailable)
+        authoritySubscription = repository.onAuthorityRetired { event ->
+            withRetirementOnMain(event, { contextKey }) {
+                val reason = event.reason
+                runOnUiThread {
+                    val contextIsStale = contextKey?.let { !repository.isCurrent(it) } == true
+                    if (reason == AuthorityInvalidation.SCOPE_CHANGED && scopeSelectionInProgress) return@runOnUiThread
+                    if (reason == AuthorityInvalidation.SCOPE_CHANGED && !contextIsStale) return@runOnUiThread
+                    uiOperation++
+                    running = false
+                    scopedSnapshotReady = false
+                    progress.isVisible = false
+                    launchButton.isEnabled = false
+                    folderPicker.render(folders, cwd.text.toString().ifBlank { null }, allowStar = false)
+                    status.setText(R.string.new_authority_unavailable)
+                }
             }
         }
         var observedConnection = repository.connection.value
         connectionObservation = lifecycleScope.launch {
             repository.connection.collect { current ->
+                val adopted = contextKey?.takeIf { !repository.isActorRetired(it) }
+                if (adopted != null) {
+                    if (adopted.connection === current) observedConnection = current
+                    return@collect
+                }
                 if (current === observedConnection) return@collect
                 observedConnection = current
                 uiOperation++
@@ -270,6 +278,9 @@ class NewActivity : AppCompatActivity() {
             showUnresolvedIntent()
             return
         }
+        if (contextKey != null && (contextKey?.connection !== captured.connection || contextKey?.connectionIncarnation != captured.connectionIncarnation)) {
+            catalog = emptyList(); inventory = null; folders = null; selectedKey = null; requiresTargetChoice = true; renderChoices()
+        }
         contextKey = captured
         lifecycleScope.launch {
             val scopedSnapshot = repository.snapshot(scope, captured)
@@ -314,7 +325,7 @@ class NewActivity : AppCompatActivity() {
             }
             folderPicker.render(folders, cwd.text.toString().ifBlank { null }, repository.writesAllowed(scope))
             launchButton.isEnabled = catalog.any { it.available && it.key == selectedKey } && !requiresTargetChoice && writesAvailable() &&
-                repository.unresolvedLaunchIntents(scope).isEmpty()
+                ownedUnresolvedIntents().isEmpty()
             showUnresolvedIntent()
         }
     }
@@ -331,6 +342,10 @@ class NewActivity : AppCompatActivity() {
             loadCatalog()
             return
         }
+        if (contextKey != null && (contextKey?.connection !== inventoryContext.connection || contextKey?.connectionIncarnation != inventoryContext.connectionIncarnation)) {
+            catalog = emptyList(); inventory = null; folders = null; selectedKey = null; requiresTargetChoice = true; renderChoices()
+        }
+        contextKey = inventoryContext
         progress.isVisible = true
         lifecycleScope.launch {
             val result = repository.snapshot(Scope(viewAll = true), inventoryContext)
@@ -338,6 +353,7 @@ class NewActivity : AppCompatActivity() {
                 settleStaleOperation(operation)
                 return@launch
             }
+            if (operation != uiOperation) return@launch
             progress.isVisible = false
             if (result is ApiResult.Success) inventory = result.value
             loadCatalog()
@@ -428,7 +444,7 @@ class NewActivity : AppCompatActivity() {
                     selectedKey = option.key
                     requiresTargetChoice = false
                     applySelectedFolderPolicy(option)
-                    launchButton.isEnabled = writesAvailable() && !running && repository.unresolvedLaunchIntents(scope).isEmpty()
+                    launchButton.isEnabled = writesAvailable() && !running && ownedUnresolvedIntents().isEmpty()
                 }
             }
             choicesView.addView(radio, RadioGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -500,7 +516,7 @@ class NewActivity : AppCompatActivity() {
             status.setText(R.string.new_write_unavailable)
             return
         }
-        if (repository.unresolvedLaunchIntents(scope).isNotEmpty()) {
+        if (ownedUnresolvedIntents().isNotEmpty()) {
             showUnresolvedIntent()
             launchButton.isEnabled = false
             return
@@ -540,7 +556,7 @@ class NewActivity : AppCompatActivity() {
                     is ApiResult.Success -> if (result.value.ok && result.value.pane != null) openCreatedPane(result.value)
                     else status.text = result.value.error ?: getString(R.string.new_start_failed)
                     is ApiResult.Failure -> {
-                        val unresolved = repository.unresolvedLaunchIntents(scope).firstOrNull { it.intent.operation == "launch" }
+                        val unresolved = ownedUnresolvedIntents().firstOrNull { it.intent.operation == "launch" }
                         if (unresolved != null) {
                             status.setText(R.string.new_outcome_unknown)
                             showRecoveryActions(unresolved.intent.requestId, unresolved.intent.receiptMode)
@@ -553,15 +569,18 @@ class NewActivity : AppCompatActivity() {
                     running = false
                     progress.isVisible = false
                     launchButton.isEnabled = catalog.any { it.available && it.key == selectedKey } && !requiresTargetChoice && writesAvailable() &&
-                        repository.unresolvedLaunchIntents(scope).isEmpty()
+                        ownedUnresolvedIntents().isEmpty()
                 }
             }
         }
     }
 
+    /** Local recovery rows stay bound to the accepted original; callbacks never mint an actor. */
+    private fun ownedUnresolvedIntents() = contextKey?.let { repository.unresolvedLaunchIntents(scope, it) }.orEmpty()
+
     private fun showUnresolvedIntent() {
         recoverySlot.removeAllViews()
-        val unresolved = repository.unresolvedLaunchIntents(scope).firstOrNull { it.intent.operation == "launch" } ?: return
+        val unresolved = ownedUnresolvedIntents().firstOrNull { it.intent.operation == "launch" } ?: return
         status.setText(R.string.new_outcome_unknown)
         launchButton.isEnabled = false
         showRecoveryActions(unresolved.intent.requestId, unresolved.intent.receiptMode)
@@ -602,7 +621,7 @@ class NewActivity : AppCompatActivity() {
                                 running = false
                                 progress.isVisible = false
                                 launchButton.isEnabled = catalog.any { it.available && it.key == selectedKey } && !requiresTargetChoice && writesAvailable() &&
-                                    repository.unresolvedLaunchIntents(scope).isEmpty()
+                                    ownedUnresolvedIntents().isEmpty()
                             }
                         }
                     }

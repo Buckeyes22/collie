@@ -9,6 +9,7 @@ import com.lateapex.collie.CollieApplication
 import com.lateapex.collie.R
 import com.lateapex.collie.data.CollieRepository
 import com.lateapex.collie.data.ScopedReadContext
+import com.lateapex.collie.data.custodyOwner
 import com.lateapex.collie.domain.PollingBackoff
 import com.lateapex.collie.domain.Scope
 import com.lateapex.collie.network.ApiFailure
@@ -80,6 +81,7 @@ internal data class SpaceUiState(
     val writeAuthorized: Boolean = false,
     val readSource: ReadSourceState = ReadSourceState.Unavailable(0),
     val refreshNotice: String? = null,
+    val originalReadContext: ScopedReadContext? = null,
 )
 
 internal class SpaceViewModel(
@@ -98,21 +100,35 @@ internal class SpaceViewModel(
     private var observedConnection = repository.connection.value
     private var lastGoodCapturedAt: Long? = null
 
-    private val authorityRegistration = repository.onAuthorityInvalidated { reason ->
-        if (reason == com.lateapex.collie.data.AuthorityInvalidation.ACCESS_FROZEN) {
-            repository.accessFailure?.takeIf { it is ApiFailure.Http && it.status in setOf(401, 403) }?.let { failure ->
-                mutableState.value = mutableState.value.copy(loading = false, error = MainViewModel.describe(getApplication<Application>().resources, failure))
-            }
-        }
-        mutableState.value = mutableState.value.copy(writeAuthorized = false)
-        if (reason in setOf(com.lateapex.collie.data.AuthorityInvalidation.PAIRING_RETIRED,
-            com.lateapex.collie.data.AuthorityInvalidation.CONNECTION_CHANGED,
-            com.lateapex.collie.data.AuthorityInvalidation.DISCONNECTED,
-            com.lateapex.collie.data.AuthorityInvalidation.SCOPE_CHANGED)) {
-            lastGoodCapturedAt = null
+    @Volatile internal var originalContext: ScopedReadContext? = null
+        private set
+    private fun adoptOriginalContext(context: ScopedReadContext) {
+        if (originalContext?.custodyOwner?.let { it != context.custodyOwner } == true) {
             mutableState.value = SpaceUiState()
-        } else if (reason == com.lateapex.collie.data.AuthorityInvalidation.LEAD_CHANGED) {
-            mutableState.value = mutableState.value.copy(loading = false, refreshing = false)
+
+        }
+        originalContext = context
+        mutableState.value = mutableState.value.copy(originalReadContext = context)
+    }
+
+    private val authorityRegistration = repository.onAuthorityRetired { event ->
+        withRetirementOnMain(event, { originalContext }) {
+            val reason = event.reason
+            if (reason == com.lateapex.collie.data.AuthorityInvalidation.ACCESS_FROZEN) {
+                repository.accessFailure?.takeIf { it is ApiFailure.Http && it.status in setOf(401, 403) }?.let { failure ->
+                    mutableState.value = mutableState.value.copy(loading = false, error = MainViewModel.describe(getApplication<Application>().resources, failure))
+                }
+            }
+            mutableState.value = mutableState.value.copy(writeAuthorized = false)
+            if (reason in setOf(com.lateapex.collie.data.AuthorityInvalidation.PAIRING_RETIRED,
+                com.lateapex.collie.data.AuthorityInvalidation.CONNECTION_CHANGED,
+                com.lateapex.collie.data.AuthorityInvalidation.DISCONNECTED,
+                com.lateapex.collie.data.AuthorityInvalidation.SCOPE_CHANGED)) {
+                lastGoodCapturedAt = null
+                mutableState.value = SpaceUiState()
+            } else if (reason == com.lateapex.collie.data.AuthorityInvalidation.LEAD_CHANGED) {
+                mutableState.value = mutableState.value.copy(loading = false, refreshing = false)
+            }
         }
     }
 
@@ -134,7 +150,9 @@ internal class SpaceViewModel(
         }
         viewModelScope.launch {
             repository.connection.collectLatest { connection ->
-                if (connection !== observedConnection) {
+                val adopted = originalContext?.takeIf { !repository.isActorRetired(it) }
+                if (adopted != null && adopted.connection !== connection) return@collectLatest
+                if (connection !== observedConnection && adopted?.connection !== connection) {
                     observedConnection = connection
                     mutableState.value = SpaceUiState()
                     loadConfig()
@@ -204,7 +222,8 @@ internal class SpaceViewModel(
 
     private suspend fun loadConfig() {
         val context = repository.readContext(scope, workspaceId) ?: return
-        val result = repository.config(scope)
+        adoptOriginalContext(context)
+        val result = repository.config(scope, context)
         if (!repository.isCurrent(context)) return
         if (result is ApiResult.Success) {
             mutableState.value = mutableState.value.copy(mux = result.value.mux)
@@ -220,6 +239,7 @@ internal class SpaceViewModel(
             requestInFlight.set(false)
             return
         }
+        adoptOriginalContext(context)
         mutableState.value = mutableState.value.copy(
             loading = mutableState.value.content == null,
             refreshing = manual,

@@ -66,6 +66,7 @@ internal object SpaceActionModel {
 }
 
 class SpaceActivity : AppCompatActivity() {
+    private var renderedContext: com.lateapex.collie.data.ScopedReadContext? = null
     private var authorityRegistration: AutoCloseable? = null
     private lateinit var binding: ActivitySpaceBinding
     private lateinit var viewModel: SpaceViewModel
@@ -73,6 +74,8 @@ class SpaceActivity : AppCompatActivity() {
     private lateinit var workspaceId: String
     private val adapter = SpaceAdapter(::openPane)
     private var selectedTabId: String? = null
+    private var tabCreateContext: com.lateapex.collie.data.ScopedReadContext? = null
+    private var spaceCreateContext: com.lateapex.collie.data.ScopedReadContext? = null
     private var creatingTab = false
     private var creatingSpace = false
     private var everRenderedSpace = false
@@ -112,9 +115,16 @@ class SpaceActivity : AppCompatActivity() {
             this,
             SpaceViewModel.Factory(application, workspaceId, scope),
         )[SpaceViewModel::class.java]
-        authorityRegistration = repository.onAuthorityInvalidated {
-            creatingTab = false
-            creatingSpace = false
+        authorityRegistration = repository.onAuthorityRetired { event ->
+            withRetirementOnMain(event, { renderedContext }) {
+                if (event.reason in setOf(com.lateapex.collie.data.AuthorityInvalidation.CONNECTION_CHANGED,
+                    com.lateapex.collie.data.AuthorityInvalidation.DISCONNECTED, com.lateapex.collie.data.AuthorityInvalidation.PAIRING_RETIRED)) {
+                    renderedContext = null
+                    render(SpaceUiState())
+                }
+            }
+            withRetirementOnMain(event, { tabCreateContext }) { creatingTab = false; tabCreateContext = null }
+            withRetirementOnMain(event, { spaceCreateContext }) { creatingSpace = false; spaceCreateContext = null }
         }
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) { viewModel.state.collect(::render) }
@@ -142,6 +152,7 @@ class SpaceActivity : AppCompatActivity() {
     }
 
     private fun render(state: SpaceUiState) = with(binding) {
+        renderedContext = state.originalReadContext ?: renderedContext
         if (state.error == getString(R.string.space_missing) && !missingRedirected) {
             missingRedirected = true
             Toast.makeText(
@@ -374,10 +385,11 @@ class SpaceActivity : AppCompatActivity() {
 
     private fun showNewTab() {
         if (creatingTab) return
+        val context = repository.readContext(scope, workspaceId) ?: return
+        tabCreateContext = context
         creatingTab = true
         viewModel.state.value.content?.let { renderTabStrip(it, viewModel.state.value) }
         lifecycleScope.launch {
-            val context = repository.readContext(scope, workspaceId) ?: return@launch
             try {
                 handleCreate(currentActorResult { viewModel.createTab(null, null) } ?: return@launch)
             } finally {
@@ -428,10 +440,11 @@ class SpaceActivity : AppCompatActivity() {
         }
         body.addView(sheetActionButton(getString(R.string.action_create)) {
             dialog.dismiss()
+            val context = repository.readContext(scope, workspaceId) ?: return@sheetActionButton
+            spaceCreateContext = context
             creatingSpace = true
             viewModel.state.value.content?.let { renderTabStrip(it, viewModel.state.value) }
             lifecycleScope.launch {
-                val context = repository.readContext(scope, workspaceId) ?: return@launch
                 try {
                     handleCreate(currentActorResult { viewModel.createWorkspace(label.valueOrNull(), cwd.valueOrNull()) } ?: return@launch)
                 } finally {

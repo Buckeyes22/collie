@@ -8,6 +8,7 @@ import com.lateapex.collie.CollieApplication
 import com.lateapex.collie.R
 import com.lateapex.collie.data.CollieRepository
 import com.lateapex.collie.data.ScopedReadContext
+import com.lateapex.collie.data.custodyOwner
 import com.lateapex.collie.data.StoredLaunchIntent
 import com.lateapex.collie.domain.DeviceLabel
 import com.lateapex.collie.domain.PollingBackoff
@@ -58,6 +59,7 @@ data class MainUiState(
     val refreshNotice: String? = null,
     val receiptContextBound: Boolean? = null,
     val unknownLaunchIntents: List<StoredLaunchIntent> = emptyList(),
+    val originalReadContext: ScopedReadContext? = null,
 ) {
     val panes: List<PaneSummary>
         get() = snapshot?.let { it.agents + it.shellPanes }.orEmpty()
@@ -83,18 +85,34 @@ class MainViewModel @JvmOverloads constructor(
     private var scopeValidationPending = true
     private var observedConnection = repository.connection.value
 
-    private val authorityRegistration = repository.onAuthorityInvalidated { reason ->
-        if (reason == com.lateapex.collie.data.AuthorityInvalidation.ACCESS_FROZEN) {
-            repository.accessFailure?.takeIf { it is ApiFailure.Http && it.status in setOf(401, 403) }?.let { failure ->
-                mutableState.value = mutableState.value.copy(loading = false, error = MainViewModel.describe(getApplication<Application>().resources, failure))
-            }
+    @Volatile internal var originalContext: ScopedReadContext? = null
+        private set
+    private fun adoptOriginalContext(context: ScopedReadContext) {
+        if (originalContext?.custodyOwner?.let { it != context.custodyOwner } == true) {
+            mutableState.value = MainUiState(configured = true, origin = context.key.origin,
+                label = context.connection.label, paired = context.connection.isPaired)
+            configRequested = false
+            scopeValidationPending = true
         }
-        mutableState.value = mutableState.value.copy(writeAuthorized = false)
-        if (reason in setOf(com.lateapex.collie.data.AuthorityInvalidation.PAIRING_RETIRED,
-            com.lateapex.collie.data.AuthorityInvalidation.CONNECTION_CHANGED, com.lateapex.collie.data.AuthorityInvalidation.DISCONNECTED)) {
-            mutableState.value = MainUiState()
-        } else if (reason == com.lateapex.collie.data.AuthorityInvalidation.LEAD_CHANGED) {
-            mutableState.value = mutableState.value.copy(loading = false, refreshing = false)
+        originalContext = context
+        mutableState.value = mutableState.value.copy(originalReadContext = context)
+    }
+
+    private val authorityRegistration = repository.onAuthorityRetired { event ->
+        withRetirementOnMain(event, { originalContext }) {
+            val reason = event.reason
+            if (reason == com.lateapex.collie.data.AuthorityInvalidation.ACCESS_FROZEN) {
+                repository.accessFailure?.takeIf { it is ApiFailure.Http && it.status in setOf(401, 403) }?.let { failure ->
+                    mutableState.value = mutableState.value.copy(loading = false, error = MainViewModel.describe(getApplication<Application>().resources, failure))
+                }
+            }
+            mutableState.value = mutableState.value.copy(writeAuthorized = false)
+            if (reason in setOf(com.lateapex.collie.data.AuthorityInvalidation.PAIRING_RETIRED,
+                com.lateapex.collie.data.AuthorityInvalidation.CONNECTION_CHANGED, com.lateapex.collie.data.AuthorityInvalidation.DISCONNECTED)) {
+                mutableState.value = MainUiState()
+            } else if (reason == com.lateapex.collie.data.AuthorityInvalidation.LEAD_CHANGED) {
+                mutableState.value = mutableState.value.copy(loading = false, refreshing = false)
+            }
         }
     }
 
@@ -108,7 +126,9 @@ class MainViewModel @JvmOverloads constructor(
         syncConnection()
         viewModelScope.launch {
             repository.connection.collectLatest { connection ->
-                val changed = connection != observedConnection
+                val adopted = originalContext?.takeIf { !repository.isActorRetired(it) }
+                if (adopted != null && adopted.connection !== connection) return@collectLatest
+                val changed = connection != observedConnection && adopted?.connection !== connection
                 observedConnection = connection
                 if (changed) {
                     configRequested = false
@@ -442,7 +462,7 @@ class MainViewModel @JvmOverloads constructor(
 
     fun refreshLaunchIntentState(scope: Scope = currentScope) {
         if (scope == currentScope) {
-            mutableState.value = mutableState.value.copy(unknownLaunchIntents = repository.unresolvedLaunchIntents(scope))
+            mutableState.value = mutableState.value.copy(unknownLaunchIntents = originalContext?.let { repository.unresolvedLaunchIntents(scope, it) }.orEmpty())
         }
     }
 
@@ -473,14 +493,18 @@ class MainViewModel @JvmOverloads constructor(
     }
 
     private suspend fun loadConfig() {
-        val result = repository.config()
+        val context = repository.readContext(currentScope, null) ?: return
+        adoptOriginalContext(context)
+        val result = repository.config(currentScope, context)
+        if (!repository.isCurrent(context)) return
         if (result is ApiResult.Success) {
             mutableState.value = mutableState.value.copy(
                 muxName = result.value.mux?.name?.trim()?.takeIf(String::isNotEmpty),
                 mux = result.value.mux,
                 receiptContextBound = result.value.receiptContextBound,
             )
-            val launchers = repository.launchers()
+            val launchers = repository.launchers(currentScope, context)
+            if (!repository.isCurrent(context)) return
             if (launchers is ApiResult.Success) {
                 mutableState.value = mutableState.value.copy(launchers = launchers.value)
             }
@@ -503,6 +527,7 @@ class MainViewModel @JvmOverloads constructor(
             )
             val requestedScope = scopeOverride ?: repository.selectedScope.value
             val context = expectedContext ?: repository.readContext(requestedScope) ?: return
+            adoptOriginalContext(context)
             val initialScope = if (scopeValidationPending) Scope() else requestedScope
             val initialContext = if (initialScope == requestedScope) context else {
                 if (!repository.isCurrent(context)) return
@@ -521,6 +546,7 @@ class MainViewModel @JvmOverloads constructor(
                 }
                 restore.readScope?.let { restoredScope ->
                     val restoredContext = repository.readContext(restoredScope) ?: return
+                    adoptOriginalContext(restoredContext)
                     result = repository.snapshot(restoredScope, restoredContext)
                     if (!repository.isCurrent(restoredContext)) return
                 }

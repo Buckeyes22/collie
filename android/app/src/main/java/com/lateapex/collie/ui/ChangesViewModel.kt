@@ -73,16 +73,20 @@ internal class ChangesViewModel(
     private val mutableState = MutableStateFlow(ChangesScreenState(lookup = lookup))
     val state: StateFlow<ChangesScreenState> = mutableState.asStateFlow()
     @Volatile private var generation = 0L
+    @Volatile private var custodyActor: ScopedReadContext? = null
     private val authorityRegistration: AutoCloseable
 
     init {
         repository.selectSubject(scope, target.id)
-        authorityRegistration = repository.onReadContextInvalidated { reason ->
-            generation++
-            val message = if (reason == AuthorityInvalidation.ACCESS_FROZEN || reason == AuthorityInvalidation.PAIRING_RETIRED) {
-                ChangesMessage.UNAUTHORIZED
-            } else ChangesMessage.UNAVAILABLE
-            mutableState.value = ChangesScreenState(lookup = lookup, error = message)
+        authorityRegistration = repository.onReadContextRetired { event ->
+            withRetirementOnMain(event, { custodyActor }) {
+                val reason = event.reason
+                generation++
+                val message = if (reason == AuthorityInvalidation.ACCESS_FROZEN || reason == AuthorityInvalidation.PAIRING_RETIRED) {
+                    ChangesMessage.UNAUTHORIZED
+                } else ChangesMessage.UNAVAILABLE
+                mutableState.value = ChangesScreenState(lookup = lookup, error = message)
+            }
         }
         refresh()
     }
@@ -93,6 +97,10 @@ internal class ChangesViewModel(
             mutableState.value = mutableState.value.copy(loading = false, error = ChangesMessage.NOT_CONNECTED)
             return
         }
+        if (custodyActor?.connection !== context.connection || custodyActor?.connectionIncarnation != context.connectionIncarnation) {
+            mutableState.value = ChangesScreenState(lookup = lookup)
+        }
+        custodyActor = context
         val request = ++generation
         mutableState.value = mutableState.value.copy(loading = true, detail = null, selection = null, listContext = null, error = null)
         viewModelScope.launch {
@@ -137,7 +145,7 @@ internal class ChangesViewModel(
 
     fun openHistory(repo: String) {
         val request = ++generation
-        val context = repository.readContext(scope, target.id)
+        val context = custodyActor?.takeIf(repository::isCurrent)
         if (context == null) {
             mutableState.value = mutableState.value.copy(loading = false, history = null, error = ChangesMessage.NOT_CONNECTED)
             return
@@ -168,7 +176,7 @@ internal class ChangesViewModel(
             return
         }
         val request = ++generation
-        val context = repository.readContext(scope, target.id)
+        val context = custodyActor?.takeIf(repository::isCurrent)
         if (context == null) {
             mutableState.value = mutableState.value.copy(loading = false, error = ChangesMessage.NOT_CONNECTED)
             return
@@ -211,7 +219,7 @@ internal class ChangesViewModel(
     private fun loadCommit(repo: String, commitHash: String?) {
         val selection = ChangesSelection(repo, null, commit = true, commitHash = commitHash)
         val request = ++generation
-        val context = repository.readContext(scope, target.id)
+        val context = custodyActor?.takeIf(repository::isCurrent)
         if (context == null) {
             mutableState.value = mutableState.value.copy(loading = false, selection = selection, error = ChangesMessage.NOT_CONNECTED)
             return
@@ -252,7 +260,7 @@ internal class ChangesViewModel(
     fun openCommitFile(repo: String, file: ChangedFile) {
         val selection = ChangesSelection(repo, file.path, commit = true, commitHash = mutableState.value.selection?.commitHash)
         val request = ++generation
-        val context = repository.readContext(scope, target.id)
+        val context = custodyActor?.takeIf(repository::isCurrent)
         if (context == null) {
             mutableState.value = mutableState.value.copy(loading = false, selection = selection, error = ChangesMessage.NOT_CONNECTED)
             return

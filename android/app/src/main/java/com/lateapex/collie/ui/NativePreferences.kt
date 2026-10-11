@@ -151,26 +151,33 @@ class NativePreferences(
             }.apply()
         }
 
-    fun paneDraft(key: String): String {
-        volatileDrafts[key]?.let { return it }
+    fun paneDraft(key: String): String = synchronized(sensitiveContentLock) {
+        volatileDrafts[key]?.let { return@synchronized it }
         val valueKey = "$PANE_DRAFT_PREFIX$key"
         val savedKey = "$PANE_DRAFT_SAVED_PREFIX$key"
         val value = preferences.getString(valueKey, "").orEmpty()
-        if (value.isEmpty()) return ""
+        if (value.isEmpty()) return@synchronized ""
         val savedAt = preferences.getLong(savedKey, 0L)
         if (savedAt == 0L) {
             preferences.edit().putLong(savedKey, now()).apply()
-            return value
+            return@synchronized value
         }
-        if (now() - savedAt <= PANE_DRAFT_TTL_MS) return value
+        if (now() - savedAt <= PANE_DRAFT_TTL_MS) return@synchronized value
         preferences.edit().remove(valueKey).remove(savedKey).apply()
-        return ""
+        return@synchronized ""
     }
 
-    fun savePaneDraft(key: String, value: String) {
+    fun savePaneDraft(key: String, value: String, owner: com.lateapex.collie.data.ScopedCustodyOwner? = null) = synchronized(sensitiveContentLock) {
         val valueKey = "$PANE_DRAFT_PREFIX$key"
         val savedKey = "$PANE_DRAFT_SAVED_PREFIX$key"
         val editor = preferences.edit()
+        val ownerKey = "$PANE_DRAFT_OWNER_PREFIX$key"
+        if (value.isBlank()) { volatileDraftOwners.remove(key); editor.remove(ownerKey) }
+        else {
+            val identity = owner?.storageIdentity
+            if (identity == null) { volatileDraftOwners.remove(key); editor.remove(ownerKey) }
+            else { volatileDraftOwners[key] = identity; editor.putString(ownerKey, identity) }
+        }
         when {
             value.isBlank() -> {
                 volatileDrafts.remove(key)
@@ -189,11 +196,31 @@ class NativePreferences(
     }
 
     /** Content custody retires with pairing/origin, while display preferences may survive. */
-    fun clearSensitiveContent() {
+    fun clearSensitiveContent(): Unit = synchronized(sensitiveContentLock) {
         volatileDrafts.clear()
+        volatileDraftOwners.clear()
         val editor = preferences.edit()
-        preferences.all.keys.filter { it.startsWith(PANE_DRAFT_PREFIX) || it.startsWith(PANE_DRAFT_SAVED_PREFIX) }.forEach(editor::remove)
+        preferences.all.keys.filter { it.startsWith(PANE_DRAFT_PREFIX) || it.startsWith(PANE_DRAFT_SAVED_PREFIX) || it.startsWith(PANE_DRAFT_OWNER_PREFIX) }.forEach(editor::remove)
         editor.commit()
+        Unit
+    }
+
+    /** Original-owner selective cleanup is atomic with saves on every preferences instance.
+     * Unowned legacy drafts cannot prove a successor and are retired conservatively. */
+    fun retireSensitiveContent(owner: com.lateapex.collie.data.ScopedCustodyOwner) = synchronized(sensitiveContentLock) {
+        val identity = owner.storageIdentity
+        val diskKeys = preferences.all.keys.filter { it.startsWith(PANE_DRAFT_PREFIX) }
+            .map { it.removePrefix(PANE_DRAFT_PREFIX) }
+        val retired = (diskKeys + volatileDrafts.keys).filter { key ->
+            val stored = volatileDraftOwners[key] ?: preferences.getString("$PANE_DRAFT_OWNER_PREFIX$key", null)
+            stored == null || stored == identity
+        }.toSet()
+        val editor = preferences.edit()
+        retired.forEach { key ->
+            editor.remove("$PANE_DRAFT_PREFIX$key").remove("$PANE_DRAFT_SAVED_PREFIX$key").remove("$PANE_DRAFT_OWNER_PREFIX$key")
+        }
+        check(editor.commit()) { "Unable to retire original-owner pane drafts" }
+        retired.forEach { volatileDrafts.remove(it); volatileDraftOwners.remove(it) }
     }
 
     fun fitsPaneDraftStore(value: String): Boolean = value.length <= MAX_PERSISTED_DRAFT_CHARS
@@ -225,6 +252,9 @@ class NativePreferences(
         internal const val DASHBOARD_SCOPE_HOST = "dashboard_scope_host"
         internal const val DASHBOARD_SCOPE_SESSION = "dashboard_scope_session"
         internal const val DASHBOARD_SCOPE_VIEW_ALL = "dashboard_scope_view_all"
+        private val sensitiveContentLock = Any()
+        private val volatileDraftOwners = mutableMapOf<String, String>()
+        private const val PANE_DRAFT_OWNER_PREFIX = "pane_draft_owner:"
         private val volatileDrafts = mutableMapOf<String, String>()
     }
 }

@@ -19,38 +19,64 @@ class ProxySignInCoordinator(private val store: ProxyIdentityStore, private val 
     }) {
     val bindingLifecycle = ProxyBindingLifecycle(store)
     @androidx.annotation.VisibleForTesting internal var beforePublicationForTesting: () -> Unit = {}
+    private class IssuerCustody(val actor: ScopedReadContext) { val retired = java.util.concurrent.atomic.AtomicBoolean() }
     private val credentialCalls = java.util.concurrent.ConcurrentHashMap.newKeySet<Call>()
+    private val credentialOwners = java.util.concurrent.ConcurrentHashMap<Call, IssuerCustody>()
     private val authorityEpoch = java.util.concurrent.atomic.AtomicLong()
     fun retire() {
         authorityEpoch.incrementAndGet(); credentialCalls.forEach { it.cancel() }
         store.retire()
     }
-    fun suspendPresentation() { store.suspendPresentation() }
+    fun retire(event: AuthorityRetirement, removeRecord: Boolean = false) {
+        // Persistence closes publication first. Cancellation runs outside every store/custody lock.
+        try {
+            if (store.retireOwned(event, removeRecord) && removeRecord) {
+                bindingLifecycle.pending().forEach(bindingLifecycle::publish)
+            }
+        } finally {
+            credentialOwners.entries.filter { event.affects(it.value.actor) }.forEach { (call, owner) ->
+                owner.retired.set(true)
+                call.cancel()
+            }
+        }
+    }
+    fun suspendPresentation(actor: ScopedReadContext? = null) {
+        if (actor == null) store.suspendPresentation() else store.suspendPresentation(actor)
+    }
     private val processIdentity = UUID.randomUUID().toString()
     fun deviceKeyThumbprint(actor: ScopedReadContext): String { require(isCurrent(actor)); return key.thumbprint }
     fun configured(): Boolean = store.hasCustody()
     fun importProfile(raw: String, actor: ScopedReadContext) {
-        val (lease, prior) = store.capture()
+        require(isCurrent(actor))
+        val (lease, prior) = store.captureOwned(actor)
         val profile = ProxyProfile.parse(raw)
         require(current() === actor.connection && isCurrent(actor))
         require(actor.connection.origin.headerValue + "/" == profile.gatewayOrigin)
-        val imported = ProxyRecord(origin = actor.connection.origin.value, connectionIdentity = actor.key.pairedDeviceIdentity, profile = raw, binding = prior?.let { it.binding ?: legacyWitness(it) })
+        val sameOwner = prior?.let { it.origin == actor.key.origin && it.connectionIdentity == actor.key.pairedDeviceIdentity } == true
+        val witness = prior?.let { it.binding ?: legacyWitness(it) }
+        val imported = ProxyRecord(origin = actor.connection.origin.value, connectionIdentity = actor.key.pairedDeviceIdentity,
+            profile = raw, binding = witness.takeIf { sameOwner }, custody = actor.custodyVersion)
+        val retired = witness?.takeUnless { sameOwner }?.let { ProxyBindingRetirement(it.bindingId, it.revision) }
         require(isCurrent(actor)); beforePublicationForTesting()
         // The original empty/owned revision, never the replacement record, authorizes publication.
-        require(prior == null || prior.origin == actor.key.origin && prior.connectionIdentity == actor.key.pairedDeviceIdentity)
-        check(store.commit(lease, imported)) { "Identity actor retired" }
+        // Import is a deliberate replacement of the exact captured record, including an older
+        // unstamped envelope. It grants no token authority; old enrolled binding retires durably.
+        require(isCurrent(actor))
+        check(store.commit(lease, imported, retired)) { "Identity actor retired" }
+        retired?.let(bindingLifecycle::publish)
     }
     fun begin(actor: ScopedReadContext, admitted: () -> Boolean = { true }): String {
-        val (lease, captured) = store.capture()
+        require(isCurrent(actor))
+        val (lease, captured) = store.captureOwned(actor)
         val r = captured?.takeIf { it.origin == actor.key.origin && it.connectionIdentity == actor.key.pairedDeviceIdentity } ?: error("Configure the operator profile first")
         require(admitted() && isCurrent(actor) && actor.key.pairedDeviceIdentity == r.connectionIdentity)
         val profile = ProxyProfile.parse(r.profile)
-        validateDiscovery(profile) { admitted() && isCurrent(actor) && store.current(lease) }
+        validateDiscovery(profile, actor) { admitted() && isCurrent(actor) && store.current(lease) }
         require(admitted() && current() === actor.connection && isCurrent(actor))
         fun random() = ProxyJose.encode(ByteArray(32).also { SecureRandom().nextBytes(it) })
-        val t = ProxyTransaction(random(), random(), random(), now() + 5 * 60_000, r.connectionIdentity, actor.key.connectionGeneration, processIdentity)
+        val t = ProxyTransaction(random(), random(), random(), now() + 5 * 60_000, r.connectionIdentity, actor.key.connectionGeneration, processIdentity, actor.custodyVersion)
         beforePublicationForTesting()
-        check(admitted() && store.commit(lease, r.copyCustody(transaction = t)))
+        check(admitted() && isCurrent(actor) && store.commit(lease, r.copyCustody(transaction = t)))
         return profile.authorizationEndpoint.toHttpUrl().newBuilder().addQueryParameter("response_type", "code")
             .addQueryParameter("client_id", profile.clientId).addQueryParameter("redirect_uri", ProxyProfile.REDIRECT)
             .addQueryParameter("scope", profile.authorizationScope).addQueryParameter("audience", profile.audience)
@@ -68,30 +94,31 @@ class ProxySignInCoordinator(private val store: ProxyIdentityStore, private val 
         }
         val actor = originalActor ?: return false
         if (!admitted() || !isCurrent(actor)) return false
-        val (record, transaction) = store.consume(query["state"] ?: return false, actor.key.pairedDeviceIdentity, actor.key.connectionGeneration, processIdentity, now()) ?: return false
-        val (lease, consumed) = store.capture(); if (consumed?.revision != record.revision) return false
+        val (record, transaction) = store.consume(query["state"] ?: return false, actor.key.pairedDeviceIdentity, actor.key.connectionGeneration, processIdentity, now(), actor.custodyVersion) ?: return false
+        val (lease, consumed) = store.captureOwned(actor); if (consumed?.revision != record.revision) return false
         val profile = ProxyProfile.parse(record.profile); require(query["iss"] == profile.issuer)
         if (query.containsKey("error")) { require(!query.containsKey("code")); return false }
         val code = query["code"] ?: return false
         val form = FormBody.Builder().add("grant_type", "authorization_code").add("client_id", profile.clientId).add("code", code).add("redirect_uri", ProxyProfile.REDIRECT).add("code_verifier", transaction.verifier).build()
         if (!admitted() || !isCurrent(actor) || !store.current(lease)) return false
-        val tokens = exchange(profile, form, transaction.nonce, null) { admitted() && isCurrent(actor) && store.current(lease) }
+        val tokens = exchange(profile, form, transaction.nonce, null, actor) { admitted() && isCurrent(actor) && store.current(lease) }
         if (!admitted() || !isCurrent(actor)) return false
         beforePublicationForTesting()
-        return admitted() && store.commit(lease, record.copyCustody(tokens = tokens, transaction = null, binding = record.binding ?: legacyWitness(record)))
+        return admitted() && isCurrent(actor) && store.commit(lease, record.copyCustody(tokens = tokens, transaction = null, binding = record.binding ?: legacyWitness(record)))
     }
     fun credentials(connection: Connection, actor: ScopedReadContext? = context()): Pair<ProxyProfile, ProxyTokens>? {
         if (actor == null || actor.connection !== connection || !isCurrent(actor)) error("Identity actor retired")
-        val (lease, captured) = store.capture()
+        require(isCurrent(actor))
+        val (lease, captured) = store.captureOwned(actor)
         val record = captured?.takeIf { it.origin == actor.key.origin && it.connectionIdentity == actor.key.pairedDeviceIdentity } ?: return null
         val profile = ProxyProfile.parse(record.profile); val prior = record.tokens ?: error("Native identity sign-in required")
         if (prior.expiresAt > now() + 30_000) return profile to prior
         val refresh = prior.refreshToken ?: error("Native identity sign-in required")
         val form = FormBody.Builder().add("grant_type", "refresh_token").add("client_id", profile.clientId).add("refresh_token", refresh).build()
-        val next = exchange(profile, form, prior.nonce, prior.subject) { isCurrent(actor) && store.current(lease) }.let { if (it.refreshToken == null) ProxyTokens(it.accessToken, refresh, it.subject, it.expiresAt, it.thumbprint, it.nonce) else it }
+        val next = exchange(profile, form, prior.nonce, prior.subject, actor) { isCurrent(actor) && store.current(lease) }.let { if (it.refreshToken == null) ProxyTokens(it.accessToken, refresh, it.subject, it.expiresAt, it.thumbprint, it.nonce) else it }
         if (!isCurrent(actor) || !store.current(lease)) error("Identity actor retired")
         beforePublicationForTesting()
-        check(store.commit(lease, record.copyCustody(tokens = next, binding = record.binding ?: legacyWitness(record)))); return profile to next
+        check(isCurrent(actor) && store.commit(lease, record.copyCustody(tokens = next, binding = record.binding ?: legacyWitness(record)))); return profile to next
     }
     fun credentialsCurrent(actor: ScopedReadContext, profile: ProxyProfile, accessToken: String): Boolean {
         if (!isCurrent(actor)) return false
@@ -103,7 +130,7 @@ class ProxySignInCoordinator(private val store: ProxyIdentityStore, private val 
     fun acceptBinding(connection: Connection, accessToken: String, id: String, revision: Long, originalActor: ScopedReadContext? = context()) {
         val actor = originalActor ?: return
         if (actor.connection !== connection || !isCurrent(actor) || !id.matches(Regex("[A-Za-z0-9_-]{16,64}")) || revision < 1) return
-        val (lease, record) = store.capture(); record ?: return
+        val (lease, record) = store.captureOwned(actor); record ?: return
         val token = record.tokens ?: return
         if (record.origin != actor.key.origin || record.connectionIdentity != actor.key.pairedDeviceIdentity || token.accessToken != accessToken) return
         val witness = ProxyBindingWitness(ProxyProfile.parse(record.profile).issuer, token.subject, token.thumbprint, id, revision)
@@ -111,30 +138,30 @@ class ProxySignInCoordinator(private val store: ProxyIdentityStore, private val 
         val retired = old?.takeIf { it != witness }?.let { ProxyBindingRetirement(it.bindingId, it.revision) }
         if (!isCurrent(actor)) return
         beforePublicationForTesting()
-        if (!store.commit(lease, record.copyCustody(binding = witness), retired)) return
+        if (!isCurrent(actor) || !store.commit(lease, record.copyCustody(binding = witness), retired)) return
         retired?.let(bindingLifecycle::publish)
     }
     fun bindingRetired(connection: Connection, accessToken: String, id: String, revision: Long, originalActor: ScopedReadContext? = context()) {
         val actor = originalActor ?: return
         if (actor.connection !== connection || !isCurrent(actor)) return
-        val (lease, record) = store.capture(); record ?: return
+        val (lease, record) = store.captureOwned(actor); record ?: return
         val token = record.tokens ?: return; val witness = record.binding ?: legacyWitness(record) ?: return
         if (record.origin != actor.key.origin || record.connectionIdentity != actor.key.pairedDeviceIdentity || token.accessToken != accessToken ||
             witness.issuer != ProxyProfile.parse(record.profile).issuer || witness.subject != token.subject || witness.thumbprint != token.thumbprint || witness.bindingId != id || witness.revision != revision) return
         val event = ProxyBindingRetirement(id, revision)
         if (!isCurrent(actor)) return
         beforePublicationForTesting()
-        if (store.commit(lease, record.copyCustody(tokens = null, transaction = null, binding = null), event)) bindingLifecycle.publish(event)
+        if (isCurrent(actor) && store.commit(lease, record.copyCustody(tokens = null, transaction = null, binding = null), event)) bindingLifecycle.publish(event)
     }
     fun identityFailed(connection: Connection, accessToken: String, originalActor: ScopedReadContext? = context()) {
         val actor = originalActor ?: return
         if (actor.connection !== connection || !isCurrent(actor)) return
-        val (lease, record) = store.capture(); record ?: return
+        val (lease, record) = store.captureOwned(actor); record ?: return
         if (record.origin != actor.key.origin || record.connectionIdentity != actor.key.pairedDeviceIdentity || record.tokens?.accessToken != accessToken) return
         val witness = record.binding ?: legacyWitness(record)
         if (!isCurrent(actor)) return
         beforePublicationForTesting()
-        store.commit(lease, record.copyCustody(tokens = null, transaction = null, binding = witness))
+        if (isCurrent(actor)) store.commit(lease, record.copyCustody(tokens = null, transaction = null, binding = witness))
     }
     private fun legacyWitness(record: ProxyRecord): ProxyBindingWitness? {
         val token = record.tokens ?: return null
@@ -142,21 +169,21 @@ class ProxySignInCoordinator(private val store: ProxyIdentityStore, private val 
         return ProxyBindingWitness(ProxyProfile.parse(record.profile).issuer, token.subject, token.thumbprint, id, revision)
     }
     private fun isCurrent(actor: ScopedReadContext): Boolean = actorCurrent(actor)
-    private fun validateDiscovery(profile: ProxyProfile, admitted: () -> Boolean) {
-        val metadata = read(Request.Builder().url(profile.issuer.trimEnd('/') + "/.well-known/openid-configuration").build(), admitted)
+    private fun validateDiscovery(profile: ProxyProfile, actor: ScopedReadContext, admitted: () -> Boolean) {
+        val metadata = read(actor, Request.Builder().url(profile.issuer.trimEnd('/') + "/.well-known/openid-configuration").build(), admitted)
         require(ProxyJson.string(metadata, "issuer") == profile.issuer && ProxyJson.string(metadata, "authorization_endpoint") == profile.authorizationEndpoint && ProxyJson.string(metadata, "token_endpoint") == profile.tokenEndpoint && ProxyJson.string(metadata, "jwks_uri") == profile.jwksEndpoint)
         require(metadata["code_challenge_methods_supported"]?.jsonArray?.any { it.jsonPrimitive.content == "S256" } == true && metadata["dpop_signing_alg_values_supported"]?.jsonArray?.any { it.jsonPrimitive.content == "ES256" } == true && metadata["authorization_response_iss_parameter_supported"]?.jsonPrimitive?.booleanOrNull == true)
-        val actual = read(Request.Builder().url(profile.jwksEndpoint).build(), admitted)["keys"]?.jsonArray ?: error("Missing issuer keys")
+        val actual = read(actor, Request.Builder().url(profile.jwksEndpoint).build(), admitted)["keys"]?.jsonArray ?: error("Missing issuer keys")
         for (pin in profile.keys) require(actual.any { candidate -> val p = pin.jsonObject; val c = candidate.jsonObject; listOf("kid", "kty", "crv", "x", "y").all { p[it] == c[it] } && !c.containsKey("d") })
     }
-    private fun exchange(profile: ProxyProfile, form: FormBody, nonce: String, expectedSubject: String?, admitted: () -> Boolean): ProxyTokens {
+    private fun exchange(profile: ProxyProfile, form: FormBody, nonce: String, expectedSubject: String?, actor: ScopedReadContext, admitted: () -> Boolean): ProxyTokens {
         var issuerNonce: String? = null
         var answer: JsonObject? = null
         repeat(2) { attempt ->
             if (answer != null) return@repeat
             check(admitted()) { "Identity actor retired" }
             val request = Request.Builder().url(profile.tokenEndpoint).header("DPoP", ProxyJose.proof(key, "POST", profile.tokenEndpoint, nonce = issuerNonce, nowSeconds = now() / 1000)).post(form).build()
-            issuerCall(request, admitted) { response ->
+            issuerCall(actor, request, admitted) { response ->
                 val parsed = bounded(response)
                 if (!response.isSuccessful) {
                     if (attempt == 0 && response.code in setOf(400, 401) && parsed["error"]?.jsonPrimitive?.content == "use_dpop_nonce") { issuerNonce = response.header("DPoP-Nonce")?.takeIf { it.length in 1..256 && it.none { ch -> ch.code < 33 || ch.code > 126 } } ?: error("Invalid issuer nonce") }
@@ -181,19 +208,21 @@ class ProxySignInCoordinator(private val store: ProxyIdentityStore, private val 
         val refresh = value["refresh_token"]?.let { ProxyJson.string(value,"refresh_token",16_384) }
         return ProxyTokens(access, refresh, subject, Math.multiplyExact(expires, 1000), key.thumbprint, nonce)
     }
-    private fun read(request: Request, admitted: () -> Boolean): JsonObject {
+    private fun read(actor: ScopedReadContext, request: Request, admitted: () -> Boolean): JsonObject {
         check(admitted()) { "Identity actor retired" }
-        return issuerCall(request, admitted) { require(it.isSuccessful); bounded(it) }
+        return issuerCall(actor, request, admitted) { require(it.isSuccessful); bounded(it) }
     }
-    private fun <T> issuerCall(request: Request, admitted: () -> Boolean, read: (Response) -> T): T {
+    private fun <T> issuerCall(actor: ScopedReadContext, request: Request, admitted: () -> Boolean, read: (Response) -> T): T {
         val epoch = authorityEpoch.get(); val call = credentialClient.newCall(request)
+        val custody = IssuerCustody(actor)
+        credentialOwners[call] = custody
         credentialCalls.add(call)
         try {
-            check(epoch == authorityEpoch.get() && admitted()) { "Identity actor retired" }
+            check(!custody.retired.get() && epoch == authorityEpoch.get() && admitted()) { "Identity actor retired" }
             val result = call.execute().use(read)
-            check(epoch == authorityEpoch.get() && admitted()) { "Identity actor retired" }
+            check(!custody.retired.get() && epoch == authorityEpoch.get() && admitted()) { "Identity actor retired" }
             return result
-        } finally { credentialCalls.remove(call) }
+        } finally { credentialCalls.remove(call); credentialOwners.remove(call, custody) }
     }
     private fun decodeQuery(raw: String): String {
         val bytes = java.io.ByteArrayOutputStream(); var i=0

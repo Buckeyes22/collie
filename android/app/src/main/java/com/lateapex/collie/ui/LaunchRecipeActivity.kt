@@ -93,22 +93,25 @@ class LaunchRecipeActivity : AppCompatActivity() {
         mode = intent.getStringExtra(EXTRA_MODE) ?: MODE_ALL
         buildContent()
         window.applySafeContentInsets(root)
-        authoritySubscription = repository.onAuthorityInvalidated { reason ->
-            runOnUiThread {
-                if (reason == AuthorityInvalidation.SCOPE_CHANGED && contextKey?.let(repository::isCurrent) == true) return@runOnUiThread
-                // A transport failure freezes writes without retiring the captured actor.
-                // Keep the in-flight token so its durable UNKNOWN acknowledgement can render.
-                val actorRetired = reason != AuthorityInvalidation.ACCESS_FROZEN || contextKey?.let(repository::isActorRetired) != false
-                if (actorRetired) { operation++; running = false }
-                scopedReady = false
-                runCheck = null
-                catalog = null
-                renderRecipeRows()
-                renderRecentRuns()
-                showPendingIntents()
-                progress.isVisible = false
-                status.setText(R.string.recipes_not_authorized)
-                renderActions()
+        authoritySubscription = repository.onAuthorityRetired { event ->
+            withRetirementOnMain(event, { contextKey }) {
+                val reason = event.reason
+                runOnUiThread {
+                    if (reason == AuthorityInvalidation.SCOPE_CHANGED && contextKey?.let(repository::isCurrent) == true) return@runOnUiThread
+                    // A transport failure freezes writes without retiring the captured actor.
+                    // Keep the in-flight token so its durable UNKNOWN acknowledgement can render.
+                    val actorRetired = reason != AuthorityInvalidation.ACCESS_FROZEN || contextKey?.let(repository::isActorRetired) != false
+                    if (actorRetired) { operation++; running = false }
+                    scopedReady = false
+                    runCheck = null
+                    catalog = null
+                    renderRecipeRows()
+                    renderRecentRuns()
+                    showPendingIntents()
+                    progress.isVisible = false
+                    status.setText(R.string.recipes_not_authorized)
+                    renderActions()
+                }
             }
         }
         load()
@@ -228,6 +231,9 @@ class LaunchRecipeActivity : AppCompatActivity() {
         showPanel(mode)
     }
 
+    /** Local recovery rows stay bound to the accepted original; callbacks never mint an actor. */
+    private fun ownedUnresolvedIntents() = contextKey?.let { repository.unresolvedLaunchIntents(scope, it) }.orEmpty()
+
     private fun showPanel(next: String) {
         mode = next
         recipePanel.isVisible = next != MODE_RUN
@@ -254,6 +260,9 @@ class LaunchRecipeActivity : AppCompatActivity() {
             scopedReady = false
             renderActions()
             return
+        }
+        if (contextKey != null && (contextKey?.connection !== captured.connection || contextKey?.connectionIncarnation != captured.connectionIncarnation)) {
+            catalog = null; runCheck = null; renderRecipeRows(); renderRecentRuns()
         }
         contextKey = captured
         progress.isVisible = true
@@ -397,7 +406,7 @@ class LaunchRecipeActivity : AppCompatActivity() {
 
     private fun showPendingIntents() {
         recoveryRows.removeAllViews()
-        repository.unresolvedLaunchIntents(scope).forEach { saved ->
+        ownedUnresolvedIntents().forEach { saved ->
             when (saved.intent.operation) {
                 "launch.run" -> {
                     recoveryRows.addView(label(getString(R.string.recipes_run_unknown)), params())
@@ -475,14 +484,14 @@ class LaunchRecipeActivity : AppCompatActivity() {
                 when (result) {
                 is ApiResult.Success -> if (result.value.ok && result.value.pane != null) {
                     openPane(result.value)
-                } else if (repository.unresolvedLaunchIntents(scope).any { it.intent.operation == "launch.run" }) {
+                } else if (ownedUnresolvedIntents().any { it.intent.operation == "launch.run" }) {
                     status.setText(R.string.recipes_run_unknown)
                     showPendingIntents()
                 } else {
                     status.text = result.value.error ?: getString(R.string.recipes_run_failed, "the server refused the command")
                 }
                     is ApiResult.Failure -> {
-                        val unresolved = repository.unresolvedLaunchIntents(scope).firstOrNull { it.intent.operation == "launch.run" }
+                        val unresolved = ownedUnresolvedIntents().firstOrNull { it.intent.operation == "launch.run" }
                         if (unresolved != null) { status.setText(R.string.recipes_run_unknown); showPendingIntents() }
                         else status.text = getString(R.string.recipes_run_failed, MainViewModel.describe(resources, result.error))
                     }
@@ -644,14 +653,14 @@ class LaunchRecipeActivity : AppCompatActivity() {
                 is ApiResult.Success -> if (result.value.ok) {
                     status.setText(if (result.value.replayed == true) R.string.recipes_add_confirmed else R.string.recipes_title)
                     load()
-                } else if (repository.unresolvedLaunchIntents(scope).any { it.intent.requestId == id }) {
+                } else if (ownedUnresolvedIntents().any { it.intent.requestId == id }) {
                     status.setText(R.string.recipes_add_unknown)
                     showPendingIntents()
                 } else {
                     status.text = result.value.error ?: getString(R.string.recipes_add_failed, "server refusal")
                 }
                 is ApiResult.Failure -> {
-                    val unknown = repository.unresolvedLaunchIntents(scope).any { it.intent.requestId == id && it.intent.operation == "launcher.add" }
+                    val unknown = ownedUnresolvedIntents().any { it.intent.requestId == id && it.intent.operation == "launcher.add" }
                     status.text = if (unknown) getString(R.string.recipes_add_unknown) else getString(R.string.recipes_add_failed, MainViewModel.describe(resources, result.error))
                     if (unknown) showPendingIntents()
                 }
@@ -665,7 +674,7 @@ class LaunchRecipeActivity : AppCompatActivity() {
         if (!repository.isCurrent(captured) || !canWrite()) return
         performMutation {
             when (val result = repository.retryAddedLauncherIntent(scope, requestId, captured)) {
-                is ApiResult.Success -> if (result.value.ok) load() else if (repository.unresolvedLaunchIntents(scope).any { it.intent.requestId == requestId }) {
+                is ApiResult.Success -> if (result.value.ok) load() else if (ownedUnresolvedIntents().any { it.intent.requestId == requestId }) {
                     status.setText(R.string.recipes_mutation_unknown)
                     showPendingIntents()
                 } else status.text = result.value.error ?: getString(R.string.recipes_mutation_unknown)

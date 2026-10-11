@@ -73,6 +73,7 @@ class HistoryActivity : AppCompatActivity() {
     private val turnViews = linkedMapOf<String, View>()
     private val historyTextTargets = linkedMapOf<HistorySearchKey, HistoryTextTarget>()
     private val expandedTools = mutableSetOf<Pair<String, Int>>()
+    @Volatile private var custodyActor: ScopedReadContext? = null
     @Volatile private var admittedRenderContext: ScopedReadContext? = null
     private val admittedEntryUuids = ConcurrentHashMap.newKeySet<String>()
     private var renderer: HistoryTurnRenderer? = null
@@ -134,50 +135,55 @@ class HistoryActivity : AppCompatActivity() {
         )
         retainedReader = ViewModelProvider(this)[HistoryReaderViewModel::class.java]
         val connectionAtOpen = repository.connection.value
-        if (retainedReader.state != null && retainedReader.connection !== connectionAtOpen) {
+        if (retainedReader.state != null && (retainedReader.context == null || repository.isActorRetired(retainedReader.context!!))) {
             retainedReader.state = null
             retainedReader.findQuery = ""
         }
         repository.selectSubject(address.scope, address.paneId)
-        authorityRegistration = repository.onReadContextInvalidated { reason ->
-            loading = false
-            admittedRenderContext = null
-            admittedEntryUuids.clear()
-            rendererAdmissionRevision.incrementAndGet()
-            refreshContinuation = null
-            refreshContinuationActor = null
-            renderer = null
-            rendererActor = null
-            if (reason in setOf(com.lateapex.collie.data.AuthorityInvalidation.PAIRING_RETIRED,
-                com.lateapex.collie.data.AuthorityInvalidation.CONNECTION_CHANGED, com.lateapex.collie.data.AuthorityInvalidation.DISCONNECTED)) {
-                retired = true
-                entries = emptyList()
-                retainedReader.state = null
-                retainedReader.findQuery = ""
-                retainedReader.connection = null
-                findHits = emptyList()
-                findStops = emptyList()
-                turnViews.clear()
-                historyTextTargets.clear()
-                expandedTools.clear()
-                pendingRestoreAnchor = null
+        authorityRegistration = repository.onReadContextRetired { event ->
+            withRetirementOnMain(event, { custodyActor }) {
+                val reason = event.reason
                 loading = false
-                runOnUiThread {
-                    renderer = null
-                    rendererActor = null
-                    binding.historyFindQuery.text?.clear()
-                    binding.historyEntries.removeAllViews()
-                    finish()
-                }
-            } else {
-                runOnUiThread {
-                    renderer = null
-                    rendererActor = null
-                    if (!isFinishing && entries.isNotEmpty()) renderEntries()
+                admittedRenderContext = null
+                admittedEntryUuids.clear()
+                rendererAdmissionRevision.incrementAndGet()
+                refreshContinuation = null
+                refreshContinuationActor = null
+                renderer = null
+                rendererActor = null
+                if (reason in setOf(com.lateapex.collie.data.AuthorityInvalidation.PAIRING_RETIRED,
+                    com.lateapex.collie.data.AuthorityInvalidation.CONNECTION_CHANGED, com.lateapex.collie.data.AuthorityInvalidation.DISCONNECTED)) {
+                    retired = true
+                    entries = emptyList()
+                    retainedReader.state = null
+                    retainedReader.findQuery = ""
+                    retainedReader.connection = null
+                    retainedReader.context = null
+                    findHits = emptyList()
+                    findStops = emptyList()
+                    turnViews.clear()
+                    historyTextTargets.clear()
+                    expandedTools.clear()
+                    pendingRestoreAnchor = null
+                    loading = false
+                    runOnUiThread {
+                        renderer = null
+                        rendererActor = null
+                        binding.historyFindQuery.text?.clear()
+                        binding.historyEntries.removeAllViews()
+                        finish()
+                    }
+                } else {
+                    runOnUiThread {
+                        renderer = null
+                        rendererActor = null
+                        if (!isFinishing && entries.isNotEmpty()) renderEntries()
+                    }
                 }
             }
         }
         retainedReader.connection = connectionAtOpen
+        custodyActor = retainedReader.context
         restoreReaderState(savedInstanceState)
         binding.historySubtitle.text = intent.getStringExtra(EXTRA_TITLE)?.trim()?.takeIf(String::isNotEmpty) ?: paneId
         binding.historyBackButton.setOnClickListener { finish() }
@@ -238,17 +244,6 @@ class HistoryActivity : AppCompatActivity() {
             restoreFindChrome()
             loadPage(older = false)
         }
-        lifecycleScope.launch {
-            repository.connection.collect { connection ->
-                if (connection !== connectionAtOpen) {
-                    entries = emptyList()
-                    retainedReader.state = null
-                    retainedReader.findQuery = ""
-                    renderEntries()
-                    finish()
-                }
-            }
-        }
     }
 
     override fun onDestroy() {
@@ -260,6 +255,7 @@ class HistoryActivity : AppCompatActivity() {
     override fun onSaveInstanceState(outState: Bundle) {
         if (retired) { super.onSaveInstanceState(outState); return }
         val anchor = captureReadAnchor()
+        retainedReader.context = custodyActor
         retainedReader.state = HistoryRetainedState(
             entries = entries,
             hasMore = hasMore,
@@ -367,6 +363,12 @@ class HistoryActivity : AppCompatActivity() {
         if (older && oldest == null) return
         val anchor = if (older) captureAnchor() else null
         val context = repository.readContext(address.scope, address.paneId) ?: return
+        if (custodyActor != null && (custodyActor?.connection !== context.connection || custodyActor?.connectionIncarnation != context.connectionIncarnation)) {
+            entries = emptyList(); retainedReader.state = null; retainedReader.findQuery = ""
+            findHits = emptyList(); findStops = emptyList(); expandedTools.clear(); turnViews.clear(); historyTextTargets.clear()
+            renderer = null; rendererActor = null; admittedEntryUuids.clear(); renderEntries()
+        }
+        custodyActor = context
         loading = true
         binding.historyProgress.isVisible = !loadedOnce
         binding.historyLoadOlder.isEnabled = false
@@ -439,6 +441,15 @@ class HistoryActivity : AppCompatActivity() {
             renderFailure(getString(R.string.history_access_changed))
             return
         }
+        if (custodyActor != null && (custodyActor?.connection !== context.connection || custodyActor?.connectionIncarnation != context.connectionIncarnation)) {
+            entries = emptyList(); retainedReader.state = null; retainedReader.findQuery = ""
+            findHits = emptyList(); findStops = emptyList(); expandedTools.clear(); turnViews.clear(); historyTextTargets.clear()
+            renderer = null; rendererActor = null; admittedEntryUuids.clear(); renderEntries()
+            custodyActor = context
+            loadPage(older = false)
+            return
+        }
+        custodyActor = context
         val retained = entries.toList()
         val retainedOldest = retained.firstOrNull()?.uuid ?: return
         // Let renderEntries consume the saved UUID/offset anchor if the user taps before its
@@ -798,6 +809,7 @@ class HistoryActivity : AppCompatActivity() {
 }
 
 internal class HistoryReaderViewModel : ViewModel() {
+    var context: ScopedReadContext? = null
     var connection: com.lateapex.collie.domain.Connection? = null
     var state: HistoryRetainedState? = null
     var findQuery: String = ""

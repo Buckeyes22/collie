@@ -43,6 +43,8 @@ import com.lateapex.collie.network.FileEntryKind
 import com.lateapex.collie.network.RelativeFilePath
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 
 class FilesActivity : AppCompatActivity() {
     private lateinit var target: FilesTarget
@@ -61,6 +63,10 @@ class FilesActivity : AppCompatActivity() {
     private lateinit var previewButton: Button
     private lateinit var ignoredCheck: CheckBox
     private lateinit var sourceText: TextView
+    // Views detached by Source/Preview redraws may still be held by selection or accessibility.
+    // Weak keys do not keep those copies alive; each copy keeps its original actor until wiped.
+    private val copiedTextActors = java.util.WeakHashMap<TextView, com.lateapex.collie.data.ScopedReadContext>()
+    private val copiedPreviewActors = java.util.WeakHashMap<View, com.lateapex.collie.data.ScopedReadContext>()
     private var showPreview = false
     private var savedHandoffRequired = false
     private var lastFindOffset = 0
@@ -69,6 +75,7 @@ class FilesActivity : AppCompatActivity() {
     private var acceptedListing: FilesAnswer.Listing? = null
     private var invalidationSubscription: AutoCloseable? = null
     private var previewJob: Job? = null
+    private val previewReads = linkedSetOf<Job>()
     private var previewGeneration = 0L
     private var currentLine = 0
     private var currentFind = ""
@@ -102,31 +109,54 @@ class FilesActivity : AppCompatActivity() {
         showPreview = savedInstanceState?.getBoolean(STATE_PREVIEW) ?: (pendingAnchor != null)
         viewModel = ViewModelProvider(this, FilesViewModel.Factory(application, target, scope, directory, path, ignored, openReference,
             handoffRequired, intent.getStringExtra(EXTRA_HANDOFF_TOKEN), intent.getStringExtra(EXTRA_PATH)))[FilesViewModel::class.java]
-        invalidationSubscription = repository.onReadContextInvalidated {
-            // Revoke the Activity's own accepted page synchronously. Invalidation can arrive from
-            // a repository worker, so wait for the view wipe before returning to that caller.
-            acceptedPageContext = null
-            acceptedListing = null
-            previewGeneration++
-            previewJob?.cancel()
+        invalidationSubscription = viewModel.onPageRetired {
+            // This subscription survives STOPPED. The VM's custody lock has already been released.
             val clear = Runnable {
+                // Erase detached A copies even if the visible page already belongs to fresh B.
+                wipeCopiedText()
+                adapter.wipeRetiredCopies(repository::isActorRetired)
+                // An older queued wipe must never remove a newly admitted page's content.
+                if (acceptedPageContext?.let { !repository.isActorRetired(it) } == true) return@Runnable
+                acceptedPageContext = null
+                acceptedListing = null
+                previewGeneration++
+                previewJob?.cancel()
+                previewReads.toList().forEach { it.cancel() }
+                previewReads.clear()
                 currentSource = null
+                currentLine = 0
+                currentFind = ""
+                lastFindOffset = 0
+                pendingAnchor = null
                 adapter.clear()
+                fun wipe(view: View) {
+                    view.contentDescription = null
+                    if (view is TextView) view.text = ""
+                    if (view is ViewGroup) repeat(view.childCount) { wipe(view.getChildAt(it)) }
+                }
+                wipe(list)
+                list.recycledViewPool.clear()
+                wipe(sourceContent)
                 sourceContent.removeAllViews()
-                if (::sourceText.isInitialized) sourceText.text = ""
+                if (::sourceText.isInitialized) { sourceText.text = ""; sourceText.contentDescription = null }
                 sourceScroll.isVisible = false
                 list.isVisible = false
+                sourceControls.isVisible = false
+                listingControls.isVisible = false
+                sourceButton.isVisible = false
+                previewButton.isVisible = false
+                progress.isVisible = false
                 fileTitle.text = target.id
-                breadcrumb.text = "/"
+                breadcrumb.text = ""
+                findViewById<EditText>(R.id.files_find).setText("")
+                findViewById<EditText>(R.id.files_line).setText("")
+                findViewById<TextView>(R.id.files_listing_status).text = ""
                 dismissOldPreviewDialog()
             }
-            if (Looper.myLooper() == Looper.getMainLooper()) {
-                clear.run()
-            } else {
+            if (Looper.myLooper() == Looper.getMainLooper()) clear.run()
+            else {
                 val completed = java.util.concurrent.CountDownLatch(1)
-                if (Handler(Looper.getMainLooper()).post { try { clear.run() } finally { completed.countDown() } }) {
-                    completed.await()
-                }
+                if (Handler(Looper.getMainLooper()).post { try { clear.run() } finally { completed.countDown() } }) completed.await()
             }
         }
         ignoredCheck.isChecked = ignored
@@ -174,6 +204,12 @@ class FilesActivity : AppCompatActivity() {
         invalidationSubscription?.close()
         invalidationSubscription = null
         previewJob?.cancel()
+        previewReads.toList().forEach { it.cancel() }
+        previewReads.clear()
+        if (::sourceContent.isInitialized) rememberTextCopies(sourceContent, acceptedPageContext)
+        wipeCopiedText(all = true)
+        adapter.wipeRetiredCopies(repository::isActorRetired, all = true)
+        dismissOldPreviewDialog()
         super.onDestroy()
     }
 
@@ -198,6 +234,8 @@ class FilesActivity : AppCompatActivity() {
     }
 
     private fun render(state: FilesScreenState) {
+        // Remember the outgoing subtree before replacing either the view or its actor field.
+        rememberTextCopies(sourceContent, acceptedPageContext)
         progress.isVisible = state.loading
         status.isVisible = state.error != null
         status.text = state.error?.let(::message).orEmpty()
@@ -264,6 +302,34 @@ class FilesActivity : AppCompatActivity() {
         } else {
             sourceContent.removeAllViews()
             // Loading/retirement destroys content custody, not the lightweight navigation mode.
+        }
+        rememberTextCopies(sourceContent, context)
+    }
+
+    private fun rememberTextCopies(view: View, actor: com.lateapex.collie.data.ScopedReadContext?) {
+        if (actor == null) return
+        if (view is TextView) copiedTextActors.putIfAbsent(view, actor)
+        if (view is RetirableFilePreview) copiedPreviewActors.putIfAbsent(view, actor)
+        if (view is ViewGroup) repeat(view.childCount) { rememberTextCopies(view.getChildAt(it), actor) }
+    }
+
+    /** Runs only on Main, outside custody/store/admission locks; fresh actor copies are retained. */
+    private fun wipeCopiedText(all: Boolean = false) {
+        copiedPreviewActors.entries.map { it.key to it.value }.forEach { (view, actor) ->
+            if (view != null && actor != null && (all || repository.isActorRetired(actor))) {
+                (view as? RetirableFilePreview)?.disposePreview()
+                view.contentDescription = null
+                copiedPreviewActors.remove(view)
+            }
+        }
+        copiedTextActors.entries.map { it.key to it.value }.forEach { (view, actor) ->
+            if (view != null && actor != null && (all || repository.isActorRetired(actor))) {
+                view.text = ""
+                view.contentDescription = null
+                view.movementMethod = null
+                view.setOnClickListener(null)
+                copiedTextActors.remove(view)
+            }
         }
     }
 
@@ -405,6 +471,7 @@ class FilesActivity : AppCompatActivity() {
                             target, image.path, null, null,
                         )
                         card.contentDescription = getString(R.string.files_image_alt, image.alt.ifBlank { getString(R.string.files_image_default_alt) })
+                        rememberTextCopies(card, context)
                         sourceContent.addView(card, layoutParams())
                     }
                 }
@@ -416,31 +483,42 @@ class FilesActivity : AppCompatActivity() {
     private fun addFileLinks(source: FilesAnswer.Source, links: List<FileLinkRef>, generation: Long, context: com.lateapex.collie.data.ScopedReadContext) {
         val bounded = links.take(64)
         if (bounded.isEmpty()) return
-        lifecycleScope.launch {
+        launchPreviewRead {
             val paths = bounded.map { it.path }.distinct()
             val answer = repository.filesExist(target, scope, paths, context)
-            val existing = (answer as? ApiResult.Success)?.value?.exists ?: return@launch
-            if (!repository.isCurrent(context) || context !== acceptedPageContext || currentSource != source || !showPreview || generation != previewGeneration) return@launch
+            val existing = (answer as? ApiResult.Success)?.value?.exists ?: return@launchPreviewRead
+            if (!repository.isCurrent(context) || context !== acceptedPageContext || currentSource != source || !showPreview || generation != previewGeneration) return@launchPreviewRead
             bounded.filter { it.path.value in existing }.forEach { link ->
                 val button = Button(this@FilesActivity).apply {
                     text = getString(R.string.files_open_link, link.label)
                     contentDescription = getString(R.string.files_open_link_accessibility, link.path.value)
                     setOnClickListener {
                         if (currentSource == source && acceptedPageContext === context && repository.isCurrent(context) && generation == previewGeneration) {
-                            lifecycleScope.launch {
+                            launchPreviewRead {
                                 val current = repository.filesExist(target, scope, listOf(link.path), context)
                                 if ((current as? ApiResult.Success)?.value?.exists?.contains(link.path.value) != true ||
                                     currentSource != source || acceptedPageContext !== context || !repository.isCurrent(context) || generation != previewGeneration
-                                ) return@launch
+                                ) return@launchPreviewRead
                                 if (link.anchor != null && link.path.value == source.path) scrollToHeading(link.anchor)
                                 else startActivity(FilesActivity.intent(this@FilesActivity, target, scope, path = link.path.value, openReference = true, anchor = link.anchor))
                             }
                         }
                     }
                 }
+                rememberTextCopies(button, context)
                 sourceContent.addView(button, layoutParams())
             }
         }
+    }
+
+    /** Own every preview confirmation read so retirement cancels held transport as well as views. */
+    private fun launchPreviewRead(block: suspend CoroutineScope.() -> Unit) {
+        val job = lifecycleScope.launch(start = CoroutineStart.LAZY, block = block)
+        previewReads.add(job)
+        job.invokeOnCompletion {
+            Handler(Looper.getMainLooper()).post { previewReads.remove(job) }
+        }
+        job.start()
     }
 
     private fun sourceTextView(source: FilesAnswer.Source, text: String = source.text): TextView = TextView(this).apply {
@@ -451,7 +529,7 @@ class FilesActivity : AppCompatActivity() {
         this.text = text
         contentDescription = getString(R.string.files_source_accessibility, source.path)
         if (source.truncated) append("\n\n[${getString(R.string.files_truncated_inline)}]")
-    }
+    }.also { rememberTextCopies(it, acceptedPageContext) }
 
     private fun addNotice(text: String) {
         sourceContent.addView(TextView(this).apply {
@@ -646,6 +724,19 @@ private class FileListAdapter(private val onClick: (FileEntry, String, com.latea
     private var truncated = false
     private var acceptedContext: com.lateapex.collie.data.ScopedReadContext? = null
     private var acceptedListing: FilesAnswer.Listing? = null
+    private val copiedRows = java.util.WeakHashMap<TextView, com.lateapex.collie.data.ScopedReadContext>()
+    /** Recycled/detached copies remain owned; rebinding replaces the owner with the new actor. */
+    fun wipeRetiredCopies(retired: (com.lateapex.collie.data.ScopedReadContext) -> Boolean, all: Boolean = false) {
+        copiedRows.entries.map { it.key to it.value }.forEach { (view, actor) ->
+            if (view != null && actor != null && (all || retired(actor))) {
+                view.text = ""
+                view.contentDescription = null
+                view.movementMethod = null
+                view.setOnClickListener(null)
+                copiedRows.remove(view)
+            }
+        }
+    }
     fun submit(values: List<FileEntry>, current: String, isTruncated: Boolean, context: com.lateapex.collie.data.ScopedReadContext, listing: FilesAnswer.Listing) {
         entries = values.take(2_000); directory = current; truncated = isTruncated; acceptedContext = context; acceptedListing = listing; notifyDataSetChanged()
     }
@@ -661,6 +752,7 @@ private class FileListAdapter(private val onClick: (FileEntry, String, com.latea
         setTextColor(context.getColor(R.color.collie_foreground))
     })
     override fun onBindViewHolder(holder: Holder, position: Int) {
+        acceptedContext?.let { copiedRows[holder.text] = it }
         if (position >= entries.size) {
             holder.text.text = holder.text.context.getString(R.string.files_narrow_folder_for_more)
             holder.text.contentDescription = holder.text.text

@@ -43,19 +43,25 @@ internal class AgentIdentityViewModel(
     private var requestJob: Job? = null
     private val requestGeneration = AtomicLong()
     private var started = false
-    private val invalidation = repository.onReadContextInvalidated { reason ->
+    private val invalidation = repository.onReadContextRetired { event ->
+        val reason = event.reason
         // Read repository facts outside private custody; cancellation and UI ACK never hold this lock.
-        val authFailure = repository.accessFailure as? ApiFailure.Http
+        val authFailure = event.refusal
         val problem = if (repository.credentialRetirementFailure != null) {
             AgentIdentityProblem.STORAGE_RETAINED
         } else if (reason == AuthorityInvalidation.ACCESS_FROZEN && authFailure != null && authFailure.status in setOf(401, 403)) {
             AgentIdentityProblem.AUTH
         } else AgentIdentityProblem.RETIRED
-        retire(problem)
+        retire(problem, event)
     }
 
-    private fun retire(problem: AgentIdentityProblem) {
+    internal fun originalActorFor(state: AgentIdentityUiState): ScopedReadContext? = synchronized(custodyLock) {
+        context.takeIf { mutableState.value === state }
+    }
+
+    private fun retire(problem: AgentIdentityProblem, event: com.lateapex.collie.data.AuthorityRetirement? = null) {
         val retiredJob = synchronized(custodyLock) {
+            if (event != null && !event.affects(context)) return
             val generation = requestGeneration.incrementAndGet()
             context = null
             val previous = requestJob

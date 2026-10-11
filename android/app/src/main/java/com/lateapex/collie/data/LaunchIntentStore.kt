@@ -68,9 +68,10 @@ class LaunchIntentStore(
     context: Context,
     private val cipher: SecretCipher = AndroidKeystoreCipher(alias = KEY_ALIAS),
     private val json: Json = Json,
+    preferencesOverride: SharedPreferences? = null,
 ) {
     private val preferences: SharedPreferences =
-        context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+        preferencesOverride ?: context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
     private val records = linkedMapOf<String, StoredLaunchIntent>()
     private var unavailable = false
 
@@ -102,6 +103,25 @@ class LaunchIntentStore(
             unavailable = true
             throw error
         }
+    }
+
+    /** Atomic durable retirement of the ENTRY owner. A delayed A ACK cannot erase B's barrier. */
+    @Synchronized
+    fun retireOwned(owner: ScopedCustodyOwner): Int {
+        checkAvailable()
+        val next = records.values.filterNot { record ->
+            record.intent.origin == owner.origin && record.intent.mount == owner.mount &&
+                record.intent.pairedDeviceIdentity == owner.pairedDeviceIdentity
+        }
+        val removed = records.size - next.size
+        if (removed == 0) return 0
+        try { persist(next) } catch (error: Exception) {
+            unavailable = true
+            throw error
+        }
+        records.clear()
+        next.forEach { records[it.intent.requestId] = it }
+        return removed
     }
 
     /** Forget an uncertain request only after the user confirms the duplicate-risk disclosure. */

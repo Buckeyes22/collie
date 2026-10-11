@@ -30,6 +30,7 @@ class AgentCatalogActivity : AppCompatActivity() {
     private lateinit var refresh: MaterialButton
     private var authorityRegistration: AutoCloseable? = null
     @Volatile private var retired = false
+    private var custodyActor: com.lateapex.collie.data.ScopedReadContext? = null
     private var inFlight = false
     private lateinit var scope: Scope
 
@@ -54,9 +55,11 @@ class AgentCatalogActivity : AppCompatActivity() {
             setOnClickListener { load() }
         }
         content.addView(refresh)
-        authorityRegistration = repository.onReadContextInvalidated {
-            retired = true
-            runOnUiThread { showMessage(getString(R.string.agent_catalog_unavailable)) }
+        authorityRegistration = repository.onReadContextRetired { event ->
+            withRetirementOnMain(event, { custodyActor }) {
+                retired = true
+                runOnUiThread { showMessage(getString(R.string.agent_catalog_unavailable)) }
+            }
         }
         load()
     }
@@ -79,7 +82,8 @@ class AgentCatalogActivity : AppCompatActivity() {
                 finishLoad()
                 return@launch
             }
-            val result = repository.agentCapabilities(scope)
+            custodyActor = captured
+            val result = repository.agentCapabilities(scope, captured)
             if (isFinishing || retired || !repository.isCurrent(captured)) {
                 finishLoad()
                 return@launch

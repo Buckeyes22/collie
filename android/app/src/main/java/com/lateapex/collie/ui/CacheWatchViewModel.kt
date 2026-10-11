@@ -82,11 +82,15 @@ internal class CacheWatchViewModel(
 
     init {
         repository.selectSubject(address.scope, address.paneId)
-        authorityRegistration = repository.onReadContextInvalidated { reason ->
-            retire(when (reason) {
-                AuthorityInvalidation.ACCESS_FROZEN, AuthorityInvalidation.PAIRING_RETIRED -> CacheWatchMessage.UNAVAILABLE
-                else -> CacheWatchMessage.STALE
-            }, invalidateAdmission = reason != AuthorityInvalidation.CONNECTION_CHANGED)
+        authorityRegistration = repository.onReadContextRetired { event ->
+            val reason = event.reason
+            val retirement = synchronized(custodyLock) {
+                if (!event.affects(context)) null else retirementLocked(when (reason) {
+                    AuthorityInvalidation.ACCESS_FROZEN, AuthorityInvalidation.PAIRING_RETIRED -> CacheWatchMessage.UNAVAILABLE
+                    else -> CacheWatchMessage.STALE
+                }, invalidateAdmission = reason != AuthorityInvalidation.CONNECTION_CHANGED)
+            }
+            retirement?.let(::finishRetirement)
         }
         // The repository notices credential replacement on its next readContext call.
         // Observe the real store flow so screen custody retires without an extra read.

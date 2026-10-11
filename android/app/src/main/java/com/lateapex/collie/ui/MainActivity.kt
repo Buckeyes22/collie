@@ -56,12 +56,14 @@ import java.util.Locale
 import kotlinx.coroutines.launch
 
 class MainActivity : AppCompatActivity() {
+    private var renderedContext: com.lateapex.collie.data.ScopedReadContext? = null
     private var authorityRegistration: AutoCloseable? = null
     private val repository get() = (application as CollieApplication).container.repository
     private lateinit var binding: ActivityMainBinding
     private lateinit var viewModel: MainViewModel
     private val nativePreferences by lazy { NativePreferences(this) }
     private var spaceQuery = ""
+    private var structuralContext: ScopedReadContext? = null
     private val launchingCommands = mutableMapOf<String, Pair<String, ScopedReadContext>>()
     private var retryingLaunchIntent = false
     private var retryingLaunchActor: String? = null
@@ -164,9 +166,20 @@ class MainActivity : AppCompatActivity() {
         })
         if (savedInstanceState == null) openDeepLink(intent.data)
 
-        authorityRegistration = repository.onAuthorityInvalidated {
-            structuralBusy = false
-            launchingCommands.clear()
+        authorityRegistration = repository.onAuthorityRetired { event ->
+            withRetirementOnMain(event, { renderedContext }) {
+                if (event.reason in setOf(com.lateapex.collie.data.AuthorityInvalidation.CONNECTION_CHANGED,
+                    com.lateapex.collie.data.AuthorityInvalidation.DISCONNECTED, com.lateapex.collie.data.AuthorityInvalidation.PAIRING_RETIRED)) {
+                    renderedContext = null
+                    render(MainUiState())
+                }
+            }
+            withRetirementOnMain(event, { structuralContext }) { structuralBusy = false; structuralContext = null }
+            withRetirementOnMain(event, { retryingLaunchContext }) { retryingLaunchIntent = false; retryingLaunchContext = null }
+            // The map holds one original actor per command; no successor-wide clear.
+            withRetirementOnMain(event, { launchingCommands.values.firstOrNull { event.affects(it.second) }?.second }) {
+                launchingCommands.entries.removeAll { event.affects(it.value.second) }
+            }
         }
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -280,6 +293,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun render(state: MainUiState) = with(binding) {
+        renderedContext = state.originalReadContext ?: renderedContext
         latestShellState = state
         setupPanel.visibility = if (state.configured && !state.pairingRequired) View.GONE else View.VISIBLE
         dashboardPanel.visibility = if (state.configured && !state.pairingRequired) View.VISIBLE else View.GONE
@@ -1210,6 +1224,7 @@ class MainActivity : AppCompatActivity() {
                 if (!repository.isCurrent(context) || viewModel.currentScope != target) return@launch
                 val actor = UUID.randomUUID().toString()
                 structuralActor = actor
+                structuralContext = context
                 structuralBusy = true
                 structuralProgressRes = R.string.worktree_creating
                 render(viewModel.state.value)
@@ -1608,6 +1623,7 @@ class MainActivity : AppCompatActivity() {
         val context = repository.readContext(viewModel.currentScope) ?: return null
         val actor = UUID.randomUUID().toString()
         structuralActor = actor
+        structuralContext = context
         structuralBusy = true
         structuralProgressRes = progressRes
         render(viewModel.state.value)

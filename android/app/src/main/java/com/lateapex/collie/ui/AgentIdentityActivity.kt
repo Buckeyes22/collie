@@ -30,6 +30,7 @@ class AgentIdentityActivity : AppCompatActivity() {
     private lateinit var address: PaneAddress
     private lateinit var content: LinearLayout
     private lateinit var viewModel: AgentIdentityViewModel
+    private var renderedActor: com.lateapex.collie.data.ScopedReadContext? = null
     private var authorityRegistration: AutoCloseable? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -55,8 +56,10 @@ class AgentIdentityActivity : AppCompatActivity() {
         val scroller = ScrollView(this).apply { addView(content) }
         setContentView(scroller)
         window.applySafeContentInsets(scroller)
-        authorityRegistration = repository.onReadContextInvalidated { _: AuthorityInvalidation ->
-            clearContentAndAcknowledge(renderCurrentState = true)
+        authorityRegistration = repository.onReadContextRetired { event ->
+            withRetirementOnMain(event, { renderedActor }) {
+                clearContentAndAcknowledge(renderCurrentState = true)
+            }
         }
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -112,6 +115,7 @@ class AgentIdentityActivity : AppCompatActivity() {
 
     private fun renderState(state: AgentIdentityUiState) {
         if (!viewModel.isCurrentPresentation(state)) return
+        renderedActor = viewModel.originalActorFor(state) ?: renderedActor
         content.removeAllViews()
         addText(getString(R.string.agent_identity_title), 20f, bold = true)
         when {

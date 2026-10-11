@@ -1753,7 +1753,14 @@ class CollieApiClient(
         timeoutSeconds: Long,
         read: (Response) -> ApiResult<T>,
     ): ApiResult<T> = try {
+        val actor = kotlin.coroutines.coroutineContext[com.lateapex.collie.data.OriginalReadActor]
+        if (actor != null && !actor.permitsDispatch()) throw IOException("Connection, scope or operation admission changed")
         client.newBuilder()
+            .addNetworkInterceptor { chain ->
+                // Runs after application interceptor/readiness/TLS waits, immediately before send.
+                if (actor != null && !actor.permitsDispatch()) throw IOException("Connection, scope or operation admission changed")
+                chain.proceed(chain.request())
+            }
             .followRedirects(false)
             .followSslRedirects(false)
             .readTimeout(timeoutSeconds, TimeUnit.SECONDS)

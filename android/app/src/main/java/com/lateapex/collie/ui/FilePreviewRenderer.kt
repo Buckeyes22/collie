@@ -48,6 +48,9 @@ internal enum class PreviewNotice(val resourceId: Int) {
 }
 internal enum class JsonContainerKind { OBJECT, ARRAY }
 internal data class JsonPreviewRow(val label: String, val value: String, val depth: Int, val childCount: Int, val parent: Int?, val container: JsonContainerKind? = null)
+/** Native preview graphs must be released, not merely detached, when their original actor retires. */
+internal interface RetirableFilePreview { fun disposePreview() }
+
 internal data class SvgDrawing(val width: Float, val height: Float, val svg: SVG)
 internal data class MarkdownImageRef(val alt: String, val path: RelativeFilePath)
 internal data class FileLinkRef(val label: String, val path: RelativeFilePath, val anchor: String? = null)
@@ -674,7 +677,15 @@ internal object FilePreviewRenderer {
 
     fun createSvgView(context: Context, drawing: SvgDrawing): View = SvgView(context, drawing)
 
-    private class SvgView(context: Context, private val drawing: SvgDrawing) : View(context) {
+    private class SvgView(context: Context, drawing: SvgDrawing) : View(context), RetirableFilePreview {
+        private var drawing: SvgDrawing? = drawing
+        override fun disposePreview() {
+            drawing = null
+            contentDescription = null
+            setOnTouchListener(null)
+            isClickable = false
+            invalidate()
+        }
         private var scale = 1f
         private var offsetX = 0f
         private var offsetY = 0f
@@ -689,6 +700,7 @@ internal object FilePreviewRenderer {
         })
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
+            val drawing = drawing ?: return
             val fit = minOf(width / drawing.width.coerceAtLeast(1f), height / drawing.height.coerceAtLeast(1f))
             val s = fit * scale
             canvas.save()
@@ -698,6 +710,7 @@ internal object FilePreviewRenderer {
             canvas.restore()
         }
         override fun onTouchEvent(event: android.view.MotionEvent): Boolean {
+            if (drawing == null) return false
             detector.onTouchEvent(event)
             when (event.actionMasked) {
                 android.view.MotionEvent.ACTION_DOWN -> { lastX = event.x; lastY = event.y }

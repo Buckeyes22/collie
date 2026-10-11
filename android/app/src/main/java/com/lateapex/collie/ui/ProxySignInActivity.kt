@@ -8,6 +8,8 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.lateapex.collie.CollieApplication
 import com.lateapex.collie.R
+import com.lateapex.collie.data.ScopedReadContext
+import com.lateapex.collie.data.custodyVersion
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -26,10 +28,13 @@ class ProxySignInActivity : AppCompatActivity() {
     private val custodyLock = Any()
     private var reviewed: ProfileReview? = null
     private var callback: CharArray? = null
+    private var callbackActor: ScopedReadContext? = null
+    @Volatile private var presentationActor: ScopedReadContext? = null
     @Volatile private var started = false
     private val actorVersion = java.util.concurrent.atomic.AtomicLong()
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        presentationActor = container.repository.readContext()
         val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(24, 24, 24, 24) }
         status = TextView(this).apply { text = getString(R.string.proxy_identity_explanation); isFocusable = true; accessibilityLiveRegion = android.view.View.ACCESSIBILITY_LIVE_REGION_POLITE }
         profile = EditText(this).apply { hint = getString(R.string.proxy_identity_profile); minLines = 4; maxLines = 10; isSaveEnabled = false; filters = arrayOf(android.text.InputFilter.LengthFilter(65_536)); inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE }
@@ -39,6 +44,7 @@ class ProxySignInActivity : AppCompatActivity() {
         copyKey.setOnClickListener {
             if (!started) return@setOnClickListener
             val actor = container.repository.readContext() ?: return@setOnClickListener
+            adoptActor(actor)
             runCatching { container.proxyCoordinator.deviceKeyThumbprint(actor) }.onSuccess { key ->
                 if (container.repository.isCurrent(actor)) {
                     getSystemService(android.content.ClipboardManager::class.java).setPrimaryClip(android.content.ClipData.newPlainText(getString(R.string.proxy_identity_key_label), key))
@@ -49,15 +55,19 @@ class ProxySignInActivity : AppCompatActivity() {
         column.addView(copyKey)
         column.addView(status); column.addView(profile); column.addView(import); column.addView(signIn)
         setContentView(ScrollView(this).apply { addView(column) })
-        retirement = container.repository.onReadContextInvalidated {
-            retirePresentation()
-            // Wipe ACK completes before the invalidating worker returns. No custody/repository
-            // lock is held while waiting for main, and main's wipe performs no repository calls.
-            wipeOnMainAndAwait { status.setText(R.string.proxy_identity_actor_changed) }
+        retirement = container.repository.onReadContextRetired { event ->
+            // Compare the COPY owner again on Main, after a possible fresh B import/refresh.
+            // Cancellation and ACK remain outside repository/store/private custody locks.
+            if (retirePresentation(event)) {
+                withRetirementOnMain(event, { presentationActor }) {
+                    wipeOnMainAndAwait { status.setText(R.string.proxy_identity_actor_changed) }
+                }
+            }
         }
         import.setOnClickListener {
             val actor = container.repository.readContext() ?: return@setOnClickListener
             if (!started) return@setOnClickListener
+            adoptActor(actor)
             val raw = profile.text.toString().toCharArray()
             val parsed = runCatching { com.lateapex.collie.auth.ProxyProfile.parse(String(raw)) }.getOrNull()
             if (parsed == null) { raw.fill('\u0000'); status.setText(R.string.proxy_identity_invalid); return@setOnClickListener }
@@ -83,12 +93,24 @@ class ProxySignInActivity : AppCompatActivity() {
         }
         signIn.setOnClickListener { runIdentity { actor, admitted -> container.proxyCoordinator.begin(actor, admitted) } }
         intent.getStringExtra(EXTRA_CALLBACK_ID)?.let { id ->
-            callback = ProxyCallbackHandoff.consume(id)?.toCharArray()
+            ProxyCallbackHandoff.consumeOwned(id)?.let { owned ->
+                callback = owned.callback.toCharArray()
+                callbackActor = owned.actor ?: presentationActor
+            }
         }
     }
-    private fun runIdentity(action: (com.lateapex.collie.data.ScopedReadContext, () -> Boolean) -> String) {
+    private fun adoptActor(actor: ScopedReadContext) {
+        if (presentationActor?.custodyVersion?.let { it != actor.custodyVersion } == true) {
+            retirePresentation()
+            wipeOnMainAndAwait()
+        }
+        synchronized(custodyLock) { presentationActor = actor }
+    }
+    private fun runIdentity(expectedActor: ScopedReadContext? = null, action: (com.lateapex.collie.data.ScopedReadContext, () -> Boolean) -> String) {
         if (!started) return
-        val actor = container.repository.readContext() ?: run { status.setText(R.string.proxy_identity_not_connected); return }
+        val actor = expectedActor ?: container.repository.readContext() ?: run { status.setText(R.string.proxy_identity_not_connected); return }
+        if (!container.repository.isCurrent(actor)) { status.setText(R.string.proxy_identity_actor_changed); return }
+        adoptActor(actor)
         if (work?.isActive == true) return
         val version = actorVersion.get()
         val admitted = { started && version == actorVersion.get() && container.repository.isCurrent(actor) }
@@ -109,16 +131,23 @@ class ProxySignInActivity : AppCompatActivity() {
     }
     override fun onStart() {
         super.onStart(); started = true
-        val raw = synchronized(custodyLock) { callback?.also { callback = null } }
-        if (raw != null) {
+        val owned = synchronized(custodyLock) { callback?.let { it to callbackActor }.also { callback = null; callbackActor = null } }
+        if (owned != null) {
+            val (raw, original) = owned
             val text = String(raw); raw.fill('\u0000')
-            runIdentity { actor, admitted -> if (container.proxyCoordinator.consumeCallback(text, actor, admitted)) "completed" else "refused" }
+            runIdentity(original) { actor, admitted -> if (container.proxyCoordinator.consumeCallback(text, actor, admitted)) "completed" else "refused" }
         }
     }
-    private fun retirePresentation() {
-        actorVersion.incrementAndGet()
-        synchronized(custodyLock) { reviewed?.raw?.fill('\u0000'); reviewed = null; callback?.fill('\u0000'); callback = null }
-        work?.cancel(); work = null
+    private fun retirePresentation(event: com.lateapex.collie.data.AuthorityRetirement? = null): Boolean {
+        val previous = synchronized(custodyLock) {
+            if (event != null && !event.affects(presentationActor)) return false
+            actorVersion.incrementAndGet()
+            reviewed?.raw?.fill('\u0000'); reviewed = null
+            callback?.fill('\u0000'); callback = null; callbackActor = null
+            work.also { work = null }
+        }
+        previous?.cancel()
+        return true
     }
     private fun wipeOnMainAndAwait(after: () -> Unit = {}) {
         val wipe = { review?.dismiss(); review = null; profile.text.clear(); signIn.isEnabled = true; import.isEnabled = true; after() }
@@ -140,7 +169,7 @@ class ProxySignInActivity : AppCompatActivity() {
         started = false; retirePresentation()
         // Stop invalidates in-flight publication but preserves the encrypted one-shot browser
         // transaction so a deliberate external-browser callback can finish on a started screen.
-        container.proxyCoordinator.suspendPresentation()
+        presentationActor?.let(container.proxyCoordinator::suspendPresentation)
         wipeOnMainAndAwait(); super.onStop()
     }
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
@@ -150,14 +179,23 @@ class ProxySignInActivity : AppCompatActivity() {
 /** Callback code remains process-only and never enters a Bundle. Lightweight internal IDs alone
  * cross Activities. The encrypted authorization transaction independently validates state/actor. */
 internal object ProxyCallbackHandoff {
-    private class Entry(val callback: String, val deadline: Long)
+    internal class OwnedCallback(val callback: String, val actor: ScopedReadContext?)
+    private class Entry(val callback: String, val deadline: Long, val actor: ScopedReadContext?)
     private val pending = LinkedHashMap<String, Entry>()
-    @Synchronized fun put(callback: String): String {
+    @Synchronized fun put(callback: String, actor: ScopedReadContext? = null): String {
         require(callback.length <= 8192)
         pending.entries.removeAll { it.value.deadline <= android.os.SystemClock.elapsedRealtime() }
         while (pending.size >= 4) pending.remove(pending.keys.first())
-        val id = java.util.UUID.randomUUID().toString(); pending[id] = Entry(callback, android.os.SystemClock.elapsedRealtime() + 60_000); return id
+        val id = java.util.UUID.randomUUID().toString()
+        pending[id] = Entry(callback, android.os.SystemClock.elapsedRealtime() + 60_000, actor)
+        return id
     }
     @Synchronized fun retire() { pending.clear() }
-    @Synchronized fun consume(id: String): String? = pending.remove(id)?.takeIf { it.deadline > android.os.SystemClock.elapsedRealtime() }?.callback
+    @Synchronized fun retire(event: com.lateapex.collie.data.AuthorityRetirement) {
+        // Unowned legacy entries grant no credentials; retire them conservatively.
+        pending.entries.removeAll { it.value.actor == null || event.affects(it.value.actor) }
+    }
+    @Synchronized fun consumeOwned(id: String): OwnedCallback? = pending.remove(id)
+        ?.takeIf { it.deadline > android.os.SystemClock.elapsedRealtime() }?.let { OwnedCallback(it.callback, it.actor) }
+    @Synchronized fun consume(id: String): String? = consumeOwned(id)?.callback
 }

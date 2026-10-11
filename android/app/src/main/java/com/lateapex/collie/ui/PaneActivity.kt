@@ -118,7 +118,7 @@ class PaneActivity : AppCompatActivity() {
                 val pane = matches.single()
                 // The new pane ID has a different owner-bound draft and key target. Drop old
                 // composition state before opening it so no old-pane input follows the move.
-                nativePreferences.savePaneDraft(paneDraftKey, "")
+                nativePreferences.savePaneDraft(paneDraftKey, "", paneContentContext?.let { com.lateapex.collie.data.ScopedCustodyOwner(it.key.origin, it.key.origin, it.key.pairedDeviceIdentity) })
                 binding.replyInput.text?.clear()
                 paneKeyQueue.clear()
                 stableTerminalDraft = null
@@ -221,6 +221,7 @@ class PaneActivity : AppCompatActivity() {
     private val sendConfirmation = TimedConfirmation<String>(now = SystemClock::uptimeMillis)
     private var pendingDestructiveSend: PendingDestructiveSend? = null
     private var paneDraftKey = ""
+    private var paneContentContext: com.lateapex.collie.data.ScopedReadContext? = null
     private var restoringDraft = false
     private var pendingQuickReply: String? = null
     private var pendingReplyAttempt: PendingReplyAttempt? = null
@@ -330,6 +331,8 @@ class PaneActivity : AppCompatActivity() {
             this,
             PaneViewModel.Factory(application, address, intent.getStringExtra(EXTRA_AGENT)),
         )[PaneViewModel::class.java]
+        paneContentContext = repository.readContext(address.scope, paneId)
+        paneDraftKey = listOf(origin, paneContentContext?.key?.pairedDeviceIdentity.orEmpty(), address.scope.host.orEmpty(), address.scope.session.orEmpty(), paneId).joinToString("|")
         binding.transcriptBody.onLoadOlder = viewModel::loadOlderTranscript
         binding.transcriptBody.onSendQueuedNow = viewModel::sendQueuedNow
         binding.transcriptBody.onDisplayedFileReferences = ::decorateTranscriptFileReferences
@@ -375,69 +378,72 @@ class PaneActivity : AppCompatActivity() {
         binding.replyInput.onDirectKeys = viewModel::sendDirectKeys
         binding.replyInput.onSendShortcut = ::sendReplyDraft
         restoringDraft = true
-        authorityRegistration = repository.onAuthorityInvalidated { reason ->
-            // This callback only removes authority; it must never initiate another Files read.
-            if (terminalOutputContext?.let(repository::isActorRetired) != false) {
-                retirePrintedPathCustody()
-                terminalOutputContext = null
-                retiredOutputFingerprint = outputFingerprint(renderedRevision, lastRawText)
-                resetTranscriptLinkBudget()
-            } else {
-                // A temporary admission fence removes tappable confirmations without retiring
-                // the in-flight lookup actor. Its refused reply can install the inert retry lease.
-                printedLinkRefs = emptyList()
-                printedLinkConfirmed = emptySet()
-                printedLinkRoot = null
-            }
-            ++terminalRenderGeneration
-            terminalRenderJob?.cancel()
-            terminalRenderJob = null
-            pendingTerminalRevision = null
-            pendingTerminalText = null
-            paneActionInFlight = false
-            tabCreateInFlight = false
-            composerMediaBusy = false
-            pickedImageThumb = null
-            imagePickerContext = null
-            microphonePermissionContext = null
-            documentPickerContext = null
-            val retiredDocumentJob = documentJob
-            documentJob = null
-            retiredDocumentJob?.cancel()
-            recordingContext = null
-            if (::speechRecorder.isInitialized) speechRecorder.cancel()
-            if (reason in setOf(com.lateapex.collie.data.AuthorityInvalidation.PAIRING_RETIRED,
-                com.lateapex.collie.data.AuthorityInvalidation.CONNECTION_CHANGED, com.lateapex.collie.data.AuthorityInvalidation.DISCONNECTED)) {
-                nativePreferences.clearSensitiveContent()
-                retireSensitiveCustody()
-                val retirementGeneration = terminalRenderGeneration
-                runOnUiThread {
-                    if (retirementGeneration != terminalRenderGeneration) return@runOnUiThread
-                    restoringDraft = true
-                    binding.replyInput.setText("")
-                    restoringDraft = false
-                    pickedImageThumb = null
-                    pendingDestructiveSend = null
-                    pendingQuickReply = null
-                    pendingReplyAttempt = null
-                    pendingSent = null
-                    paneKeyQueue.clear()
-                    binding.terminalText.text = ""
-                    binding.terminalBlockContent.removeAllViews()
-                    binding.terminalStatusline.text = ""
-                    binding.composerMediaStatus.text = ""
-                    binding.composerMediaStatus.isVisible = false
-                    binding.transcriptBody.bind(agentName, emptyList(), false)
-                    binding.semanticActions.removeAllViews()
-                    binding.semanticPanel.isVisible = false
-                    renderAttachmentChip()
-                    if (::speechRecorder.isInitialized) speechRecorder.cancel()
+        authorityRegistration = repository.onAuthorityRetired { event ->
+            withRetirementOnMain(event, { paneContentContext }) {
+                val reason = event.reason
+                // This callback only removes authority; it must never initiate another Files read.
+                if (terminalOutputContext?.let(repository::isActorRetired) != false) {
+                    retirePrintedPathCustody()
+                    terminalOutputContext = null
+                    retiredOutputFingerprint = outputFingerprint(renderedRevision, lastRawText)
+                    resetTranscriptLinkBudget()
+                } else {
+                    // A temporary admission fence removes tappable confirmations without retiring
+                    // the in-flight lookup actor. Its refused reply can install the inert retry lease.
+                    printedLinkRefs = emptyList()
+                    printedLinkConfirmed = emptySet()
+                    printedLinkRoot = null
                 }
-            } else {
-                runOnUiThread {
-                    // Strip path spans immediately while preserving whatever content policy G2
-                    // allows. The retained mirror alone cannot acquire a replacement actor.
-                    renderTerminalContent(renderedTerminalText, confirmPrintedPaths = false)
+                ++terminalRenderGeneration
+                terminalRenderJob?.cancel()
+                terminalRenderJob = null
+                pendingTerminalRevision = null
+                pendingTerminalText = null
+                paneActionInFlight = false
+                tabCreateInFlight = false
+                composerMediaBusy = false
+                pickedImageThumb = null
+                imagePickerContext = null
+                microphonePermissionContext = null
+                documentPickerContext = null
+                val retiredDocumentJob = documentJob
+                documentJob = null
+                retiredDocumentJob?.cancel()
+                recordingContext = null
+                if (::speechRecorder.isInitialized) speechRecorder.cancel()
+                if (reason in setOf(com.lateapex.collie.data.AuthorityInvalidation.PAIRING_RETIRED,
+                    com.lateapex.collie.data.AuthorityInvalidation.CONNECTION_CHANGED, com.lateapex.collie.data.AuthorityInvalidation.DISCONNECTED)) {
+                    event.owner?.let(nativePreferences::retireSensitiveContent)
+                    retireSensitiveCustody()
+                    val retirementGeneration = terminalRenderGeneration
+                    runOnUiThread {
+                        if (retirementGeneration != terminalRenderGeneration) return@runOnUiThread
+                        restoringDraft = true
+                        binding.replyInput.setText("")
+                        restoringDraft = false
+                        pickedImageThumb = null
+                        pendingDestructiveSend = null
+                        pendingQuickReply = null
+                        pendingReplyAttempt = null
+                        pendingSent = null
+                        paneKeyQueue.clear()
+                        binding.terminalText.text = ""
+                        binding.terminalBlockContent.removeAllViews()
+                        binding.terminalStatusline.text = ""
+                        binding.composerMediaStatus.text = ""
+                        binding.composerMediaStatus.isVisible = false
+                        binding.transcriptBody.bind(agentName, emptyList(), false)
+                        binding.semanticActions.removeAllViews()
+                        binding.semanticPanel.isVisible = false
+                        renderAttachmentChip()
+                        if (::speechRecorder.isInitialized) speechRecorder.cancel()
+                    }
+                } else {
+                    runOnUiThread {
+                        // Strip path spans immediately while preserving whatever content policy G2
+                        // allows. The retained mirror alone cannot acquire a replacement actor.
+                        renderTerminalContent(renderedTerminalText, confirmPrintedPaths = false)
+                    }
                 }
             }
         }
@@ -455,7 +461,7 @@ class PaneActivity : AppCompatActivity() {
         binding.replyInput.addTextChangedListener(simpleTextWatcher { draft ->
             if (pendingDestructiveSend?.draft != draft) resetDestructiveConfirm()
             if (!restoringDraft && !directTyping && noEchoPrompt == null) {
-                nativePreferences.savePaneDraft(paneDraftKey, draft)
+                nativePreferences.savePaneDraft(paneDraftKey, draft, paneContentContext?.let { com.lateapex.collie.data.ScopedCustodyOwner(it.key.origin, it.key.origin, it.key.pairedDeviceIdentity) })
             }
             binding.draftPersistenceWarning.isVisible =
                 draft.isNotEmpty() && !nativePreferences.fitsPaneDraftStore(draft)
@@ -545,7 +551,7 @@ class PaneActivity : AppCompatActivity() {
         cancelActiveKeyRepeat = null
         resetDestructiveConfirm(render = false)
         if (!directTyping && noEchoPrompt == null) {
-            nativePreferences.savePaneDraft(paneDraftKey, binding.replyInput.text?.toString().orEmpty())
+            nativePreferences.savePaneDraft(paneDraftKey, binding.replyInput.text?.toString().orEmpty(), paneContentContext?.let { com.lateapex.collie.data.ScopedCustodyOwner(it.key.origin, it.key.origin, it.key.pairedDeviceIdentity) })
         }
         viewModel.endDirectTyping()
         setDirectTyping(false, announce = false)
@@ -704,7 +710,7 @@ class PaneActivity : AppCompatActivity() {
         noEchoType.setOnClickListener {
             if (noEchoPrompt == null || semanticSurface?.ownsKeyboard == true) return@setOnClickListener
             replyInput.text?.clear()
-            nativePreferences.savePaneDraft(paneDraftKey, "")
+            nativePreferences.savePaneDraft(paneDraftKey, "", paneContentContext?.let { com.lateapex.collie.data.ScopedCustodyOwner(it.key.origin, it.key.origin, it.key.pairedDeviceIdentity) })
             if (!showDrawer(ComposerDrawer.NONE)) return@setOnClickListener
             setDirectTyping(true)
         }
@@ -1775,6 +1781,17 @@ class PaneActivity : AppCompatActivity() {
     }
 
     private fun render(state: PaneUiState) = with(binding) {
+        val copied = state.paneReadContext ?: state.transcriptReadContext ?: state.filesConfigContext
+        if (copied != null && repository.isCurrent(copied)) {
+            if (paneContentContext != null && (paneContentContext?.connection !== copied.connection || paneContentContext?.connectionIncarnation != copied.connectionIncarnation)) {
+                retireSensitiveCustody()
+                restoringDraft = true
+                replyInput.setText("")
+                restoringDraft = false
+            }
+            paneContentContext = copied
+            paneDraftKey = listOf(copied.key.origin, copied.key.pairedDeviceIdentity, address.scope.host.orEmpty(), address.scope.session.orEmpty(), address.paneId).joinToString("|")
+        }
         currentState = state
         lastRenderedState = state
         val paneActor = state.paneReadContext?.takeIf(repository::isCurrent)
@@ -1838,7 +1855,7 @@ class PaneActivity : AppCompatActivity() {
         if (effectiveNoEchoPrompt != null && noEchoPrompt == null) {
             // The local field remains available for an explicit Type handoff, but a value refused
             // at a no-echo prompt must never survive activity/process recreation on disk.
-            nativePreferences.savePaneDraft(paneDraftKey, "")
+            nativePreferences.savePaneDraft(paneDraftKey, "", paneContentContext?.let { com.lateapex.collie.data.ScopedCustodyOwner(it.key.origin, it.key.origin, it.key.pairedDeviceIdentity) })
         }
         noEchoPrompt = effectiveNoEchoPrompt
         val observedTerminalDraft = analyzedTerminalDraft.takeIf {
@@ -1914,7 +1931,7 @@ class PaneActivity : AppCompatActivity() {
             pendingAttachmentThumb = null
             renderAttachmentChip()
             replyInput.text?.clear()
-            nativePreferences.savePaneDraft(paneDraftKey, "")
+            nativePreferences.savePaneDraft(paneDraftKey, "", paneContentContext?.let { com.lateapex.collie.data.ScopedCustodyOwner(it.key.origin, it.key.origin, it.key.pairedDeviceIdentity) })
             viewModel.onReplyDraftCleared()
         }
         renderPendingSent()

@@ -26,6 +26,7 @@ class PaneProcessesActivity : AppCompatActivity() {
     private lateinit var content: LinearLayout
     private var authorityRegistration: AutoCloseable? = null
     private var retired = false
+    private var custodyActor: com.lateapex.collie.data.ScopedReadContext? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -49,9 +50,11 @@ class PaneProcessesActivity : AppCompatActivity() {
         val scroller = ScrollView(this).apply { addView(content) }
         setContentView(scroller)
         window.applySafeContentInsets(scroller)
-        authorityRegistration = repository.onReadContextInvalidated { _ ->
-            retired = true
-            runOnUiThread { renderMessage(getString(R.string.pane_processes_unavailable)) }
+        authorityRegistration = repository.onReadContextRetired { event ->
+            withRetirementOnMain(event, { custodyActor }) {
+                retired = true
+                runOnUiThread { renderMessage(getString(R.string.pane_processes_unavailable)) }
+            }
         }
         load()
     }
@@ -63,10 +66,12 @@ class PaneProcessesActivity : AppCompatActivity() {
     }
 
     private fun load() {
+        val captured = repository.readContext(address.scope, address.paneId) ?: return
+        custodyActor = captured
         renderMessage(getString(R.string.pane_processes_loading))
         lifecycleScope.launch {
-            val processes = repository.paneProcesses(address)
-            if (isFinishing || retired) return@launch
+            val processes = repository.paneProcesses(address, captured)
+            if (isFinishing || retired || custodyActor !== captured || !repository.isCurrent(captured)) return@launch
             content.removeAllViews()
             addText(getString(R.string.pane_processes_title), 20f, bold = true)
             when (processes) {

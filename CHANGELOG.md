@@ -49,6 +49,10 @@ Running a crew? Update the lead first; members follow on their own. Details:
 
 ### Fixed
 
+- **Keep local acknowledged input visible when the current connection returns.** Refresh only its local acknowledgement display without replacing an already adopted pane, restoring drafts or replaying input. Refuse queued old connection emissions.
+
+- **Keep native proxy cleanup with its original owner.** Join connection-incarnation retirement with request custody through transport waits, encrypted identity transactions, nonce caches, issuer calls and queued profile/editor acknowledgements. Preserve fresh replacement navigation and local acknowledged-input custody without replaying terminal actions.
+
 - **Native identity profiles accept exact root issuers without a slash.** Preserve the operator’s literal issuer in discovery, callback, token and device-binding verification while keeping other HTTPS endpoints canonical.
 
 - **Printed file discovery carries its owning device read admission.** Pane responses bind the current Files verdict into their ETag, and Crew preserves the owning declaration without borrowing the lead’s support.

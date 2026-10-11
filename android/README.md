@@ -237,7 +237,16 @@ completed uploads do not persist the provider URI or its grant.
   filtering, source Find/line jumps, native inert Markdown/JSON/HTML/CSV/SVG previews, and raster
   reads through the shared authenticated image loader. Printed relative source paths remain plain
   text unless a scoped Files/exist read confirms them. Parser bounds and SVG/HTML security policy are
-  documented in [Files preview security](FILES_PREVIEW_SECURITY.md).
+  documented in [Files preview security](FILES_PREVIEW_SECURITY.md). Removing or replacing the
+  encrypted connection clears accepted Files content, detached and pooled listing rows, retained earlier
+  source/preview copies, parsed SVG graphs and image dialogs even while the screen is stopped. The shared
+  image loader retires requests and versioned caches for the original committed actor without a new read;
+  current replacement actors and temporary admission fences keep their own live custody. An explicit retry admits a fresh actor; a Changes handoff stays bound to
+  its original actor and cannot acquire replacement credentials. Each committed encrypted connection
+  has a durable opaque incarnation ID; clearing or replacing it permanently retires earlier actors,
+  even when notification coalesces and the same Connection object returns. Re-saving the exact live
+  instance preserves its ID. Older encrypted records without an ID require deliberate reconnect;
+  reading an old record does not mint new authority.
 - The Keys drawer keeps primary keys and modifiers together, wrapping on narrow phones to retain
   48 dp touch targets. Its More sheet holds presets and function keys.
 - The worktree sheet lists a repository's linked worktrees that have no open space; selecting one
@@ -424,3 +433,11 @@ Cache watches preserve the exact host/session/pane address. Older ambiguous peer
 in the list with Forget available and no pane link; add a new watch from a current exact pane.
 Cache details clear live facts and catalog validators when their authority retires or the screen
 stops. The existing Refresh action acquires fresh facts before the switch becomes usable again.
+
+Native retained content and recovery records carry their original committed connection owner.
+Delayed retirement compares that copied owner again on Main and removes only the predecessor's
+pane drafts and encrypted launch intents. A fresh committed successor can refresh the same
+screen while predecessor cleanup is held. Genuine same-generation or unsupported-store pending
+acknowledgements refuse new actors while preserving temporarily fenced original custody.
+Fresh canonical whole review, native compilation and actual device/Crew/format acceptance
+remain required; historical failed runs remain preserved, and B18 H11/R1 remain open.

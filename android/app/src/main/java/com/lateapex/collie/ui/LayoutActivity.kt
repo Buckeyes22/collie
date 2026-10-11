@@ -78,7 +78,7 @@ class LayoutActivity : AppCompatActivity() {
         if (paneId == null) { finish(); return }
         address = PaneAddress(Scope(intent.getStringExtra(EXTRA_HOST), intent.getStringExtra(EXTRA_SESSION)), paneId)
         actor = repository.readContext(address.scope, paneId)
-        authorityRegistration = repository.onAuthorityInvalidated { retireAuthorityAndAcknowledge() }
+        authorityRegistration = repository.onAuthorityRetired { retireAuthorityAndAcknowledge(it) }
         loadPendingIntent()
         val scroll = ScrollView(this)
         content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(16), dp(20), dp(24)) }
@@ -119,8 +119,9 @@ class LayoutActivity : AppCompatActivity() {
         }
     }
 
-    private fun retireAuthorityAndAcknowledge() {
+    private fun retireAuthorityAndAcknowledge(event: com.lateapex.collie.data.AuthorityRetirement) {
         val retirement = synchronized(custodyLock) {
+            if (!event.affects(actor)) return
             if (disposalRequested) null else {
                 val next = custodyGeneration.incrementAndGet()
                 val dialog = activeDialog

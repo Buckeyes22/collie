@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
 
 internal enum class FilesMessage { NOT_CONNECTED, UNSUPPORTED, UNAUTHORIZED, PROXY_REQUIRED, NOT_FOUND, NO_FOLDER, TOO_LARGE, NOT_IMAGE, UNAVAILABLE, MALFORMED }
 internal data class FilesScreenState(
@@ -45,34 +46,44 @@ internal class FilesViewModel(
 ) : AndroidViewModel(application) {
     private val mutableState = MutableStateFlow(FilesScreenState(directory = initialDirectory, path = initialPath, ignored = initialIgnored))
     val state: StateFlow<FilesScreenState> = mutableState.asStateFlow()
+    private val custodyLock = Any()
     private var generation = 0L
     private var navigationContext = initialContext
-    private val invalidation = repository.onReadContextInvalidated { reason ->
-        if (reason in setOf(
-                AuthorityInvalidation.CONNECTION_CHANGED, AuthorityInvalidation.PAIRING_RETIRED,
-                AuthorityInvalidation.DISCONNECTED, AuthorityInvalidation.SAVED_COPY,
-                AuthorityInvalidation.SCOPE_CHANGED, AuthorityInvalidation.LEAD_CHANGED,
-            ) || (reason == AuthorityInvalidation.ACCESS_FROZEN && repository.accessFailure is ApiFailure.Http)
-        ) {
+    private var pageContext: ScopedReadContext? = null
+    private var retirement: AutoCloseable? = null
+    private var readJob: Job? = null
+    private var pageRetired = false
+    private val pageRetirements = java.util.concurrent.CopyOnWriteArrayList<() -> Unit>()
+
+    /** Activity-owned copies must also be cleared while lifecycle state collection is stopped. */
+    fun onPageRetired(listener: () -> Unit): AutoCloseable {
+        val notify = synchronized(custodyLock) { pageRetirements.add(listener); pageRetired }
+        if (notify) listener()
+        return AutoCloseable { pageRetirements.remove(listener) }
+    }
+
+    private fun retire(context: ScopedReadContext, reason: AuthorityInvalidation) {
+        val work = synchronized(custodyLock) {
+            if (pageContext !== context || !repository.isActorRetired(context)) return
             generation++
+            pageContext = null
             navigationContext = null
-            val previous = mutableState.value
+            pageRetired = true
             val currentFailure = repository.accessFailure
-            val refusal = if (reason == AuthorityInvalidation.ACCESS_FROZEN && currentFailure != null) failure(currentFailure) else when (reason) {
-                AuthorityInvalidation.PAIRING_RETIRED -> FilesMessage.UNAUTHORIZED
-                AuthorityInvalidation.CONNECTION_CHANGED, AuthorityInvalidation.DISCONNECTED,
-                AuthorityInvalidation.SCOPE_CHANGED, AuthorityInvalidation.LEAD_CHANGED,
-                AuthorityInvalidation.SAVED_COPY -> FilesMessage.NOT_CONNECTED
-                AuthorityInvalidation.ACCESS_FROZEN -> FilesMessage.UNAVAILABLE
-            }
-            mutableState.value = FilesScreenState(
-                loading = false,
-                path = previous.path,
-                directory = previous.directory,
-                ignored = previous.ignored,
-                error = refusal,
-            )
+            val previous = mutableState.value
+            mutableState.value = FilesScreenState(loading = false, path = previous.path,
+                directory = previous.directory, ignored = previous.ignored,
+                error = if (reason == AuthorityInvalidation.ACCESS_FROZEN && currentFailure != null) failure(currentFailure)
+                    else if (reason == AuthorityInvalidation.PAIRING_RETIRED) FilesMessage.UNAUTHORIZED else FilesMessage.NOT_CONNECTED)
+            val retiring = readJob to retirement
+            readJob = null
+            retirement = null
+            retiring
         }
+        // Cancellation and main-thread view ACKs must never borrow custody/admission/store locks.
+        work.first?.cancel()
+        work.second?.close()
+        pageRetirements.forEach { it() }
     }
 
     init {
@@ -95,8 +106,10 @@ internal class FilesViewModel(
 
     fun openDirectory(path: String) {
         val relative = RelativeFilePath.parse(path, allowRoot = true) ?: run {
-            generation++
-            mutableState.value = FilesScreenState(loading = false, directory = mutableState.value.directory, ignored = mutableState.value.ignored, error = FilesMessage.NOT_FOUND)
+            synchronized(custodyLock) {
+                generation++
+                mutableState.value = FilesScreenState(loading = false, directory = mutableState.value.directory, ignored = mutableState.value.ignored, error = FilesMessage.NOT_FOUND)
+            }
             return
         }
         loadDirectory(relative.value, mutableState.value.ignored)
@@ -104,8 +117,10 @@ internal class FilesViewModel(
 
     fun openFile(path: String) {
         val relative = RelativeFilePath.parse(path) ?: run {
-            generation++
-            mutableState.value = FilesScreenState(loading = false, directory = mutableState.value.directory, ignored = mutableState.value.ignored, error = FilesMessage.NOT_FOUND)
+            synchronized(custodyLock) {
+                generation++
+                mutableState.value = FilesScreenState(loading = false, directory = mutableState.value.directory, ignored = mutableState.value.ignored, error = FilesMessage.NOT_FOUND)
+            }
             return
         }
         read(relative)
@@ -136,8 +151,10 @@ internal class FilesViewModel(
 
     private fun loadDirectory(directory: String, ignored: Boolean) {
         val relative = RelativeFilePath.parse(directory, allowRoot = true) ?: run {
-            generation++
-            mutableState.value = FilesScreenState(loading = false, error = FilesMessage.NOT_FOUND)
+            synchronized(custodyLock) {
+                generation++
+                mutableState.value = FilesScreenState(loading = false, error = FilesMessage.NOT_FOUND)
+            }
             return
         }
         request(FilesScreenState(loading = true, directory = relative.value, ignored = ignored)) { context ->
@@ -153,44 +170,67 @@ internal class FilesViewModel(
     }
 
     private fun request(loading: FilesScreenState, call: suspend (ScopedReadContext) -> ApiResult<FilesAnswer>) {
-        val request = ++generation
-        val context = if (handoffRequired) navigationContext?.takeIf {
-            it.key.scope == scope && it.key.subjectIdentity == target.id && repository.isCurrent(it)
+        val originalNavigation = synchronized(custodyLock) { navigationContext }
+        val context = if (handoffRequired) originalNavigation?.takeIf {
+            it.key.scope == scope && it.key.subjectIdentity == target.id && !repository.isActorRetired(it)
         } else repository.readContext(scope, target.id)
         if (context == null) {
-            if (handoffRequired) navigationContext = null
-            mutableState.value = loading.copy(loading = false, error = FilesMessage.NOT_CONNECTED)
+            synchronized(custodyLock) {
+                // A pending ACK pauses admission; it does not destroy an original live handoff.
+                if (pageContext?.let { !repository.isActorRetired(it) } == true) return
+                if (handoffRequired) navigationContext = null
+                generation++
+                mutableState.value = loading.copy(loading = false, error = FilesMessage.NOT_CONNECTED)
+            }
             return
         }
-        mutableState.value = loading.copy(error = null)
-        viewModelScope.launch {
+        if (!repository.isCurrent(context)) return
+        val (request, previous) = synchronized(custodyLock) {
+            pageContext = context
+            pageRetired = false
+            mutableState.value = loading.copy(error = null)
+            (++generation) to (readJob to retirement)
+        }
+        previous.first?.cancel()
+        previous.second?.close()
+        val subscription = repository.onFilesActorRetired(context) { retire(context, it) }
+        val keep = synchronized(custodyLock) {
+            if (pageContext === context && request == generation) { retirement = subscription; true } else false
+        }
+        if (!keep) { subscription.close(); return }
+        val work = viewModelScope.launch {
             val result = call(context)
-            if (request != generation) return@launch
-            if (!repository.isCurrent(context)) return@launch
-            when (result) {
-                is ApiResult.Success -> {
-                    val unavailable = result.value as? FilesAnswer.Unavailable
-                    val error = when (unavailable?.reason) {
-                        "no-folder" -> FilesMessage.NO_FOLDER
-                        "no-pane", "no-workspace" -> FilesMessage.NOT_FOUND
-                        else -> null
+            synchronized(custodyLock) {
+                if (request != generation || pageContext !== context || !repository.isCurrent(context)) return@launch
+                when (result) {
+                    is ApiResult.Success -> {
+                        val unavailable = result.value as? FilesAnswer.Unavailable
+                        val error = when (unavailable?.reason) {
+                            "no-folder" -> FilesMessage.NO_FOLDER
+                            "no-pane", "no-workspace" -> FilesMessage.NOT_FOUND
+                            else -> null
+                        }
+                        val accepted = result.status == 200 && result.value !is FilesAnswer.Unavailable && repository.isCurrent(context)
+                        val navigation = when (val answer = result.value) {
+                            is FilesAnswer.Source -> loading.copy(path = answer.path, directory = answer.path.substringBeforeLast('/', ""))
+                            is FilesAnswer.Listing -> loading.copy(path = null, directory = answer.directory)
+                            is FilesAnswer.Unavailable -> loading
+                        }
+                        mutableState.value = if (accepted) {
+                            navigation.copy(loading = false, answer = result.value, error = error, acceptedContext = context)
+                        } else {
+                            loading.copy(loading = false, answer = null, error = error ?: FilesMessage.MALFORMED, acceptedContext = null)
+                        }
                     }
-                    val accepted = result.status == 200 && result.value !is FilesAnswer.Unavailable && repository.isCurrent(context)
-                    val navigation = when (val answer = result.value) {
-                        is FilesAnswer.Source -> loading.copy(path = answer.path, directory = answer.path.substringBeforeLast('/', ""))
-                        is FilesAnswer.Listing -> loading.copy(path = null, directory = answer.directory)
-                        is FilesAnswer.Unavailable -> loading
-                    }
-                    mutableState.value = if (accepted) {
-                        navigation.copy(loading = false, answer = result.value, error = error, acceptedContext = context)
-                    } else {
-                        loading.copy(loading = false, answer = null, error = error ?: FilesMessage.MALFORMED, acceptedContext = null)
-                    }
+                    is ApiResult.Failure -> mutableState.value = loading.copy(loading = false, error = failure(result.error))
+                    is ApiResult.NotModified -> mutableState.value = loading.copy(loading = false, error = FilesMessage.MALFORMED)
                 }
-                is ApiResult.Failure -> mutableState.value = loading.copy(loading = false, error = failure(result.error))
-                is ApiResult.NotModified -> mutableState.value = loading.copy(loading = false, error = FilesMessage.MALFORMED)
             }
         }
+        val retainWork = synchronized(custodyLock) {
+            if (pageContext === context && request == generation) { readJob = work; true } else false
+        }
+        if (!retainWork) work.cancel()
     }
 
     private fun failure(error: ApiFailure): FilesMessage = when (error) {
@@ -208,9 +248,19 @@ internal class FilesViewModel(
     }
 
     override fun onCleared() {
-        navigationContext = null
-        generation++
-        invalidation.close()
+        val retiring = synchronized(custodyLock) {
+            navigationContext = null
+            pageContext = null
+            generation++
+            val owned = readJob to retirement
+            readJob = null
+            retirement = null
+            mutableState.value = FilesScreenState(loading = false, error = FilesMessage.NOT_CONNECTED)
+            owned
+        }
+        retiring.first?.cancel()
+        retiring.second?.close()
+        pageRetirements.clear()
         super.onCleared()
     }
 

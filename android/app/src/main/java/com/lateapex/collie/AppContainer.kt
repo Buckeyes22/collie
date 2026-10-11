@@ -76,21 +76,22 @@ class AppContainer(context: Context) {
     init {
         // Registered before Activity/View listeners: encrypted publication closes before any
         // main-thread wipe ACK can begin, with no monitor held across the later callbacks.
-        repository.onReadContextInvalidated {
-            com.lateapex.collie.ui.ProxyCallbackHandoff.retire()
-            proxyCoordinator.retire()
-            proxyInterceptor.retire()
+        repository.onReadContextRetired { event ->
+            com.lateapex.collie.ui.ProxyCallbackHandoff.retire(event)
+            proxyCoordinator.retire(event)
+            proxyInterceptor.retire(event)
         }
-        repository.onAuthorityInvalidated { reason ->
+        repository.onAuthorityRetired { event ->
+            val reason = event.reason
             if (reason == com.lateapex.collie.data.AuthorityInvalidation.ACCESS_FROZEN) {
-                com.lateapex.collie.ui.ProxyCallbackHandoff.retire()
-                proxyCoordinator.retire()
-                proxyInterceptor.retire()
+                com.lateapex.collie.ui.ProxyCallbackHandoff.retire(event)
+                proxyCoordinator.retire(event)
+                proxyInterceptor.retire(event)
             }
             if (reason in setOf(com.lateapex.collie.data.AuthorityInvalidation.PAIRING_RETIRED,
                 com.lateapex.collie.data.AuthorityInvalidation.CONNECTION_CHANGED, com.lateapex.collie.data.AuthorityInvalidation.DISCONNECTED)) {
-                proxyIdentityStore.clear()
-                nativePreferences.clearSensitiveContent()
+                proxyCoordinator.retire(event, removeRecord = true)
+                event.owner?.let(nativePreferences::retireSensitiveContent)
             }
         }
     }

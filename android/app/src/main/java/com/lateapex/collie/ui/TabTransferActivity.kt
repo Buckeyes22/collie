@@ -90,24 +90,26 @@ class TabTransferActivity : AppCompatActivity() {
         content.addView(controls, fullWidth())
         rows = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         content.addView(rows, fullWidth())
-        authorityRegistration = repository.onReadContextInvalidated {
-            val currentParent = parent
-            if (currentParent?.activeChild != null) journal.markTransferUnknown(currentParent.owner, currentParent.transferId, currentParent.activeChild.requestId)
-            val acknowledgement = CountDownLatch(1)
-            val wipe = Runnable {
-                activeDialog?.dismiss()
-                activeDialog = null
-                actor = null
-                parent = null
-                flowSupported = false
-                busy = false
-                notice.text = getString(R.string.tab_transfer_scope_changed)
-                rows.removeAllViews()
-                acknowledgement.countDown()
-            }
-            if (Looper.myLooper() == Looper.getMainLooper()) wipe.run() else {
-                mainHandler.post(wipe)
-                try { acknowledgement.await(2, TimeUnit.SECONDS) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
+        authorityRegistration = repository.onReadContextRetired { event ->
+            withRetirementOnMain(event, { actor }) {
+                val currentParent = parent
+                if (currentParent?.activeChild != null) journal.markTransferUnknown(currentParent.owner, currentParent.transferId, currentParent.activeChild.requestId)
+                val acknowledgement = CountDownLatch(1)
+                val wipe = Runnable {
+                    activeDialog?.dismiss()
+                    activeDialog = null
+                    actor = null
+                    parent = null
+                    flowSupported = false
+                    busy = false
+                    notice.text = getString(R.string.tab_transfer_scope_changed)
+                    rows.removeAllViews()
+                    acknowledgement.countDown()
+                }
+                if (Looper.myLooper() == Looper.getMainLooper()) wipe.run() else {
+                    mainHandler.post(wipe)
+                    try { acknowledgement.await(2, TimeUnit.SECONDS) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
+                }
             }
         }
         refresh()
@@ -124,9 +126,13 @@ class TabTransferActivity : AppCompatActivity() {
         lifecycleScope.launch {
             val captured = repository.readContext(scope)
             if (captured == null) { actor = null; parent = null; busy = false; notice.text = getString(R.string.tab_transfer_unavailable); render(); return@launch }
+            if (actor != null && (actor?.connection !== captured.connection || actor?.connectionIncarnation != captured.connectionIncarnation)) {
+                activeDialog?.dismiss(); activeDialog = null; parent = null; rows.removeAllViews()
+            }
             actor = captured
             val config = repository.config(scope, captured)
-            if (!repository.isCurrent(captured)) { retireLocal(); return@launch }
+            if (actor !== captured) return@launch
+            if (!repository.isCurrent(captured)) { retireLocal(captured); return@launch }
             flowSupported = (config as? ApiResult.Success)?.value?.let { value ->
                 val mux = value.mux
                 value.control?.supportsNew("controlOperations") == true &&
@@ -134,9 +140,11 @@ class TabTransferActivity : AppCompatActivity() {
             } == true
             val owner = ownerFor(captured)
             val saved = journal.transfer(owner)
-            if (!repository.isCurrent(captured)) { retireLocal(); return@launch }
+            if (actor !== captured) return@launch
+            if (!repository.isCurrent(captured)) { retireLocal(captured); return@launch }
             val snapshot = repository.paneSnapshot(scope, captured)
-            if (!repository.isCurrent(captured)) { retireLocal(); return@launch }
+            if (actor !== captured) return@launch
+            if (!repository.isCurrent(captured)) { retireLocal(captured); return@launch }
             parent = saved
             when (snapshot) {
                 is ApiResult.Success -> {
@@ -204,7 +212,7 @@ class TabTransferActivity : AppCompatActivity() {
         lifecycleScope.launch {
             val captured = actor ?: return@launch
             val result = repository.paneSnapshot(scope, captured)
-            if (!repository.isCurrent(captured) || result !is ApiResult.Success) return@launch
+            if (actor !== captured || !repository.isCurrent(captured) || result !is ApiResult.Success) return@launch
             val choices = result.value.workspaces.filter { it.host == scope.host && it.workspaceId != sourceWorkspaceId }
             if (choices.isEmpty()) { notice.text = getString(R.string.tab_transfer_no_other_workspace); render(); return@launch }
             val dialog = AlertDialog.Builder(this@TabTransferActivity).setTitle(R.string.tab_transfer_choose_workspace)
@@ -238,16 +246,20 @@ class TabTransferActivity : AppCompatActivity() {
         render()
         lifecycleScope.launch {
             val snapshot = repository.paneSnapshot(scope, captured)
+            if (actor !== captured) return@launch
             if (!repository.isCurrent(captured) || snapshot !is ApiResult.Success) { busy = false; notice.text = getString(R.string.tab_transfer_unavailable); render(); return@launch }
             val sourcePanes = (snapshot.value.agents + snapshot.value.shellPanes).filter { it.tabId == tabId && it.workspaceId == sourceWorkspaceId && it.host == scope.host && it.session == scope.session }
             if (sourcePanes.isEmpty() || sourcePanes.size > 64) { busy = false; notice.text = getString(R.string.tab_transfer_source_missing); render(); return@launch }
             val firstAddress = PaneAddress(scope, sourcePanes.first().paneId)
             val layout = repository.paneLayout(firstAddress, captured)
+            if (actor !== captured) return@launch
             if (!repository.isCurrent(captured) || layout !is ApiResult.Success || !layout.value.result.validForPane(firstAddress.paneId, "layout")) { busy = false; notice.text = getString(R.string.tab_transfer_layout_unavailable); render(); return@launch }
             val recipe = balancedRecipe(layout.value.result.layout.area.width, layout.value.result.layout.area.height, sourcePanes.size - 1)
             if (recipe == null) { busy = false; notice.text = getString(R.string.tab_transfer_reflow_infeasible); render(); return@launch }
             val requestBody = buildJsonObject { put("destination", destination); put("recipe", buildJsonArray { recipe.forEach { step -> add(buildJsonObject { put("direction", JsonPrimitive(step.direction)); put("ratio", JsonPrimitive(step.ratio)) }) } }) }
-            when (val plan = repository.planTabTransfer(scope, tabId, requestBody, captured)) {
+            val plan = repository.planTabTransfer(scope, tabId, requestBody, captured)
+            if (actor !== captured) return@launch
+            when (plan) {
                 is ApiResult.Success -> {
                     val response = plan.value
                     val requestedType = (destination["type"] as? JsonPrimitive)?.contentOrNull
@@ -304,6 +316,7 @@ class TabTransferActivity : AppCompatActivity() {
             } else {
                 val mapping = currentParent.mappings.first()
                 val currentLayout = repository.paneLayout(PaneAddress(scope, mapping.currentPaneId), captured)
+                if (actor !== captured || parent !== currentParent) return@launch
                 if (!repository.isCurrent(captured) || currentLayout !is ApiResult.Success || !currentLayout.value.result.validForPane(mapping.currentPaneId, "layout") || currentLayout.value.result.layout.tabId != mapping.tabId || currentLayout.value.result.layout.workspaceId != mapping.workspaceId) {
                     busy = false; notice.text = getString(R.string.tab_transfer_destination_changed); render(); return@launch
                 }
@@ -325,6 +338,7 @@ class TabTransferActivity : AppCompatActivity() {
             }
             val action = buildJsonObject { put("kind", JsonPrimitive("move")); put("destination", destination); put("transfer", guard) }
             val planResult = repository.planPaneLayout(address, action, captured)
+            if (actor !== captured) return@launch
             if (!repository.isCurrent(captured) || planResult !is ApiResult.Success || !planResult.value.validForPane(member.originalPaneId, action)) {
                 busy = false; notice.text = getString(R.string.tab_transfer_plan_failed); render(); return@launch
             }
@@ -370,9 +384,11 @@ class TabTransferActivity : AppCompatActivity() {
                 dispatchConfirmedStep(captured, transfer, member, address, action, plan)
             }
             .setNegativeButton(android.R.string.cancel) { _, _ ->
-                activeDialog = null
-                busy = false
-                render()
+                if (actor === captured && parent === transfer) {
+                    activeDialog = null
+                    busy = false
+                    render()
+                }
             }
             .create()
         activeDialog = dialog
@@ -395,6 +411,7 @@ class TabTransferActivity : AppCompatActivity() {
         action: kotlinx.serialization.json.JsonObject,
         plan: com.lateapex.collie.network.PaneLayoutPlanResponse,
     ) {
+        if (actor !== captured || parent !== currentParent) return
         val requestId = UUID.randomUUID().toString()
         if (plan.expiresAt <= System.currentTimeMillis() || !repository.isCurrent(captured) || parent != currentParent || actor !== captured) {
             busy = false
@@ -413,7 +430,13 @@ class TabTransferActivity : AppCompatActivity() {
             busy = false; notice.text = getString(R.string.tab_transfer_unknown_notice); render(); return
         }
         lifecycleScope.launch {
-            when (val result = repository.applyPaneLayout(address, requestId, plan.planToken, action, captured)) {
+            val result = repository.applyPaneLayout(address, requestId, plan.planToken, action, captured)
+            if (actor !== captured || parent?.transferId != currentParent.transferId) {
+                // A's uncertain child remains A-owned in its journal; never replace B's parent/UI.
+                journal.markTransferUnknown(currentParent.owner, currentParent.transferId, requestId)
+                return@launch
+            }
+            when (result) {
                 is ApiResult.Success -> {
                     val operation = result.value.operation
                     val moveResult = operation?.result
@@ -450,7 +473,9 @@ class TabTransferActivity : AppCompatActivity() {
         notice.text = getString(R.string.tab_transfer_checking)
         render()
         lifecycleScope.launch {
-            when (val outcome = repository.controlOperation(scope, child.requestId, captured)) {
+            val outcome = repository.controlOperation(scope, child.requestId, captured)
+            if (actor !== captured || parent !== currentParent) return@launch
+            when (outcome) {
                 is ApiResult.Success -> {
                     val operation = outcome.value.operation
                     if (!repository.isCurrent(captured) || !operation.validFor(child.requestId)) notice.text = getString(R.string.tab_transfer_unknown_notice)
@@ -464,7 +489,9 @@ class TabTransferActivity : AppCompatActivity() {
                         notice.text = if (saved) getString(R.string.tab_transfer_progress, parent?.mappings?.size ?: 0, currentParent.sourceMembers.size) else getString(R.string.tab_transfer_custody_unavailable)
                     } else if (operation.state == "refused") {
                         // A refusal is terminal, but no fresh ID is admitted until authoritative roster evidence proves no move happened.
-                        if (proveNoEffect(captured, currentParent, child.owner.paneId)) {
+                        val noEffect = proveNoEffect(captured, currentParent, child.owner.paneId)
+                        if (actor !== captured || parent !== currentParent) return@launch
+                        if (noEffect) {
                             journal.finishRefusedTransferChild(currentParent.owner, currentParent.transferId, child.requestId)
                             parent = journal.transfer(currentParent.owner)
                             notice.text = getString(R.string.tab_transfer_refused_replan)
@@ -545,7 +572,7 @@ class TabTransferActivity : AppCompatActivity() {
         return recipe
     }
 
-    private fun retireLocal() { actor = null; parent = null; flowSupported = false; busy = false; notice.text = getString(R.string.tab_transfer_scope_changed); render() }
+    private fun retireLocal(original: ScopedReadContext) { if (actor !== original) return; actor = null; parent = null; flowSupported = false; busy = false; notice.text = getString(R.string.tab_transfer_scope_changed); render() }
     private fun button(label: Int, disabled: Boolean = false, action: () -> Unit) = MaterialButton(this).apply { text = getString(label); isEnabled = !disabled; minHeight = dp(48); setOnClickListener { action() } }
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
     private fun fullWidth() = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)

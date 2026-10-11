@@ -9,6 +9,7 @@ import com.lateapex.collie.CollieApplication
 import com.lateapex.collie.R
 import com.lateapex.collie.data.CollieRepository
 import com.lateapex.collie.data.ScopedReadContext
+import com.lateapex.collie.data.custodyOwner
 import com.lateapex.collie.data.QueuedSendAttemptStore
 import com.lateapex.collie.data.UnavailableQueuedSendAttemptStore
 import com.lateapex.collie.domain.PaneAddress
@@ -137,11 +138,15 @@ class PaneViewModel(
     private val pollingBackoff = PollingBackoff()
     private val writeInFlight = AtomicBoolean(false)
     // Credential scope stays in memory, with no generated toString or saved-state serialization.
-    private class AcceptedScope(val origin: String, val token: String?, val replies: CodexAcceptedReplies)
+    private class AcceptedScope(val connection: com.lateapex.collie.domain.Connection, val incarnation: String?, val replies: CodexAcceptedReplies) {
+        val origin get() = connection.origin.value
+        val token get() = connection.token
+    }
     private val acceptedScopes = mutableListOf<AcceptedScope>()
     private fun acceptedReplies(): CodexAcceptedReplies? = repository.connection.value?.let { connection ->
-        acceptedScopes.firstOrNull { it.origin == connection.origin.value && it.token == connection.token }?.replies
-            ?: CodexAcceptedReplies().also { acceptedScopes += AcceptedScope(connection.origin.value, connection.token, it) }
+        val incarnation = repository.committedIncarnationFor(connection)
+        acceptedScopes.firstOrNull { it.origin == connection.origin.value && it.token == connection.token && it.incarnation == incarnation }?.replies
+            ?: CodexAcceptedReplies().also { acceptedScopes += AcceptedScope(connection, incarnation, it) }
     }
     private val directKeyQueue = ArrayDeque<String>()
     private var directTypingActive = false
@@ -153,39 +158,65 @@ class PaneViewModel(
     private class DiscardedActor : kotlinx.coroutines.CancellationException()
     private suspend fun <T> withCurrentActor(block: suspend () -> ApiResult<T>): ApiResult<T> {
         val context = repository.readContext(address.scope, address.paneId) ?: throw DiscardedActor()
+        adoptOriginalContext(context)
         val result = block()
         if (!repository.isCurrent(context)) throw DiscardedActor()
         return result
     }
 
-    private val authorityRegistration = repository.onAuthorityInvalidated { reason ->
-        if (reason == com.lateapex.collie.data.AuthorityInvalidation.ACCESS_FROZEN) {
-            repository.accessFailure?.takeIf { it is ApiFailure.Http && it.status in setOf(401, 403) }?.let { failure ->
-                mutableState.value = mutableState.value.copy(loading = false, error = MainViewModel.describe(getApplication<Application>().resources, failure))
+    @Volatile internal var originalContext: ScopedReadContext? = null
+        private set
+    private fun adoptOriginalContext(context: ScopedReadContext) {
+        if (originalContext?.custodyOwner?.let { it != context.custodyOwner } == true) {
+            mutableState.value = PaneUiState(clearReplyDraft = true)
+            chatWindow.clear(); chatEtag = null; transcriptEtag = null
+        }
+        originalContext = context
+    }
+
+    private val authorityRegistration = repository.onAuthorityRetired { event ->
+        withMainCustodyAck {
+            val reason = event.reason
+            // Retire the old cache entry even after this screen has adopted B. A's event
+            // cannot clear any B entry or depend on a callback-time repository read.
+            if (reason in setOf(com.lateapex.collie.data.AuthorityInvalidation.PAIRING_RETIRED,
+                com.lateapex.collie.data.AuthorityInvalidation.CONNECTION_CHANGED, com.lateapex.collie.data.AuthorityInvalidation.DISCONNECTED)) {
+                acceptedScopes.removeAll { entry ->
+                    if (entry.incarnation != null) event.affectsConnection(entry.connection, entry.incarnation)
+                    else reason != com.lateapex.collie.data.AuthorityInvalidation.CONNECTION_CHANGED &&
+                        event.affectsConnection(entry.connection, null)
+                }
+            }
+            if (!event.affects(originalContext)) return@withMainCustodyAck
+            if (reason == com.lateapex.collie.data.AuthorityInvalidation.ACCESS_FROZEN) {
+                repository.accessFailure?.takeIf { it is ApiFailure.Http && it.status in setOf(401, 403) }?.let { failure ->
+                    mutableState.value = mutableState.value.copy(loading = false, error = MainViewModel.describe(getApplication<Application>().resources, failure))
+                }
+            }
+            disarmQueuedAction()
+            deviceAuthorizationKnown = false
+            deviceWriteAllowed = false
+            endDirectTyping()
+            // A failed optional/supporting read freezes writes without retiring an otherwise current
+            // accepted pane body. Actual read-authority retirement clears its actor below.
+            mutableState.value = mutableState.value.copy(canWrite = false, composerReady = false)
+            if (reason in setOf(com.lateapex.collie.data.AuthorityInvalidation.PAIRING_RETIRED,
+                com.lateapex.collie.data.AuthorityInvalidation.CONNECTION_CHANGED, com.lateapex.collie.data.AuthorityInvalidation.DISCONNECTED)) {
+                chatWindow.clear()
+                chatEtag = null
+                transcriptEtag = null
+                transcriptSkipPolls = 0
+                legacyChat = false
+                mutableState.value = PaneUiState(clearReplyDraft = true)
             }
         }
-        disarmQueuedAction()
-        deviceAuthorizationKnown = false
-        deviceWriteAllowed = false
-        endDirectTyping()
-        // A failed optional/supporting read freezes writes without retiring an otherwise current
-        // accepted pane body. Actual read-authority retirement clears its actor below.
-        mutableState.value = mutableState.value.copy(canWrite = false, composerReady = false)
-        if (reason in setOf(com.lateapex.collie.data.AuthorityInvalidation.PAIRING_RETIRED,
-            com.lateapex.collie.data.AuthorityInvalidation.CONNECTION_CHANGED, com.lateapex.collie.data.AuthorityInvalidation.DISCONNECTED)) {
-            acceptedScopes.clear()
-            chatWindow.clear()
+    }
+    private val readContextRegistration = repository.onReadContextRetired { event ->
+        withRetirementOnMain(event, { originalContext }) {
             chatEtag = null
             transcriptEtag = null
-            transcriptSkipPolls = 0
-            legacyChat = false
-            mutableState.value = PaneUiState(clearReplyDraft = true)
+            mutableState.value = mutableState.value.copy(transcriptReadContext = null, paneReadContext = null)
         }
-    }
-    private val readContextRegistration = repository.onReadContextInvalidated {
-        chatEtag = null
-        transcriptEtag = null
-        mutableState.value = mutableState.value.copy(transcriptReadContext = null, paneReadContext = null)
     }
 
     override fun onCleared() {
@@ -208,7 +239,11 @@ class PaneViewModel(
         }
         viewModelScope.launch {
             repository.connection.collect { connection ->
-                if (connection != observedConnection) {
+                // A queued old flow value cannot replace an already adopted current pane.
+                if (connection !== repository.connection.value) return@collect
+                val adopted = originalContext?.takeIf { !repository.isActorRetired(it) }
+                if (adopted != null && adopted.connection !== connection) return@collect
+                if (connection != observedConnection && adopted?.connection !== connection) {
                     mutationJob?.cancel()
                     endDirectTyping()
                     observedConnection = connection
@@ -237,6 +272,12 @@ class PaneViewModel(
                         tabs = emptyList(),
                         servers = null,
                     )
+                } else if (connection !== observedConnection && adopted != null && repository.isCurrent(adopted)) {
+                    // The current actor may already own its pane, including a legacy original
+                    // connection returning. Publish only local input acknowledgements: keep the
+                    // adopted pane/transcript and never restore drafts or replay terminal input.
+                    observedConnection = connection
+                    mutableState.value = mutableState.value.copy(codexAcceptedReplies = acceptedReplies()?.texts.orEmpty())
                 }
                 connectionPaired = connection?.isPaired == true
                 applyWriteAccess()
@@ -1070,6 +1111,7 @@ class PaneViewModel(
             run {
                 val lines = paneRequestedLines
                 val readActor = repository.readContext(address.scope, address.paneId) ?: throw DiscardedActor()
+                adoptOriginalContext(readActor)
                 when (val result = repository.readPane(address, lines, markSeen = true)) {
                     is ApiResult.Success -> {
                         if (!repository.isCurrent(readActor)) throw DiscardedActor()
@@ -1312,6 +1354,7 @@ class PaneViewModel(
 
     private suspend fun loadSupportingData() {
         val configActor = repository.readContext(address.scope, address.paneId) ?: throw DiscardedActor()
+        adoptOriginalContext(configActor)
         val config = repository.config(address.scope, configActor)
         if (!repository.isCurrent(configActor)) throw DiscardedActor()
         mutableState.value = mutableState.value.copy(filesConfigContext =

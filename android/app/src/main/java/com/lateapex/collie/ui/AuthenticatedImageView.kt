@@ -25,15 +25,15 @@ import com.lateapex.collie.network.RelativeFilePath
 internal class AuthenticatedImageView(
     context: Context,
     private val loader: ScopedImageLoader?,
-    private val readContext: ScopedReadContext?,
-    private val reference: String?,
-    private val description: String,
-    private val mimeType: String?,
-    private val fileTarget: FilesTarget? = null,
-    private val filePath: RelativeFilePath? = null,
-    private val fileSize: Long? = null,
-    private val fileMtimeMs: Double? = null,
-) : FrameLayout(context) {
+    private var readContext: ScopedReadContext?,
+    private var reference: String?,
+    private var description: String,
+    private var mimeType: String?,
+    private var fileTarget: FilesTarget? = null,
+    private var filePath: RelativeFilePath? = null,
+    private var fileSize: Long? = null,
+    private var fileMtimeMs: Double? = null,
+) : FrameLayout(context), RetirableFilePreview {
     private val image = ImageView(context).apply {
         scaleType = ImageView.ScaleType.FIT_CENTER
         contentDescription = description
@@ -80,23 +80,21 @@ internal class AuthenticatedImageView(
             showRefused(context.getString(R.string.history_image_unavailable))
             return
         }
+        retirement = activeLoader.onRetired(readContext) {
+            // Block stale clicks as soon as authority retires, even if the main thread is busy.
+            retired = true
+            val clear = Runnable {
+                disposePreview()
+                showRefused(context.getString(R.string.history_image_access_changed))
+            }
+            acknowledgeImageCustodyOnMain(clear)
+        }
+        if (retired) { retirement?.close(); retirement = null; return }
         if (!activeLoader.isCurrent(readContext)) {
             // A card may be attached after its captured page actor already retired. It missed
             // the loader's synchronous retirement event, so make the stale state explicit here.
             showRefused(context.getString(R.string.history_image_access_changed))
             return
-        }
-        retirement = activeLoader.onRetired {
-            // Block stale clicks as soon as authority retires, even if the main thread is busy.
-            retired = true
-            val clear = Runnable {
-                request?.close()
-                request = null
-                clearImage()
-                showRefused(context.getString(R.string.history_image_access_changed))
-            }
-            if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) clear.run()
-            else android.os.Handler(android.os.Looper.getMainLooper()).post(clear)
         }
         val onResult: (ScopedImageResult) -> Unit = onResult@{ result ->
             if (!activeLoader.isCurrent(readContext)) {
@@ -124,8 +122,10 @@ internal class AuthenticatedImageView(
                 ScopedImageResult.Unsupported -> showRefused(context.getString(R.string.history_image_unsupported))
             }
         }
-        request = if (fileTarget != null && filePath != null) {
-            activeLoader.loadFile(readContext, fileTarget, filePath, fileSize, fileMtimeMs, dp(320), dp(208), onResult, expectedMimeType = mimeType)
+        val target = fileTarget
+        val path = filePath
+        request = if (target != null && path != null) {
+            activeLoader.loadFile(readContext, target, path, fileSize, fileMtimeMs, dp(320), dp(208), onResult, expectedMimeType = mimeType)
         } else {
             activeLoader.load(readContext, reference, dp(320), dp(208), onResult, expectedMimeType = mimeType)
         }
@@ -144,13 +144,40 @@ internal class AuthenticatedImageView(
         super.onDetachedFromWindow()
     }
 
+    /** Releases owned requests, drawables, viewer leases and retained private descriptions on Main. */
+    override fun disposePreview() {
+        retired = true
+        attachmentGeneration++
+        viewer?.close()
+        viewer = null
+        request?.close()
+        request = null
+        clearImage()
+        retirement?.close()
+        retirement = null
+        readContext = null
+        description = ""
+        reference = null
+        mimeType = null
+        fileTarget = null
+        filePath = null
+        fileSize = null
+        fileMtimeMs = null
+        image.contentDescription = null
+        status.text = ""
+        status.contentDescription = null
+        contentDescription = null
+        setOnClickListener(null)
+        isClickable = false
+    }
+
     private fun showRefused(message: String) {
         image.isVisible = false
         status.text = message
         status.contentDescription = message
         status.isVisible = true
         isClickable = false
-        contentDescription = context.getString(R.string.history_image_card, "$description. $message")
+        contentDescription = if (retired) message else context.getString(R.string.history_image_card, "$description. $message")
     }
 
     private fun clearImage() {
@@ -219,6 +246,8 @@ private object ImageViewer {
         var retirement: AutoCloseable? = null
         dialog.setOnDismissListener {
             view.setImageDrawable(null)
+            view.contentDescription = null
+            view.setOnTouchListener(null)
             retirement?.close()
             retirement = null
             lease.close()
@@ -232,17 +261,18 @@ private object ImageViewer {
             matrix.setRectToRect(source, target, Matrix.ScaleToFit.CENTER)
             view.imageMatrix = matrix
         }
-        retirement = loader.onRetired {
+        retirement = loader.onRetired(readContext) {
             // Dialog dismissal may deliver OnDismiss asynchronously. Clear the drawn bitmap and
             // release its lease in this retirement task; ScopedImageLease.close is idempotent, so
             // the eventual OnDismiss remains a safe second cleanup path.
             val dismiss = Runnable {
                 view.setImageDrawable(null)
+                view.contentDescription = null
+                view.setOnTouchListener(null)
                 lease.close()
                 if (dialog.isShowing) dialog.dismiss()
             }
-            if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) dismiss.run()
-            else android.os.Handler(android.os.Looper.getMainLooper()).post(dismiss)
+            acknowledgeImageCustodyOnMain(dismiss)
         }
         if (!loader.isCurrent(readContext)) dialog.dismiss()
         // A history/pane card detaches during Activity rotation or destruction. Dismiss the
@@ -252,5 +282,14 @@ private object ImageViewer {
             if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) dismiss.run()
             else android.os.Handler(android.os.Looper.getMainLooper()).post(dismiss)
         }
+    }
+}
+
+/** Caller releases every loader/store/admission lock before waiting for owned drawable cleanup. */
+private fun acknowledgeImageCustodyOnMain(cleanup: Runnable) {
+    if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) cleanup.run()
+    else {
+        val done = java.util.concurrent.CountDownLatch(1)
+        if (android.os.Handler(android.os.Looper.getMainLooper()).post { try { cleanup.run() } finally { done.countDown() } }) done.await()
     }
 }

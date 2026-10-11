@@ -77,6 +77,8 @@ import com.lateapex.collie.network.RelativeFilePath
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
 import com.lateapex.collie.network.retiresPairing
 import com.lateapex.collie.network.ControlOperationResponse
 import com.lateapex.collie.network.OrganizationAction
@@ -179,6 +181,7 @@ class CollieRepository(
 
     private val mutableDeviceWriteAuthorization = MutableStateFlow(DeviceWriteAuthorization.UNVERIFIED)
     @Volatile private var authorizationConnection: Connection? = null
+    @Volatile private var authorizationIncarnation: String? = null
     val deviceWriteAuthorization: StateFlow<DeviceWriteAuthorization> =
         mutableDeviceWriteAuthorization.asStateFlow()
 
@@ -189,6 +192,9 @@ class CollieRepository(
         val configured = connection.value ?: return@synchronized false
         if (configured === retiredCredentialConnection) return@synchronized false
         val live = mutableReadSource.value as? ReadSourceState.Live ?: return@synchronized false
+        val committed = connectionStore.captureCommitted()
+        if (committed != null && (committed.incarnationId == null || committed.connection !== configured ||
+            committed.incarnationId != authorizationIncarnation || committed.incarnationId != generationIncarnation)) return@synchronized false
         configured.isPaired && authorizationConnection === configured &&
             mutableDeviceWriteAuthorization.value.permitsWrites &&
             live.key.origin == configured.origin.value && live.key.connectionGeneration == generation.get() &&
@@ -203,6 +209,7 @@ class CollieRepository(
     private val generation = AtomicLong(0)
     private val navigationGeneration = AtomicLong(0)
     @Volatile private var generationConnection: Connection? = connection.value
+    @Volatile private var generationIncarnation: String? = connectionStore.captureCommitted()?.incarnationId
     @Volatile private var leadEpoch: Long = 0
     @Volatile private var observedLeadAuthority: String? = null
     @Volatile var accessFailure: ApiFailure? = null
@@ -213,8 +220,10 @@ class CollieRepository(
         private set
     private val scopeJobs = java.util.concurrent.ConcurrentHashMap.newKeySet<Job>()
     private val readAdmissionLock = Any()
-    // Read admission stays closed until every overlapping retirement callback has acknowledged.
-    private var pendingAuthorityTransitions = 0
+    // Same-incarnation admission stays closed until its cancellation/custody ACK completes.
+    // A successor never inherits a predecessor's pending cleanup fence. All access is under admission.
+    private val pendingByGeneration = mutableMapOf<Long, Int>()
+    private val pendingAuthorityTransitions: Int get() = pendingByGeneration[generation.get()] ?: 0
     /** Final result seams run outside all locks; no-op in production. */
     internal var beforeSnapshotPublicationForTesting: () -> Unit = {}
     internal var beforeConnectionResultPublicationForTesting: () -> Unit = {}
@@ -222,8 +231,8 @@ class CollieRepository(
     internal var beforeReadAdmissionForTesting: suspend () -> Unit = {}
     /** Runs before target/generation capture, outside locks; deterministic shared-caller tests only. */
     internal var beforeReadContextCaptureForTesting: () -> Unit = {}
-    private val authorityInvalidations = java.util.concurrent.CopyOnWriteArrayList<(AuthorityInvalidation) -> Unit>()
-    private val readContextInvalidations = java.util.concurrent.CopyOnWriteArrayList<(AuthorityInvalidation) -> Unit>()
+    private val authorityInvalidations = java.util.concurrent.CopyOnWriteArrayList<(AuthorityRetirement) -> Unit>()
+    private val readContextInvalidations = java.util.concurrent.CopyOnWriteArrayList<(AuthorityRetirement) -> Unit>()
     private val mutableReadSource = MutableStateFlow<ReadSourceState>(ReadSourceState.Unavailable(0))
     val readSource: StateFlow<ReadSourceState> = mutableReadSource.asStateFlow()
     private val refreshMutex = Mutex()
@@ -236,6 +245,24 @@ class CollieRepository(
 
     init {
         require(maxPaneCacheEntries > 0)
+    }
+
+    /** Shared original actors (Files, Pack, Machines and transport callers) retire on the same
+     * committed witness. Initial/replayed callbacks never invalidate an already admitted B. */
+    private val committedObservation = connectionStore.observeCommitted {
+        val committed = connectionStore.captureCommitted() ?: return@observeCommitted
+        invalidateAuthority(AuthorityInvalidation.CONNECTION_CHANGED, change = {
+            val latest = connectionStore.captureCommitted()
+            if (latest == null || latest.connection !== committed.connection || latest.incarnationId != committed.incarnationId ||
+                (generationConnection === latest.connection && generationIncarnation == latest.incarnationId)) false
+            else {
+                generationConnection = latest.connection
+                generationIncarnation = latest.incarnationId
+                generation.incrementAndGet()
+                observedLeadAuthority = null
+                true
+            }
+        })
     }
 
     fun selectScope(scope: Scope) {
@@ -261,14 +288,46 @@ class CollieRepository(
 
     /** Sensitive feature custody retires synchronously; callbacks receive no credential. */
     fun onAuthorityInvalidated(listener: (AuthorityInvalidation) -> Unit): AutoCloseable {
-        authorityInvalidations.add(listener)
-        return AutoCloseable { authorityInvalidations.remove(listener) }
+        return onAuthorityRetired { listener(it.reason) }
     }
 
     /** Immutable authority-retirement events only; ordinary failed reads do not invalidate scope. */
     fun onReadContextInvalidated(listener: (AuthorityInvalidation) -> Unit): AutoCloseable {
+        return onReadContextRetired { listener(it.reason) }
+    }
+
+    /** Ordered original-owner callbacks share registration order with the compatibility API. */
+    fun onAuthorityRetired(listener: (AuthorityRetirement) -> Unit): AutoCloseable {
+        authorityInvalidations.add(listener)
+        return AutoCloseable { authorityInvalidations.remove(listener) }
+    }
+
+    fun onReadContextRetired(listener: (AuthorityRetirement) -> Unit): AutoCloseable {
         readContextInvalidations.add(listener)
         return AutoCloseable { readContextInvalidations.remove(listener) }
+    }
+
+    /** Files page custody follows committed store changes even while the screen is stopped.
+     * Flow values can be queued: check this original actor against the actual current store value.
+     * Temporary pending admission is not retirement. Callbacks/GUI ACKs run outside all locks. */
+    fun onFilesActorRetired(context: ScopedReadContext, listener: (AuthorityInvalidation) -> Unit): AutoCloseable {
+        val actor = java.util.concurrent.atomic.AtomicReference<ScopedReadContext?>(context)
+        fun retire(reason: AuthorityInvalidation) {
+            val original = actor.get() ?: return
+            if (isActorRetired(original) && actor.compareAndSet(original, null)) listener(reason)
+        }
+        val authority = onReadContextInvalidated(::retire)
+        val observer = onCommittedConnectionChanged { retire(AuthorityInvalidation.CONNECTION_CHANGED) }
+        return AutoCloseable { actor.set(null); authority.close(); observer.close() }
+    }
+
+    /** Production observes every committed witness, even when an ABA returns the same reference.
+     * Legacy test stores retain their existing flow; no supported production store falls back. */
+    internal fun onCommittedConnectionChanged(listener: () -> Unit): AutoCloseable {
+        if (connectionStore.captureCommitted() != null) return connectionStore.observeCommitted { listener() }
+        val observer = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Unconfined)
+        observer.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) { connection.collect { listener() } }
+        return AutoCloseable { observer.coroutineContext[kotlinx.coroutines.Job]?.cancel() }
     }
 
     /** Null scope means the selected target, resolved with its navigation generation under one lock. */
@@ -285,13 +344,21 @@ class CollieRepository(
         subjectIdentity: String? = null,
         useSelectedSubject: Boolean = true,
     ): ReadTarget? {
-        val configured = connection.value ?: return null
+        val committed = connectionStore.captureCommitted()
+        val configured = (if (committed != null) committed.connection else connection.value) ?: return null
+        // Unsupported stores cannot prove an independent successor incarnation. Preserve their
+        // conservative pending contract; production adoption below distinguishes committed B first.
+        if (committed == null && synchronized(readAdmissionLock) { pendingByGeneration.isNotEmpty() }) return null
+        // A supported legacy record never gains a minted actor merely by reading it.
+        if (committed != null && committed.incarnationId == null) return null
         if (configured === retiredCredentialConnection) return null
-        if (synchronized(readAdmissionLock) { pendingAuthorityTransitions != 0 }) return null
+        fun sameCommit(): Boolean = if (committed == null) connectionStore.captureCommitted() == null && connection.value === configured
+            else connectionStore.captureCommitted()?.let { it.connection === configured && it.incarnationId == committed.incarnationId } == true
         invalidateAuthority(AuthorityInvalidation.CONNECTION_CHANGED, change = {
-            if (pendingAuthorityTransitions > 1 || generationConnection === configured || connection.value !== configured) false
+            if ((generationConnection === configured && generationIncarnation == committed?.incarnationId) || !sameCommit()) false
             else {
                 generationConnection = configured
+                generationIncarnation = committed?.incarnationId
                 generation.incrementAndGet()
                 observedLeadAuthority = null
                 true
@@ -299,12 +366,16 @@ class CollieRepository(
         })
         beforeReadContextCaptureForTesting()
         return synchronized(readAdmissionLock) {
-            if (pendingAuthorityTransitions != 0 || connection.value !== configured || generationConnection !== configured) return@synchronized null
+            // Held actors remain allocated during temporary fences, but no new actor is minted.
+            if (pendingAuthorityTransitions != 0 || (committed == null && pendingByGeneration.isNotEmpty())) return@synchronized null
+            if (!sameCommit() || generationConnection !== configured ||
+                generationIncarnation != committed?.incarnationId) return@synchronized null
             if (configured === retiredCredentialConnection) return@synchronized null
             val targetScope = scope ?: mutableScope.value
             val targetSubject = if (useSelectedSubject) activeSubject else subjectIdentity
-            val context = ScopedReadContext(ScopedRequestKey(configured.origin.value, generation.get(), credentialIdentity(configured),
-                leadEpoch, targetScope.host, targetScope.session, targetSubject), configured, navigationGeneration.get(), targetScope)
+            val context = ScopedReadContext(ScopedRequestKey(configured.origin.value, generation.get(), credentialIdentity(configured, committed?.incarnationId),
+                leadEpoch, targetScope.host, targetScope.session, targetSubject), configured, navigationGeneration.get(), targetScope,
+                connectionIncarnation = committed?.incarnationId, committedStore = committed != null, committedSnapshot = committed)
             ReadTarget(targetScope, context, targetSubject)
         }
     }
@@ -325,10 +396,10 @@ class CollieRepository(
     } else captureReadTarget(scope, subjectIdentity, useSelectedSubject)
 
     /** Local custody identity only: stable across recreation and different for replacement credentials. */
-    private fun credentialIdentity(configured: Connection): String {
+    private fun credentialIdentity(configured: Connection, incarnationId: String? = null): String {
         val digest = java.security.MessageDigest.getInstance("SHA-256")
         digest.update("collie.native.custody.v1\u0000".toByteArray(Charsets.UTF_8))
-        for (value in listOf(configured.origin.value, configured.token.orEmpty())) {
+        for (value in listOf(configured.origin.value, configured.token.orEmpty()) + listOfNotNull(incarnationId)) {
             val bytes = value.toByteArray(Charsets.UTF_8)
             digest.update(java.nio.ByteBuffer.allocate(4).putInt(bytes.size).array())
             digest.update(bytes)
@@ -336,8 +407,19 @@ class CollieRepository(
         return digest.digest().joinToString("") { "%02x".format(it.toInt() and 255) }
     }
 
+    /** Non-authorizing witness for local acknowledged-input custody; never allocates an actor. */
+    internal fun committedIncarnationFor(original: Connection): String? =
+        connectionStore.captureCommitted()?.takeIf { it.connection === original }?.incarnationId
+
+    private fun matchesCommitted(context: ScopedReadContext): Boolean {
+        val actual = connectionStore.captureCommitted()
+        return if (context.committedStore) actual != null && context.connectionIncarnation != null &&
+            actual.incarnationId == context.connectionIncarnation && actual.connection === context.connection
+        else actual == null && connection.value === context.connection
+    }
+
     private fun matchesActorLocked(context: ScopedReadContext): Boolean =
-        connection.value === context.connection && context.connection !== retiredCredentialConnection &&
+        matchesCommitted(context) && connection.value === context.connection && context.connection !== retiredCredentialConnection &&
             generation.get() == context.key.connectionGeneration && navigationGeneration.get() == context.navigationGeneration &&
             leadEpoch == context.key.leadEpoch &&
             (activeSubject == null || context.key.subjectIdentity == null || activeSubject == context.key.subjectIdentity)
@@ -371,23 +453,49 @@ class CollieRepository(
         })
     }
 
-    private data class AuthorityTransition(val token: Long, val jobs: List<Job>, val retiresReadActor: Boolean)
+    private data class AuthorityTransition(
+        val token: Long,
+        val pendingGeneration: Long,
+        val jobs: List<Job>,
+        val retiresReadActor: Boolean,
+        val retiredConnection: Connection?,
+        val retiredIncarnation: String?,
+        val retiredNavigation: Long,
+        val owner: ScopedCustodyOwner?,
+        val readListeners: List<(AuthorityRetirement) -> Unit>,
+        val authorityListeners: List<(AuthorityRetirement) -> Unit>,
+        val refusal: AuthorityRefusal?,
+    )
+
+    private fun finishPendingLocked(affectedGeneration: Long) {
+        val count = checkNotNull(pendingByGeneration[affectedGeneration])
+        if (count == 1) pendingByGeneration.remove(affectedGeneration)
+        else pendingByGeneration[affectedGeneration] = count - 1
+    }
 
     /** Called only under readAdmissionLock. The pending fence precedes every state change. */
     private fun prepareAuthorityTransitionLocked(
         retiresReadActor: Boolean = true,
+        refusal: AuthorityRefusal? = null,
         change: () -> Boolean = { true },
     ): AuthorityTransition? {
-        ++pendingAuthorityTransitions
+        val affectedGeneration = generation.get()
+        val retiredConnection = generationConnection
+        val retiredIncarnation = generationIncarnation
+        val retiredNavigation = navigationGeneration.get()
+        val owner = retiredConnection?.let { ScopedCustodyOwner(it.origin.value, it.origin.value, credentialIdentity(it, retiredIncarnation)) }
+        pendingByGeneration[affectedGeneration] = (pendingByGeneration[affectedGeneration] ?: 0) + 1
         val changed = try { change() } catch (failure: Throwable) {
-            --pendingAuthorityTransitions
+            finishPendingLocked(affectedGeneration)
             throw failure
         }
-        if (!changed) { --pendingAuthorityTransitions; return null }
+        if (!changed) { finishPendingLocked(affectedGeneration); return null }
         val token = if (retiresReadActor) navigationGeneration.incrementAndGet() else navigationGeneration.get()
         mutableDeviceWriteAuthorization.value = DeviceWriteAuthorization.UNVERIFIED
         mutableReadSource.value = ReadSourceState.Unavailable(generation.get())
-        return AuthorityTransition(token, if (retiresReadActor) scopeJobs.toList() else emptyList(), retiresReadActor)
+        return AuthorityTransition(token, affectedGeneration, if (retiresReadActor) scopeJobs.toList() else emptyList(),
+            retiresReadActor, retiredConnection, retiredIncarnation, retiredNavigation, owner,
+            readContextInvalidations.toList(), authorityInvalidations.toList(), refusal)
     }
 
     /** No repository/admission/private-custody lock crosses cancellation or main-thread ACK. */
@@ -396,22 +504,26 @@ class CollieRepository(
         transition: AuthorityTransition,
         settled: () -> Unit = {},
     ) {
+        val event = AuthorityRetirement(reason, transition.owner, transition.retiresReadActor,
+            transition.retiredConnection, transition.retiredIncarnation, transition.pendingGeneration, transition.retiredNavigation, refusal = transition.refusal)
         try {
             transition.jobs.forEach { it.cancel() }
             if (transition.retiresReadActor) {
-                readContextInvalidations.forEach { listener -> runCatching { listener(reason) } }
+                transition.readListeners.forEach { listener -> runCatching { listener(event) } }
             }
             if (reason in setOf(AuthorityInvalidation.CONNECTION_CHANGED, AuthorityInvalidation.PAIRING_RETIRED, AuthorityInvalidation.DISCONNECTED)) {
-                synchronized(cacheLock) { paneCache.clear() }
+                synchronized(cacheLock) {
+                    paneCache.keys.removeAll { it.connection === transition.retiredConnection && it.incarnationId == transition.retiredIncarnation }
+                }
             }
             if (reason in setOf(AuthorityInvalidation.PAIRING_RETIRED, AuthorityInvalidation.DISCONNECTED)) {
-                runCatching { launchIntentStore?.clear() }
+                transition.owner?.let { owner -> runCatching { launchIntentStore?.retireOwned(owner) } }
             }
-            authorityInvalidations.forEach { listener -> runCatching { listener(reason) } }
+            transition.authorityListeners.forEach { listener -> runCatching { listener(event) } }
         } finally {
             synchronized(readAdmissionLock) {
                 if (navigationGeneration.get() == transition.token) settled()
-                --pendingAuthorityTransitions
+                finishPendingLocked(transition.pendingGeneration)
             }
         }
     }
@@ -425,8 +537,17 @@ class CollieRepository(
             prepareAuthorityTransitionLocked {
                 val changed = change()
                 if (changed && reason == AuthorityInvalidation.CONNECTION_CHANGED) {
+                    val committed = connectionStore.captureCommitted()
+                    val configured = committed?.connection ?: connection.value
+                    if (generationConnection !== configured || generationIncarnation != committed?.incarnationId) {
+                        generationConnection = configured
+                        generationIncarnation = committed?.incarnationId
+                        generation.incrementAndGet()
+                        observedLeadAuthority = null
+                    }
                     accessFailure = null
                     authorizationConnection = null
+                    authorizationIncarnation = null
                     retiredCredentialConnection = null
                     credentialRetirementFailure = null
                 }
@@ -501,6 +622,7 @@ class CollieRepository(
                 accessFailure = null
                 mutableDeviceWriteAuthorization.value = DeviceWriteAuthorization.from(result.value.device)
                 authorizationConnection = context.connection
+                authorizationIncarnation = context.connectionIncarnation
                 mutableReadSource.value = ReadSourceState.Live(context.key, result.value.ts)
                 null
             }
@@ -653,7 +775,7 @@ class CollieRepository(
         val target = readTarget(null) ?: return notConnected()
         val result = withWritableConnectionTarget(target) { api.revokeDevice(it, label) }
         if (result is ApiResult.Success && result.value.currentExpired) {
-            demoteToReadOnly(target.context.connection)
+            demoteToReadOnly(target.context)
         }
         return result
     }
@@ -722,7 +844,7 @@ class CollieRepository(
         api.chat(it, address, limit, after, before, etag)
     }
 
-    suspend fun paneProcesses(address: PaneAddress): ApiResult<PaneProcessesResponse> = withConnection(address.scope, address.paneId) { configured ->
+    suspend fun paneProcesses(address: PaneAddress, expectedContext: ScopedReadContext? = null): ApiResult<PaneProcessesResponse> = withConnection(address.scope, address.paneId, expectedContext) { configured ->
         when (val config = api.config(configured, address.scope)) {
             is ApiResult.Failure -> config
             is ApiResult.NotModified -> ApiResult.Failure(ApiFailure.Protocol("Process capability was not verified"))
@@ -907,12 +1029,15 @@ class CollieRepository(
         return dispatchLaunchIntent(context, reserved.record)
     }
 
-    fun unresolvedLaunchIntents(scope: Scope? = null): List<StoredLaunchIntent> = try {
-        val context = readContext(scope) ?: return emptyList()
-        launchIntentStore?.all().orEmpty().filter { record ->
-            record.state == LaunchIntentState.unknown && intentMatches(record.intent, context, record.intent.operation)
-        }.takeIf { isCurrent(context) }.orEmpty()
-    } catch (_: Exception) { emptyList() }
+    fun unresolvedLaunchIntents(scope: Scope? = null, expectedContext: ScopedReadContext? = null): List<StoredLaunchIntent> {
+        return try {
+            val context = expectedContext ?: readContext(scope) ?: return emptyList()
+            if (!isCurrent(context)) return emptyList()
+            launchIntentStore?.all().orEmpty().filter { record ->
+                record.state == LaunchIntentState.unknown && intentMatches(record.intent, context, record.intent.operation)
+            }.takeIf { isCurrent(context) }.orEmpty()
+        } catch (_: Exception) { emptyList() }
+    }
 
     /** An explicit retry replays the exact persisted body and ID; startup never calls this method. */
     suspend fun retryLaunchIntent(scope: Scope, requestId: String, expectedContext: ScopedReadContext? = null): ApiResult<CreateResponse> {
@@ -1508,8 +1633,8 @@ class CollieRepository(
         withResolvedWritableConnection(scope) { configured, requestScope -> api.starFolder(configured, requestScope, folder, starred) }
 
     /** Read-only per-harness implementation inventory from the exact owning host/session. */
-    suspend fun agentCapabilities(scope: Scope = selectedScope.value): ApiResult<AgentCapabilitiesResponse> =
-        withConnection(scope) { api.agentCapabilities(it, scope) }
+    suspend fun agentCapabilities(scope: Scope = selectedScope.value, expectedContext: ScopedReadContext? = null): ApiResult<AgentCapabilitiesResponse> =
+        withConnection(scope, expectedContext = expectedContext) { api.agentCapabilities(it, scope) }
 
     /** `command` must be a value returned by [launchers], never caller-authored shell text. */
     suspend fun launch(
@@ -1627,14 +1752,15 @@ class CollieRepository(
         lines: Int = 600,
         markSeen: Boolean = true,
     ): ApiResult<PaneContent> {
-        val configured = connection.value ?: return notConnected()
-        val cacheKey = PaneCacheKey(configured, address)
+        val context = readContext(address.scope, address.paneId) ?: return notConnected()
+        val configured = context.connection
+        val cacheKey = PaneCacheKey(configured, address, context.connectionIncarnation)
         // A pane body is conditional only for the exact window that produced it. Reusing the
         // 600-line ETag for a later 1,000-line request can otherwise turn a valid grow into a 304
         // with the shorter cached body when a bridge keys ETags to pane revision rather than size.
         // Credential identity is part of the key so reconnecting cannot reuse another device's body.
         val cached = synchronized(cacheLock) { paneCache[cacheKey] }?.takeIf { it.lines == lines }
-        return when (val result = withConnectionOf(configured, address.scope, address.paneId) { api.pane(it, address, lines, cached?.etag, markSeen) }) {
+        return when (val result = withConnectionOf(configured, address.scope, address.paneId, expectedContext = context) { api.pane(it, address, lines, cached?.etag, markSeen) }) {
             is ApiResult.Success -> {
                 val pane = result.value
                 val served = pane.servedLines
@@ -1645,7 +1771,7 @@ class CollieRepository(
                 ) return ApiResult.Failure(ApiFailure.Protocol("Pane read returned inconsistent bounded-read metadata"))
                 val entry = CachedPane(result.value, result.etag, lines)
                 synchronized(cacheLock) {
-                    if (connection.value !== configured) return ApiResult.Failure(ApiFailure.Protocol("Connection changed; refresh before trying again"))
+                    if (!isCurrent(context)) return ApiResult.Failure(ApiFailure.Protocol("Connection changed; refresh before trying again"))
                     paneCache[cacheKey] = entry
                 }
                 ApiResult.Success(
@@ -1719,7 +1845,9 @@ class CollieRepository(
 
         // Capability negotiation is part of this one captured actor. Process its authority headers
         // through the same repository path as every other response before considering a write.
-        val rawConfig = com.lateapex.collie.network.RequestActorCustody.withActor(actor) { api.config(connection, address.scope) }
+        val rawConfig = com.lateapex.collie.network.RequestActorCustody.withActor(actor) {
+            kotlinx.coroutines.withContext(OriginalReadActor { isCurrent(actor) }) { api.config(connection, address.scope) }
+        }
         if (!isCurrent(actor)) return staleScope()
         val config = processConnectionResult(actor, rawConfig)
         if (config !is ApiResult.Success) return when (config) {
@@ -1737,7 +1865,11 @@ class CollieRepository(
         if (!writesAllowed(address.scope, actor.key.subjectIdentity)) {
             return ApiResult.Failure(ApiFailure.Http(403, "device not authorised", "device.not_authorised"))
         }
-        val result = com.lateapex.collie.network.RequestActorCustody.withActor(actor) { api.queuedSendNow(connection, address, keys, expectedPrompt, guard) }
+        val result = com.lateapex.collie.network.RequestActorCustody.withActor(actor) {
+            kotlinx.coroutines.withContext(OriginalReadActor {
+                isCurrent(actor) && writesAllowed(address.scope, actor.key.subjectIdentity)
+            }) { api.queuedSendNow(connection, address, keys, expectedPrompt, guard) }
+        }
         if (!isCurrent(actor)) return staleScope()
         return processConnectionResult(actor, result)
     }
@@ -1752,29 +1884,34 @@ class CollieRepository(
     }
 
     fun demoteToReadOnly() {
-        val current = connection.value ?: return
+        val current = readContext() ?: return
         demoteToReadOnly(current)
     }
 
-    private fun demoteToReadOnly(expected: Connection) {
+    private fun demoteToReadOnly(expected: ScopedReadContext) {
         invalidateAuthority(AuthorityInvalidation.PAIRING_RETIRED, change = {
             retireCredentialLocked(expected)
         })
     }
 
     /** Called under admission: durable failure must never restore authority for a revoked owner. */
-    private fun retireCredentialLocked(expected: Connection): Boolean {
-        if (connection.value !== expected) return false
+    private fun retireCredentialLocked(original: ScopedReadContext): Boolean {
+        if (!matchesActorLocked(original)) return false
+        val expected = original.connection
+        val committed = connectionStore.captureCommitted()
+        if (original.committedStore && (committed == null || committed.incarnationId != original.connectionIncarnation ||
+            committed.connection !== expected)) return false
         val replacement = Connection(expected.origin, expected.label, null)
         var failure: CredentialRetirementFailure? = null
         val replaced = try {
-            connectionStore.compareAndSet(expected, replacement)
+            if (original.committedStore) connectionStore.compareAndSet(committed!!, replacement)
+            else connectionStore.compareAndSet(expected, replacement)
         } catch (_: Exception) {
             failure = CredentialRetirementFailure.PERSISTENCE_FAILED
             false
         }
         // An external save is independent of the repository lock. Never publish A's freeze onto B.
-        if (connection.value !== expected && connection.value !== replacement) return false
+        if (!(replaced && connection.value === replacement) && !matchesCommitted(original)) return false
         if (replaced) {
             credentialRetirementFailure = null
             retiredCredentialConnection = null
@@ -1919,7 +2056,12 @@ class CollieRepository(
             coroutineContext.ensureActive()
         }
         try {
-            val result = com.lateapex.collie.network.RequestActorCustody.withActor(context) { block(configured) }
+            val result = com.lateapex.collie.network.RequestActorCustody.withActor(context) {
+                kotlinx.coroutines.withContext(OriginalReadActor {
+                    // Both the immutable request actor and declared operation survive every wait.
+                    isCurrent(context) && (!mutation || if (checkWriteAuthority) writesAllowed(requestScope, requestSubject) else deviceOwnedAdmission())
+                }) { block(configured) }
+            }
             if (!isCurrent(context)) return@coroutineScope staleScope()
             processConnectionResult(context, result, job)
         } finally { synchronized(readAdmissionLock) { scopeJobs.remove(job) } }
@@ -1968,13 +2110,13 @@ class CollieRepository(
                 }
                 reason = if (pairingRetired) AuthorityInvalidation.PAIRING_RETIRED else AuthorityInvalidation.ACCESS_FROZEN
                 transition = prepareAuthorityTransitionLocked(
+                    refusal = AuthorityRefusal.from(result.error),
                     change = {
                         if (pairingRetired) {
                             // Only the failed incarnation may be removed, before callbacks/ACK.
                             // Store CAS also fences direct store.save outside the repository lock.
-                            val expected = context.connection
-                            if (!retireCredentialLocked(expected)) return@prepareAuthorityTransitionLocked false
-                        } else if (connection.value !== context.connection) return@prepareAuthorityTransitionLocked false
+                            if (!retireCredentialLocked(context)) return@prepareAuthorityTransitionLocked false
+                        } else if (!matchesCommitted(context)) return@prepareAuthorityTransitionLocked false
                         accessFailure = result.error
                         true
                     },
@@ -1992,10 +2134,12 @@ class CollieRepository(
         return publishedResult
     }
 
+    private fun deviceOwnedAdmission(): Boolean = readSource.value !is ReadSourceState.SavedCopy &&
+        (accessFailure as? ApiFailure.Http)?.status !in setOf(401, 403)
+
     /** Device-owned preferences keep read admission; saved/offline authority cannot dispatch writes. */
     private suspend fun <T> withDeviceOwnedConnection(block: suspend (Connection) -> ApiResult<T>): ApiResult<T> {
-        if (readSource.value is ReadSourceState.SavedCopy ||
-            (accessFailure as? ApiFailure.Http)?.status in setOf(401, 403)) return staleScope()
+        if (!deviceOwnedAdmission()) return staleScope()
         val configured = connection.value ?: return notConnected()
         return withConnectionOf(configured, mutation = true, block = block)
     }
@@ -2035,8 +2179,16 @@ class CollieRepository(
         return withConnectionOf(configured, requestScope, requestSubject, mutation = true, expectedContext = context, block = block)
     }
 
-    private fun <T> notConnected(): ApiResult<T> =
-        ApiResult.Failure(ApiFailure.Protocol("No Collie connection is configured"))
+    private fun <T> notConnected(): ApiResult<T> {
+        val committed = connectionStore.captureCommitted()
+        val configured = if (committed != null) committed.connection else connection.value
+        val detail = when {
+            configured == null -> "No Collie connection is configured"
+            committed != null && committed.incarnationId == null -> "Reconnect to establish current encrypted connection custody"
+            else -> "Connection authority is unavailable; refresh after the current transition"
+        }
+        return ApiResult.Failure(ApiFailure.Protocol(detail))
+    }
 
     private data class CachedPane(
         val pane: PaneReadResponse,
@@ -2047,6 +2199,7 @@ class CollieRepository(
     private data class PaneCacheKey(
         val connection: Connection,
         val address: PaneAddress,
+        val incarnationId: String?,
     )
 
 }

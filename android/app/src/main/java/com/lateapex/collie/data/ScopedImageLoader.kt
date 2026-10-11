@@ -53,6 +53,12 @@ class ScopedImageLoader(
     private val main = Handler(Looper.getMainLooper())
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val jobs = linkedSetOf<Job>()
+    private val jobActors = mutableMapOf<Job, ScopedReadContext>()
+    private class ActorListener(val context: ScopedReadContext, val callback: () -> Unit) {
+        val notified = AtomicBoolean(false)
+        fun notifyRetired() { if (notified.compareAndSet(false, true)) callback() }
+    }
+    private val actorListeners = CopyOnWriteArrayList<ActorListener>()
     private val retirementListeners = CopyOnWriteArrayList<() -> Unit>()
     private val decodeSlots = Semaphore(2)
     private val entries = mutableMapOf<CacheKey, CachedBitmap>()
@@ -62,7 +68,11 @@ class ScopedImageLoader(
     private var reservedBytes = 0L
     private var pendingDeliveries = 0
     private var retirementGeneration = 0L
-    private val invalidation = repository.onReadContextInvalidated { retire() }
+    private val invalidation = repository.onReadContextInvalidated {
+        retireOriginalActors()
+        retirementListeners.forEach { listener -> runCatching(listener) }
+    }
+    private val storeObservation = repository.onCommittedConnectionChanged { retireOriginalActors() }
     @Volatile private var closed = false
 
     init { require(maxCacheBytes > 0 && maxResidentBytes >= maxCacheBytes) }
@@ -70,6 +80,17 @@ class ScopedImageLoader(
     fun onRetired(listener: () -> Unit): AutoCloseable {
         retirementListeners += listener
         return AutoCloseable { retirementListeners -= listener }
+    }
+
+    /** Only this original actor receives this callback; stale A never clears an active B card. */
+    fun onRetired(context: ScopedReadContext?, listener: () -> Unit): AutoCloseable {
+        if (context == null) return AutoCloseable { }
+        val registration = ActorListener(context, listener)
+        actorListeners += registration
+        if (closed || repository.isActorRetired(context)) {
+            try { registration.notifyRetired() } finally { actorListeners -= registration }
+        }
+        return AutoCloseable { actorListeners -= registration }
     }
 
     fun isCurrent(context: ScopedReadContext?): Boolean = !closed && context != null && repository.isCurrent(context)
@@ -182,7 +203,7 @@ class ScopedImageLoader(
                                             reservedBytes -= reservation
                                             reservationHeld = false
                                             val effectiveKey = if (cacheAllowed) key else key.copy(content = "${key.content}:uncached:${java.util.UUID.randomUUID()}")
-                                            val entry = CachedBitmap(bitmap, mime, bitmap.allocationByteCount, references = 1, cacheable = cacheAllowed)
+                                            val entry = CachedBitmap(bitmap, mime, bitmap.allocationByteCount, references = 1, cacheable = cacheAllowed, actor = context)
                                             entries[effectiveKey] = entry
                                             residentBytes += entry.bytes
                                             lease(effectiveKey, entry) to true
@@ -222,7 +243,7 @@ class ScopedImageLoader(
             catch (_: UnsupportedImage) { ScopedImageResult.Unsupported }
             catch (_: MemoryBudgetExceeded) { ScopedImageResult.Refused("Too many journal images are currently open") }
             catch (_: Exception) { ScopedImageResult.Refused("Image could not be loaded") }
-            finally { synchronized(lock) { jobs.remove(coroutineContext[Job]) } }
+            finally { synchronized(lock) { jobs.remove(coroutineContext[Job]); jobActors.remove(coroutineContext[Job]) } }
             synchronized(lock) { pendingDeliveries++ }
             val deliver = Runnable {
                 try {
@@ -242,7 +263,12 @@ class ScopedImageLoader(
                 (result as? ScopedImageResult.Ready)?.lease?.close()
             }
         }
-        synchronized(lock) { if (closed) job.cancel() else jobs += job }
+        val keep = synchronized(lock) {
+            if (closed) false else { jobs += job; jobActors[job] = context; true }
+        }
+        job.invokeOnCompletion { synchronized(lock) { jobs.remove(job); jobActors.remove(job) } }
+        // Cancellation never borrows the image lock; close the registration/publication race.
+        if (!keep || repository.isActorRetired(context)) job.cancel()
         job.start()
         return AutoCloseable {
             cancelled.set(true)
@@ -271,27 +297,47 @@ class ScopedImageLoader(
         val sourceMtimeMs: Double?,
     )
 
-    /** Called synchronously by authority retirement; no old actor can repopulate this cache. */
-    fun retire() {
-        synchronized(lock) {
-            retirementGeneration++
-            jobs.toList().forEach(Job::cancel)
-            jobs.clear()
+    /** Mark retired entries before callbacks; clear drawables before their final lease can recycle.
+     * Snapshot and actor checks, cancellation and Main ACKs never hold the image/store/admission lock. */
+    private fun retireOriginalActors(all: Boolean = false) {
+        val actors = synchronized(lock) { entries.values.map { it.actor } + jobActors.values.toList() } +
+            actorListeners.map { it.context }
+        val retired = actors.filter { all || repository.isActorRetired(it) }.toSet()
+        val work = synchronized(lock) {
+            entries.forEach { (key, entry) ->
+                if (entry.actor in retired) {
+                    entry.retired = true
+                    if (entry.cached) {
+                        cache.remove(key)
+                        cachedBytes -= entry.bytes
+                        entry.cached = false
+                    }
+                }
+            }
+            jobActors.filterValues { it in retired }.keys.toList()
         }
-        retirementListeners.forEach { listener -> runCatching(listener) }
+        work.forEach(Job::cancel)
+        actorListeners.filter { it.context in retired }.forEach { registration ->
+            try { registration.notifyRetired() } catch (_: Exception) { }
+            finally { actorListeners -= registration }
+        }
         synchronized(lock) {
-            cache.clear()
-            cachedBytes = 0
             entries.toList().forEach { (key, entry) ->
-                entry.cached = false
-                entry.retired = true
-                if (entry.references == 0) removeEntry(key, entry)
+                if (entry.retired && entry.references == 0) removeEntry(key, entry)
             }
         }
     }
 
+    /** Explicit loader lifecycle teardown remains global; connection retirement is actor-specific. */
+    fun retire() {
+        synchronized(lock) { retirementGeneration++ }
+        retireOriginalActors(all = true)
+        retirementListeners.forEach { listener -> runCatching(listener) }
+    }
+
     override fun close() {
         synchronized(lock) { closed = true }
+        storeObservation.close()
         retire()
         invalidation.close()
         scope.coroutineContext[Job]?.cancel()
@@ -478,6 +524,7 @@ class ScopedImageLoader(
         var cached: Boolean = false,
         var retired: Boolean = false,
         val cacheable: Boolean = true,
+        val actor: ScopedReadContext,
     )
     private class MissingImage : Exception()
     private class ImageUnavailable : Exception()

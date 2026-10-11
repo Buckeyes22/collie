@@ -6,9 +6,25 @@ the first Android release from this fork.
 
 ## Unreleased
 
+- Restore retained local Codex input acknowledgements when the authoritative legacy connection returns, without resetting an already adopted pane or accepting queued old connection values.
+
+- Retire proxy identity transactions, calls, nonce entries and callback/editor copies by their original connection and navigation owner; preserve an admitted replacement while old cleanup is acknowledged. Persist owned binding retirement before notifying its consumers.
+- Keep local acknowledged Codex input on a harmless current recommit and fence its production cache to the committed connection incarnation; replacement credentials cannot restore the old acknowledgement.
+
 - Native identity sign-in requests the operator profile's bounded additional API scopes and displays the complete scope list during import review, while preserving exact signed token audience and proof-key verification.
 
 - Accept an exact OIDC root issuer without a trailing slash while preserving literal discovery, callback and signed-token issuer checks.
+
+- Retire only the original connection's screen copies, pane drafts and encrypted launch intents; preserve refreshed replacement content and uncertain launch barriers while old cleanup is acknowledged.
+- Refuse new actors during genuine same-connection or unsupported-store pending acknowledgements, while a distinct committed successor remains independently admissible.
+
+- Bind pending connection cleanup to its original generation and recheck declared mutation admission after transport waits; preserve paired read preferences and same-actor pending custody.
+
+- Keep cleared Files and image custody retired even if the original connection object is saved again before notification; preserve live reconnects with an encrypted incarnation witness.
+
+- Erase retired Files names from detached and pooled rows, release retained SVG graphs, and retire original-actor image requests, caches and viewers on encrypted connection changes while preserving current replacement content.
+
+- Clear native Files source, previews and dialogs, including retained copies from earlier Source/Preview redraws, when the encrypted connection is removed or replaced, even while the screen is stopped and no read is pending.
 
 - Open current, bridge-listed Changes source in native Files with the original scoped read actor; explain historical and deleted diffs and preserve Files device-read refusals.
 
