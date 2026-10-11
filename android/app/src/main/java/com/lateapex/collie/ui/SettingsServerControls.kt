@@ -637,8 +637,9 @@ internal class SettingsServerControls(
             mutate(
                 progress = text(R.string.settings_revoking, device.label),
                 onSuccess = {
-                    if (device.current) {
-                        repository.demoteToReadOnly()
+                    if (device.current && repository.credentialRetirementFailure != null) {
+                        showStatus(text(R.string.pairing_storage_retained), error = true)
+                    } else if (device.current) {
                         activity.startActivity(
                             Intent(activity, MainActivity::class.java).addFlags(
                                 Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP,

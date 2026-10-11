@@ -2707,6 +2707,16 @@ describe("marksPaneSeen — CSRF guard on marking a pane seen", () => {
     expect(shouldMaskForwardedAnswer("/api/pane/w1:p1/history", true)).toBe(true);
   });
 
+  test("agent identity is a protected diagnostic read; lifecycle intent does not count as reading the transcript", () => {
+    expect(marksPaneSeen(withHeader(), "agent")).toBe(false);
+    expect(paneGateLevel("agent")).toBe("device-read");
+    expect(shouldMaskForwardedAnswer("/api/pane/w1:p1/agent", false)).toBe(true);
+    for (const action of ["agent/state", "agent/session", "agent/release", "agent/authority/clear"]) {
+      expect(paneGateLevel(action)).toBe("write");
+      expect(marksPaneSeen(withHeader(), action)).toBe(false);
+    }
+  });
+
   test("write actions count without it — they already cleared the Origin-requiring write gate", () => {
     for (const action of ["reply", "keys", "upload", "close", "rename"]) {
       expect(marksPaneSeen(withHeader(), action)).toBe(true);
@@ -2888,7 +2898,7 @@ describe("muxConfigBody — the capability declaration, as the phone reads it", 
   test("the real Herdr adapter advertises only proven capabilities before layout readiness", () => {
     const wire = muxConfigBody(herdrMuxFactory.create({ endpoint: "/tmp/none.sock", timeoutMs: 100, options: {} }));
     const proven = new Set([
-      "paneGrid", "gridScrollback", "agentDetection", "agentSessionRef", "paneProcesses",
+      "paneGrid", "gridScrollback", "agentDetection", "agentSessionRef", "agentIdentity", "paneProcesses",
       "typeText", "sendKeys", "guardedQueuedSend", "renamePane", "closePane", "setFocus", "createTab", "renameTab",
       "closeTab", "createSpace", "listWorktrees", "createWorktree", "openWorktree",
       "pushTopologyEvents", "pushPaneEvents", "listSessions",

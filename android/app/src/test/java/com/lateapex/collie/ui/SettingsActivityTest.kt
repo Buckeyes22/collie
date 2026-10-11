@@ -18,7 +18,6 @@ import com.lateapex.collie.R
 import com.lateapex.collie.data.EncryptedConnectionStore
 import com.lateapex.collie.domain.CollieOrigin
 import com.lateapex.collie.domain.Connection
-import kotlinx.coroutines.flow.MutableStateFlow
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -432,16 +431,11 @@ class SettingsActivityTest {
     )
 
     private fun seedConnection(paired: Boolean) {
-        val store = (context.applicationContext as CollieApplication).container.connectionStore
-        @Suppress("UNCHECKED_CAST")
-        val flow = EncryptedConnectionStore::class.java.getDeclaredField("mutableConnection")
-            .apply { isAccessible = true }
-            .get(store) as MutableStateFlow<Connection?>
-        flow.value = Connection(
+        saveFixtureConnection(context.applicationContext as CollieApplication, Connection(
             CollieOrigin("https://collie.example.com/"),
             "S25U-native",
             token = if (paired) "pairing-token" else null,
-        )
+        ))
     }
 
     private fun firstImage(view: View): ImageView? {

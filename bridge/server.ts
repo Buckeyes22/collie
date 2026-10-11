@@ -6,6 +6,8 @@ import { servePaneLayoutRoute } from "./control/layout.ts";
 import { serveOrganizationRoute } from "./control/organization.ts";
 import { serveControlRoute } from "./control/routes.ts";
 import { servePaneProcesses } from "./control/processes.ts";
+import { servePaneAgentIdentity } from "./control/agent-identity.ts";
+import { AgentReporterRegistry, refuseUnsafeAgentMutation, type AgentMutationKind } from "./control/agent-authority.ts";
 import { hostControlForMux } from "./mux/registry.ts";
 import type { HostControlPort } from "./host-control/types.ts";
 import { hostControlConfig } from "./host-control/registry.ts";
@@ -43,6 +45,14 @@ import {
 import { apiError, type ApiErrorBody, type ApiErrorDetail, type ErrorCode } from "./error-codes.ts";
 import { keysDeliverable, MUX_CAPABILITIES, type MuxCapability, type MuxCapabilityDeclaration } from "./mux/capabilities.ts";
 import type { MuxAdapter, MuxAck, MuxGrid, MuxWorktreeCreateRequest } from "./mux/types.ts";
+
+function parseAgentMutationAction(action: string | undefined): AgentMutationKind | null {
+  if (action === "agent/state") return "state";
+  if (action === "agent/session") return "session";
+  if (action === "agent/release") return "release";
+  if (action === "agent/authority/clear") return "authority-clear";
+  return null;
+}
 import { MAX_PANE_READ_LINES, negotiateReadLimit } from "./mux/read-limits.ts";
 import { allCacheRules } from "./cache/rules/index.ts";
 import type { CacheOverride } from "./cache/engine.ts";
@@ -408,7 +418,7 @@ export function isLoopbackPeer(address: string | null | undefined): boolean {
   return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(v4);
 }
 
-const PANE_ROUTE = /^\/api\/pane\/([^/]+)(?:\/(reply|keys|upload|close|rename|history|chat|changes|files|focus|processes))?$/;
+const PANE_ROUTE = /^\/api\/pane\/([^/]+)(?:\/(reply|keys|upload|close|rename|history|chat|changes|files|focus|processes|agent|agent\/(?:state|session|release|authority\/clear)))?$/;
 
 /**
  * A pairing claim's refusal, as an error code.
@@ -540,6 +550,7 @@ export const SEEN_HEADER = "x-collie-seen";
  */
 export function marksPaneSeen(req: Request, action: string | undefined): boolean {
   if (req.headers.get(SEEN_HEADER) !== null) return true;
+  if (action?.startsWith("agent/")) return false;
   return action !== undefined && !isPaneReadAction(action);
 }
 
@@ -550,7 +561,7 @@ export function marksPaneSeen(req: Request, action: string | undefined): boolean
  * forwarded route's kind the same way.
  */
 export function isPaneReadAction(action: string | undefined): boolean {
-  return action === "history" || action === "chat" || action === "changes" || action === "files" || action === "processes";
+  return action === "history" || action === "chat" || action === "changes" || action === "files" || action === "processes" || action === "agent";
 }
 
 /**
@@ -578,13 +589,13 @@ export function afterPaneInput(engine: Pick<StateEngine, "noteInput">, res: Resp
  * into or restructures a terminal.
  */
 export function paneGateLevel(action: string | undefined): GateLevel {
-  if (action === "files" || action === "processes") return "device-read";
+  if (action === "files" || action === "processes" || action === "agent") return "device-read";
   return !action || isPaneReadAction(action) ? "read" : "write";
 }
 
 /** Process argv and paths stay masked on Crew even when the optional terminal redaction switch is off. */
 export function shouldMaskForwardedAnswer(pathname: string, redact: boolean): boolean {
-  return redact || /^\/api\/pane\/[^/]+\/processes$/.test(pathname);
+  return redact || /^\/api\/pane\/[^/]+\/(?:processes|agent)$/.test(pathname);
 }
 
 /**
@@ -1218,6 +1229,7 @@ export async function startServer(opts: {
   machines?: MachineSurface;
 }) {
   const { cfg, registry, push, snooze, notifyPrefs, updateMonitor, audit, activity, crew } = opts;
+  const agentReporters = await AgentReporterRegistry.load(cfg.stateDir);
   // The prompt-cache ledger, built in bridge/index.ts beside the journal registry it probes through,
   // because the state engine's poll is what drives it and that poll is wired there. Undefined when
   // `COLLIE_TRANSCRIPT` is off: no journal, no probe, and every pane reads exactly as it did in 1.8.2.
@@ -1882,8 +1894,8 @@ export async function startServer(opts: {
       // `files` is a read that still needs an authorised device (ADR 0083); see paneGateLevel.
       const denied = caller.gate(paneGateLevel(action));
       if (denied) return denied;
-      if (action === "processes" && !controlScope(url, "session")) {
-        return refusalResponse(refusal("scope.malformed", "Malformed process inspection scope", "scope"), 400);
+      if ((action === "processes" || action === "agent" || action?.startsWith("agent/")) && !controlScope(url, "session")) {
+        return refusalResponse(refusal("scope.malformed", "Malformed agent inspection scope", "scope"), 400);
       }
       const rt = await caller.resolve();
       if (rt instanceof Response) return rt;
@@ -1929,6 +1941,11 @@ export async function startServer(opts: {
         return paneFiles(rt.engine, paneId, url, req, filesPrivateFolders(cfg), homedir(), cfg.redact);
       if (action === "processes" && req.method === "GET")
         return servePaneProcesses(herdr, rt.engine, paneId);
+      if (action === "agent" && req.method === "GET")
+        return servePaneAgentIdentity(herdr, rt.engine, paneId);
+      const agentMutation = parseAgentMutationAction(action);
+      if (agentMutation && req.method === "POST")
+        return refuseUnsafeAgentMutation(herdr, rt.engine, paneId, agentMutation, req, agentReporters);
       // A landed input makes the engine hot for a few polls (§ isPaneInput). On a member this runs
       // through the crew dispatch, so the member that owns the pane is the one that goes hot.
       if (action === "reply" && req.method === "POST")

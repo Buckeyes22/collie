@@ -98,7 +98,7 @@ class LaunchRecipeActivity : AppCompatActivity() {
                 if (reason == AuthorityInvalidation.SCOPE_CHANGED && contextKey?.let(repository::isCurrent) == true) return@runOnUiThread
                 // A transport failure freezes writes without retiring the captured actor.
                 // Keep the in-flight token so its durable UNKNOWN acknowledgement can render.
-                val actorRetired = reason != AuthorityInvalidation.ACCESS_FROZEN || contextKey?.let(repository::isCurrent) != true
+                val actorRetired = reason != AuthorityInvalidation.ACCESS_FROZEN || contextKey?.let(repository::isActorRetired) != false
                 if (actorRetired) { operation++; running = false }
                 scopedReady = false
                 runCheck = null
@@ -471,7 +471,7 @@ class LaunchRecipeActivity : AppCompatActivity() {
         lifecycleScope.launch {
             try {
                 val result = repository.startRunIntent(scope, line, requestId, folder, noPrompts, captured)
-                if (token != operation || !repository.isCurrent(captured)) return@launch stale(token)
+                if (token != operation || repository.isActorRetired(captured)) return@launch stale(token)
                 when (result) {
                 is ApiResult.Success -> if (result.value.ok && result.value.pane != null) {
                     openPane(result.value)

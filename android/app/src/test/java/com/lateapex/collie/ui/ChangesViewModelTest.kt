@@ -29,6 +29,7 @@ import com.lateapex.collie.network.CollieApi
 import com.lateapex.collie.network.OriginValidator
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -136,8 +137,9 @@ class ChangesViewModelTest {
                 val repository = CollieRepository(api, store, app.container.originValidator)
                 val interleaving = repository.onReadContextInvalidated { reason ->
                     if (reason == com.lateapex.collie.data.AuthorityInvalidation.ACCESS_FROZEN) {
-                        // This earlier listener replaces the mutable last failure before the screen listener runs.
-                        kotlinx.coroutines.runBlocking { repository.changeDiff(target, scope, ChangesLookup(), ".", "missing.txt") }
+                        // A fresh ordinary refusal runs after the closed retirement ACK window.
+                        // The earlier immutable retirement event must still leave the screen retired.
+                        launch { repository.changeDiff(target, scope, ChangesLookup(), ".", "missing.txt") }
                     }
                 }
                 val viewModel = ChangesViewModel(app as Application, repository, target, scope)

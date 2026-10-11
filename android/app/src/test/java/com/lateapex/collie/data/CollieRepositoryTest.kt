@@ -1368,6 +1368,9 @@ class CollieRepositoryTest {
         override val connection: StateFlow<Connection?> = mutable
         var cleared = false
 
+        override fun compareAndSet(expected: Connection, replacement: Connection): Boolean =
+            mutable.compareAndSet(expected, replacement)
+
         override fun save(connection: Connection) {
             mutable.value = connection
         }

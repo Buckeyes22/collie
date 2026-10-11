@@ -30,6 +30,8 @@ export const MUX_CAPABILITIES = [
   "gridScrollback",
   "agentDetection",
   "agentSessionRef",
+  "agentIdentity",
+  "agentLifecycleWrites",
   "paneProcesses",
   "typeText",
   "sendKeys",
@@ -108,6 +110,10 @@ export const MUX_CAPABILITY_ROUTES = {
     "GET /api/snapshot — the split into `agents` and `shellPanes` and every status mark (needs you, working) both need the mux to say which agent a pane holds and how it is doing.",
   agentSessionRef:
     "GET /api/pane/:id/history — the journal keys an on-disk log off the session an agent named. Without this, history is absent, not empty (bridge/journal/registry.ts).",
+  agentIdentity:
+    "GET /api/pane/:id/agent — state, readiness, completion sequence and native session provenance supplied by the owning runtime; lifecycle authority source is reported as unknown when the runtime does not expose it.",
+  agentLifecycleWrites:
+    "POST /api/pane/:id/agent/{state,session,release,authority/clear} — requires source registration and atomic current-occupant compare-and-set; unsupported while the owning runtime lacks that guarantee.",
   paneProcesses: "GET /api/pane/:id/processes — sensitive process and foreground-directory diagnostics from the owning runtime; requires device-read.",
   typeText: "POST /api/pane/:id/reply — step one, the literal text.",
   sendKeys: "POST /api/pane/:id/reply (step two, the submit key) and POST /api/pane/:id/keys (the Keys tray).",
@@ -247,6 +253,8 @@ export function declareCapabilities(input: MuxCapabilityInput): MuxCapabilityDec
     gridScrollback: claimed.has("gridScrollback"),
     agentDetection: claimed.has("agentDetection"),
     agentSessionRef: claimed.has("agentSessionRef"),
+    agentIdentity: claimed.has("agentIdentity"),
+    agentLifecycleWrites: claimed.has("agentLifecycleWrites"),
     paneProcesses: claimed.has("paneProcesses"),
     typeText: claimed.has("typeText"),
     sendKeys: claimed.has("sendKeys"),

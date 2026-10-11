@@ -1471,6 +1471,9 @@ class PaneViewModelTest {
     private class FakeStore(initial: Connection) : ConnectionStore {
         private val mutable = MutableStateFlow<Connection?>(initial)
         override val connection: StateFlow<Connection?> = mutable
+        override fun compareAndSet(expected: Connection, replacement: Connection): Boolean =
+            mutable.compareAndSet(expected, replacement)
+
         override fun save(connection: Connection) { mutable.value = connection }
         override fun clear() { mutable.value = null }
     }

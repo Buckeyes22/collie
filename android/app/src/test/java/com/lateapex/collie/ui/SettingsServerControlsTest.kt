@@ -146,16 +146,10 @@ class SettingsServerControlsTest {
     }
 
     private fun seedUnpairedConnection(application: CollieApplication) {
-        val store = application.container.connectionStore
-        @Suppress("UNCHECKED_CAST")
-        val flow = com.lateapex.collie.data.EncryptedConnectionStore::class.java
-            .getDeclaredField("mutableConnection")
-            .apply { isAccessible = true }
-            .get(store) as kotlinx.coroutines.flow.MutableStateFlow<com.lateapex.collie.domain.Connection?>
-        flow.value = com.lateapex.collie.domain.Connection(
+        saveFixtureConnection(application, com.lateapex.collie.domain.Connection(
             com.lateapex.collie.domain.CollieOrigin("https://collie.example.com/"),
             "S25U-native",
             token = null,
-        )
+        ))
     }
 }

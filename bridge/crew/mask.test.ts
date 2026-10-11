@@ -153,6 +153,12 @@ describe("a member's key reaches the phone masked through the lead", () => {
     ["a Files body", "/api/pane/w1:p1/files", JSON.stringify({ paneId: "w1:p1", ...fileText })],
     ["a Files body asked by space", "/api/workspace/w1/files", JSON.stringify({ workspaceId: "w1", ...fileText })],
     ["process arguments and directories", "/api/pane/w1:p1/processes", JSON.stringify({ ok: true, paneId: "w1:p1", truncated: false, foregroundCwd: `/home/${key}`, restoreError: `restore failed ${key}`, processes: [{ pid: 5, name: "node", argv: ["node", `--key=${key}`], cwd: "/home/a" }] })],
+    ["agent session provenance", "/api/pane/w1:p1/agent", JSON.stringify({
+      ok: true, paneId: "w1:p1", agent: "codex", status: "working",
+      session: { source: "herdr:codex", agent: "codex", kind: "id", value: key },
+      stateAuthority: { observed: false, source: null }, interactiveReady: true, launchPending: false,
+      stateChangeSeq: "9", completionSeq: null,
+    })],
   ];
   for (const [name, path, body] of cases) {
     test(name, async () => {
@@ -207,6 +213,19 @@ describe("a member's key reaches the phone masked through the lead", () => {
     expect(out).not.toContain(key);
     expect(out).toContain(masked);
   });
+});
+
+test("Crew preserves exact uint64 identity diagnostics and refuses overflow", () => {
+  const baseIdentity = {
+    ok: true, paneId: "w1:p1", agent: "codex", status: "working",
+    stateAuthority: { observed: false, source: null }, interactiveReady: true, launchPending: false,
+    stateChangeSeq: "9007199254740993", completionSeq: "18446744073709551615",
+  };
+  const allowed = maskForwardedAnswer("agent", JSON.stringify(baseIdentity), "w1:p1");
+  expect(allowed).not.toBeNull();
+  expect(JSON.parse(allowed!).stateChangeSeq).toBe("9007199254740993");
+  expect(JSON.parse(allowed!).completionSeq).toBe("18446744073709551615");
+  expect(maskForwardedAnswer("agent", JSON.stringify({ ...baseIdentity, completionSeq: "18446744073709551616" }), "w1:p1")).toBeNull();
 });
 
 describe("an answer a 1.18 member already masked comes back byte for byte", () => {
@@ -288,6 +307,11 @@ describe("fail closed: a body that should be masked and cannot be is never passe
     ["process metadata with an unbounded argument list", "/api/pane/w1:p1/processes", JSON.stringify({ ok: true, paneId: "w1:p1", truncated: false, processes: [{ pid: 5, name: "node", argv: Array(65).fill(key) }] })],
     ["process metadata with a malformed cwd", "/api/pane/w1:p1/processes", JSON.stringify({ ok: true, paneId: "w1:p1", truncated: false, processes: [{ pid: 5, name: "node", cwd: { secret: key } }] })],
     ["process metadata for another pane", "/api/pane/w1:p1/processes", JSON.stringify({ ok: true, paneId: "w1:p2", truncated: false, processes: [{ pid: 5, name: "node" }] })],
+    ["agent identity with control characters", "/api/pane/w1:p1/agent", JSON.stringify({
+      ok: true, paneId: "w1:p1", agent: "codex\nrelease", status: "working",
+      stateAuthority: { observed: false, source: null }, interactiveReady: true, launchPending: false,
+      stateChangeSeq: "9", completionSeq: null,
+    })],
   ];
   for (const [name, path, body] of broken) {
     test(name, async () => {

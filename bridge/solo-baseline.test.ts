@@ -637,7 +637,7 @@ describe("solo zero-tax — routes", () => {
       // the poll path, forwarded to the owning member and taxing a solo instance with nothing.
       // `files` is the Files view (ADR 0083): one folder or one file under the Changes root, a read
       // gated on an authorised device and forwarded to the owning member like `changes`.
-      "/^\\/api\\/pane\\/([^/]+)(?:\\/(reply|keys|upload|close|rename|history|chat|changes|files|focus|processes))?$/",
+      "/^\\/api\\/pane\\/([^/]+)(?:\\/(reply|keys|upload|close|rename|history|chat|changes|files|focus|processes|agent|agent\\/(?:state|session|release|authority\\/clear)))?$/",
       // Which paths exist under the Files root (ADR 0088), asked in one batch for the pane view's
       // links: a read with the Files gate, one `lstat` per path, not forwarded across a crew link.
       "/^\\/api\\/pane\\/([^/]+)\\/files\\/exist$/",
@@ -982,6 +982,8 @@ const STATE_DIR_ENTRIES = [
   // never on Linux or macOS, and never on a Windows install whose folders were private already.
   "acl-backups",
   "activity.json",
+  // Operator-owned allowlist for explicitly registered custom agent reporters and exact session refs.
+  "agent-reporters.json",
   "audit.log",
   // Agent beacons (M11/01) — a directory, and one no bridge module ever writes: the bridge only ever
   // READS it, and the emitter that fills it is a CLI verb the operator installs a hook for. An

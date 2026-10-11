@@ -182,3 +182,4 @@ the branch you happen to be on.
 | [0037](./0037-the-interface-is-english-only.md) | The interface is English-only | Accepted |
 
 | [0096](./0096-control-authority-is-scoped-and-positive.md) | Control authority is scoped and positive | Accepted |
+| [0097](./0097-agent-lifecycle-reports-require-occupant-cas.md) | Agent lifecycle reports require occupant compare-and-set | Proposed |

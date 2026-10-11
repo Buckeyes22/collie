@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="pairing_storage_retained">Access is frozen. The pairing credential could not be removed from encrypted storage and is still retained on this phone. Replace the pairing or disconnect before trying again.</string>
     <string name="pane_terminal_output_omitted">… earlier output omitted …</string>
     <string name="pane_closed">Pane closed</string>
     <string name="pane_back">Back</string>
@@ -19,6 +20,33 @@
     <string name="pane_processes_pid">PID %1$d</string>
     <string name="pane_processes_arguments">Arguments: %1$s</string>
     <string name="pane_processes_directory">Directory: %1$s</string>
+    <string name="pane_action_agent_identity">Agent identity</string>
+    <string name="agent_identity_title">AGENT IDENTITY</string>
+    <string name="agent_identity_loading">Reading agent identity…</string>
+    <string name="agent_identity_unsupported">Agent identity details are not supported by this runtime.</string>
+    <string name="agent_identity_unavailable">Agent identity details are temporarily unavailable.</string>
+    <string name="agent_identity_auth_refused">The selected host refused this read. Reconnect or check access, then refresh deliberately.</string>
+    <string name="agent_identity_pane_missing">This pane is no longer available. Return to the pane list and select its current occupant.</string>
+    <string name="agent_identity_retired">This identity read ended when the screen stopped or its authority changed. Refresh to read the current pane.</string>
+    <string name="agent_identity_refresh">Refresh identity</string>
+    <string name="agent_identity_refresh_description">Read current agent identity for this pane again</string>
+    <string name="agent_identity_none">No agent reported</string>
+    <string name="agent_identity_agent">Agent: %1$s</string>
+    <string name="agent_identity_status">State: %1$s</string>
+    <string name="agent_identity_authority_unknown">State authority: not exposed by this runtime</string>
+    <string name="agent_identity_ready">Interactive ready: %1$s</string>
+    <string name="agent_identity_launch_pending">Launch pending: %1$s</string>
+    <string name="agent_identity_state_sequence">State change sequence: %1$s</string>
+    <string name="agent_identity_completion_sequence">Completion sequence: %1$s</string>
+    <string name="agent_identity_session_none">No native session reference was reported.</string>
+    <string name="agent_identity_session_source">Session source: %1$s</string>
+    <string name="agent_identity_session_agent">Session agent: %1$s</string>
+    <string name="agent_identity_session_kind">Session reference kind: %1$s</string>
+    <string name="agent_identity_session_value">Session reference: %1$s</string>
+    <string name="agent_identity_mutations_unavailable">State, session, release, and authority controls are unavailable because this Herdr protocol does not bind a write atomically to the current pane occupant.</string>
+    <string name="common_yes">Yes</string>
+    <string name="common_no">No</string>
+    <string name="agent_identity_unknown">Unknown</string>
     <string name="pane_action_changes">Changes</string>
     <string name="pane_action_zen">Zen mode</string>
     <string name="pane_action_focus">Focus in terminal</string>

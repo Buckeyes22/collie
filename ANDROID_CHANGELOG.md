@@ -18,6 +18,15 @@ the first Android release from this fork.
 - Add bounded native document and text attachments with a scoped picker, private temporary storage, and one-shot uploads.
 - Show sourced cache timing, model and Git facts with lead-owned cache watches and shared machine/cache notification preferences.
 
+- Keep revoked access locally frozen when encrypted credential removal fails, retain honest recovery after a temporary failure, and deliver committed connection changes outside storage and admission locks.
+
+- Publish snapshot and refusal authority only for the captured current actor; an older response cannot restore writes after retirement or remove replacement pairing credentials.
+
+- Capture the selected host, session and pane with its navigation generation so concurrent navigation cannot send a shared read or action to an earlier target.
+
+- Keep native read admission closed while target and credential retirement callbacks acknowledge, preventing intermediate actors during scope changes.
+
+- Add a scoped native Agent identity details screen for owner-reported status, readiness, sequence and session provenance; keep authority unknown when Herdr does not expose it and explain why lifecycle writes are unavailable without occupant compare-and-set.
 - Open New Space and worktree creation sheets expanded, with a bounded scrolling viewport that keeps Create reachable at large text sizes.
 
 - Add a native pane-layout screen for inspecting geometry and adjacency, then plan and confirm capability-gated split, resize, zoom, swap, focus and move actions. Unknown writes never replay automatically; same-ID recovery requires the owning peer's durable receipt support. On older peers, an explicit duplicate-risk warning lets the operator abandon only the local recovery record after inspecting the layout. Moved panes reopen from their new server-issued ID.

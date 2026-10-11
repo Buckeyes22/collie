@@ -35,6 +35,7 @@ import type {
   HerdrSplitPaneParams,
   PaneRead,
   SubscribeOptions,
+  WireAgentInfo,
   WirePane,
   WirePaneProcessInfo,
   WireSnapshot,
@@ -96,6 +97,7 @@ export class FakeHerdr implements HerdrRpc {
   /** False while the adapter's connection is down: every RPC rejects, as a closed socket does. */
   private connected = true;
   readonly processInfoTargets: string[] = [];
+  readonly agentInfoRows: WireAgentInfo[] = [];
 
   constructor() {
     this.seed();
@@ -245,6 +247,36 @@ export class FakeHerdr implements HerdrRpc {
   async listPanes(): Promise<WirePane[]> {
     this.assertConnected("pane.list");
     return this.panes;
+  }
+
+  async getPane(paneId: string): Promise<WirePane> {
+    this.assertConnected("pane.get");
+    return { ...this.pane("pane.get", paneId) };
+  }
+
+  async getAgent(target: string): Promise<WireAgentInfo> {
+    this.assertConnected("agent.get");
+    const matching = this.agentInfoRows.filter((row) => row.pane_id === target);
+    if (matching.length > 0) return { ...matching[0]! };
+    const pane = this.pane("agent.get", target);
+    return {
+      pane_id: pane.pane_id,
+      agent: pane.agent,
+      agent_status: pane.agent_status,
+      agent_session: pane.agent_session && pane.agent_session.source && pane.agent_session.agent &&
+        (pane.agent_session.kind === "id" || pane.agent_session.kind === "path") && pane.agent_session.value
+        ? {
+            source: pane.agent_session.source,
+            agent: pane.agent_session.agent,
+            kind: pane.agent_session.kind,
+            value: pane.agent_session.value,
+          }
+        : null,
+      interactive_ready: true,
+      launch_pending: false,
+      state_change_seq: "0",
+      completion_seq: null,
+    };
   }
 
   async processInfo(paneId: string): Promise<WirePaneProcessInfo> {

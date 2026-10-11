@@ -44,6 +44,7 @@ import {
   requestedCwd,
   type MuxAck,
   type MuxAdapter,
+  type MuxAgentIdentity,
   type MuxCreatedPane,
   type MuxGrid,
   type MuxGridRequest,
@@ -130,6 +131,7 @@ const HERDR_BASE_CAPABILITIES = [
     "gridScrollback",
     "agentDetection",
     "agentSessionRef",
+    "agentIdentity",
     "paneProcesses",
     "typeText",
     "sendKeys",
@@ -931,6 +933,54 @@ export class HerdrMux implements MuxAdapter {
     }
   }
 
+  /** Read the two vendor views and join on the same public pane id and terminal occupant. */
+  async agentIdentity(paneId: string): Promise<MuxOutcome<MuxAgentIdentity>> {
+    try {
+      const before = await this.client.getPane(paneId);
+      const agent = await this.client.getAgent(paneId);
+      const after = await this.client.getPane(paneId);
+      if (before.terminal_id !== after.terminal_id || before.pane_id !== after.pane_id) {
+        return muxGone("The pane occupant changed while agent identity was being read.");
+      }
+      if (
+        (agent.agent ?? null) !== (after.agent ?? null) ||
+        agent.agent_status !== after.agent_status ||
+        !sameWireSession(agent.agent_session, after.agent_session)
+      ) {
+        return muxGone("The agent identity changed while its details were being read.");
+      }
+      const session = agent.agent_session ?? after.agent_session ?? null;
+      const validSession: NonNullable<MuxAgentIdentity["session"]> | undefined = session !== null && session.source && session.agent &&
+        (session.kind === "id" || session.kind === "path") && session.value
+        ? {
+            source: safeAgentText(session.source, 80),
+            agent: safeAgentText(session.agent, 80),
+            kind: session.kind,
+            value: safeAgentText(session.value, 2048),
+          }
+        : undefined;
+      const displaySession = validSession && validSession.source !== "" && validSession.agent !== "" && validSession.value !== ""
+        ? validSession
+        : undefined;
+      const identityBase = {
+        paneId,
+        agent: safeAgentText(agent.agent ?? after.agent ?? "", 256) || null,
+        status: agent.agent_status,
+        stateAuthority: { observed: false, source: null } satisfies MuxAgentIdentity["stateAuthority"],
+        interactiveReady: agent.interactive_ready ?? null,
+        launchPending: agent.launch_pending ?? null,
+        stateChangeSeq: safeUint64(agent.state_change_seq),
+        completionSeq: safeUint64(agent.completion_seq),
+      };
+      const identity: MuxAgentIdentity = displaySession === undefined
+        ? identityBase
+        : { ...identityBase, session: displaySession };
+      return muxOk(identity);
+    } catch (err) {
+      return transportRefusal(err);
+    }
+  }
+
   /**
    * The same scrollback with soft wraps undone (`recent_unwrapped`), for URL repair.
    *
@@ -1176,6 +1226,35 @@ function toCreatedPane(created: CreatedShell): MuxCreatedPane {
     tabId: created.tabId,
     cwd: created.cwd,
   };
+}
+
+function safeUint64(value: string | null | undefined): string | null {
+  return value !== undefined && value !== null && /^(0|[1-9][0-9]{0,19})$/.test(value) &&
+    BigInt(value) <= 18_446_744_073_709_551_615n ? value : null;
+}
+
+/** Bound and redact vendor identity text before it becomes a phone-visible owner fact. */
+function safeAgentText(value: string, maximum: number): string {
+  const normalized = Array.from(value)
+    .filter((character) => {
+      const code = character.codePointAt(0)!;
+      return code >= 32 && !(code >= 127 && code <= 159);
+    })
+    .join("");
+  // Mask across the complete bounded upstream field before clipping; clipping first can split a
+  // credential token and leave a recognizable prefix that the redactor no longer recognizes.
+  return Array.from(redactText(normalized)).slice(0, maximum).join("");
+}
+
+function sameWireSession(
+  left: WirePane["agent_session"] | null | undefined,
+  right: WirePane["agent_session"] | null | undefined,
+): boolean {
+  const a = left ?? null;
+  const b = right ?? null;
+  return a === null || b === null
+    ? a === b
+    : a.source === b.source && a.agent === b.agent && a.kind === b.kind && a.value === b.value;
 }
 
 /**

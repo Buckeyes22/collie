@@ -421,4 +421,80 @@ class DiagnosticsInterceptorTest {
         assertNotNull(server.takeRequest().getHeader("X-Collie-Trace-Id"))
         assertTrue(recorded.isEmpty())
     }
+    @Test
+    fun enabledDiagnosticsDoesNotReadMountedIdentityBodiesBeforeTheNativeJsonBound() {
+        server.shutdown()
+        val certificate = HeldCertificate.Builder().commonName("localhost").addSubjectAlternativeName("localhost").build()
+        val serverCertificates = HandshakeCertificates.Builder().heldCertificate(certificate).build()
+        val clientCertificates = HandshakeCertificates.Builder().addTrustedCertificate(certificate.certificate).build()
+        server = MockWebServer().apply { useHttps(serverCertificates.sslSocketFactory(), false); start() }
+        val payload = "{\"ok\":true,\"paneId\":\"w1:p1\",\"privateSession\":\"never-record-this\",\"padding\":\"${"x".repeat(80 * 1024)}\"}"
+        for (mime in listOf(null, "text/plain", "application/octet-stream")) {
+            val sourceBytesRead = AtomicLong()
+            val diagnosticClient = CollieApiClient.defaultHttpClient().newBuilder()
+                .sslSocketFactory(clientCertificates.sslSocketFactory(), clientCertificates.trustManager)
+                .addInterceptor(DiagnosticsInterceptor(RecordingDiagnosticsRecorder(recorded)))
+                .addNetworkInterceptor { chain ->
+                    val response = chain.proceed(chain.request())
+                    val originalBody = response.body ?: return@addNetworkInterceptor response
+                    val counted = object : ForwardingSource(originalBody.source()) {
+                        override fun read(sink: okio.Buffer, byteCount: Long): Long {
+                            val read = super.read(sink, byteCount)
+                            if (read > 0) sourceBytesRead.addAndGet(read)
+                            return read
+                        }
+                    }.buffer()
+                    response.newBuilder().body(object : ResponseBody() {
+                        override fun contentType() = originalBody.contentType()
+                        override fun contentLength() = originalBody.contentLength()
+                        override fun source(): BufferedSource = counted
+                    }).build()
+                }.build()
+            val api = CollieApiClient(diagnosticClient, Json { ignoreUnknownKeys = true })
+            val response = MockResponse().setChunkedBody(payload, 1024)
+            if (mime != null) response.setHeader("Content-Type", mime)
+            server.enqueue(response)
+            val result = kotlinx.coroutines.runBlocking {
+                api.paneAgentIdentity(
+                    Connection(CollieOrigin(server.url("/mounted/").toString()), "phone", "token"),
+                    com.lateapex.collie.domain.PaneAddress(Scope("host-a", "session-a"), "w1:p1"),
+                )
+            }
+            assertTrue("oversized identity JSON is refused for $mime", result is ApiResult.Failure)
+            assertTrue("the API bound, not diagnostics, limits reads for $mime: ${sourceBytesRead.get()}", sourceBytesRead.get() <= 16 * 1024L + 8 * 1024L)
+            val fields = recorded.last().second
+            assertEquals("/mounted/api/pane/w1%3Ap1/agent", fields["path"])
+            assertEquals(true, fields["responseBodyStreaming"])
+            assertFalse(fields.containsKey("responseBody"))
+            assertFalse(fields.values.any { it.toString().contains("never-record-this") })
+            server.takeRequest()
+        }
+    }
+    @Test
+    fun mountedLifecyclePostBodiesAreMetadataOnlyAndRemainReadableByTheCaller() {
+        for (path in listOf("/mounted/api/pane/w1%3Ap1/agent/state", "/nested/mounted/api/pane/w1%3Ap1/agent/authority/clear")) {
+            recorded.clear()
+            val requestSecret = "private-report-session-credential"
+            val responseSecret = "private-lifecycle-response-payload"
+            server.enqueue(MockResponse().setResponseCode(409).setHeader("Content-Type", "text/plain")
+                .setChunkedBody("$responseSecret ${"x".repeat(32 * 1024)}", 512))
+            val request = Request.Builder().url(server.url(path)).header("Content-Type", "application/json")
+                .post(object : okhttp3.RequestBody() {
+                    override fun contentType() = "application/json".toMediaType()
+                    override fun contentLength() = -1L
+                    override fun writeTo(sink: okio.BufferedSink) {
+                        sink.writeUtf8("{\"session\":\"$requestSecret\"}")
+                    }
+                }).build()
+            val body = client.newCall(request).execute().use { it.body!!.string() }
+            assertTrue(body.contains(responseSecret))
+            val (_, fields) = recorded.single()
+            assertEquals(true, fields["requestBodyRedacted"])
+            assertEquals(true, fields["responseBodyStreaming"])
+            assertFalse(fields.containsKey("requestBody"))
+            assertFalse(fields.containsKey("responseBody"))
+            assertFalse(fields.values.any { it.toString().contains(requestSecret) || it.toString().contains(responseSecret) })
+            server.takeRequest()
+        }
+    }
 }

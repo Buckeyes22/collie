@@ -7,6 +7,7 @@ import type { AgentStatus } from "../../types.ts";
 import { dialHerdr, type DialMode, type SockHandle } from "../../dial.ts";
 import { decodeReplyLine, decodeStreamLine, type EventData } from "../../wire.ts";
 import { redactText } from "../../redact.ts";
+import { randomUUID } from "node:crypto";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The Herdr socket TRANSPORT. THIS IS THE ONLY FILE that knows Herdr's method
@@ -166,6 +167,101 @@ export interface WirePane {
     max_offset_from_bottom: number;
     viewport_rows: number;
   } | null;
+}
+
+/** Read-only `agent.get` payload from the pinned Herdr protocol. */
+export interface WireAgentInfo {
+  pane_id: string;
+  agent?: string | null;
+  agent_status: AgentStatus;
+  agent_session?: {
+    source: string;
+    agent: string;
+    kind: "id" | "path";
+    value: string;
+  } | null;
+  interactive_ready?: boolean;
+  launch_pending?: boolean;
+  state_change_seq?: string;
+  completion_seq?: string | null;
+}
+
+function parseWireAgentInfo(value: JsonValue, exactUint64Marker: string): WireAgentInfo {
+  const row = wireObject(value, "agent row");
+  const paneId = wireText(row, "pane_id");
+  const rawAgent = row.agent;
+  if (rawAgent !== undefined && rawAgent !== null && typeof rawAgent !== "string") {
+    throw new Error("herdr agent.get: malformed agent");
+  }
+  const rawStatus = row.agent_status;
+  const status = parseAgentStatus(rawStatus);
+  if (status === null) throw new Error("herdr agent.get: malformed agent_status");
+  const sequence = (field: string): string | null => {
+    const raw = row[field];
+    if (raw === undefined || raw === null) return null;
+    if (typeof raw === "string" && raw.startsWith(`\u0000collie.uint64.${exactUint64Marker}.`)) {
+      const exact = raw.slice(`\u0000collie.uint64.${exactUint64Marker}.`.length);
+      if (!/^(0|[1-9][0-9]{0,19})$/.test(exact) || BigInt(exact) > 18_446_744_073_709_551_615n) {
+        throw new Error(`herdr agent.get: malformed ${field}`);
+      }
+      return exact;
+    }
+    if (typeof raw === "string") throw new Error(`herdr agent.get: malformed ${field}`);
+    if (typeof raw !== "number" || !Number.isSafeInteger(raw) || raw < 0) {
+      throw new Error(`herdr agent.get: malformed ${field}`);
+    }
+    return String(raw);
+  };
+  const optionalBoolean = (field: string): boolean | undefined => {
+    const raw = row[field];
+    if (raw === undefined) return undefined;
+    if (typeof raw !== "boolean") throw new Error(`herdr agent.get: malformed ${field}`);
+    return raw;
+  };
+  const rawSession = row.agent_session;
+  let session: WireAgentInfo["agent_session"];
+  if (rawSession === undefined || rawSession === null) {
+    session = rawSession;
+  } else {
+    const ref = wireObject(rawSession, "agent_session");
+    const kind = wireText(ref, "kind");
+    if (kind !== "id" && kind !== "path") throw new Error("herdr agent.get: malformed agent_session.kind");
+    session = {
+      source: wireText(ref, "source"),
+      agent: wireText(ref, "agent"),
+      kind,
+      value: wireText(ref, "value"),
+    };
+  }
+  const info: WireAgentInfo = {
+    pane_id: paneId,
+    agent: rawAgent,
+    agent_status: status,
+    agent_session: session,
+    state_change_seq: sequence("state_change_seq") ?? undefined,
+    completion_seq: sequence("completion_seq"),
+  };
+  const interactiveReady = optionalBoolean("interactive_ready");
+  const launchPending = optionalBoolean("launch_pending");
+  if (interactiveReady !== undefined) info.interactive_ready = interactiveReady;
+  if (launchPending !== undefined) info.launch_pending = launchPending;
+  return info;
+}
+
+function parseAgentStatus(value: JsonValue | undefined): AgentStatus | null {
+  switch (value) {
+    case "idle": case "working": case "blocked": case "done": case "unknown": return value;
+    default: return null;
+  }
+}
+
+function validWireSession(value: WirePane["agent_session"]): boolean {
+  return value === undefined || value === null || (
+    typeof value === "object" && typeof value.source === "string" && value.source.trim() !== "" &&
+    typeof value.agent === "string" && value.agent.trim() !== "" &&
+    (value.kind === "id" || value.kind === "path") &&
+    typeof value.value === "string" && value.value.trim() !== ""
+  );
 }
 
 /**
@@ -347,6 +443,8 @@ export type HerdrRpc = Pick<
   | "sessionSnapshot"
   | "listWorkspaces"
   | "listPanes"
+  | "getAgent"
+  | "getPane"
   | "listTabs"
   | "readPane"
   | "processInfo"
@@ -398,6 +496,45 @@ export const DEFAULT_TIMEOUT_MS = 5000;
  * other call gets. Cut at 5 s, the create still finishes on the host, and the phone is told it failed.
  */
 export const WORKTREE_TIMEOUT_MS = 60_000;
+
+/** pane.get is read twice for every identity join, so each untrusted reply has a hard wire bound. */
+export const MAX_PANE_REPLY_CHARS = 64 * 1024;
+const UINT64_FIELDS = new Set(["state_change_seq", "completion_seq"]);
+
+/** Quote only JSON numeric tokens belonging to uint64 fields before JSON.parse can round them. */
+function preserveUint64Tokens(line: string, marker: string): string {
+  const edits: Array<{ start: number; end: number; replacement: string }> = [];
+  for (let i = 0; i < line.length;) {
+    if (line[i] !== '"') { i++; continue; }
+    const start = i++;
+    let escaped = false;
+    while (i < line.length) {
+      const ch = line[i++]!;
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') break;
+    }
+    if (line[i - 1] !== '"') break;
+    let key: unknown;
+    try { key = JSON.parse(line.slice(start, i)); } catch { continue; }
+    if (typeof key !== "string" || !UINT64_FIELDS.has(key)) continue;
+    let cursor = i;
+    while (/\s/.test(line[cursor] ?? "")) cursor++;
+    if (line[cursor] !== ":") continue;
+    cursor++;
+    while (/\s/.test(line[cursor] ?? "")) cursor++;
+    const match = /^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?/.exec(line.slice(cursor));
+    if (match) edits.push({ start: cursor, end: cursor + match[0].length, replacement: JSON.stringify(`\u0000collie.uint64.${marker}.${match[0]}`) });
+  }
+  if (edits.length === 0) return line;
+  let output = "";
+  let from = 0;
+  for (const edit of edits) {
+    output += line.slice(from, edit.start) + edit.replacement;
+    from = edit.end;
+  }
+  return output + line.slice(from);
+}
 
 
 /** `worktree.create`'s parameters as Collie sends them. `base` and `path` go on the wire only when set. */
@@ -494,7 +631,7 @@ export class HerdrClient {
    *
    * `timeoutMs` overrides the client's budget for this one call; absent, the constructor's applies.
    */
-  private request<T>(method: string, params: JsonObject = {}, timeoutMs = this.timeoutMs, maxReplyChars?: number): Promise<T> {
+  private request<T>(method: string, params: JsonObject = {}, timeoutMs = this.timeoutMs, maxReplyChars?: number, exactUint64Marker?: string): Promise<T> {
     const id = `b${++idCounter}`;
     return new Promise<T>((resolve, reject) => {
       let buf = "";
@@ -507,7 +644,8 @@ export class HerdrClient {
       let cancelDial: (() => void) | null = null;
       // Stream-decode so a multi-byte UTF-8 codepoint split across chunk boundaries isn't
       // corrupted into replacement characters.
-      const decoder = new TextDecoder("utf-8");
+      const decoder = new TextDecoder("utf-8", { fatal: true });
+      let replyBytes = 0;
       // Settle BEFORE closing: socket.end() synchronously fires `close`, which re-enters finish —
       // but `settled` is already set there, so that reject is a no-op and we keep the real outcome.
       const finish = (fn: () => void) => {
@@ -546,7 +684,17 @@ export class HerdrClient {
         },
         data(s, chunk) {
           socket = s;
-          buf += decoder.decode(chunk, { stream: true });
+          replyBytes += chunk.byteLength;
+          if (maxReplyChars !== undefined && replyBytes > maxReplyChars * 4) {
+            finish(() => reject(new Error(`herdr ${method}: reply exceeded ${maxReplyChars * 4} bytes`)));
+            return;
+          }
+          try {
+            buf += decoder.decode(chunk, { stream: true });
+          } catch {
+            finish(() => reject(new Error(`herdr ${method}: reply was not valid UTF-8`)));
+            return;
+          }
           if (maxReplyChars !== undefined && buf.length > maxReplyChars) {
             finish(() => reject(new Error(`herdr ${method}: reply exceeded ${maxReplyChars} characters`)));
             return;
@@ -556,9 +704,11 @@ export class HerdrClient {
           const line = buf.slice(0, nl);
           finish(() => {
             try {
-              resolve(decodeReplyLine<T>(line, method));
-            } catch (e) {
-              reject(e);
+              decoder.decode(); // Reject an incomplete UTF-8 codepoint at the reply boundary.
+              const decoded = decodeReplyLine<T>(exactUint64Marker ? preserveUint64Tokens(line, exactUint64Marker) : line, method);
+              resolve(decoded);
+            } catch (error) {
+              reject(error instanceof Error ? error : new Error(`herdr ${method}: malformed reply`));
             }
           });
         },
@@ -608,6 +758,32 @@ export class HerdrClient {
   async listPanes(): Promise<WirePane[]> {
     const r = await this.request<{ panes: WirePane[] }>("pane.list");
     return r.panes;
+  }
+
+  async getPane(paneId: string): Promise<WirePane> {
+    const r = await this.request<{ type: string; pane: WirePane }>("pane.get", { pane_id: paneId }, this.timeoutMs, MAX_PANE_REPLY_CHARS);
+    const pane = r.pane;
+    if (r.type !== "pane_info" || !pane || pane.pane_id !== paneId ||
+      typeof pane.terminal_id !== "string" || pane.terminal_id.trim() === "" ||
+      typeof pane.workspace_id !== "string" || pane.workspace_id.trim() === "" ||
+      typeof pane.tab_id !== "string" || pane.tab_id.trim() === "" ||
+      typeof pane.agent_status !== "string" || parseAgentStatus(pane.agent_status) === null ||
+      (pane.agent !== undefined && pane.agent !== null && typeof pane.agent !== "string") ||
+      !validWireSession(pane.agent_session)) {
+      throw new Error("herdr pane.get: pane identity mismatch");
+    }
+    return pane;
+  }
+
+  /** Read the exact agent target by pane ID; never resolve an agent name or ambient focus. */
+  async getAgent(paneId: string): Promise<WireAgentInfo> {
+    const exactUint64Marker = randomUUID();
+    const raw = await this.request<JsonValue>("agent.get", { target: paneId }, this.timeoutMs, 64 * 1024, exactUint64Marker);
+    const result = wireObject(raw, "agent.get result");
+    if (result.type !== "agent_info" || result.agent === undefined) throw new Error("herdr agent.get: unexpected result type");
+    const agent = parseWireAgentInfo(result.agent, exactUint64Marker);
+    if (agent.pane_id !== paneId) throw new Error("herdr agent.get: target identity mismatch");
+    return agent;
   }
 
   /** Fetch sensitive process metadata for the explicit target; never asks Herdr to infer focus. */

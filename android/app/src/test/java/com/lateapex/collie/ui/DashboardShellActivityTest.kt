@@ -16,7 +16,6 @@ import com.lateapex.collie.CollieApplication
 import com.lateapex.collie.data.FrozenLaunchIntent
 import com.lateapex.collie.data.LaunchIntentState
 import com.lateapex.collie.data.StoredLaunchIntent
-import com.lateapex.collie.data.EncryptedConnectionStore
 import com.lateapex.collie.domain.CollieOrigin
 import com.lateapex.collie.domain.Connection
 import com.lateapex.collie.domain.Scope
@@ -271,11 +270,7 @@ class DashboardShellActivityTest {
             Intent(ApplicationProvider.getApplicationContext(), MainActivity::class.java),
         ).create().get()
         val app = activity.application as CollieApplication
-        @Suppress("UNCHECKED_CAST")
-        val connectionFlow = EncryptedConnectionStore::class.java.getDeclaredField("mutableConnection")
-            .apply { isAccessible = true }
-            .get(app.container.connectionStore) as kotlinx.coroutines.flow.MutableStateFlow<Connection?>
-        connectionFlow.value = Connection(CollieOrigin("https://collie.example/"), "phone", "paired-token")
+        saveFixtureConnection(app, Connection(CollieOrigin("https://collie.example/"), "phone", "paired-token"))
         val repository = app.container.repository
         val viewModel = MainActivity::class.java.getDeclaredField("viewModel").apply { isAccessible = true }.get(activity) as MainViewModel
         val scope = viewModel.currentScope
@@ -330,11 +325,7 @@ class DashboardShellActivityTest {
             Intent(ApplicationProvider.getApplicationContext(), MainActivity::class.java),
         ).create().get()
         val app = activity.application as CollieApplication
-        @Suppress("UNCHECKED_CAST")
-        val connectionFlow = EncryptedConnectionStore::class.java.getDeclaredField("mutableConnection")
-            .apply { isAccessible = true }
-            .get(app.container.connectionStore) as kotlinx.coroutines.flow.MutableStateFlow<Connection?>
-        connectionFlow.value = Connection(CollieOrigin("https://collie.example/"), "phone", "paired-token")
+        saveFixtureConnection(app, Connection(CollieOrigin("https://collie.example/"), "phone", "paired-token"))
         val repository = app.container.repository
         val viewModel = MainActivity::class.java.getDeclaredField("viewModel").apply { isAccessible = true }.get(activity) as MainViewModel
         val scope = viewModel.currentScope

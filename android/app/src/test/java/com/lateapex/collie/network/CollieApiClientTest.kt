@@ -283,6 +283,62 @@ class CollieApiClientTest {
     }
 
     @Test
+    fun agentIdentityReadIsScopedAndDoesNotMarkThePaneSeen() = runBlocking {
+        server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody(
+            """{"ok":true,"paneId":"w1:p1","agent":"codex","status":"working","session":{"source":"codex","agent":"codex","kind":"id","value":"session-42"},"stateAuthority":{"observed":false,"source":null},"interactiveReady":true,"launchPending":false,"stateChangeSeq":"9007199254740993","completionSeq":"18446744073709551615"}""",
+        ))
+        val address = PaneAddress(Scope(host = "desk", session = "work"), "w1:p1")
+        val result = api.paneAgentIdentity(Connection(origin, "phone", "bearer-secret"), address)
+        assertTrue(result is ApiResult.Success)
+        val identity = (result as ApiResult.Success).value
+        assertEquals("session-42", identity.session?.value)
+        assertEquals(false, identity.stateAuthority.observed)
+        assertEquals("9007199254740993", identity.stateChangeSeq)
+        assertEquals("18446744073709551615", identity.completionSeq)
+        val request = server.takeRequest()
+        assertEquals("GET", request.method)
+        assertEquals("/api/pane/w1%3Ap1/agent?host=desk&session=work", request.path)
+        assertEquals("Bearer bearer-secret", request.getHeader("Authorization"))
+        assertEquals(null, request.getHeader("X-Collie-Seen"))
+    }
+
+    @Test
+    fun agentIdentityAcceptsKnownStatusWithAllOptionalFactsUnknown() = runBlocking<Unit> {
+        server.enqueue(MockResponse().setBody(
+            """{"ok":true,"paneId":"w1:p1","agent":"codex","status":"working","stateAuthority":{"observed":false,"source":null},"session":null,"interactiveReady":null,"launchPending":null,"stateChangeSeq":null,"completionSeq":null}""",
+        ))
+        val result = api.paneAgentIdentity(Connection(origin, "phone", "token"), PaneAddress(Scope(), "w1:p1"))
+        assertTrue(result is ApiResult.Success)
+        val identity = (result as ApiResult.Success).value
+        assertEquals(AgentStatus.WORKING, identity.status)
+        assertNull(identity.session)
+        assertNull(identity.interactiveReady)
+        assertNull(identity.launchPending)
+        assertNull(identity.stateChangeSeq)
+        assertNull(identity.completionSeq)
+        assertEquals("GET", server.takeRequest().method)
+    }
+
+    @Test
+    fun agentIdentityRejectsAnotherPaneOrInferredAuthority() = runBlocking {
+        val address = PaneAddress(Scope(), "w1:p1")
+        server.enqueue(MockResponse().setBody("""{"ok":true,"paneId":"w1:p2","status":"working","stateAuthority":{"observed":false,"source":null}}"""))
+        assertTrue(api.paneAgentIdentity(Connection(origin, "phone", "token"), address) is ApiResult.Failure)
+        server.takeRequest()
+        server.enqueue(MockResponse().setBody("""{"ok":true,"paneId":"w1:p1","status":"working","stateAuthority":{"observed":true,"source":"codex"}}"""))
+        assertTrue(api.paneAgentIdentity(Connection(origin, "phone", "token"), address) is ApiResult.Failure)
+    }
+
+    @Test
+    fun agentIdentityRejectsSequenceAboveUint64Maximum() = runBlocking<Unit> {
+        server.enqueue(MockResponse().setBody(
+            """{"ok":true,"paneId":"w1:p1","status":"working","stateAuthority":{"observed":false,"source":null},"stateChangeSeq":"18446744073709551616"}""",
+        ))
+        assertTrue(api.paneAgentIdentity(Connection(origin, "phone", "token"), PaneAddress(Scope(), "w1:p1")) is ApiResult.Failure)
+        server.takeRequest()
+    }
+
+    @Test
     fun paneProcessDetailsRejectAnotherPaneAndUnboundedRows() = runBlocking {
         val address = PaneAddress(Scope(), "w1:p1")
         server.enqueue(MockResponse().setBody("""{"ok":true,"paneId":"w1:p2","processes":[]}"""))

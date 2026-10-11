@@ -9,13 +9,18 @@ import android.util.Base64
 import com.lateapex.collie.domain.Connection
 import com.lateapex.collie.network.OriginValidator
 import java.security.KeyStore
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.InternalCoroutinesApi
+import kotlinx.coroutines.ExperimentalForInheritanceCoroutinesApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 
@@ -23,6 +28,15 @@ interface ConnectionStore {
     val connection: StateFlow<Connection?>
     fun save(connection: Connection)
     fun clear()
+    /** Atomic, durable replacement of this exact credential incarnation. No check/save fallback. */
+    fun compareAndSet(expected: Connection, replacement: Connection): Boolean = false
+}
+
+/** Process-wide bounded notification delivery; no Android Looper is needed by the store. */
+private object ConnectionPublisher {
+    val executor = Executors.newSingleThreadExecutor { task ->
+        Thread(task, "collie-connection-publisher").apply { isDaemon = true }
+    }
 }
 
 data class CipherEnvelope(val iv: ByteArray, val ciphertext: ByteArray)
@@ -88,14 +102,67 @@ class EncryptedConnectionStore(
     private val cipher: SecretCipher,
     private val json: Json,
     private val originValidator: OriginValidator,
+    preferencesOverride: SharedPreferences? = null,
 ) : ConnectionStore {
     private val preferences: SharedPreferences =
-        context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
-    private val mutableConnection = MutableStateFlow(read())
+        preferencesOverride ?: context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+    private val persistenceLock = Any()
+    private data class Incarnation(val revision: Long, val connection: Connection?)
+    private val current = AtomicReference(Incarnation(0, read()))
+    private val notifications = MutableStateFlow(current.get())
+    private val publicationScheduled = AtomicBoolean(false)
+    /** Runs on the single publisher, outside all mutation locks; no-op in production. */
+    @Volatile internal var beforePublicationForTesting: () -> Unit = {}
 
-    override val connection: StateFlow<Connection?> = mutableConnection.asStateFlow()
+    // Durable ownership and notification delivery are distinct. Callers never borrow a stale
+    // emitted value for admission: value/replayCache always project the committed incarnation.
+    @OptIn(ExperimentalForInheritanceCoroutinesApi::class)
+    override val connection: StateFlow<Connection?> = object : StateFlow<Connection?> {
+        override val value: Connection? get() = current.get().connection
+        override val replayCache: List<Connection?> get() = listOf(value)
+
+        @OptIn(InternalCoroutinesApi::class)
+        override suspend fun collect(collector: FlowCollector<Connection?>): Nothing {
+            var seenRevision = -1L
+            var initialized = false
+            var emitted: Connection? = null
+            return notifications.collect(object : FlowCollector<Incarnation> {
+                override suspend fun emit(value: Incarnation) {
+                    val latest = current.get()
+                    if (latest.revision > seenRevision) {
+                        seenRevision = latest.revision
+                        if (!initialized || emitted != latest.connection) {
+                            initialized = true
+                            emitted = latest.connection
+                            collector.emit(latest.connection)
+                        }
+                    }
+                }
+            })
+        }
+    }
 
     override fun save(connection: Connection) {
+        synchronized(persistenceLock) {
+            persist(connection)
+            current.set(Incarnation(current.get().revision + 1, connection))
+        }
+        schedulePublication()
+    }
+
+    override fun compareAndSet(expected: Connection, replacement: Connection): Boolean {
+        val changed = synchronized(persistenceLock) {
+            if (current.get().connection !== expected) false else {
+                persist(replacement)
+                current.set(Incarnation(current.get().revision + 1, replacement))
+                true
+            }
+        }
+        if (changed) schedulePublication()
+        return changed
+    }
+
+    private fun persist(connection: Connection) {
         require(connection.label.isNotBlank() && connection.label.length <= MAX_LABEL_CHARS)
         val clear = json.encodeToString(
             StoredConnection.serializer(),
@@ -113,14 +180,30 @@ class EncryptedConnectionStore(
         check(preferences.edit().putString(RECORD, encoded).commit()) {
             "Unable to persist encrypted Collie connection"
         }
-        mutableConnection.value = connection
     }
 
     override fun clear() {
-        check(preferences.edit().remove(RECORD).commit()) {
-            "Unable to clear encrypted Collie connection"
+        synchronized(persistenceLock) {
+            check(preferences.edit().remove(RECORD).commit()) {
+                "Unable to clear encrypted Collie connection"
+            }
+            current.set(Incarnation(current.get().revision + 1, null))
         }
-        mutableConnection.value = null
+        schedulePublication()
+    }
+
+    private fun schedulePublication() {
+        if (publicationScheduled.compareAndSet(false, true)) {
+            // Always enqueue, even for Main.immediate callers and repository CAS under admission.
+            // One shared publisher and at most one queued drain per store bound the work. Releasing
+            // the flag before reading current prevents lost wakeups; sequential drains and collector
+            // revision checks prevent an obsolete notification from republishing an older owner.
+            ConnectionPublisher.executor.execute {
+                publicationScheduled.set(false)
+                beforePublicationForTesting()
+                notifications.value = current.get()
+            }
+        }
     }
 
     private fun read(): Connection? {

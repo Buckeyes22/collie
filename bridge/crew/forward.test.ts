@@ -245,13 +245,15 @@ describe("which routes cross a link", () => {
     const pane = server.match(/^const PANE_ROUTE = (.+);$/m)![1]!;
     const tab = server.match(/^const TAB_ACTION_ROUTE = (.+);$/m)![1]!;
     const alternation = /\(([a-z]+(?:\|[a-z]+)+)\)/;
-    const paneActions = pane.match(alternation)![1]!.split("|").toSorted();
-    // The list IS the inventory of what crosses a link; `chat` joined it with the live window, and
-    // `files` with the Files view (ADR 0083).
-    expect(paneActions).toEqual([
-      "changes", "chat", "close", "files", "focus", "history", "keys", "processes", "rename", "reply", "upload",
-    ]);
+    expect(pane).toBe("/^\\/api\\/pane\\/([^/]+)(?:\\/(reply|keys|upload|close|rename|history|chat|changes|files|focus|processes|agent|agent\\/(?:state|session|release|authority\\/clear)))?$/");
+    const paneActions = ["reply", "keys", "upload", "close", "rename", "history", "chat", "changes", "files", "focus", "processes", "agent"];
+    // The list IS the inventory of legacy single-segment actions; nested agent actions are checked
+    // separately below so no subroute can accidentally become forwardable.
     for (const action of paneActions) expect(crewRouteFor(`/api/pane/x/${action}`)).toBe(`pane/x/${action}`);
+    for (const action of ["state", "session", "release", "authority/clear"]) {
+      expect(crewRouteFor(`/api/pane/x/agent/${action}`)).toBe(`pane/x/agent/${action}`);
+    }
+    expect(crewRouteFor("/api/pane/x/agent/arbitrary")).toBeNull();
     const tabActions = tab.match(alternation)![1]!.split("|").toSorted();
     expect(tabActions).toEqual(["close", "rename"]);
     for (const action of tabActions) expect(crewRouteFor(`/api/tab/x/${action}`)).toBe(`tab/x/${action}`);
@@ -304,9 +306,15 @@ describe("which routes cross a link", () => {
     expect(forwardKind("pane/w1:p1/chat")).toBe("read");
     expect(forwardKind("pane/w1:p1/changes")).toBe("read");
     expect(forwardKind("pane/w1:p1/processes")).toBe("read");
+    expect(forwardKind("pane/w1:p1/agent")).toBe("read");
     expect(forwardGate("pane/w1:p1/processes", "GET")).toBe("device-read");
+    expect(forwardGate("pane/w1:p1/agent", "GET")).toBe("device-read");
     for (const action of ["reply", "keys", "upload", "close", "rename"]) {
       expect(forwardKind(`pane/w1:p1/${action}`)).toBe("write");
+    }
+    for (const action of ["agent/state", "agent/session", "agent/release", "agent/authority/clear"]) {
+      expect(forwardKind(`pane/w1:p1/${action}`)).toBe("write");
+      expect(forwardGate(`pane/w1:p1/${action}`, "POST")).toBe("write");
     }
     expect(forwardKind("tab")).toBe("write");
     expect(forwardKind("workspace")).toBe("write");

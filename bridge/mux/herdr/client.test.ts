@@ -5,8 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { toPipeName } from "../../dial.ts";
-import type { JsonObject } from "../../json.ts";
-import { HerdrClient, WORKTREE_TIMEOUT_MS } from "./client.ts";
+import type { JsonObject, JsonValue } from "../../json.ts";
+import { HerdrClient, MAX_PANE_REPLY_CHARS, WORKTREE_TIMEOUT_MS } from "./client.ts";
 
 // The per-call budget (ADR 0089). Every Herdr call gets the client's own budget, 5 s in production,
 // except the two worktree calls, which run `git worktree add` before they answer and get
@@ -37,7 +37,7 @@ afterEach(() => {
  * so the same test runs on both. Windows has no socket file: the client dials the pipe named for
  * the socket path (`toPipeName`), so the stand-in listens on that name and the path is a plain tag.
  */
-async function lateHerdr(result: JsonObject): Promise<string> {
+async function lateHerdr(result: JsonValue, rawReply?: (id: string) => string | Buffer): Promise<string> {
   let path: string;
   if (process.platform === "win32") {
     path = `collie-herdr-client-${process.pid}-${++counter}`;
@@ -60,7 +60,22 @@ async function lateHerdr(result: JsonObject): Promise<string> {
       buf = "";
       setTimeout(() => {
         if (conn.destroyed) return;
-        conn.end(`${JSON.stringify({ id: req.id, result })}\n`);
+        const reply = rawReply ? rawReply(req.id) : `${JSON.stringify({ id: req.id, result })}\n`;
+        const bytes = Buffer.isBuffer(reply) ? reply : Buffer.from(reply);
+        if (!rawReply || bytes.length <= 4096) {
+          conn.end(bytes);
+          return;
+        }
+        let offset = 0;
+        const writeNext = () => {
+          if (conn.destroyed) return;
+          const end = Math.min(offset + 1024, bytes.length);
+          conn.write(bytes.subarray(offset, end));
+          offset = end;
+          if (offset < bytes.length) setTimeout(writeNext, 1);
+          else conn.end();
+        };
+        writeNext();
       }, REPLY_DELAY_MS);
     });
   });
@@ -195,5 +210,84 @@ describe("HerdrClient pane.process_info", () => {
       process_info: { pane_id: "w9:p1", foreground_processes: [{ pid: 1, name: "x".repeat(1_000_001) }] },
     }), 1_000);
     await expect(client.processInfo("w9:p1")).rejects.toThrow("reply exceeded 1000000 characters");
+  });
+});
+
+describe("HerdrClient agent identity diagnostics", () => {
+  test("pane.get is exact-id scoped and accepts only its named reply", async () => {
+    const pane = {
+      pane_id: "w9:p1", terminal_id: "term-7", workspace_id: "w9", tab_id: "w9:t1", focused: false,
+      cwd: "/repo", agent: "codex", agent_status: "working", revision: 12,
+      agent_session: { source: "herdr:codex", agent: "codex", kind: "id", value: "session-42" },
+    };
+    const client = new HerdrClient(await lateHerdr({ type: "pane_info", pane }), 1_000);
+    expect(await client.getPane("w9:p1")).toMatchObject({ pane_id: "w9:p1", terminal_id: "term-7" });
+    expect(lastRequest).toEqual({ method: "pane.get", params: { pane_id: "w9:p1" } });
+  });
+
+  test("pane.get refuses absent, empty, mistyped, or malformed occupant witnesses", async () => {
+    for (const pane of [
+      { pane_id: "w9:p1", terminal_id: "", workspace_id: "w9", tab_id: "w9:t1", agent_status: "working" },
+      { pane_id: "w9:p1", terminal_id: null, workspace_id: "w9", tab_id: "w9:t1", agent_status: "working" },
+      { pane_id: "w9:p1", terminal_id: "term", workspace_id: "w9", tab_id: "w9:t1", agent_status: "future" },
+      { pane_id: "w9:p1", terminal_id: "term", workspace_id: "w9", tab_id: "w9:t1", agent_status: "working", agent_session: { source: "", agent: "codex", kind: "id", value: "s" } },
+    ]) {
+      const client = new HerdrClient(await lateHerdr({ type: "pane_info", pane }), 1000);
+      await expect(client.getPane("w9:p1")).rejects.toThrow("pane identity mismatch");
+    }
+  });
+
+  test("pane.get refuses an oversized chunked reply before JSON parsing", async () => {
+    const client = new HerdrClient(await lateHerdr({ type: "pane_info", pane: { ...PANE, pane_id: "w9:p1", terminal_id: "term", agent_status: "working", padding: "x".repeat(MAX_PANE_REPLY_CHARS + 1) } }), 1000);
+    await expect(client.getPane("w9:p1")).rejects.toThrow(`reply exceeded ${MAX_PANE_REPLY_CHARS} characters`);
+  });
+
+  test("pane.get bounds unterminated replies and rejects malformed UTF-8", async () => {
+    const oversized = new HerdrClient(await lateHerdr({}, () => `{"result":"${"x".repeat(MAX_PANE_REPLY_CHARS * 4 + 1)}`), 1000);
+    await expect(oversized.getPane("w9:p1")).rejects.toThrow(`reply exceeded ${MAX_PANE_REPLY_CHARS} characters`);
+    const malformedUtf8Path = await lateHerdr({}, (id) => Buffer.concat([
+      Buffer.from(`{"id":${JSON.stringify(id)},"result":{"type":"pane_info","pane":{"pane_id":"w9:p1","terminal_id":"term","workspace_id":"w9","tab_id":"w9:t1","agent_status":"working","cwd":"`),
+      Buffer.from([0xff]), Buffer.from("\"}}}\n"),
+    ]));
+    const malformedUtf8 = new HerdrClient(malformedUtf8Path, 1000);
+    await expect(malformedUtf8.getPane("w9:p1")).rejects.toThrow("reply was not valid UTF-8");
+  });
+
+  test("agent.get targets the exact pane and preserves session, readiness and bounded sequences", async () => {
+    const client = new HerdrClient(await lateHerdr({ type: "agent_info", agent: {
+      pane_id: "w9:p1", agent: "codex", agent_status: "working",
+      agent_session: { source: "herdr:codex", agent: "codex", kind: "id", value: "session-42" },
+      interactive_ready: true, launch_pending: false, state_change_seq: 9, completion_seq: 7,
+    } }), 1_000);
+    expect(await client.getAgent("w9:p1")).toMatchObject({
+      pane_id: "w9:p1", agent: "codex", interactive_ready: true, launch_pending: false,
+      state_change_seq: "9", completion_seq: "7", agent_session: { source: "herdr:codex", value: "session-42" },
+    });
+    expect(lastRequest).toEqual({ method: "agent.get", params: { target: "w9:p1" } });
+  });
+
+  test("agent.get preserves the full uint64 numeric wire domain as exact decimal strings", async () => {
+    for (const [wire, expected] of [
+      ["0", "0"], ["9007199254740991", "9007199254740991"], ["9007199254740992", "9007199254740992"],
+      ["9007199254740993", "9007199254740993"], ["18446744073709551615", "18446744073709551615"],
+    ] as const) {
+      const client = new HerdrClient(await lateHerdr({}, (id) =>
+        `{"id":${JSON.stringify(id)},"result":{"type":"agent_info","agent":{"pane_id":"w9:p1","agent_status":"working","state_change_seq":${wire},"completion_seq":${wire}}}}\n`), 1000);
+      await expect(client.getAgent("w9:p1")).resolves.toMatchObject({ state_change_seq: expected, completion_seq: expected });
+    }
+    for (const wire of ["18446744073709551616", "-1", "1.5", "1e2", "\"9\""]) {
+      const client = new HerdrClient(await lateHerdr({}, (id) =>
+        `{"id":${JSON.stringify(id)},"result":{"type":"agent_info","agent":{"pane_id":"w9:p1","agent_status":"working","state_change_seq":${wire}}}}\n`), 1000);
+      await expect(client.getAgent("w9:p1")).rejects.toThrow("malformed state_change_seq");
+    }
+  });
+
+  test("rejects wrong target, wrapper and status", async () => {
+    const wrongTarget = new HerdrClient(await lateHerdr({ type: "agent_info", agent: { pane_id: "w9:p2", agent_status: "working" } }), 1_000);
+    await expect(wrongTarget.getAgent("w9:p1")).rejects.toThrow("target identity mismatch");
+    const wrongWrapper = new HerdrClient(await lateHerdr({ type: "pane_info", agent: { pane_id: "w9:p1", agent_status: "working" } }), 1_000);
+    await expect(wrongWrapper.getAgent("w9:p1")).rejects.toThrow("unexpected result type");
+    const invalid = new HerdrClient(await lateHerdr({ type: "agent_info", agent: { pane_id: "w9:p1", agent_status: "invented" } }), 1_000);
+    await expect(invalid.getAgent("w9:p1")).rejects.toThrow("malformed agent_status");
   });
 });

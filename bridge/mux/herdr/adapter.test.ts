@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import type { MuxSpace } from "../types.ts";
 import { HerdrMux, REPO_LOOKUP_RETRY_MS, workspaceRepoOf } from "./adapter.ts";
+import { maskForwardedAnswer } from "../../crew/mask.ts";
 import type { WireSnapshot, WireWorkspace, WireWorktreeListing } from "./client.ts";
 import { FakeHerdr } from "./fixture.ts";
 import { buildSubscriptions } from "./events.ts";
@@ -434,5 +435,103 @@ describe("herdr 0.8.2: the repo is on the workspace record", () => {
     const { spaces } = await new HerdrMux(fake, () => []).snapshot();
     expect(fake.lookups).toEqual(["w5"]);
     expect("repoRoot" in spaceOf(spaces, "w5")).toBe(false);
+  });
+});
+
+describe("Herdr pane agent identity join", () => {
+  test("returns exact current owner facts without inventing the authority source", async () => {
+    const herdr = new FakeHerdr();
+    const pane = (await herdr.listPanes()).find((row) => row.agent != null)!;
+    herdr.changePaneMetadata(pane.pane_id, {
+      agent: "codex", agent_status: "working",
+      agent_session: { source: "herdr:codex", agent: "codex", kind: "id", value: "session-42" },
+    });
+    herdr.agentInfoRows.push({
+      pane_id: pane.pane_id, agent: "codex", agent_status: "working",
+      agent_session: { source: "herdr:codex", agent: "codex", kind: "id", value: "session-42" },
+      interactive_ready: true, launch_pending: false, state_change_seq: "9", completion_seq: "7",
+    });
+    const result = await new HerdrMux(herdr, () => []).agentIdentity(pane.pane_id);
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        paneId: pane.pane_id, agent: "codex", status: "working",
+        stateAuthority: { observed: false, source: null }, interactiveReady: true,
+        launchPending: false, stateChangeSeq: "9", completionSeq: "7",
+        session: { source: "herdr:codex", value: "session-42" },
+      },
+    });
+  });
+
+  test("refuses a keyed agent.get identity that differs from pane.get", async () => {
+    class ConflictingAgent extends FakeHerdr {
+      override async getAgent(target: string) {
+        const agent = await super.getAgent(target);
+        return { ...agent, agent: "different-agent" };
+      }
+    }
+    const herdr = new ConflictingAgent();
+    const pane = (await herdr.listPanes()).find((row) => row.agent != null)!;
+    herdr.agentInfoRows.push({ pane_id: pane.pane_id, agent: pane.agent, agent_status: pane.agent_status });
+    const mismatch = await new HerdrMux(herdr, () => []).agentIdentity(pane.pane_id);
+    expect(mismatch).toMatchObject({ ok: false, reason: "gone" });
+  });
+
+  test("removes control characters and bounds vendor identity text before it reaches a phone", async () => {
+    const herdr = new FakeHerdr();
+    const pane = (await herdr.listPanes()).find((row) => row.agent != null)!;
+    const noisy = `co\ndex${"x".repeat(400)}`;
+    herdr.changePaneMetadata(pane.pane_id, { agent: noisy, agent_status: "working" });
+    herdr.agentInfoRows.push({
+      pane_id: pane.pane_id, agent: noisy, agent_status: "working",
+      agent_session: { source: "claude", agent: "claude", kind: "id", value: "0a1b2c3d-session" },
+    });
+    const result = await new HerdrMux(herdr, () => []).agentIdentity(pane.pane_id);
+    expect(result).toMatchObject({ ok: true, value: { agent: `codex${"x".repeat(251)}` } });
+  });
+
+  test("redacts credentials across the synthetic clipping boundary before clipping identity fields", async () => {
+    const herdr = new FakeHerdr();
+    const pane = (await herdr.listPanes()).find((row) => row.agent != null)!;
+    const secret = "sk-" + "BoundaryCredential".repeat(4);
+    const source = `${"x".repeat(72)} ${secret}`;
+    herdr.changePaneMetadata(pane.pane_id, {
+      agent: "codex", agent_status: "working",
+      agent_session: { source, agent: "codex", kind: "id", value: "session-safe" },
+    });
+    herdr.agentInfoRows.push({
+      pane_id: pane.pane_id, agent: "codex", agent_status: "working",
+      agent_session: { source, agent: "codex", kind: "id", value: "session-safe" },
+    });
+    const result = await new HerdrMux(herdr, () => []).agentIdentity(pane.pane_id);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const clipped = result.value.session?.source ?? "";
+      expect(clipped.length).toBeLessThanOrEqual(80);
+      expect(clipped).not.toContain("sk-BoundaryCredential");
+      expect(clipped).toContain("sk-");
+      expect(clipped).toContain("•");
+      const masked = maskForwardedAnswer("agent", JSON.stringify({ ok: true, ...result.value }), pane.pane_id);
+      expect(masked).not.toBeNull();
+      expect(masked).not.toContain("BoundaryCredential");
+    }
+  });
+
+  test("projects exact full-range uint64 diagnostics without inventing authority", async () => {
+    const herdr = new FakeHerdr();
+    const pane = (await herdr.listPanes()).find((row) => row.agent != null)!;
+    herdr.agentInfoRows.push({
+      pane_id: pane.pane_id, agent: pane.agent, agent_status: pane.agent_status,
+      agent_session: pane.agent_session?.source && pane.agent_session.agent &&
+        (pane.agent_session.kind === "id" || pane.agent_session.kind === "path") && pane.agent_session.value
+        ? { source: pane.agent_session.source, agent: pane.agent_session.agent, kind: pane.agent_session.kind, value: pane.agent_session.value }
+        : null,
+      state_change_seq: "9007199254740993", completion_seq: "18446744073709551615",
+    });
+    const result = await new HerdrMux(herdr, () => []).agentIdentity(pane.pane_id);
+    expect(result).toMatchObject({ ok: true, value: {
+      stateChangeSeq: "9007199254740993", completionSeq: "18446744073709551615",
+      stateAuthority: { observed: false, source: null },
+    } });
   });
 });

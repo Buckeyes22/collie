@@ -66,7 +66,7 @@ export function crewRouteFor(pathname: string): string | null {
 const FORWARDABLE: readonly RegExp[] = [
   /^refresh$/,
   /^control\/operations\/[a-zA-Z0-9_-]{1,128}$/,
-  /^pane\/[^/]+(?:\/(?:reply|keys|upload|close|rename|history|chat|changes|files|focus|processes))?$/,
+  /^pane\/[^/]+(?:\/(?:reply|keys|upload|close|rename|history|chat|changes|files|focus|processes|agent|agent\/(?:state|session|release|authority\/clear)))?$/,
   /^pane\/[^/]+\/layout(?:\/(?:neighbor|edges|plan|split|resize|zoom|swap|move|focus-direction))?$/,
   // One picture under the Files root, as bytes (ADR 0090): off the disk of the member that owns the
   // pane or the space, like the Files read it sits beside. Mirrors `PANE_FILES_IMAGE_ROUTE` and
@@ -127,7 +127,7 @@ const FORWARDABLE: readonly RegExp[] = [
  * by pane or by space. A picture (`files/image`) and a blob are bytes, never text, and stay byte for
  * byte, and so does every write's answer.
  */
-export type TextAnswer = "pane" | "history" | "chat" | "changes" | "files" | "processes";
+export type TextAnswer = "pane" | "history" | "chat" | "changes" | "files" | "processes" | "agent";
 
 /** Which {@link TextAnswer} a crew route answers with, or `null` for a route whose answer is not text. */
 export function textAnswerOf(route: string): TextAnswer | null {
@@ -135,6 +135,7 @@ export function textAnswerOf(route: string): TextAnswer | null {
   if (/^pane\/[^/]+\/history$/.test(route)) return "history";
   if (/^pane\/[^/]+\/chat$/.test(route)) return "chat";
   if (/^pane\/[^/]+\/processes$/.test(route)) return "processes";
+  if (/^pane\/[^/]+\/agent$/.test(route)) return "agent";
   if (/^(?:pane|workspace)\/[^/]+\/changes$/.test(route)) return "changes";
   if (/^(?:pane|workspace)\/[^/]+\/files$/.test(route)) return "files";
   return null;
@@ -154,8 +155,8 @@ function isWorkspaceRead(route: string): boolean {
 }
 
 /** The pane actions that only read, as bridge/server.ts's `isPaneReadAction` lists them. */
-function isPaneRead(action: string | undefined): action is undefined | "history" | "chat" | "changes" | "files" | "processes" {
-  return action === undefined || action === "history" || action === "chat" || action === "changes" || action === "files" || action === "processes";
+function isPaneRead(action: string | undefined): action is undefined | "history" | "chat" | "changes" | "files" | "processes" | "agent" {
+  return action === undefined || action === "history" || action === "chat" || action === "changes" || action === "files" || action === "processes" || action === "agent";
 }
 
 /** The inverse of {@link crewRouteFor}, for the peer dispatching a crew route into its own routes. */
@@ -195,6 +196,7 @@ export function forwardKind(route: string, method = "POST"): ForwardKind {
   // attempted against a stale member and rides the read budget like any other read.
   if (isWorkspaceRead(route)) return "read";
   if (!route.startsWith("pane/")) return "write";
+  if (/^pane\/[^/]+\/agent\/(?:state|session|release|authority\/clear)$/.test(route)) return "write";
   const action = route.split("/")[2];
   // `changes` is read-only git over the owning member's folder (ADR 0065): a read, like history.
   // `chat` is the same log `history` reads, asked for its newest end (journal/live.ts): a read too,
@@ -584,9 +586,9 @@ async function maskedAnswer(res: Response, answer: TextAnswer, mask: AnswerMask,
   if (res.status < 200 || res.status >= 300 || res.status === 204 || res.body === null) return res;
   let raw: string | null;
   try {
-    raw = answer === "processes" ? await readBoundedUtf8(res, MAX_PROCESS_INFO_BODY_BYTES) : await res.text();
+    raw = answer === "processes" ? await readBoundedUtf8(res, MAX_PROCESS_INFO_BODY_BYTES) : answer === "agent" ? await readBoundedUtf8(res, 16 * 1024) : await res.text();
     if (raw === null) {
-      return forwardError("answer_unmaskable", `host ${memberId} sent invalid or oversized process details, so they were not passed on`, 502, { host: memberId });
+      return forwardError("answer_unmaskable", `host ${memberId} sent invalid or oversized diagnostic details, so they were not passed on`, 502, { host: memberId });
     }
   } catch (err) {
     return forwardError("host_unreachable", `host ${memberId}: the answer broke off (${String(err)})`, 503, {
@@ -800,6 +802,6 @@ export function forwardGate(route: string, method: string): "read" | "device-rea
   const control = controlGate(`/api/${route}`, method);
   if (control) return control;
   if (/^(?:pane|workspace)\/[^/]+\/files(?:\/(?:image|exist))?$/.test(route)) return "device-read";
-  if (/^pane\/[^/]+\/processes$/.test(route)) return "device-read";
+  if (/^pane\/[^/]+\/(?:processes|agent)$/.test(route)) return "device-read";
   return forwardKind(route);
 }

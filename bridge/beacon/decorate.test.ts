@@ -79,6 +79,7 @@ class StubAdapter implements MuxAdapter {
   focusSpace?: MuxAdapter["focusSpace"];
   moveTab?: MuxAdapter["moveTab"];
   focusTab?: MuxAdapter["focusTab"];
+  agentIdentity?: (paneId: string) => Promise<MuxOutcome<import("../mux/types.ts").MuxAgentIdentity>>;
   capabilities = declareCapabilities({
     supports: ["paneGrid", "typeText", "sendKeys"],
     notes: { agentDetection: "the adapter's own note", closePane: "untouched" },
@@ -276,6 +277,7 @@ describe("a decorator preserves the adapter's whole surface", () => {
     refresh: true,
     readGrid: true,
     processInfo: true,
+    agentIdentity: true,
     readLogicalText: true,
     readLayout: true,
     applyLayout: true,
@@ -335,6 +337,10 @@ describe("a decorator preserves the adapter's whole surface", () => {
     stub.focusSpace = async () => ({ ok: true, value: undefined });
     stub.moveTab = async () => ({ ok: true, value: undefined });
     stub.focusTab = async () => ({ ok: true, value: undefined });
+    stub.agentIdentity = (paneId) => Promise.resolve(muxOk({
+      paneId, agent: null, status: "unknown", stateAuthority: { observed: false, source: null },
+      interactiveReady: null, launchPending: null, stateChangeSeq: null, completionSeq: null,
+    }));
     return stub;
   }
 

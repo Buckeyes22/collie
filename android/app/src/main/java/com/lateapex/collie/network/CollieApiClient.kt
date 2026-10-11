@@ -85,6 +85,7 @@ interface CollieApi {
         markSeen: Boolean = true,
     ): ApiResult<PaneReadResponse>
     suspend fun paneProcesses(connection: Connection, address: PaneAddress): ApiResult<PaneProcessesResponse> = unavailable("Pane process details")
+    suspend fun paneAgentIdentity(connection: Connection, address: PaneAddress): ApiResult<AgentIdentityResponse> = unavailable("Agent identity details")
     suspend fun refresh(connection: Connection, scope: Scope = Scope()): ApiResult<ActionResponse>
     suspend fun pair(origin: CollieOrigin, code: String, label: String): ApiResult<PairResult>
     suspend fun controlOperation(connection: Connection, scope: Scope, requestId: String): ApiResult<ControlOperationResponse> = unavailable("Control operations")
@@ -484,6 +485,29 @@ class CollieApiClient(
                         process.name.length + (process.argv?.sumOf { it.length } ?: 0) + (process.argv0?.length ?: 0) +
                             (process.cmdline?.length ?: 0) + (process.cwd?.length ?: 0)
                     } <= MAX_PROCESS_INFO_TEXT_CHARS)
+        }
+    }
+
+    override suspend fun paneAgentIdentity(connection: Connection, address: PaneAddress): ApiResult<AgentIdentityResponse> {
+        val url = scopedUrl(connection.origin, path("pane", address.paneId, "agent"), address.scope)
+        return requireContract(
+            executeJson(
+                requestBuilder(connection, url).get().build(),
+                AgentIdentityResponse.serializer(),
+                READ_TIMEOUT_SECONDS,
+                maxResponseBytes = 16 * 1024,
+            ),
+            "Malformed agent identity response",
+        ) { response ->
+            response.ok && response.paneId == address.paneId &&
+                response.agent?.let { it.isNotBlank() && it.length <= 256 } != false &&
+                response.stateAuthority == AgentStateAuthority(observed = false, source = null) &&
+                response.stateChangeSeq.isWireSequence() && response.completionSeq.isWireSequence() &&
+                response.session?.let { session ->
+                    session.source.isNotBlank() && session.source.length <= 80 && session.agent.isNotBlank() &&
+                        session.agent.length <= 80 && session.kind in setOf("id", "path") &&
+                        session.value.isNotBlank() && session.value.length <= 2048
+                } != false
         }
     }
 
@@ -1885,6 +1909,11 @@ class CollieApiClient(
     }
 }
 
+private fun String?.isWireSequence(): Boolean =
+    this == null || this == "0" || (
+        matches(Regex("[1-9][0-9]{0,19}")) &&
+            (length < 20 || compareTo("18446744073709551615") <= 0)
+        )
 
 private suspend fun <T> Call.await(timeoutSeconds: Long, read: (Response) -> T): T =
     suspendCancellableCoroutine { continuation ->

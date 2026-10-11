@@ -63,7 +63,6 @@ import com.lateapex.collie.domain.MuxKeyGrammar
 import com.lateapex.collie.network.AgentStatus
 import com.lateapex.collie.domain.Scope
 import com.lateapex.collie.network.ActionResponse
-import com.lateapex.collie.network.retiresPairing
 import com.lateapex.collie.network.ApiFailure
 import com.lateapex.collie.network.ApiResult
 import com.lateapex.collie.network.CreatedPane
@@ -378,11 +377,17 @@ class PaneActivity : AppCompatActivity() {
         restoringDraft = true
         authorityRegistration = repository.onAuthorityInvalidated { reason ->
             // This callback only removes authority; it must never initiate another Files read.
-            if (terminalOutputContext?.let(repository::isCurrent) != true) {
+            if (terminalOutputContext?.let(repository::isActorRetired) != false) {
                 retirePrintedPathCustody()
                 terminalOutputContext = null
                 retiredOutputFingerprint = outputFingerprint(renderedRevision, lastRawText)
                 resetTranscriptLinkBudget()
+            } else {
+                // A temporary admission fence removes tappable confirmations without retiring
+                // the in-flight lookup actor. Its refused reply can install the inert retry lease.
+                printedLinkRefs = emptyList()
+                printedLinkConfirmed = emptySet()
+                printedLinkRoot = null
             }
             ++terminalRenderGeneration
             terminalRenderJob?.cancel()
@@ -3815,6 +3820,9 @@ class PaneActivity : AppCompatActivity() {
             closingRow(getString(R.string.pane_action_cache)) {
                 startActivity(CacheWatchActivity.intent(this@PaneActivity, address))
             }
+            closingRow(getString(R.string.pane_action_agent_identity)) {
+                startActivity(AgentIdentityActivity.intent(this, address))
+            }
             closingRow(getString(R.string.pane_action_changes)) {
                 startActivity(ChangesActivity.intentForPane(
                     this,
@@ -4664,9 +4672,6 @@ class PaneActivity : AppCompatActivity() {
                 }
                 is ApiResult.NotModified -> showTransientMessage(getString(R.string.pane_action_failed))
                 is ApiResult.Failure -> {
-                    if (result.error is ApiFailure.Http && result.error.retiresPairing()) {
-                        repository.demoteToReadOnly()
-                    }
                     val uncertain = result.error is ApiFailure.Timeout || result.error is ApiFailure.Network ||
                         result.error is ApiFailure.Protocol
                     showTransientMessage(

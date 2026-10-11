@@ -444,6 +444,28 @@ export interface MuxPaneProcessInfo {
   readonly tty?: string;
 }
 
+/** Read-only identity facts returned by an owning runtime for one current pane. */
+export interface MuxAgentIdentity {
+  readonly paneId: string;
+  /** Name the runtime currently associates with this pane, if any. */
+  readonly agent: string | null;
+  readonly status: AgentStatus;
+  /** Session provenance is independent of lifecycle authority. */
+  readonly session?: {
+    readonly source: string;
+    readonly agent: string;
+    readonly kind: "id" | "path";
+    readonly value: string;
+  };
+  /** Herdr does not expose the active lifecycle authority source in AgentInfo. */
+  readonly stateAuthority: { readonly observed: false; readonly source: null };
+  readonly interactiveReady: boolean | null;
+  readonly launchPending: boolean | null;
+  /** Decimal strings preserve uint64 values without JS precision loss. */
+  readonly stateChangeSeq: string | null;
+  readonly completionSeq: string | null;
+}
+
 /** A freshly-created shell pane — enough to navigate into it before the next snapshot. */
 export interface MuxCreatedPane {
   readonly paneId: string;
@@ -694,6 +716,9 @@ export interface MuxAdapter {
   /** Read foreground process metadata from the owning runtime. Needs `paneProcesses`; optional for older adapters. */
   processInfo?(paneId: string): Promise<MuxOutcome<MuxPaneProcessInfo>>;
 
+  /** Read owner-supplied agent/session diagnostics without inferring a state authority source. */
+  agentIdentity?(paneId: string): Promise<MuxOutcome<MuxAgentIdentity>>;
+
   /**
    * The same rows with soft wraps undone, when the multiplexer can produce them.
    *
@@ -841,7 +866,7 @@ export function muxDataFields(adapter: MuxAdapter): Pick<MuxAdapter, "logo" | "h
  * unwrap (tmux) never comes out of a decorator appearing to offer the read: absent stays absent.
  */
 type MuxOptionalMethodFields = Pick<MuxAdapter,
-  | "readLogicalText" | "processInfo" | "readLayout" | "applyLayout" | "layoutRuntimeIdentity"
+  | "readLogicalText" | "processInfo" | "readLayout" | "applyLayout" | "layoutRuntimeIdentity" | "agentIdentity"
   | "renameSpace" | "closeSpace" | "moveSpace" | "moveSpaceBlock" | "focusSpace" | "moveTab" | "focusTab"
 >;
 export function muxOptionalMethods(adapter: MuxAdapter): MuxOptionalMethodFields {
@@ -857,6 +882,7 @@ export function muxOptionalMethods(adapter: MuxAdapter): MuxOptionalMethodFields
   const focusSpace = adapter.focusSpace?.bind(adapter);
   const moveTab = adapter.moveTab?.bind(adapter);
   const focusTab = adapter.focusTab?.bind(adapter);
+  const agentIdentity = adapter.agentIdentity?.bind(adapter);
   const methods: MuxOptionalMethodFields = {};
   if (readLogicalText !== undefined) methods.readLogicalText = readLogicalText;
   if (processInfo !== undefined) methods.processInfo = processInfo;
@@ -870,5 +896,6 @@ export function muxOptionalMethods(adapter: MuxAdapter): MuxOptionalMethodFields
   if (focusSpace !== undefined) methods.focusSpace = focusSpace;
   if (moveTab !== undefined) methods.moveTab = moveTab;
   if (focusTab !== undefined) methods.focusTab = focusTab;
+  if (agentIdentity !== undefined) methods.agentIdentity = agentIdentity;
   return methods;
 }

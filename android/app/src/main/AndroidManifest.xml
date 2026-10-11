@@ -41,6 +41,9 @@
             android:parentActivityName=".ui.PaneActivity" />
         <activity
             android:name=".ui.CacheWatchActivity"
+            android:exported="false" />
+        <activity
+            android:name=".ui.AgentIdentityActivity"
             android:exported="false"
             android:parentActivityName=".ui.PaneActivity" />
         <activity

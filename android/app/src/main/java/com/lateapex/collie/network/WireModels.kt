@@ -241,6 +241,35 @@ data class PaneProcessesResponse(
 )
 
 @Serializable
+data class AgentIdentitySession(
+    val source: String,
+    val agent: String,
+    val kind: String,
+    val value: String,
+)
+
+@Serializable
+data class AgentStateAuthority(
+    val observed: Boolean,
+    val source: String? = null,
+)
+
+/** State authority is explicitly unknown when the owning runtime does not expose its source. */
+@Serializable
+data class AgentIdentityResponse(
+    val ok: Boolean,
+    val paneId: String,
+    val agent: String? = null,
+    val status: AgentStatus,
+    val session: AgentIdentitySession? = null,
+    val stateAuthority: AgentStateAuthority,
+    val interactiveReady: Boolean? = null,
+    val launchPending: Boolean? = null,
+    val stateChangeSeq: String? = null,
+    val completionSeq: String? = null,
+)
+
+@Serializable
 data class WorkspaceSummary(
     val workspaceId: String,
     val number: Int,

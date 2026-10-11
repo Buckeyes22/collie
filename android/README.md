@@ -66,6 +66,12 @@ the owning runtime positively declares process inspection. These fields can cont
 the route requires `device-read`, the bridge and Crew lead redact before clipping, and Android caps
 the streamed JSON body before decoding. Unsupported runtimes explain that the data is unavailable.
 
+Pane actions also expose an Agent identity screen for the owning runtime's reported status,
+interactive readiness, sequence and factual session reference. It labels state authority as unknown
+when the runtime does not publish it. Herdr 0.9.3 has no atomic current-occupant condition on its
+report/session mutations, so state, session, resume and release controls stay unavailable; opening
+the screen does not focus the terminal or mark its transcript seen.
+
 The native New flow also opens launch recipe management and one-off Run on the selected machine and
 session. The phone uses only the existing launcher, validation, run and recent-history routes. It
 requires the host to declare each action, labels syntax checks as non-PATH checks, confirms

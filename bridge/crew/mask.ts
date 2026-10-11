@@ -74,7 +74,60 @@ function maskBody(answer: TextAnswer, body: JsonObject, raw: string, expectedPan
       return isFileText(body) ? JSON.stringify(maskFileBody(body, true)) : null;
     case "processes":
       return maskedProcessInfo(body, expectedPaneId);
+    case "agent":
+      return maskedAgentIdentity(body, expectedPaneId);
   }
+}
+
+function maskedAgentIdentity(body: JsonObject, expectedPaneId?: string): string | null {
+  const allowed = new Set(["ok", "paneId", "agent", "status", "session", "stateAuthority", "interactiveReady", "launchPending", "stateChangeSeq", "completionSeq"]);
+  if (Object.keys(body).some((key) => !allowed.has(key)) || body.ok !== true || body.paneId !== expectedPaneId ||
+    (body.agent !== null && (typeof body.agent !== "string" || body.agent.length === 0 || body.agent.length > 256 || hasControl(body.agent))) ||
+    typeof body.status !== "string" || !["idle", "working", "blocked", "done", "unknown"].includes(body.status) ||
+    (body.interactiveReady !== null && typeof body.interactiveReady !== "boolean") ||
+    (body.launchPending !== null && typeof body.launchPending !== "boolean") ||
+    !optionalSequence(body.stateChangeSeq) || !optionalSequence(body.completionSeq) ||
+    !isObject(body.stateAuthority) || body.stateAuthority.observed !== false || body.stateAuthority.source !== null) return null;
+  let session: JsonValue | undefined;
+  if (body.session !== undefined) {
+    if (!isObject(body.session) || Object.keys(body.session).some((key) => !new Set(["source", "agent", "kind", "value"]).has(key)) ||
+      typeof body.session.source !== "string" || body.session.source.length === 0 || body.session.source.length > 80 || hasControl(body.session.source) ||
+      typeof body.session.agent !== "string" || body.session.agent.length === 0 || body.session.agent.length > 80 || hasControl(body.session.agent) ||
+      (body.session.kind !== "id" && body.session.kind !== "path") ||
+      typeof body.session.value !== "string" || body.session.value.length === 0 || body.session.value.length > 2048 || hasControl(body.session.value)) return null;
+    session = {
+      source: redactText(body.session.source),
+      agent: redactText(body.session.agent),
+      kind: body.session.kind,
+      value: redactText(body.session.value),
+    };
+  }
+  const result: JsonObject = {
+    ok: true,
+    paneId: body.paneId,
+    agent: typeof body.agent === "string" ? redactText(body.agent) : null,
+    status: body.status,
+    stateAuthority: { observed: false, source: null },
+    interactiveReady: body.interactiveReady,
+    launchPending: body.launchPending,
+    stateChangeSeq: body.stateChangeSeq,
+    completionSeq: body.completionSeq,
+  };
+  if (session !== undefined) result.session = session;
+  const serialized = JSON.stringify(result);
+  return new TextEncoder().encode(serialized).byteLength <= 16 * 1024 ? serialized : null;
+}
+
+function optionalSequence(value: JsonValue | undefined): boolean {
+  return value === null || value === undefined || (typeof value === "string" &&
+    /^(0|[1-9][0-9]{0,19})$/.test(value) && BigInt(value) <= 18_446_744_073_709_551_615n);
+}
+
+function hasControl(value: string): boolean {
+  return Array.from(value).some((character) => {
+    const code = character.codePointAt(0)!;
+    return code < 32 || code === 127;
+  });
 }
 
 function maskedProcessInfo(body: JsonObject, expectedPaneId?: string): string | null {

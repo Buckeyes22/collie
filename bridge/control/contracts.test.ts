@@ -25,6 +25,10 @@ describe("scoped control contracts", () => {
     expect(controlGate("/api/tab/t1/transfer/plan", "POST")).toBe("read");
     expect(controlGate("/api/pane/w1:p1/layout/move", "POST")).toBe("write");
     expect(controlGate("/api/pane/w1:p1/layout/plan", "GET")).toBeNull();
+    expect(controlGate("/api/pane/w1%3Ap1/agent", "GET")).toBe("device-read");
+    for (const route of ["state", "session", "release", "authority/clear"]) {
+      expect(controlGate(`/api/pane/w1%3Ap1/agent/${route}`, "POST")).toBe("write");
+    }
     expect(controlGate("/api/control/arbitrary-rpc", "POST")).toBeNull();
     expect(payloadHash({ a: 1, b: 2 })).toBe(payloadHash({ b: 2, a: 1 }));
     const absent: (Record<string, boolean> | undefined)[] = [undefined, {}, { movePane: false }];

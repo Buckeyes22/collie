@@ -13,6 +13,36 @@ servers. The bridge's `bridge/types.ts`, routes in `bridge/server.ts`, and PWA `
 are the contract sources. Unknown JSON fields are ignored, but missing required response evidence
 is refused. A mutation is attempted once; transport redirects and automatic write retries remain off.
 
+Snapshot, failure and leader observations commit against the captured connection and navigation
+generation under the native admission lock. Retirement closes admission before changing authority;
+cancellation, sensitive-view retirement and the main-thread wipe acknowledgement run outside that
+lock. An authoritative pairing refusal conditionally removes only its original credential incarnation
+through the encrypted store's atomic durable compare-and-set, before retirement callbacks run.
+Concurrent replacement pairing is retained. Other `ConnectionStore` implementations must supply
+the same atomic compare-and-set contract to remove credentials; the default refuses replacement
+and keeps writes frozen rather than performing an unsafe check followed by a save.
+
+An exception or unsupported current-owner compare-and-set retires local read/write authority even
+when encrypted credential removal cannot be persisted. The original credential remains stored;
+native identity and self-revoke Settings show a retained-storage explanation. That exact in-memory
+credential stays inert until replacement or disconnection; an old owner's failure never applies its
+freeze to a replacement. Process recreation starts with unverified authority, not an assumed removal.
+
+The encrypted store's versioned atomic current value advances only after a durable commit. Its
+`connection.value` and replay projection read that committed incarnation immediately. One shared
+publisher thread and at most one queued drain per store deliver conflated current-owner notifications
+outside mutation locks; obsolete queued versions cannot republish an earlier credential. The store
+does not depend on an Android Looper. Canonical retirement events and captured-owner checks still
+retire private custody even when intermediate connection notifications are conflated. The small
+StateFlow projection explicitly opts into the pinned kotlinx.coroutines 1.10.2 inheritance contract;
+dependency upgrades require its notification/conflation/current-value regression checks.
+
+`isActorRetired` describes a permanent captured connection/navigation/lead change independently of
+temporary admission closure. It grants no read or write authority. Recipes uses it to retain the
+in-flight completion token for a same-owner Network/Protocol/503 UNKNOWN acknowledgement while
+the pending fence closes all admission. A 401/403 or permanent target change still discards old UI
+results; neither settlement nor notification automatically retries a POST.
+
 | Contract | Native adaptation |
 | --- | --- |
 | `/api/health`, `/api/pair` | Health remains the open connectivity probe. Pairing request and response bodies stay excluded from diagnostics. |
@@ -22,6 +52,7 @@ is refused. A mutation is attempted once; transport redirects and automatic writ
 | `/api/snapshot`, `/api/refresh` | Retain session names from narrow requests because upstream omits their row tags. Widened snapshots retain the server's tags. Pane checks resolve the implicit local lead without remapping peers or explicit host requests. Decode folder, tab placement, sole-tab name, git/cache and model metadata. |
 | `/api/pane/:id` | Preserve scoped ETags, exact requested line windows, seen headers and optional link text. |
 | `/api/pane/:id/processes` | Fetch sensitive diagnostics only from a runtime that positively declares `paneProcesses`; older peers and unsupported adapters remain explicit failures. Redact before clipping; cap aggregate text at 220 Ki UTF-16 units and raw JSON at 1,000,000 UTF-8 bytes on the owner, Crew lead and Android reader. Android streams the body through the byte ceiling before JSON decoding. |
+| `/api/pane/:id/agent` and `/api/pane/:id/agent/*` | The B18 bridge brackets keyed `agent.get(target=paneId)` with bounded `pane.get` reads and requires an exact pane/terminal occupant and matching agent/status/session. It preserves native session source separately from lifecycle authority, which is explicitly unknown when not exposed. `agentLifecycleWrites` remains false for Herdr 0.9.3: `pane.report_agent` and `pane.report_agent_session` have no atomic expected-occupant/sequence condition, and omitted-source authority clear is global. The native screen is diagnostic only; no state/session/release/resume mutation is sent. |
 | `/api/pane/:id/reply`, `/keys` | Accept the current 32 KiB prompt-binding limit. Codex typing and submission remain separate, verified operations. An ambiguous delivery keeps the phone draft and never triggers an automatic resend. |
 | `/api/pane/:id/chat` | Live polls use `after=gen:rev` and ETag; older reads use `before=seq:uuid` without ETag. Generation changes replace the thread. Whole-turn upserts replace partial text/results, abandoned turns are hidden, queued messages are displayed separately, stale older pages are discarded. Structured call details, question choices and answers are shown as inert transcript data; denials remain distinct from execution failures. A legacy 404 falls back to history. |
 | `/api/pane/:id/history` | Existing full history/search remains supported with UUID pagination. History merging replaces updated turns. Structured calls and read-only historic question cards retain supported fields; malformed or unknown calls stay bounded text. The fork's conditional JSON response remains available for legacy polls. |
@@ -138,3 +169,6 @@ connection notification cannot retire an actor already admitted for the current 
 
 Automatic printed Files links require positive owning `control.capabilities.filesDiscovery` config and `filesReadReady=true` on an accepted pane body under the same scoped actor. Missing, false or stale facts leave mirror/transcript paths plain with no automatic Files/exist reads; explicit Files navigation remains a deliberate read through existing device-read gates. Crew support comes from the owning hello, and the pane verdict comes from that peer’s own device policy, not the lead’s merged snapshot.
 Withdrawal retires mirror confirmations without reading Files. Transcript callbacks retain the admission generation that installed them, so restored same-owner access needs fresh confirmation while the existing turn-batch path quota remains unchanged.
+Native scoped read admission is unavailable while a target, connection or lead transition awaits retirement acknowledgements. The selected target is published inside that closed admission window. A concurrent or reentrant selection cannot overwrite it; a deliberate retry may reselect its screen target after the transition settles. Repository/admission locks are released across job cancellation and UI wipe acknowledgements. This local custody rule supplies no vendor mutation CAS.
+
+Implicit native repository reads and actions resolve their selected host/session/subject together with the navigation generation under the canonical admission lock. The same capture supplies the API request scope, including dashboard `viewAll` breadth; an already captured actor is refused after replacement. Explicit scoped reads and deliberate reselection remain supported.

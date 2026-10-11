@@ -18,6 +18,8 @@ class ScopedFeatureAdmissionTest {
         override val connection: StateFlow<Connection?> = state
         override fun save(connection: Connection) { state.value = connection }
         override fun clear() { state.value = null }
+        override fun compareAndSet(expected: Connection, replacement: Connection): Boolean =
+            state.compareAndSet(expected, replacement)
     }
     private class Api : CollieApi {
         var authorized = true

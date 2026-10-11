@@ -77,6 +77,19 @@ class DiagnosticsInterceptor internal constructor(
             diagnostics.record("network", fields)
             return response
         }
+        if (isAgentIdentityRequest(tagged)) {
+            // Identity and lifecycle payloads contain private runtime/session data. Diagnostics is
+            // metadata-only for the exact mounted API route and its recognized child actions; do
+            // not read, buffer, replace or MIME-sniff either body here.
+            fields["responseBodyBytes"] = response.body?.contentLength()?.takeIf { it >= 0L }
+            fields["responseBodyStreaming"] = true
+            tagged.body?.let {
+                fields["requestBodyBytes"] = it.contentLength().takeIf { length -> length >= 0L }
+                fields["requestBodyRedacted"] = true
+            }
+            diagnostics.record("network", fields)
+            return response
+        }
         // The URL path is decoded into segments before matching, so mounted origins (and encoded
         // segment spellings) follow the same policy. Match complete route suffixes, never substrings.
         val intentPost = tagged.method == "POST" && isIntentCreationPath(tagged.url.pathSegments)
@@ -146,6 +159,18 @@ class DiagnosticsInterceptor internal constructor(
             request.method == "POST" && suffix[4] in setOf("plan", "split", "resize", "zoom", "swap", "move", "focus-direction")
     }
 
+
+    private fun isAgentIdentityRequest(request: okhttp3.Request): Boolean {
+        val segments = request.url.pathSegments
+        fun base(suffixSize: Int): Boolean = segments.size >= suffixSize &&
+            segments[segments.size - suffixSize] == "api" &&
+            segments[segments.size - suffixSize + 1] == "pane" &&
+            segments[segments.size - suffixSize + 2].isNotBlank()
+        if (request.method == "GET") return base(4) && segments.takeLast(4).last() == "agent"
+        if (request.method != "POST") return false
+        return (base(5) && segments.takeLast(5).takeLast(2) in listOf(listOf("agent", "state"), listOf("agent", "session"), listOf("agent", "release"))) ||
+            (base(6) && segments.takeLast(6).takeLast(3) == listOf("agent", "authority", "clear"))
+    }
     private fun isIntentCreationPath(segments: List<String>): Boolean =
         segments.takeLast(2) == listOf("api", "launch") ||
             segments.takeLast(2) == listOf("api", "worktree") ||
