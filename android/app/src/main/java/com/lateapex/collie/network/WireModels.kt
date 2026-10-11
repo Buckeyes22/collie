@@ -718,6 +718,13 @@ internal data class KeysRequest(
 )
 
 @Serializable
+internal data class GuardedQueuedSendRequest(
+    val keys: List<String>,
+    @SerialName("expected_prompt") val expectedPrompt: String,
+    @SerialName("queued_send") val queuedSend: QueuedSendGuard,
+)
+
+@Serializable
 internal data class RenameRequest(val label: String)
 
 @Serializable

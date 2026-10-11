@@ -124,6 +124,13 @@ import type { Snooze } from "./snooze.ts";
 import { IMAGE_EXTS, TEXT_EXTS, TEXT_SNIFF_BYTES, uploadExt } from "./uploads.ts";
 import type { UpdateMonitor } from "./update.ts";
 import { readStagingLog } from "./staging-log.ts";
+import { queuedMessagesDigest, queuedSendOccupant } from "./journal/queued-send.ts";
+import { QueuedSendAdmissionLedger, parseGuardedQueuedSend, queuedSendActionKey } from "./journal/queued-send-admission.ts";
+import { buildBlocks } from "../web/src/lib/harness/index.ts";
+import { adapterFor as harnessAdapterFor } from "../web/src/lib/harness/registry.ts";
+import { parseAnsi } from "../web/src/lib/ansi.ts";
+import { splitLines } from "../web/src/lib/blocks.ts";
+import { detectNoEchoPrompt } from "../web/src/lib/no-echo.ts";
 import {
   parseUpdateStartRequest,
   updateStartVerdict,
@@ -244,6 +251,7 @@ const MAX_READ_LINES = MAX_PANE_READ_LINES;
 // about rows times columns, so 8192 refused a pane wider than ~134 columns at 59 rows. 32 KiB takes
 // a 220-column pane. A phone newer than this bridge gets the old 400 on such a pane and no key is sent.
 const MAX_EXPECTED_PROMPT_CHARS = 32_768;
+const MAX_QUEUED_SEND_KEYS = 12;
 // `expected_styled` carries the same rows as `expected_prompt` plus a style tag per run (about 30
 // extra characters each, and a chip row can hold a dozen runs), so it gets four times the room.
 const MAX_EXPECTED_STYLED_CHARS = 4 * MAX_EXPECTED_PROMPT_CHARS;
@@ -1223,6 +1231,7 @@ export async function startServer(opts: {
       : browserPairingGate(pairing, localCredential, (req) => server.requestIP(req)?.address, cfg.host);
   const folders = opts.folders;
   const worktreeReceipts = opts.worktreeReceipts ?? memoryWorktreeReceipts();
+  const queuedSendLedger = new QueuedSendAdmissionLedger();
   const worktreeBases = opts.worktreeBases ?? memoryWorktreeBases();
   const launchReceipts = opts.launchReceipts ?? memoryLaunchReceipts();
   const controlOperations = opts.controlOperations ?? new OperationStore(cfg.stateDir);
@@ -1865,7 +1874,7 @@ export async function startServer(opts: {
       if (action === "history" && req.method === "GET")
         return paneHistory(cfg, journals, transcripts, rt.engine, paneId, url, req);
       if (action === "chat" && req.method === "GET")
-        return paneChat(cfg, journals, live, rt.engine, herdr.capabilities, paneId, url, req);
+        return paneChat(cfg, journals, live, rt.engine, herdr.capabilities, rt.name, paneId, url, req, queuedSendLedger);
       if (action === "changes" && req.method === "GET") return paneChanges(rt.engine, paneId, url, req, homedir(), cfg.redact);
       if (action === "files" && req.method === "GET")
         return paneFiles(rt.engine, paneId, url, req, filesPrivateFolders(cfg), homedir(), cfg.redact);
@@ -1876,7 +1885,9 @@ export async function startServer(opts: {
       if (action === "reply" && req.method === "POST")
         return afterPaneInput(rt.engine, await replyPane(herdr, cfg, paneId, req, audit_, device, session));
       if (action === "keys" && req.method === "POST")
-        return afterPaneInput(rt.engine, await keysPane(herdr, cfg, paneId, req, audit_, device, session));
+        return afterPaneInput(rt.engine, await keysPane(
+          herdr, cfg, paneId, req, audit_, device, session, live, journals, rt.engine, queuedSendLedger,
+        ));
       if (action === "upload" && req.method === "POST") return uploadPane(cfg, paneId, req, audit_, device, session);
       if (action === "close" && req.method === "POST") return closePane(herdr, rt.engine, paneId, req, audit_, device, session);
       if (action === "rename" && req.method === "POST") return renamePane(herdr, rt.engine, paneId, req, audit_, device, session);
@@ -2213,6 +2224,25 @@ export async function startServer(opts: {
             );
           }
           if (resolved.kind === "peer") {
+            // A pre-B06 member cannot compare the queued action's occupant and queue identity. An
+            // old capability map therefore refuses this new guarded form before forwarding; it
+            // must never degrade into the member's unbound generic keys route.
+            if (req.method === "POST" && /\/api\/pane\/[^/]+\/keys$/.test(pathname)) {
+              let guarded = false;
+              try {
+                // SAFETY: Request.json returns JSON values; only own-key presence is inspected before the owner parses fields.
+                const candidate = await req.clone().json() as JsonValue;
+                guarded = typeof candidate === "object" && candidate !== null &&
+                  Object.prototype.hasOwnProperty.call(candidate, "queued_send");
+              } catch { /* The owning route returns the normal malformed-body answer. */ }
+              if (guarded && crewLead?.muxFor(resolved.link.memberId)?.capabilities?.guardedQueuedSend !== true) {
+                return json(
+                  { ok: false, error: "The selected Crew member does not support guarded queued send", code: "queued_send.unsupported_peer" },
+                  req.headers.get("accept-encoding"),
+                  409,
+                );
+              }
+            }
             // An input forwarded to a member makes the member's engine hot there, and the LEAD's
             // too: the lead sees the member's panes only through its sweep, which rides this
             // engine's tick (CREW_PROTOCOL.md §10.1), so a cold lead would show the member's answer
@@ -3425,9 +3455,11 @@ async function paneChat(
   live: LiveWindows | null,
   engine: StateEngine,
   mux: Pick<MuxCapabilityDeclaration, "supports" | "unsupportedKeys">,
+  session: string,
   paneId: string,
   url: URL,
   req: Request,
+  queuedSendLedger: QueuedSendAdmissionLedger,
 ): Promise<Response> {
   const accept = req.headers.get("accept-encoding");
   const unavailable = (reason: "disabled" | "no-session" | "no-log") =>
@@ -3458,7 +3490,26 @@ async function paneChat(
     if (read === null) return unavailable("no-log");
     // Masked before the ETag is hashed, so the tag describes what was actually sent (bridge/redact.ts).
     const body = chatBodyForMux(cfg.redact ? maskChatBody(read) : read, mux);
-    const data = { paneId, available: true, ...body } satisfies PaneChatResponse;
+    const data: Extract<PaneChatResponse, { available: true }> = { paneId, available: true, ...body };
+    if (
+      mux.supports.guardedQueuedSend && read.page === "live" && body.page === "live" && body.queued.length > 0 &&
+      body.sendQueuedNow !== undefined && body.sendQueuedNow.length <= MAX_QUEUED_SEND_KEYS &&
+      keysDeliverable(mux, body.sendQueuedNow) &&
+      pane.status === "working" && pane.agent !== "shell"
+    ) {
+      // Bind the action to the owner's exact queue, including bytes the read-only redactor masks on
+      // the phone. Only the opaque digest crosses the wire; a masked collision must not authorize
+      // sending a different queued message.
+      data.queuedDigest = queuedMessagesDigest(read.queued);
+      data.queuedSendOccupant = queuedSendOccupant(session, pane, new URL(req.url).origin);
+      queuedSendLedger.observe(
+        queuedSendActionKey([session, paneId]),
+        queuedSendActionKey([
+          session, paneId, String(body.gen), data.queuedDigest, data.queuedSendOccupant,
+          ...body.sendQueuedNow,
+        ]),
+      );
+    }
     const etag = computeEtag(JSON.stringify(data));
     if (notModified(req.headers.get("if-none-match"), etag)) {
       // RFC 7232 §4.1: 304 MUST echo the ETag; body MUST be empty.
@@ -4061,6 +4112,10 @@ export async function keysPane(
   audit: AuditLog,
   device: string | null,
   session: string,
+  live: LiveWindows | null = null,
+  journals: Record<string, JournalAdapter> | null = null,
+  engine: StateEngine | null = null,
+  queuedSendLedger: QueuedSendAdmissionLedger = new QueuedSendAdmissionLedger(),
 ): Promise<Response> {
   let body: JsonValue;
   try {
@@ -4072,12 +4127,28 @@ export async function keysPane(
     return text("bad body", 400);
   }
   const fields = asJsonRecord(body) ?? {};
+  const guardedPresent = Object.prototype.hasOwnProperty.call(fields, "queued_send");
+  const guarded = guardedPresent ? parseGuardedQueuedSend(fields.queued_send) : null;
+  if (guardedPresent && guarded === null) return text("bad queued_send guard", 400);
+  if (guardedPresent && Object.keys(fields).some((key) => !["keys", "expected_prompt", "queued_send"].includes(key))) {
+    return text("unknown guarded queued-send field", 400);
+  }
   const expected = expectedPrompt(fields);
   if (!expected.ok) return text("bad expected_prompt", 400);
   const styled = expectedStyled(fields, expected.present);
   if (!styled.ok) return text("bad expected_styled", 400);
   const keys = Array.isArray(fields.keys) ? fields.keys.filter((k): k is string => typeof k === "string") : [];
   if (keys.length === 0) return text("no keys", 400);
+  if (guardedPresent && (!expected.present || !Array.isArray(fields.keys) || keys.length !== fields.keys.length || keys.length > MAX_QUEUED_SEND_KEYS)) {
+    return text("bad guarded queued-send payload", 400);
+  }
+  if (guardedPresent && guarded !== null) {
+    if (!expected.present) return text("expected_prompt required for guarded queued send", 400);
+    return guardedQueuedSendPane(
+      herdr, cfg, paneId, keys, expected.value, guarded, req, audit, device, session,
+      live, journals, engine, queuedSendLedger,
+    );
+  }
   const ae = req.headers.get("accept-encoding");
   const binding = expected.present
     ? await checkPromptBinding(herdr, cfg, paneId, expected.value, styled.value)
@@ -4121,6 +4192,168 @@ export async function keysPane(
   );
 }
 
+/**
+ * The new guarded form of the existing keys route. The queue text never crosses this boundary; the
+ * owner re-reads it from the journal, checks the server-declared recipe, and verifies the current
+ * owner pane before the one adapter call. Herdr 0.9.3 still cannot atomically compare that identity
+ * with `pane.send_keys`, so the final upstream check-to-write window remains an acceptance limitation.
+ */
+async function guardedQueuedSendPane(
+  herdr: MuxAdapter,
+  cfg: Config,
+  paneId: string,
+  keys: string[],
+  expectedPromptText: string,
+  queuedGuard: NonNullable<ReturnType<typeof parseGuardedQueuedSend>>,
+  req: Request,
+  audit: AuditLog,
+  device: string | null,
+  session: string,
+  live: LiveWindows | null,
+  journals: Record<string, JournalAdapter> | null,
+  engine: StateEngine | null,
+  ledger: QueuedSendAdmissionLedger,
+): Promise<Response> {
+  const ae = req.headers.get("accept-encoding");
+  if (!herdr.capabilities.supports.guardedQueuedSend || live === null || journals === null || engine === null) {
+    return text("guarded queued send unsupported", 409);
+  }
+  if (keys.length === 0 || keys.length > MAX_QUEUED_SEND_KEYS || !keysDeliverable(herdr.capabilities, keys)) {
+    return text("invalid guarded queued-send keys", 400);
+  }
+  const actionKey = queuedSendActionKey([
+    session, paneId, String(queuedGuard.generation), queuedGuard.queueDigest, queuedGuard.occupant, ...keys,
+  ]);
+  const ownerKey = queuedSendActionKey([session, paneId]);
+  const refuse = (status = 409): Response => {
+    ledger.releaseBeforeDispatch(actionKey);
+    audit.record({ action: "keys", paneId, session, device, detail: { keys, queuedSendGuard: "refused" } });
+    return json({ ok: false, error: "Queued send is no longer current", code: "queued_send.stale" }, ae, status);
+  };
+  const admission = ledger.begin(actionKey, ownerKey);
+  if (admission !== "admitted") {
+    return json(
+      { ok: false, error: "This queued action already has an attempt", code: "queued_send.already_attempted" },
+      ae,
+      409,
+    );
+  }
+  let dispatched = false;
+  try {
+    const muxSnapshot = await herdr.snapshot();
+    const pane = muxSnapshot.panes.find((candidate) => candidate.paneId === paneId);
+    if (pane === undefined || !pane.alive || pane.status !== "working" || pane.agent === "shell") return refuse();
+    const occupant = queuedSendOccupant(session, pane, new URL(req.url).origin);
+    const journal = journals[journalAgentOf({
+      paneId: pane.paneId,
+      workspaceId: pane.spaceId,
+      workspaceLabel: pane.spaceLabel,
+      workspaceNumber: pane.spaceNumber,
+      tabId: pane.tabId,
+      agent: pane.agent,
+      status: pane.status,
+      cwd: pane.cwd,
+      focused: pane.focused,
+      sessionAgent: pane.sessionAgent,
+      agentSession: pane.agentSession,
+    })];
+    if (journal === undefined) return refuse();
+    const ref = pane.agentSession ?? (await journal.discover?.(pane.cwd)) ?? null;
+    if (ref === null) return refuse();
+
+    // A guarded action requires an adapter-owned source fence: it spans the forced source read and
+    // remains synchronously checkable after the later prompt read. Unsupported journal sources
+    // refuse instead of trusting a cached live window.
+    const fresh = await live.windowFresh(journal, ref, { limit: 40 });
+    if (fresh === null || fresh.body.page !== "live") return refuse();
+    const read = fresh.body;
+    const chat = chatBodyForMux(cfg.redact ? maskChatBody(read) : read, herdr.capabilities);
+    if (chat.page !== "live") return refuse();
+    // Recompute over the raw owner-side queue, before redaction, for the same reason the GET digest
+    // is raw: the redactor is a presentation boundary, never the action identity.
+    const queueDigest = queuedMessagesDigest(read.queued);
+    const currentAction = queuedSendActionKey([
+      session, paneId, String(chat.gen), queueDigest, occupant, ...(chat.sendQueuedNow ?? []),
+    ]);
+    ledger.observe(ownerKey, currentAction);
+    if (
+      chat.gen !== queuedGuard.generation || chat.rev !== queuedGuard.revision ||
+      queueDigest !== queuedGuard.queueDigest || occupant !== queuedGuard.occupant ||
+      chat.queued.length === 0 || chat.sendQueuedNow === undefined ||
+      chat.sendQueuedNow.length > MAX_QUEUED_SEND_KEYS ||
+      !keysDeliverable(herdr.capabilities, chat.sendQueuedNow) ||
+      chat.sendQueuedNow.length !== keys.length || chat.sendQueuedNow.some((key, index) => key !== keys[index])
+    ) return refuse();
+
+    // Read the prompt AFTER the forced journal source read. The source lease below then detects a
+    // queue/file change during this last asynchronous terminal read; a prompt that changes during
+    // the journal read itself is caught by this fresh screen. Together they close both crossed
+    // preflight awaits without pretending Herdr offers an atomic compare-and-send primitive.
+    const binding = await checkPromptBinding(herdr, cfg, paneId, expectedPromptText);
+    if (!binding.ok) {
+      ledger.releaseBeforeDispatch(actionKey);
+      audit.record({ action: "keys", paneId, session, device, detail: { keys, promptBinding: binding.audit } });
+      return promptBindingFailure(binding, ae);
+    }
+    if (!fresh.isCurrent()) return refuse();
+
+    // The final checks are synchronous and lead directly into the one adapter call; no await is
+    // allowed between source/occupant queuedGuard settlement and dispatch.
+    if (!queuedSendScreenSafe(pane.agent, binding.screen)) return refuse();
+    const enginePane = [...engine.current().agents, ...engine.current().shellPanes].find((item) => item.paneId === paneId);
+    if (
+      enginePane === undefined || enginePane.status !== "working" || enginePane.agent === "shell" ||
+      queuedSendOccupant(session, enginePane, new URL(req.url).origin) !== occupant ||
+      !herdr.capabilities.supports.guardedQueuedSend || !keysDeliverable(herdr.capabilities, keys)
+    ) return refuse();
+
+    // Synchronously retire the action before invoking the one owning adapter call. No await or
+    // unrelated asynchronous work is allowed between this check and sendKeys.
+    if (!ledger.retireBeforeDispatch(actionKey)) return refuse(503);
+    dispatched = true;
+    let sent: MuxAck;
+    try {
+      const pendingSend = herdr.sendKeys(paneId, keys);
+      sent = await pendingSend;
+    } catch {
+      audit.record({ action: "keys", paneId, session, device, detail: { keys, outcome: "unknown" } });
+      return json(
+        { ok: false, error: "Queued send outcome is unknown; refresh the queue before acting again", code: "queued_send.outcome_unknown" },
+        ae,
+        502,
+      );
+    }
+    if (sent.ok) {
+      audit.record({ action: "keys", paneId, session, device, detail: { keys, promptBinding: binding.audit, queuedSendGuard: "accepted" } });
+      return json({ ok: true } satisfies ActionResponse, ae);
+    }
+    audit.record({ action: "keys", paneId, session, device, detail: { keys, sent: false, promptBinding: binding.audit } });
+    return json({ ok: false, ...apiError("keys.send_failed", { reason: sent.detail }) } satisfies ActionResponse, ae);
+  } catch {
+    if (!dispatched) return refuse(502);
+    return json(
+      { ok: false, error: "Queued send outcome is unknown; refresh the queue before acting again", code: "queued_send.outcome_unknown" },
+      ae,
+      502,
+    );
+  } finally {
+    if (!dispatched) ledger.releaseBeforeDispatch(actionKey);
+  }
+}
+
+/** Requires the known target harness to positively own a composer and no semantic/no-echo prompt. */
+export function queuedSendScreenSafe(agent: string, screen: string): boolean {
+  const harness = harnessAdapterFor(agent);
+  if (harness?.composerReady === undefined) return false;
+  try {
+    const lines = splitLines(parseAnsi(screen));
+    if (!harness.composerReady(lines) || detectNoEchoPrompt(lines) !== null) return false;
+    return buildBlocks(lines, { agent }).every((block) => block.kind === "raw");
+  } catch {
+    return false;
+  }
+}
+
 type ExpectedPrompt =
   | { ok: true; present: false }
   | { ok: true; present: true; value: string }
@@ -4159,6 +4392,8 @@ function expectedStyled(body: JsonObject, promptPresent: boolean): ExpectedStyle
 type PromptBindingCheck =
   | {
       ok: true;
+      /** Fresh owner-side screen used only by this request's semantic/no-echo gate. */
+      screen: string;
       // `styled` is present only when the phone sent `expected_styled`: `checked`, or
       // `skipped_unknown_version` when the text check alone decided (ADR 0080 point 7).
       audit: { checked: true; passed: true; expected: string; styled?: StyledOutcome };
@@ -4259,7 +4494,7 @@ async function checkPromptBinding(
   const passed: Extract<PromptBindingCheck, { ok: true }>["audit"] = { checked: true, passed: true, expected };
   // Assigned, never conditionally spread: a bound send without `expected_styled` records no `styled` key.
   if (result.styled !== undefined) passed.styled = result.styled;
-  return { ok: true, audit: passed };
+  return { ok: true, audit: passed, screen: freshText };
 }
 
 function promptBindingFailure(

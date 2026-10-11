@@ -27,7 +27,9 @@
 // Claude writes when a session is compacted.
 
 import { readdir, stat } from "node:fs/promises";
+import { lstatSync, opendirSync, realpathSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { HOST, isInside } from "../host.ts";
 
 import { observedClaim, type Sourced } from "../cache/claims.ts";
 import type { CacheProbe } from "../cache/engine.ts";
@@ -72,8 +74,113 @@ import type {
   TranscriptSource,
 } from "./types.ts";
 
+function realpathOf(candidate: string): string {
+  return process.platform === "win32" ? realpathSync.native(candidate) : realpathSync(candidate);
+}
+
 /** A session uuid as Claude writes it — canonical 8-4-4-4-12 hex. Anything else never touches fs. */
 const SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Explicit limits on the synchronous dependency check used only for guarded queued sends. */
+const MAX_GUARDED_PROJECT_DIRS = 256;
+const MAX_GUARDED_METADATA_ENTRIES = 4096;
+
+type SyncStats = ReturnType<typeof statSync>;
+
+function dependencyStat(st: SyncStats): readonly string[] {
+  // SAFETY: every caller uses statSync/lstatSync with bigint:true; overload ReturnType omits that selected overload.
+  const value = st as SyncStats & { dev: bigint; ino: bigint; size: bigint; mtimeNs: bigint; ctimeNs: bigint };
+  return [value.dev.toString(), value.ino.toString(), value.size.toString(), value.mtimeNs.toString(), value.ctimeNs.toString()];
+}
+
+/** Read at most `remaining + 1` names, so an oversized directory is refused without materializing it. */
+function boundedDirectoryNames(path: string, remaining: number): string[] | null {
+  let directory: ReturnType<typeof opendirSync> | undefined;
+  try {
+    directory = opendirSync(path);
+    const names: string[] = [];
+    for (;;) {
+      const entry = directory.readSync();
+      if (entry === null) return names;
+      names.push(entry.name);
+      if (names.length > remaining) return null;
+    }
+  } catch {
+    return null;
+  } finally {
+    try { directory?.closeSync(); } catch { /* a refused snapshot stays refused */ }
+  }
+}
+
+/**
+ * Snapshot only the metadata dependencies the existing Claude resolver can inspect beneath its
+ * already-selected owning projects root. This does not read log contents or resolve a client path.
+ * Returning null means the dependency set is ambiguous, unreadable, unsafe, or over its explicit
+ * synchronous-work bound, so guarded dispatch must refuse.
+ */
+function resolverDependencySnapshot(configuredRoot: string): string | null {
+  try {
+    let entries = 0;
+    const rootLink = lstatSync(configuredRoot, { bigint: true });
+    const root = realpathSync.native(configuredRoot);
+    const rootStat = statSync(root, { bigint: true });
+    if (!rootStat.isDirectory()) return null;
+    const metadata: unknown[] = [[configuredRoot, root, dependencyStat(rootLink), dependencyStat(rootStat)]];
+    entries++;
+
+    const projectNames = boundedDirectoryNames(root, MAX_GUARDED_METADATA_ENTRIES - entries);
+    if (projectNames === null) return null;
+    projectNames.sort();
+    let enumerated = projectNames.length;
+    const projects: string[] = [];
+    for (const name of projectNames) {
+      if (++entries > MAX_GUARDED_METADATA_ENTRIES) return null;
+      const project = join(root, name);
+      let link: ReturnType<typeof lstatSync>;
+      try { link = lstatSync(project, { bigint: true }); } catch { return null; }
+      let target: SyncStats;
+      try { target = statSync(project, { bigint: true }); } catch {
+        // A dangling symlink or inaccessible entry could become a resolver-visible project dir.
+        if (link.isSymbolicLink()) return null;
+        continue;
+      }
+      if (!target.isDirectory()) continue;
+      const canonical = realpathSync.native(project);
+      if (!isInside(HOST, canonical, root)) return null;
+      projects.push(name);
+      if (projects.length > MAX_GUARDED_PROJECT_DIRS) return null;
+      metadata.push(["project", name, canonical, dependencyStat(link), dependencyStat(target)]);
+
+      const names = boundedDirectoryNames(project, MAX_GUARDED_METADATA_ENTRIES - enumerated);
+      if (names === null) return null;
+      enumerated += names.length;
+      names.sort();
+      const candidates: unknown[] = [];
+      for (const candidateName of names) {
+        if (!candidateName.endsWith(".jsonl")) continue;
+        const candidate = join(project, candidateName);
+        let candidateLink: ReturnType<typeof lstatSync>;
+        let candidateStat: SyncStats;
+        try {
+          candidateLink = lstatSync(candidate, { bigint: true });
+          candidateStat = statSync(candidate, { bigint: true });
+        } catch { return null; }
+        if (!candidateStat.isFile()) return null;
+        const canonicalCandidate = realpathSync.native(candidate);
+        // The current resolver reads candidate contents only after this same-root condition holds.
+        // Refuse rather than let an unsafe or unclassifiable symlink silently enter the witness.
+        if (!isInside(HOST, canonicalCandidate, root)) return null;
+        candidates.push([candidateName, canonicalCandidate, dependencyStat(candidateLink), dependencyStat(candidateStat)]);
+        if (++entries > MAX_GUARDED_METADATA_ENTRIES) return null;
+      }
+      metadata.push(["membership", name, names.filter((item) => item.endsWith(".jsonl")), candidates]);
+    }
+    metadata.unshift(["root-membership", projectNames.filter((name) => projects.includes(name))]);
+    return JSON.stringify(metadata);
+  } catch {
+    return null;
+  }
+}
 
 /** Guard used before any path work. Exported so tests can pin the shape the fs layer relies on. */
 export function isSessionId(value: string): boolean {
@@ -1007,6 +1114,31 @@ export class ClaudeTranscriptSource implements TranscriptSource {
   }
 
   /**
+   * Resolve the guarded source key twice around a bounded metadata witness. The witness is captured
+   * before the second normal resolver call so a continuation appearing between the two calls cannot
+   * be paired with a lease over the old key. The same synchronous witness is checked after the live
+   * source read and again after the final prompt read by the caller.
+   */
+  async guardedResolution(ref: AgentSessionRef): Promise<{ path: string; isCurrent: () => boolean } | null> {
+    if (ref.kind !== "id" || !isSessionId(ref.value)) return null;
+    const first = await this.resolve(ref);
+    if (first === null) return null;
+    const owner = this.pathCache.get(ref.value);
+    if (owner === undefined) return null;
+    const dependency = resolverDependencySnapshot(owner.root);
+    if (dependency === null) return null;
+
+    const second = await this.resolve(ref);
+    if (second !== first || resolverDependencySnapshot(owner.root) !== dependency) return null;
+    const fileCurrent = this.fileFreshnessLease(first);
+    if (fileCurrent === null) return null;
+    return {
+      path: first,
+      isCurrent: () => resolverDependencySnapshot(owner.root) === dependency && fileCurrent(),
+    };
+  }
+
+  /**
    * One root's projects directories, searched for `<sessionId>.jsonl`. The contained real path, or null.
    *
    * Null covers both "not here" and "here, but pointing out of this root": the caller moves on to the
@@ -1161,6 +1293,40 @@ export class ClaudeTranscriptSource implements TranscriptSource {
   }
 
   stat = statFile;
+
+  /**
+   * A guarded send may not rely on LiveWindows' cached presentation tick. Pin the canonical file
+   * resolved by this adapter, then compare its filesystem identity and high-resolution timestamps
+   * synchronously after the forced read and again immediately before the one send call. No path or
+   * stamp escapes this closure. A replaced symlink, inode, or same-size rewrite invalidates it.
+   */
+  private fileFreshnessLease(path: string): (() => boolean) | null {
+    try {
+      const canonical = realpathOf(path);
+      // `resolve` already returns a contained realpath. Refuse if that invariant no longer holds.
+      if (canonical !== path) return null;
+      const initial = statSync(canonical, { bigint: true });
+      if (!initial.isFile()) return null;
+      const identity = [
+        initial.dev.toString(), initial.ino.toString(), initial.size.toString(),
+        initial.mtimeNs.toString(), initial.ctimeNs.toString(),
+      ].join(":");
+      return () => {
+        try {
+          if (realpathOf(path) !== canonical) return false;
+          const current = statSync(canonical, { bigint: true });
+          return current.isFile() && [
+            current.dev.toString(), current.ino.toString(), current.size.toString(),
+            current.mtimeNs.toString(), current.ctimeNs.toString(),
+          ].join(":") === identity;
+        } catch {
+          return false;
+        }
+      };
+    } catch {
+      return null;
+    }
+  }
 
   load = loadTail;
 

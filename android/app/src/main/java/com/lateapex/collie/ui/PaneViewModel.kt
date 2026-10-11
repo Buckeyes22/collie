@@ -9,6 +9,8 @@ import com.lateapex.collie.CollieApplication
 import com.lateapex.collie.R
 import com.lateapex.collie.data.CollieRepository
 import com.lateapex.collie.data.ScopedReadContext
+import com.lateapex.collie.data.QueuedSendAttemptStore
+import com.lateapex.collie.data.UnavailableQueuedSendAttemptStore
 import com.lateapex.collie.domain.PaneAddress
 import com.lateapex.collie.domain.MuxKeyGrammar
 import com.lateapex.collie.domain.PollingBackoff
@@ -17,10 +19,12 @@ import com.lateapex.collie.network.retiresPairing
 import com.lateapex.collie.network.ApiFailure
 import com.lateapex.collie.network.PaneReadResponse
 import com.lateapex.collie.network.PaneSummary
+import com.lateapex.collie.network.AgentStatus
 import com.lateapex.collie.network.MuxConfigResponse
 import com.lateapex.collie.network.ServerSummary
 import com.lateapex.collie.network.TabSummary
 import com.lateapex.collie.network.TranscriptEntry
+import com.lateapex.collie.network.QueuedSendGuard
 import com.lateapex.collie.ui.terminal.PromptBinding
 import com.lateapex.collie.ui.terminal.CodexReplyGuard
 import com.lateapex.collie.ui.terminal.SemanticAction
@@ -36,6 +40,7 @@ import com.lateapex.collie.ui.terminal.StableTerminalDraft
 import com.lateapex.collie.ui.terminal.TerminalComposerSemantics
 import com.lateapex.collie.ui.terminal.TerminalDraft
 import java.util.ArrayDeque
+import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -78,6 +83,9 @@ data class PaneUiState(
     val transcriptQueued: List<String> = emptyList(),
     /** Authority of the last accepted live transcript page; redraws cannot mint a new actor. */
     val transcriptReadContext: ScopedReadContext? = null,
+    val transcriptSendNow: QueuedSendNow? = null,
+    val transcriptSendPending: Boolean = false,
+    val transcriptSendAttempt: QueuedSendNow? = null,
     val codexAcceptedReplies: List<String> = emptyList(),
 )
 
@@ -89,6 +97,9 @@ class PaneViewModel(
         (application as CollieApplication).container.repository,
     private val diagnostics: com.lateapex.collie.diagnostics.DiagnosticsRecorder =
         (application as CollieApplication).container.diagnostics,
+    private val queuedSendAttemptStore: QueuedSendAttemptStore =
+        (application as? CollieApplication)?.container?.queuedSendAttemptStore
+            ?: UnavailableQueuedSendAttemptStore,
 ) : AndroidViewModel(application) {
     /**
      * The agent whose grammar binds replies and dialogs. Seeded from the launch intent and then
@@ -149,6 +160,7 @@ class PaneViewModel(
                 mutableState.value = mutableState.value.copy(loading = false, error = MainViewModel.describe(getApplication<Application>().resources, failure))
             }
         }
+        disarmQueuedAction()
         deviceAuthorizationKnown = false
         deviceWriteAllowed = false
         endDirectTyping()
@@ -204,6 +216,9 @@ class PaneViewModel(
                         composerReady = false,
                         transcript = emptyList(),
                         transcriptQueued = emptyList(),
+                        transcriptSendNow = null,
+                        transcriptSendPending = false,
+                        transcriptSendAttempt = null,
                         transcriptHasMore = false,
                         transcriptAvailable = null,
                         transcriptReason = null,
@@ -410,6 +425,279 @@ class PaneViewModel(
         if (keys.size > MAX_REVIEWED_KEY_BATCH) return
         sendKeys(keys, direct = false)
     }
+
+    /** Send the current server-declared live queue recipe once, after rechecking its owner and screen. */
+    fun sendQueuedNow(displayed: QueuedSendNow) {
+        diagnostics.record("action", mapOf("name" to "pane.send_queued_now", "count" to displayed.keys.size))
+        val current = mutableState.value
+        val occupant = current.panes.firstOrNull { it.matches(address) } ?: return refuseQueuedSend()
+        val pane = currentPaneOrRefuse() ?: return
+        val displayedPrompt = PromptBinding.tailRegion(pane.text)
+        if (current.sending || current.transcriptSendPending || current.transcriptSendNow != displayed ||
+            current.mux?.supportsNew("guardedQueuedSend") != true ||
+            current.transcriptSendAttempt?.sameQueue(displayed) == true || !queuedKeysSupported(displayed.keys) ||
+            displayedPrompt == null || queueScreenBlocked(agent, pane.text, pane.revision) ||
+            occupant.status != AgentStatus.WORKING || refuseTerminalWrite()
+        ) return refuseQueuedSend()
+        if (!writeInFlight.compareAndSet(false, true)) return
+        val queueIdentity = QueueOccupantIdentity.of(occupant)
+        mutableState.value = mutableState.value.copy(
+            sending = true,
+            transcriptSendPending = true,
+            error = null,
+            mutationError = null,
+            status = null,
+        )
+        mutationJob = viewModelScope.launch {
+            try {
+                val liveAtStart = freshQueuedAction(displayed) ?: return@launch
+                if (!liveAtStart) return@launch
+
+                val snapshotConnection = repository.connection.value
+                val snapshot = withCurrentActor { repository.paneSnapshot(address.scope) }
+                if (snapshot !is ApiResult.Success || repository.connection.value !== snapshotConnection) {
+                    refuseQueuedSend()
+                    return@launch
+                }
+                val panes = snapshot.value.agents + snapshot.value.shellPanes
+                val freshOccupant = panes.firstOrNull { it.matches(address) }
+                deviceAuthorizationKnown = true
+                deviceWriteAllowed = snapshot.value.device?.let { !it.enforced || it.authorized } ?: true
+                mutableState.value = mutableState.value.copy(
+                    panes = panes,
+                    servers = snapshot.value.servers,
+                    topologyKnown = true,
+                )
+                applyWriteAccess()
+                if (freshOccupant == null || freshOccupant.status != AgentStatus.WORKING ||
+                    QueueOccupantIdentity.of(freshOccupant) != queueIdentity || refuseTerminalWrite()
+                ) {
+                    refuseQueuedSend()
+                    return@launch
+                }
+
+                val freshPane = when (val result = withCurrentActor {
+                    repository.readPane(address, paneRequestedLines, markSeen = true)
+                }) {
+                    is ApiResult.Success -> result.value.pane
+                    else -> {
+                        refuseQueuedSend()
+                        return@launch
+                    }
+                }
+                val freshPrompt = PromptBinding.tailRegion(freshPane.text)
+                if (mutableState.value.pane?.let { it.revision == pane.revision && it.text == pane.text } != true ||
+                    freshPrompt == null || freshPrompt != displayedPrompt ||
+                    queueScreenBlocked(agent, freshPane.text, freshPane.revision) || refuseTerminalWrite()
+                ) {
+                    mutableState.value = mutableState.value.copy(
+                        pane = freshPane,
+                        mutationError = text(R.string.pane_error_screen_changed_key),
+                    )
+                    return@launch
+                }
+
+                // The last read binds this one-shot to the queue that is still pending now. No text
+                // crosses the write route, and an uncertain response never triggers a retry.
+                if (freshQueuedAction(displayed) != true || refuseTerminalWrite()) {
+                    refuseQueuedSend()
+                    return@launch
+                }
+                val paneIdentity = queuedPaneIdentity()
+                val actionIdentity = queuedActionIdentity(displayed)
+                val persisted = try {
+                    queuedSendAttemptStore.recordBeforeDispatch(paneIdentity, actionIdentity)
+                } catch (_: Exception) {
+                    false
+                }
+                if (!persisted) {
+                    refuseQueuedSend()
+                    return@launch
+                }
+                // Busy state blocks repeated taps during preflight. The durable one-shot latch
+                // starts only after reservation, so a proved pre-dispatch refusal stays recoverable.
+                mutableState.value = mutableState.value.copy(transcriptSendAttempt = displayed)
+                val writeActor = repository.readContext(address.scope, address.paneId)
+                    ?: throw DiscardedActor()
+                if (!repository.isCurrent(writeActor)) throw DiscardedActor()
+                when (val result = repository.queuedSendNow(
+                    address,
+                    displayed.keys,
+                    expectedPrompt = freshPrompt,
+                    guard = QueuedSendGuard(
+                        generation = displayed.generation,
+                        revision = displayed.revision,
+                        queueDigest = displayed.queuedDigest,
+                        occupant = displayed.occupant,
+                    ),
+                    actor = writeActor,
+                )) {
+                    is ApiResult.Success -> if (result.value.ok) {
+                        runCatching {
+                            queuedSendAttemptStore.recordOutcome(
+                                actionIdentity,
+                                com.lateapex.collie.data.EncryptedQueuedSendAttemptStore.OUTCOME_ACCEPTED,
+                            )
+                        }
+                        mutableState.value = mutableState.value.copy(
+                            status = confirmation(text(R.string.pane_transcript_sending_now)),
+                        )
+                    } else {
+                        val outcome = when (result.value.code) {
+                            "queued_send.stale", "queued_send.already_attempted", "queued_send.unsupported_peer" ->
+                                com.lateapex.collie.data.EncryptedQueuedSendAttemptStore.OUTCOME_PRE_DISPATCH_REFUSED
+                            "queued_send.outcome_unknown" ->
+                                com.lateapex.collie.data.EncryptedQueuedSendAttemptStore.OUTCOME_UNKNOWN
+                            else -> com.lateapex.collie.data.EncryptedQueuedSendAttemptStore.OUTCOME_REFUSED
+                        }
+                        runCatching { queuedSendAttemptStore.recordOutcome(actionIdentity, outcome) }
+                        mutableState.value = mutableState.value.copy(
+                            mutationError = result.value.error ?: text(R.string.pane_error_key_refused),
+                        )
+                    }
+                    is ApiResult.Failure -> {
+                        demoteIfRevoked(result.error)
+                        mutableState.value = mutableState.value.copy(
+                            mutationError = mutationFailure(result.error, R.string.pane_action_key),
+                        )
+                    }
+                    is ApiResult.NotModified -> mutableState.value = mutableState.value.copy(
+                        mutationError = text(R.string.pane_error_key_empty),
+                    )
+                }
+                load()
+            } catch (_: DiscardedActor) {
+                // A replaced connection/subject cannot inherit a queue write or its response.
+            } finally {
+                mutableState.value = mutableState.value.copy(sending = false, transcriptSendPending = false)
+                writeInFlight.set(false)
+            }
+        }
+    }
+
+    private fun queuedKeysSupported(keys: List<String>): Boolean =
+        keys.isNotEmpty() && keys.size <= MAX_QUEUED_SEND_KEYS &&
+            keys.all { MuxKeyGrammar.isSupported(it, mutableState.value.unsupportedKeys) }
+
+    private fun queueScreenBlocked(agent: String?, screen: String, revision: Long): Boolean =
+        com.lateapex.collie.ui.terminal.AgentSemanticParser.detect(agent, screen, revision) != null ||
+            com.lateapex.collie.ui.terminal.TerminalComposerSemantics.noEchoPrompt(screen) != null
+
+    private fun disarmQueuedAction() {
+        chatWindow.disarmSendNow()
+        mutableState.value = mutableState.value.copy(transcriptSendNow = null)
+    }
+
+    private fun refuseQueuedSend() {
+        mutableState.value = mutableState.value.copy(
+            mutationError = text(R.string.pane_error_screen_changed_key),
+        )
+    }
+
+    private suspend fun freshQueuedAction(expected: QueuedSendNow): Boolean? {
+        val verificationContext = repository.readContext(address.scope, address.paneId) ?: return false
+        val result = withCurrentActor { repository.chat(address, limit = TRANSCRIPT_PAGE, expectedContext = verificationContext) }
+        if (!repository.isCurrent(verificationContext)) return false
+        return when (result) {
+        is ApiResult.Success -> {
+            val page = result.value
+            val matches = page.available && page.page == "live" && page.gen == expected.generation &&
+                page.rev == expected.revision && page.queued == expected.queued && page.sendQueuedNow == expected.keys &&
+                page.queuedDigest == expected.queuedDigest && page.queuedSendOccupant == expected.occupant
+            val merged = page.available && chatWindow.merge(page)
+            if (merged) {
+                val persistedAttempt = observeQueuedAction(chatWindow.sendNow)
+                mutableState.value = mutableState.value.copy(
+                    transcriptReadContext = verificationContext,
+                    transcript = chatWindow.entries,
+                    transcriptQueued = chatWindow.queued,
+                    transcriptSendNow = chatWindow.sendNow,
+                    transcriptSendAttempt = persistedAttempt ?: mutableState.value.transcriptSendAttempt
+                        ?.takeIf { current -> chatWindow.sendNow?.let(current::sameQueue) == true },
+                    transcriptHasMore = chatWindow.hasOlder,
+                )
+                if (matches) return persistedAttempt == null
+            }
+            if (!matches || !merged) {
+                refuseQueuedSend()
+                mutableState.value = mutableState.value.copy(
+                    transcriptSendNow = chatWindow.sendNow,
+                    transcriptSendPending = false,
+                )
+                return false
+            }
+            false
+        }
+        is ApiResult.Failure, is ApiResult.NotModified -> {
+            disarmQueuedAction()
+            refuseQueuedSend()
+            false
+        }
+        }
+    }
+
+    private fun PaneSummary.matches(address: PaneAddress): Boolean =
+        paneId == address.paneId && host == address.scope.host && session == address.scope.session
+
+    private data class QueueOccupantIdentity(
+        val paneId: String,
+        val workspaceId: String,
+        val tabId: String,
+        val host: String?,
+        val session: String?,
+        val agent: String,
+        val cwd: String,
+        val sessionName: String?,
+        val hasSession: Boolean?,
+        val kind: String?,
+    ) {
+        companion object {
+            fun of(pane: PaneSummary) = QueueOccupantIdentity(
+                pane.paneId, pane.workspaceId, pane.tabId, pane.host, pane.session,
+                pane.agent, pane.cwd, pane.sessionName, pane.hasSession, pane.kind,
+            )
+        }
+    }
+
+    private fun observeQueuedAction(action: QueuedSendNow?): QueuedSendNow? {
+        action ?: return null
+        return try {
+            val paneIdentity = queuedPaneIdentity()
+            val actionIdentity = queuedActionIdentity(action)
+            if (!queuedSendAttemptStore.observe(paneIdentity, actionIdentity)) action
+            else if (queuedSendAttemptStore.wasAttempted(actionIdentity)) action
+            else null
+        } catch (_: Exception) {
+            // Missing/corrupt custody is fail-closed: do not make a potentially repeated action live.
+            action
+        }
+    }
+
+    private fun queuedPaneIdentity(): String {
+        val connection = repository.connection.value
+        return digestOf(
+            listOf(
+                connection?.origin?.value.orEmpty(),
+                connection?.token.orEmpty(),
+                address.scope.host.orEmpty(),
+                address.scope.session.orEmpty(),
+                address.paneId,
+            ).joinToString("\u0000"),
+        )
+    }
+
+    private fun queuedActionIdentity(action: QueuedSendNow): String = digestOf(
+        listOf(
+            action.generation.toString(),
+            action.queuedDigest,
+            action.occupant,
+            action.keys.joinToString("\u0000"),
+        ).joinToString("\u0001"),
+    )
+
+    private fun digestOf(value: String): String = MessageDigest.getInstance("SHA-256")
+        .digest(value.encodeToByteArray())
+        .joinToString("") { byte -> "%02x".format(byte) }
 
     /**
      * Executes one adapter-derived terminal action after a fresh exact-pane re-read. The semantic
@@ -840,6 +1128,7 @@ class PaneViewModel(
             transcriptSkipPolls = 0
             mutableState.value = mutableState.value.copy(
                 transcript = emptyList(), transcriptQueued = emptyList(), transcriptHasMore = false,
+                transcriptSendNow = null, transcriptSendPending = false, transcriptSendAttempt = null,
                 transcriptAvailable = null, transcriptReadContext = null,
             )
         }
@@ -863,16 +1152,39 @@ class PaneViewModel(
                         chatWindow.clear()
                         chatEtag = null
                         transcriptSkipPolls = TRANSCRIPT_RETRY_POLLS
-                        mutableState.value = mutableState.value.copy(transcriptAvailable = false, transcriptReason = page.reason, transcript = emptyList(), transcriptQueued = emptyList(), transcriptHasMore = false, transcriptReadContext = transcriptContext)
-                    } else if (chatWindow.merge(page)) {
-                        acceptedReplies()?.reconcile(page)
-                        chatEtag = result.etag
-                        mutableState.value = mutableState.value.copy(transcript = chatWindow.entries, transcriptQueued = chatWindow.queued, transcriptAvailable = true, transcriptReason = null, transcriptHasMore = chatWindow.hasOlder, transcriptReadContext = transcriptContext, codexAcceptedReplies = acceptedReplies()?.texts.orEmpty())
+                    mutableState.value = mutableState.value.copy(
+                        transcriptAvailable = false, transcriptReason = page.reason, transcript = emptyList(),
+                        transcriptQueued = emptyList(), transcriptSendNow = null, transcriptSendPending = false,
+                        transcriptSendAttempt = null, transcriptHasMore = false, transcriptReadContext = transcriptContext,
+                    )
                     } else {
-                        // A well-formed response can still be rejected by the transcript window
-                        // (for example, an older revision from the same live generation). Keep
-                        // the admitted actor unchanged: a retired/null actor must not regain
-                        // authority over retained image rows until a page is actually merged.
+                        val previousSendNow = mutableState.value.transcriptSendNow
+                        val merged = chatWindow.merge(page)
+                        if (!merged && previousSendNow != null && chatWindow.sendNow == null) {
+                            // A malformed generation/revision is rejected without replacing the
+                            // retained transcript or cursor, but its disarm must reach the visible
+                            // pane state even though the page was not admitted.
+                            mutableState.value = mutableState.value.copy(transcriptSendNow = null)
+                        }
+                        if (merged) {
+                            acceptedReplies()?.reconcile(page)
+                            chatEtag = result.etag
+                            val sendNow = chatWindow.sendNow
+                            val persistedAttempt = observeQueuedAction(sendNow)
+                            val priorAttempt = mutableState.value.transcriptSendAttempt
+                                ?.takeIf { prior -> sendNow?.let(prior::sameQueue) == true }
+                            mutableState.value = mutableState.value.copy(
+                                transcriptReadContext = transcriptContext,
+                                transcript = chatWindow.entries,
+                                transcriptQueued = chatWindow.queued,
+                                transcriptSendNow = sendNow,
+                                transcriptSendAttempt = persistedAttempt ?: priorAttempt,
+                                transcriptAvailable = true,
+                                transcriptReason = null,
+                                transcriptHasMore = chatWindow.hasOlder,
+                                codexAcceptedReplies = acceptedReplies()?.texts.orEmpty(),
+                            )
+                        }
                     }
                     return
                 }
@@ -885,6 +1197,7 @@ class PaneViewModel(
                     return
                 }
                 is ApiResult.Failure -> {
+                    disarmQueuedAction()
                     val error = result.error
                     if (error is ApiFailure.Http && error.status == 404 || error is ApiFailure.Protocol && error.message == "Live chat is unavailable") {
                         legacyChat = true
@@ -942,21 +1255,21 @@ class PaneViewModel(
             if (!legacyChat) {
                 val before = chatWindow.before ?: return@launch
                 if (!repository.isCurrent(readContext)) return@launch
-                val result = repository.chat(
-                    address,
-                    limit = TRANSCRIPT_PAGE,
-                    before = before,
-                    expectedContext = readContext,
-                )
+                val result = repository.chat(address, limit = TRANSCRIPT_PAGE, before = before, expectedContext = readContext)
                 if (!repository.isCurrent(readContext)) return@launch
-                if (result is ApiResult.Success && result.value.available && chatWindow.merge(result.value)) {
-                    mutableState.value = mutableState.value.copy(
-                        transcript = chatWindow.entries,
-                        transcriptQueued = chatWindow.queued,
-                        transcriptHasMore = chatWindow.hasOlder,
-                        transcriptAvailable = true,
-                        transcriptReadContext = readContext,
-                    )
+                if (result is ApiResult.Failure || result is ApiResult.NotModified) disarmQueuedAction()
+                if (result is ApiResult.Success) {
+                    val previousSendNow = mutableState.value.transcriptSendNow
+                    val merged = result.value.available && chatWindow.merge(result.value)
+                    if (merged) {
+                        mutableState.value = mutableState.value.copy(
+                            transcript = chatWindow.entries, transcriptQueued = chatWindow.queued,
+                            transcriptHasMore = chatWindow.hasOlder, transcriptAvailable = true,
+                            transcriptReadContext = readContext,
+                        )
+                    } else if (previousSendNow != null && chatWindow.sendNow == null) {
+                        mutableState.value = mutableState.value.copy(transcriptSendNow = null)
+                    }
                 }
                 return@launch
             }
@@ -1240,6 +1553,7 @@ class PaneViewModel(
         const val MAX_DIRECT_KEY_BATCH = 64
         const val MAX_DIRECT_KEYS_PENDING = 8_192
         const val MAX_REVIEWED_KEY_BATCH = 128
+        const val MAX_QUEUED_SEND_KEYS = 12
         const val TAKEOVER_SETTLE_MS = 350L
         const val TAKEOVER_BACKSPACE_MARGIN = 32
     }

@@ -59,6 +59,7 @@ import com.lateapex.collie.R
 import com.lateapex.collie.databinding.ActivityPaneBinding
 import com.lateapex.collie.domain.PaneAddress
 import com.lateapex.collie.domain.MuxKeyGrammar
+import com.lateapex.collie.network.AgentStatus
 import com.lateapex.collie.domain.Scope
 import com.lateapex.collie.network.ActionResponse
 import com.lateapex.collie.network.retiresPairing
@@ -255,6 +256,7 @@ class PaneActivity : AppCompatActivity() {
             PaneViewModel.Factory(application, address, intent.getStringExtra(EXTRA_AGENT)),
         )[PaneViewModel::class.java]
         binding.transcriptBody.onLoadOlder = viewModel::loadOlderTranscript
+        binding.transcriptBody.onSendQueuedNow = viewModel::sendQueuedNow
         binding.pendingCodexDismiss.setOnClickListener { viewModel.dismissAcceptedCodexReplies() }
         binding.transcriptBody.onPlaced = { fields ->
             (application as CollieApplication).container.diagnostics.record("transcriptPlacement", fields)
@@ -3664,13 +3666,28 @@ class PaneActivity : AppCompatActivity() {
             renderedStatusRows.isNotEmpty() && !displayPreferences.getBoolean(PREF_RAW, false)
         if (showingTranscriptBody) {
             val container = (application as CollieApplication).container
+            val queueAction = state.transcriptSendNow
+            val occupant = state.panes.firstOrNull {
+                it.paneId == address.paneId && it.host == address.scope.host && it.session == address.scope.session
+            }
+            val queueKeysSupported = queueAction?.keys?.let { keys ->
+                keys.isNotEmpty() && keys.size <= 12 && keys.all { MuxKeyGrammar.isSupported(it, state.unsupportedKeys) }
+            } == true
             transcriptBody.bind(
-                agentName,
-                state.transcript,
-                state.transcriptHasMore,
-                state.transcriptQueued,
-                container.imageLoader,
-                state.transcriptReadContext,
+                agent = agentName,
+                entries = state.transcript,
+                hasMore = state.transcriptHasMore,
+                queued = state.transcriptQueued,
+                sendNow = queueAction,
+                sendNowEnabled = queueAction != null && queueKeysSupported &&
+                    state.mux?.supportsNew("guardedQueuedSend") == true && occupant?.status == AgentStatus.WORKING &&
+                    terminalWriteBlock() == null && !state.sending && !state.transcriptSendPending &&
+                    state.transcriptSendAttempt?.sameQueue(queueAction) != true &&
+                    semanticSurface == null && noEchoPrompt == null,
+                sendNowPending = state.transcriptSendPending,
+                sendNowAttempted = queueAction?.let { action -> state.transcriptSendAttempt?.sameQueue(action) } == true,
+                imageLoader = container.imageLoader,
+                readContext = state.transcriptReadContext,
             )
             terminalScroll.updatePadding(bottom = 0)
         } else {

@@ -64,6 +64,7 @@ import {
   withControlAuthority,
   arrivedOverHttps,
   chatBodyForMux,
+  queuedSendScreenSafe,
 } from "./server.ts";
 import {
   createPairLimiter,
@@ -72,7 +73,7 @@ import {
   PAIR_WINDOW_MS,
 } from "./pair-limit.ts";
 import { readFileSync } from "node:fs";
-import { mkdir, mkdtemp, rm, truncate, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, readFile, rm, truncate, utimes, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -111,6 +112,10 @@ import { selectView } from "./sessions.ts";
 import { DEFAULT_MAX_UPLOAD_BYTES } from "./uploads.ts";
 import { MAX_STT_AUDIO_BYTES } from "./stt/http.ts";
 import { computeEtag } from "./http-cache.ts";
+import { queuedMessagesDigest, queuedSendOccupant } from "./journal/queued-send.ts";
+import { LiveWindows, type ChatWindowBody } from "./journal/live.ts";
+import { TranscriptStore } from "./journal/store.ts";
+import { claudeJournal } from "./journal/claude.ts";
 import {
   MUX_LOGO_PATH,
   type AgentView,
@@ -1132,6 +1137,508 @@ describe("pane write prompt binding", () => {
       expect(entries[0]?.detail).toMatchObject({ promptBinding: { styled: "checked" } });
       expect(entries[1]?.detail).not.toHaveProperty("promptBinding.styled");
     });
+  });
+});
+
+function queuedFixtureMux(fake: Partial<MuxAdapter>): MuxAdapter {
+  // SAFETY: each guarded-route fixture supplies every reached mux method; Partial checks those signatures.
+  return fake as MuxAdapter;
+}
+function queuedFixtureLive(fake: Partial<import("./journal/live.ts").LiveWindows>): import("./journal/live.ts").LiveWindows {
+  // SAFETY: these route fixtures call only windowFresh; every actual-source test uses real LiveWindows.
+  return fake as import("./journal/live.ts").LiveWindows;
+}
+function queuedFixtureJournal(fake: Partial<import("./journal/types.ts").JournalAdapter>): import("./journal/types.ts").JournalAdapter {
+  // SAFETY: the synthetic windowFresh never consumes source/parse/reducer; it only uses the implemented discovery seam.
+  return fake as import("./journal/types.ts").JournalAdapter;
+}
+function queuedFixtureEngine(fake: { current(): Pick<import("./state-engine.ts").EngineSnapshot, "agents" | "shellPanes"> }): import("./state-engine.ts").StateEngine {
+  const partial: Partial<import("./state-engine.ts").StateEngine> = {
+    current: () => ({ ...fake.current(), workspaces: [], tabs: [], bridge: "connected" }),
+  };
+  // SAFETY: keysPane calls only current; complete snapshots are supplied and no engine scheduling method is reached.
+  return partial as import("./state-engine.ts").StateEngine;
+}
+
+describe("guarded queued send", () => {
+  const workingCapture = readFileSync("web/src/fixtures/panes/claude--working.txt", "utf8");
+  const trustCapture = readFileSync("web/src/fixtures/panes/claude--trust-prompt.txt", "utf8");
+  const paneId = "w1:p1";
+  const session = "default";
+  const keys = ["ctrl+Enter"];
+
+  function pane(status: AgentView["status"] = "working", cwd = "/repo") {
+    return {
+      paneId,
+      spaceId: "w1",
+      spaceLabel: "work",
+      spaceNumber: 1,
+      tabId: "w1:t1",
+      cwd,
+      focused: true,
+      alive: true,
+      agent: "claude",
+      status,
+    };
+  }
+
+  function engineAgent(status: AgentView["status"] = "working", cwd = "/repo"): AgentView {
+    return {
+      paneId,
+      workspaceId: "w1",
+      workspaceLabel: "work",
+      workspaceNumber: 1,
+      tabId: "w1:t1",
+      agent: "claude",
+      status,
+      cwd,
+      focused: true,
+    };
+  }
+
+  function chat(queued: string[] = ["queued work"], recipe: string[] = keys) {
+    return {
+      page: "live",
+      gen: 7,
+      rev: 3,
+      head: 0,
+      oldest: 1,
+      hasOlder: false,
+      upserts: [],
+      queued,
+      sendQueuedNow: recipe,
+    } satisfies ChatWindowBody;
+  }
+
+  function guardBody(target = pane(), queued = ["queued work"]) {
+    return {
+      keys,
+      expected_prompt: workingCapture,
+      queued_send: {
+        generation: 7,
+        revision: 3,
+        queue_digest: queuedMessagesDigest(queued),
+        occupant: queuedSendOccupant(session, target, "http://localhost"),
+      },
+    };
+  }
+
+  function makeHarness(options: {
+    capture?: string;
+    afterSnapshot?: () => void;
+    afterDiscover?: () => void;
+    afterPromptRead?: () => void;
+    afterQueueRead?: () => void;
+    afterQueueReadChangesCapture?: (setCapture: (capture: string) => void) => void;
+    failSend?: boolean;
+  } = {}) {
+    let currentPane = engineAgent();
+    let currentQueue: ChatWindowBody = chat();
+    let currentCapture = options.capture ?? workingCapture;
+    let currentCapabilities = declareCapabilities({
+      supports: ["paneGrid", "sendKeys", "guardedQueuedSend"],
+      topologyLatency: { kind: "bounded", ms: 1000 },
+      spaces: "many",
+    });
+    let sends = 0;
+    let promptReads = 0;
+    let queueReads = 0;
+    // SAFETY: this route fixture supplies snapshot/readGrid/sendKeys and capability metadata; no other mux method is called.
+    const mux = queuedFixtureMux({
+      mux: "test",
+      get capabilities() { return currentCapabilities; },
+      snapshot: async () => {
+        options.afterSnapshot?.();
+        return { panes: [pane()], spaces: [], tabs: [] };
+      },
+      readGrid: async () => {
+        promptReads += 1;
+        options.afterPromptRead?.();
+        return muxOk({ paneId, text: currentCapture, truncated: false, revision: 1 });
+      },
+      sendKeys: async () => {
+        sends += 1;
+        if (options.failSend) throw new Error("lost acknowledgement");
+        return muxAck();
+      },
+    });
+    const journal = {
+      discover: async () => {
+        options.afterDiscover?.();
+        return { kind: "id" as const, value: "session-opaque" };
+      },
+    };
+    const live = {
+      windowFresh: async () => {
+        queueReads += 1;
+        options.afterQueueRead?.();
+        options.afterQueueReadChangesCapture?.((capture) => { currentCapture = capture; });
+        const body = currentQueue;
+        return { body, isCurrent: () => currentQueue === body };
+      },
+    };
+    const engine = {
+      current: () => ({ agents: [currentPane], shellPanes: [] }),
+    };
+    return {
+      mux,
+      live,
+      engine,
+      journals: { claude: journal },
+      setCurrentPane: (next: AgentView) => { currentPane = next; },
+      setQueue: (next: ChatWindowBody) => { currentQueue = next; },
+      setCapture: (capture: string) => { currentCapture = capture; },
+      setGuardedCapability: (supported: boolean) => {
+        currentCapabilities = declareCapabilities({
+          supports: supported ? ["paneGrid", "sendKeys", "guardedQueuedSend"] : ["paneGrid"],
+          topologyLatency: { kind: "bounded", ms: 1000 },
+          spaces: "many",
+        });
+      },
+      counts: () => ({ sends, promptReads, queueReads }),
+    };
+  }
+
+  async function dispatch(
+    harness: ReturnType<typeof makeHarness>,
+    ledger?: import("./journal/queued-send-admission.ts").QueuedSendAdmissionLedger,
+    body = guardBody(),
+  ) {
+    const audit = new AuditLog(() => {});
+    const result = await keysPane(
+      harness.mux,
+      cfg(),
+      paneId,
+      new Request("http://localhost/api/pane/w1%3Ap1/keys", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+      audit,
+      "phone",
+      session,
+      // SAFETY: the guarded route only invokes the implemented fixture methods; tests count every send and preflight read.
+      queuedFixtureLive(harness.live),
+      // SAFETY: the guarded route only invokes the implemented fixture methods; tests count every send and preflight read.
+      { claude: queuedFixtureJournal(harness.journals.claude) },
+      // SAFETY: the guarded route only invokes the implemented fixture methods; tests count every send and preflight read.
+      queuedFixtureEngine(harness.engine),
+      ledger,
+    );
+    return result;
+  }
+
+  test("the shipped busy working capture has a composer and no semantic block", () => {
+    expect(queuedSendScreenSafe("claude", workingCapture)).toBe(true);
+    expect(queuedSendScreenSafe("claude", trustCapture)).toBe(false);
+    expect(queuedSendScreenSafe("claude", `${workingCapture}\nPassword:`)).toBe(false);
+    expect(queuedSendScreenSafe("unrecognized-agent", workingCapture)).toBe(false);
+  });
+
+  test("one guarded action reaches the declared queued recipe without posting queue text", async () => {
+    const harness = makeHarness();
+    const result = await dispatch(harness);
+    expect(result.status).toBe(200);
+    expect(harness.counts()).toEqual({ sends: 1, promptReads: 1, queueReads: 1 });
+  });
+
+  test("queue identity hashes raw owner text while the phone receives redacted presentation", async () => {
+    const secretQueue = ["api_key=placeholder1"];
+    const harness = makeHarness();
+    harness.setQueue(chat(secretQueue));
+    const result = await dispatch(harness, undefined, guardBody(pane(), secretQueue));
+    expect(result.status).toBe(200);
+    expect(harness.counts().sends).toBe(1);
+  });
+
+  test("occupant or busy-state changes during every earlier async preflight send no keys", async () => {
+    let snapshot: ReturnType<typeof makeHarness>;
+    snapshot = makeHarness({ afterSnapshot: () => snapshot.setCurrentPane(engineAgent("idle")) });
+    let discovery: ReturnType<typeof makeHarness>;
+    discovery = makeHarness({ afterDiscover: () => discovery.setCurrentPane(engineAgent("working", "/replacement")) });
+    let prompt: ReturnType<typeof makeHarness>;
+    prompt = makeHarness({ afterPromptRead: () => prompt.setCurrentPane(engineAgent("idle")) });
+    for (const [stage, harness] of [["snapshot", snapshot], ["discover", discovery], ["prompt", prompt]] as const) {
+      const result = await dispatch(harness);
+      expect(result.status, stage).toBe(409);
+      expect(harness.counts().sends, stage).toBe(0);
+    }
+  });
+
+  test("queue replacement during prompt or final queue read refuses the stale action", async () => {
+    for (const stage of ["prompt", "queue"] as const) {
+      let harness: ReturnType<typeof makeHarness>;
+      const replace = () => harness.setQueue(chat(["replacement queued work"]));
+      harness = stage === "prompt"
+        ? makeHarness({ afterPromptRead: replace })
+        : makeHarness({ afterQueueRead: replace });
+      const result = await dispatch(harness);
+      expect(result.status, stage).toBe(409);
+      expect(harness.counts().sends, stage).toBe(0);
+    }
+  });
+
+  test("a removed queue or changed declared recipe refuses the old action", async () => {
+    const removed = makeHarness();
+    removed.setQueue(chat([]));
+    expect((await dispatch(removed)).status).toBe(409);
+    expect(removed.counts().sends).toBe(0);
+
+    const changedRecipe = makeHarness();
+    changedRecipe.setQueue(chat(["queued work"], ["enter"]));
+    expect((await dispatch(changedRecipe)).status).toBe(409);
+    expect(changedRecipe.counts().sends).toBe(0);
+  });
+
+  test("a changed Crew/current mux capability refuses before the queued key write", async () => {
+    let harness: ReturnType<typeof makeHarness>;
+    harness = makeHarness({ afterQueueRead: () => harness.setGuardedCapability(false) });
+    const result = await dispatch(harness);
+    expect(result.status).toBe(409);
+    expect(harness.counts().sends).toBe(0);
+  });
+
+  test("a semantic prompt replacing the screen during the final queue read sends no keys", async () => {
+    const harness = makeHarness({
+      afterQueueReadChangesCapture: (setCapture) => setCapture(trustCapture),
+    });
+    const result = await dispatch(harness);
+    expect(result.status).toBe(409);
+    expect(harness.counts().sends).toBe(0);
+  });
+
+  test("a Claude JSONL change during the final prompt read invalidates the owner lease", async () => {
+    const root = await mkdtemp(join(tmpdir(), "collie-b06-queued-lease-"));
+    const project = join(root, "-repo");
+    await mkdir(project, { recursive: true });
+    const sessionId = "116ee214-d563-4bcc-95f2-f03c5330d354";
+    const logPath = join(project, `${sessionId}.jsonl`);
+    const row = (content: string) => JSON.stringify({
+      type: "queue-operation",
+      operation: "enqueue",
+      timestamp: "2026-10-10T12:00:00.000Z",
+      sessionId,
+      content,
+    });
+    await writeFile(logPath, `${row("queued work")}\n`);
+
+    const journal = claudeJournal(root);
+    const live = new LiveWindows(new TranscriptStore());
+    const ref = { kind: "id", value: sessionId } as const;
+    const initial = await live.window(journal, ref, { limit: 40 });
+    expect(initial?.queued).toEqual(["queued work"]);
+    const target = { ...pane(), agentSession: ref };
+    const occupant = queuedSendOccupant(session, target, "http://localhost");
+    let sends = 0;
+    let changed = false;
+    // SAFETY: this route fixture supplies snapshot/readGrid/sendKeys and capability metadata; no other mux method is called.
+    const mux = queuedFixtureMux({
+      mux: "test",
+      capabilities: declareCapabilities({
+        supports: ["paneGrid", "sendKeys", "guardedQueuedSend"],
+        topologyLatency: { kind: "bounded", ms: 1000 },
+        spaces: "many",
+      }),
+      snapshot: async () => ({ panes: [target], spaces: [], tabs: [] }),
+      readGrid: async () => {
+        if (!changed) {
+          changed = true;
+          await appendFile(logPath, `\n${row("replacement queued work")}`);
+        }
+        return muxOk({ paneId, text: workingCapture, truncated: false, revision: 1 });
+      },
+      sendKeys: async () => {
+        sends += 1;
+        return muxAck();
+      },
+    });
+    const engine = {
+      current: () => ({ agents: [{ ...engineAgent(), agentSession: ref }], shellPanes: [] }),
+    };
+    const result = await keysPane(
+      mux,
+      cfg(),
+      paneId,
+      new Request("http://localhost/api/pane/w1%3Ap1/keys", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          keys: initial?.sendQueuedNow,
+          expected_prompt: workingCapture,
+          queued_send: {
+            generation: initial?.gen,
+            revision: initial?.rev,
+            queue_digest: queuedMessagesDigest(initial!.queued),
+            occupant,
+          },
+        }),
+      }),
+      new AuditLog(() => {}),
+      "phone",
+      session,
+      live,
+      { claude: journal },
+      // SAFETY: the guarded route only invokes the implemented fixture methods; tests count every send and preflight read.
+      queuedFixtureEngine(engine),
+    );
+    expect(result.status).toBe(409);
+    expect(sends).toBe(0);
+    await rm(root, { recursive: true, force: true });
+  });
+
+  test("stable busy Claude source sends one declared key recipe without queue text", async () => {
+    const root = await mkdtemp(join(tmpdir(), "collie-b06-queued-stable-"));
+    const project = join(root, "-repo");
+    await mkdir(project, { recursive: true });
+    const sessionId = "216ee214-d563-4bcc-95f2-f03c5330d354";
+    const logPath = join(project, `${sessionId}.jsonl`);
+    const queueRow = JSON.stringify({
+      type: "queue-operation", operation: "enqueue", timestamp: "2026-10-10T12:00:00.000Z", sessionId,
+      content: "queued actual source payload",
+    });
+    const conversation = JSON.stringify({
+      type: "user", uuid: "same-conversation-root", timestamp: "2026-10-10T12:00:00.000Z",
+      message: { role: "user", content: "hello" },
+    });
+    await writeFile(logPath, `${conversation}\n${queueRow}\n`);
+    const journal = claudeJournal(root);
+    const live = new LiveWindows(new TranscriptStore());
+    const ref = { kind: "id", value: sessionId } as const;
+    const initial = await live.window(journal, ref, { limit: 40 });
+    expect(initial?.queued).toEqual(["queued actual source payload"]);
+    expect(initial?.sendQueuedNow).toEqual(keys);
+    const target = { ...pane(), agentSession: ref };
+    const occupant = queuedSendOccupant(session, target, "http://localhost");
+    let sentKeys: readonly string[] = [];
+    // SAFETY: this route fixture supplies snapshot/readGrid/sendKeys and capability metadata; no other mux method is called.
+    const mux = queuedFixtureMux({
+      mux: "test",
+      capabilities: declareCapabilities({
+        supports: ["paneGrid", "sendKeys", "guardedQueuedSend"],
+        topologyLatency: { kind: "bounded", ms: 1000 },
+        spaces: "many",
+      }),
+      snapshot: async () => ({ panes: [target], spaces: [], tabs: [] }),
+      readGrid: async () => muxOk({ paneId, text: workingCapture, truncated: false, revision: 1 }),
+      sendKeys: async (_paneId: string, delivered: readonly string[]) => {
+        sentKeys = delivered;
+        return muxAck();
+      },
+    });
+    const engine = {
+      current: () => ({ agents: [{ ...engineAgent(), agentSession: ref }], shellPanes: [] }),
+    };
+    const requestBody = {
+      keys: initial?.sendQueuedNow,
+      expected_prompt: workingCapture,
+      queued_send: {
+        generation: initial?.gen,
+        revision: initial?.rev,
+        queue_digest: queuedMessagesDigest(initial!.queued),
+        occupant,
+      },
+    };
+    expect(JSON.stringify(requestBody)).not.toContain("queued actual source payload");
+    const result = await keysPane(
+      mux, cfg(), paneId,
+      new Request("http://localhost/api/pane/w1%3Ap1/keys", {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(requestBody),
+      }),
+      new AuditLog(() => {}), "phone", session, live,
+      { claude: journal },
+      // SAFETY: the guarded route only invokes the implemented fixture methods; tests count every send and preflight read.
+      queuedFixtureEngine(engine),
+    );
+    expect(result.status).toBe(200);
+    expect(sentKeys).toEqual(["ctrl+Enter"]);
+    await rm(root, { recursive: true, force: true });
+  });
+
+  test("a same-conversation continuation appearing during the final prompt read refuses without keys", async () => {
+    const root = await mkdtemp(join(tmpdir(), "collie-b06-continuation-during-prompt-"));
+    const project = join(root, "-repo");
+    await mkdir(project, { recursive: true });
+    const sessionId = "316ee214-d563-4bcc-95f2-f03c5330d354";
+    const continuationId = "416ee214-d563-4bcc-95f2-f03c5330d354";
+    const logPath = join(project, `${sessionId}.jsonl`);
+    const continuationPath = join(project, `${continuationId}.jsonl`);
+    const conversation = (uuid: string, content: string) => JSON.stringify({
+      type: "user", uuid, timestamp: "2026-10-10T12:00:00.000Z", message: { role: "user", content },
+    });
+    const queueRow = JSON.stringify({
+      type: "queue-operation", operation: "enqueue", timestamp: "2026-10-10T12:00:00.000Z", sessionId,
+      content: "queued work",
+    });
+    await writeFile(logPath, `${conversation("same-conversation-root", "hello")}\n${queueRow}\n`);
+    const journal = claudeJournal(root);
+    const live = new LiveWindows(new TranscriptStore());
+    const ref = { kind: "id", value: sessionId } as const;
+    const initial = await live.window(journal, ref, { limit: 40 });
+    expect(initial?.queued).toEqual(["queued work"]);
+    const target = { ...pane(), agentSession: ref };
+    const occupant = queuedSendOccupant(session, target, "http://localhost");
+    let sends = 0;
+    // SAFETY: this route fixture supplies snapshot/readGrid/sendKeys and capability metadata; no other mux method is called.
+    const mux = queuedFixtureMux({
+      mux: "test",
+      capabilities: declareCapabilities({
+        supports: ["paneGrid", "sendKeys", "guardedQueuedSend"],
+        topologyLatency: { kind: "bounded", ms: 1000 },
+        spaces: "many",
+      }),
+      snapshot: async () => ({ panes: [target], spaces: [], tabs: [] }),
+      readGrid: async () => {
+        await writeFile(continuationPath, [
+          conversation("same-conversation-root", "hello"),
+          conversation("continuation-turn", "a later message makes this continuation win"),
+        ].join("\n") + "\n");
+        const newer = Date.now() / 1000 + 2;
+        await utimes(continuationPath, newer, newer);
+        return muxOk({ paneId, text: workingCapture, truncated: false, revision: 1 });
+      },
+      sendKeys: async () => { sends++; return muxAck(); },
+    });
+    const engine = {
+      current: () => ({ agents: [{ ...engineAgent(), agentSession: ref }], shellPanes: [] }),
+    };
+    const result = await keysPane(
+      mux, cfg(), paneId,
+      new Request("http://localhost/api/pane/w1%3Ap1/keys", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          keys: initial?.sendQueuedNow,
+          expected_prompt: workingCapture,
+          queued_send: {
+            generation: initial?.gen, revision: initial?.rev,
+            queue_digest: queuedMessagesDigest(initial!.queued), occupant,
+          },
+        }),
+      }),
+      new AuditLog(() => {}), "phone", session, live,
+      { claude: journal },
+      // SAFETY: the guarded route only invokes the implemented fixture methods; tests count every send and preflight read.
+      queuedFixtureEngine(engine),
+    );
+    expect(result.status).toBe(409);
+    expect(sends).toBe(0);
+    expect(await readFile(logPath, "utf8")).toContain("queued work");
+    await rm(root, { recursive: true, force: true });
+  });
+
+  test("semantic prompts refuse; an uncertain send remains latched against an immediate duplicate", async () => {
+    const promptHarness = makeHarness({ capture: trustCapture });
+    expect((await dispatch(promptHarness)).status).toBe(409);
+    expect(promptHarness.counts().sends).toBe(0);
+
+    const uncertain = makeHarness({ failSend: true });
+    const { QueuedSendAdmissionLedger } = await import("./journal/queued-send-admission.ts");
+    const ledger = new QueuedSendAdmissionLedger();
+    const first = await dispatch(uncertain, ledger);
+    const second = await dispatch(uncertain, ledger);
+    expect(first.status).toBe(502);
+    expect(second.status).toBe(409);
+    expect(uncertain.counts().sends).toBe(1);
   });
 });
 
@@ -2451,6 +2958,7 @@ describe("muxLogoResponse — serving an adapter's mark", () => {
 
 describe("bridgeConfigBody — the mux block is appended, never reordering what came before", () => {
   const base = { push: true, vapidPublicKey: "BKey", build: "abc123", mode: "solo" } as const;
+    // SAFETY: this route fixture supplies snapshot/readGrid/sendKeys and capability metadata; no other mux method is called.
   const mux = { mux: "reference", capabilities: declareCapabilities({ supports: ["paneGrid"], topologyLatency: { kind: "push" } }) };
 
   test("no adapter in hand: no key at all, which a client reads as an older bridge", () => {
@@ -3371,6 +3879,7 @@ describe("launch — an allowlisted space create, then the command and Enter", (
 
     test("without a paneId, the Space path runs exactly as before", async () => {
       const clock = fakeClock();
+    // SAFETY: this route fixture supplies snapshot/readGrid/sendKeys and capability metadata; no other mux method is called.
       const mux = new FakeLaunchMux(clock.now);
       const { audit, entries } = launchAudit();
       const res = await launch(
@@ -3496,6 +4005,10 @@ describe("POST /api/workspace — a create that worked records the folder the mu
   });
 
   test("with no store (a bridge built by hand), the create is exactly today's", async () => {
+    // SAFETY: this route fixture supplies snapshot/readGrid/sendKeys and capability metadata; no other mux method is called.
+    // SAFETY: this route fixture supplies snapshot/readGrid/sendKeys and capability metadata; no other mux method is called.
+    // SAFETY: this route fixture supplies snapshot/readGrid/sendKeys and capability metadata; no other mux method is called.
+    // SAFETY: this route fixture supplies snapshot/readGrid/sendKeys and capability metadata; no other mux method is called.
     const mux = new FakeSpaceMux("/home/op/proj");
     const res = await createWorkspace(asSpaceMux(mux), engine, body(JSON.stringify({ cwd: "~/proj" })), new AuditLog(() => {}), null, "default");
     expect(await res.json()).toMatchObject({ ok: true, pane: { cwd: "/home/op/proj" } });

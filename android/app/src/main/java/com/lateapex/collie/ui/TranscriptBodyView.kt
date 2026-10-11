@@ -28,6 +28,7 @@ class TranscriptBodyView @JvmOverloads constructor(
     attrs: AttributeSet? = null,
 ) : FrameLayout(context, attrs) {
     var onLoadOlder: (() -> Unit)? = null
+    var onSendQueuedNow: ((QueuedSendNow) -> Unit)? = null
 
     /** Where a bind that added or replaced turns left the reader; wired to the diagnostics trace. */
     var onPlaced: ((Map<String, Any?>) -> Unit)? = null
@@ -95,8 +96,16 @@ class TranscriptBodyView @JvmOverloads constructor(
         isVisible = false
         setOnClickListener { onLoadOlder?.invoke() }
     }
+    private val sendQueuedNow = MaterialButton(context).apply {
+        id = R.id.transcript_send_queued_now
+        revealOnFocusHint = false
+        transformationMethod = null
+        isVisible = false
+        setOnClickListener { boundSendNow?.let { onSendQueuedNow?.invoke(it) } }
+    }
     private val queuedContainer = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
     private var boundQueued: List<String> = emptyList()
+    private var boundSendNow: QueuedSendNow? = null
     private val expandedTools = mutableSetOf<Pair<String, Int>>()
     private val turns = linkedMapOf<String, View>()
     private var renderer: HistoryTurnRenderer? = null
@@ -112,6 +121,7 @@ class TranscriptBodyView @JvmOverloads constructor(
             LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT),
         )
         turnsContainer.addView(queuedContainer)
+        turnsContainer.addView(sendQueuedNow)
     }
 
     fun bind(
@@ -121,6 +131,10 @@ class TranscriptBodyView @JvmOverloads constructor(
         queued: List<String> = emptyList(),
         imageLoader: ScopedImageLoader? = null,
         readContext: ScopedReadContext? = null,
+        sendNow: QueuedSendNow? = null,
+        sendNowEnabled: Boolean = false,
+        sendNowPending: Boolean = false,
+        sendNowAttempted: Boolean = false,
     ) {
         val atBottom = scroll.scrollY + scroll.height >= (scroll.getChildAt(0)?.height ?: 0) - dp(8)
         // The reader's place is the first turn on screen and its offset from the top. Restoring
@@ -134,8 +148,8 @@ class TranscriptBodyView @JvmOverloads constructor(
         val imageAuthorityChanged = boundImageActor != imageActor
         val reset = turns.isNotEmpty() && (imageAuthorityChanged || turns.keys.any { key -> entries.none { it.uuid == key } })
         if (reset) {
+            turns.values.forEach(turnsContainer::removeView)
             turns.clear()
-            turnsContainer.removeViews(1, turnsContainer.childCount - 2)
         }
         if (agent != boundAgent || renderer == null || boundImageActor != imageActor) {
             boundAgent = agent
@@ -170,6 +184,16 @@ class TranscriptBodyView @JvmOverloads constructor(
                 })
             }
         }
+        boundSendNow = sendNow
+        sendQueuedNow.isVisible = sendNow != null && queued.isNotEmpty()
+        sendQueuedNow.text = context.getString(
+            when {
+                sendNowPending -> R.string.pane_transcript_sending_now
+                sendNowAttempted -> R.string.pane_transcript_send_check_queue
+                else -> R.string.pane_transcript_send_now
+            },
+        )
+        sendQueuedNow.isEnabled = sendNow != null && sendNowEnabled && !sendNowPending && !sendNowAttempted
         val added = turns.size - before
         val restore = {
             val scrollBefore = scroll.scrollY

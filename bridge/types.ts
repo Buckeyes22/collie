@@ -845,7 +845,12 @@ export type PaneHistoryResponse =
  */
 export type PaneChatResponse =
   | { paneId: string; available: false; reason: "disabled" | "no-session" | "no-log" }
-  | ({ paneId: string; available: true } & ChatBody);
+  | ({ paneId: string; available: true } & ChatBody & {
+      /** Opaque guard identity, present only for a live declared queued-send action. */
+      queuedDigest?: string;
+      /** Opaque hash of the current owner-side pane occupant identity. */
+      queuedSendOccupant?: string;
+    });
 
 /**
  * One changed file in a Changes list (ADR 0065). `status` is the file's state against HEAD, staged

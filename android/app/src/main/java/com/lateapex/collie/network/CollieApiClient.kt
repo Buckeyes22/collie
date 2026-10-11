@@ -211,6 +211,13 @@ interface CollieApi {
         keys: List<String>,
         expectedPrompt: String? = null,
     ): ApiResult<ActionResponse>
+    suspend fun queuedSendNow(
+        connection: Connection,
+        address: PaneAddress,
+        keys: List<String>,
+        expectedPrompt: String,
+        guard: QueuedSendGuard,
+    ): ApiResult<ActionResponse> = unavailable("Guarded queued send")
 
     private fun <T> unavailable(operation: String): ApiResult<T> =
         ApiResult.Failure(ApiFailure.Protocol("$operation is unavailable"))
@@ -437,8 +444,10 @@ class CollieApiClient(
             "Malformed live chat response",
         ) { page ->
             if (!page.available) !page.reason.isNullOrBlank()
-            else page.gen != null && page.upserts.all { it.seq != null } &&
-                if (before != null) page.page == "older" else page.page == "live" && page.rev != null && page.head != null && page.oldest != null
+            else page.gen != null && page.gen >= 0L && page.upserts.all { it.seq != null && it.seq >= 0L } &&
+                if (before != null) page.page == "older" else page.page == "live" &&
+                    (page.rev == null || page.rev >= 0L) && page.head != null && page.head >= 0L &&
+                    page.oldest != null && page.oldest >= 0L
         }
     }
 
@@ -970,6 +979,22 @@ class CollieApiClient(
         return executeAction(post(connection, url, json.encodeToString(KeysRequest(keys, expectedPrompt))))
     }
 
+    override suspend fun queuedSendNow(
+        connection: Connection,
+        address: PaneAddress,
+        keys: List<String>,
+        expectedPrompt: String,
+        guard: QueuedSendGuard,
+    ): ApiResult<ActionResponse> {
+        if (keys.isEmpty() || keys.size > MAX_QUEUED_SEND_KEYS || !keys.all(MuxKeyGrammar::isValid) ||
+            guard.generation < 0L || guard.revision < 0L ||
+            !isCanonicalQueuedSendIdentity(guard.queueDigest) || !isCanonicalQueuedSendIdentity(guard.occupant)
+        ) return ApiResult.Failure(ApiFailure.Protocol("Queued send action is malformed"))
+        val url = scopedUrl(connection.origin, path("pane", address.paneId, "keys"), address.scope)
+        val body = GuardedQueuedSendRequest(keys.toList(), expectedPrompt, guard)
+        return executeAction(post(connection, url, json.encodeToString(body)))
+    }
+
     private suspend fun paneAction(
         connection: Connection,
         address: PaneAddress,
@@ -1178,6 +1203,7 @@ class CollieApiClient(
         private const val BUILD_HEADER = "X-Collie-Build"
         private const val READ_TIMEOUT_SECONDS = 10L
         private const val MUTATION_TIMEOUT_SECONDS = 20L
+        private const val MAX_QUEUED_SEND_KEYS = 12
         private const val WORKTREE_TIMEOUT_SECONDS = 100L
         private const val UPLOAD_TIMEOUT_SECONDS = 60L
         private const val STT_PROVIDER_AND_OVERHEAD_SECONDS = 80L

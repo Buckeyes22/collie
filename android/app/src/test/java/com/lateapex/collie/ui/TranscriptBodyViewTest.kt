@@ -11,6 +11,7 @@ import com.lateapex.collie.network.TranscriptResult
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertTrue
@@ -20,6 +21,40 @@ import org.robolectric.RobolectricTestRunner
 
 @RunWith(RobolectricTestRunner::class)
 class TranscriptBodyViewTest {
+    @Test
+    fun anEmptyTranscriptShowsTheDeclaredQueueActionAndKeepsAttemptDisclosureVisible() {
+        val context = android.view.ContextThemeWrapper(
+            ApplicationProvider.getApplicationContext<Context>(),
+            R.style.Theme_Collie,
+        )
+        val view = TranscriptBodyView(context)
+        val action = QueuedSendNow(
+            generation = 7,
+            revision = 12,
+            queuedDigest = "a".repeat(64),
+            occupant = "b".repeat(64),
+            queued = listOf("next message"),
+            keys = listOf("ctrl+Enter"),
+        )
+        var tapped: QueuedSendNow? = null
+        view.onSendQueuedNow = { tapped = it }
+
+        view.bind("claude", emptyList(), hasMore = false, queued = action.queued, sendNow = action, sendNowEnabled = true)
+
+        val button = view.findViewById<android.widget.Button>(R.id.transcript_send_queued_now)
+        assertEquals(View.VISIBLE, button.visibility)
+        assertTrue(button.isEnabled)
+        button.performClick()
+        assertSame(action, tapped)
+
+        view.bind(
+            "claude", emptyList(), hasMore = false, queued = action.queued, sendNow = action,
+            sendNowEnabled = false, sendNowAttempted = true,
+        )
+        assertFalse(button.isEnabled)
+        assertEquals(context.getString(R.string.pane_transcript_send_check_queue), button.text.toString())
+    }
+
     @Test
     fun bindAddsOneViewPerUuidAndReusesOnRebind() {
         val context = android.view.ContextThemeWrapper(
@@ -51,10 +86,12 @@ class TranscriptBodyViewTest {
         view.bind("claude", listOf(a, b), hasMore = true)
 
         val container = (view.getChildAt(0) as ViewGroup).getChildAt(0) as ViewGroup
-        assertEquals(4, container.childCount)
+        assertEquals(5, container.childCount)
         assertEquals(R.id.transcript_load_older, container.getChildAt(0).id)
         assertSame(view.turnViewForTest("a"), container.getChildAt(1))
         assertSame(bView, container.getChildAt(2))
+        assertTrue(container.getChildAt(3) is android.widget.LinearLayout)
+        assertSame(view.findViewById<View>(R.id.transcript_send_queued_now), container.getChildAt(4))
     }
 
     @Test

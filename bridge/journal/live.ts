@@ -164,6 +164,12 @@ export interface ChatWindowBody {
   sendQueuedNow?: string[];
 }
 
+/** Internal only: a fresh owner window plus a synchronous check for changes after its read. */
+export interface GuardedChatWindow {
+  body: ChatWindowBody;
+  isCurrent(): boolean;
+}
+
 /**
  * A `?before=` page: older turns off disk, numbered into the same `gen` the live window uses.
  *
@@ -370,16 +376,16 @@ class LiveWindow {
    * move means there is nothing to ask the source for. The one case that must skip the pre-check is
    * the first tick, where there is no cursor yet and so nothing to compare against.
    */
-  async tick(key: string): Promise<void> {
+  async tick(key: string, force = false): Promise<void> {
     const now = this.now();
-    if (this.ticked && now - this.lastTickAt < TICK_FLOOR_MS) return;
+    if (!force && this.ticked && now - this.lastTickAt < TICK_FLOOR_MS) return;
     this.ticked = true;
     this.lastTickAt = now;
     const seen = await this.adapter.source.stat(key);
     if (
       seen !== null &&
       this.lastSeen !== null &&
-      seen.size === this.lastSeen.size &&
+      !force && seen.size === this.lastSeen.size &&
       seen.mtimeMs === this.lastSeen.mtimeMs
     ) {
       return;
@@ -516,6 +522,17 @@ class LiveWindow {
     return body;
   }
 
+  /** Check that no concurrent completed window update changed the admitted queue identity. */
+  matches(body: ChatWindowBody): boolean {
+    const queued = this.reducer?.queued() ?? [];
+    const recipe = this.adapter.sendQueuedNow;
+    return this.gen === body.gen && this.rev === body.rev &&
+      queued.length === body.queued.length && queued.every((value, index) => value === body.queued[index]) &&
+      ((recipe === undefined && body.sendQueuedNow === undefined) ||
+        (recipe !== undefined && body.sendQueuedNow !== undefined && recipe.length === body.sendQueuedNow.length &&
+          recipe.every((key, index) => key === body.sendQueuedNow![index])));
+  }
+
   /** This generation, for a `?before=` page that must land in the same numbering. */
   generation(): number {
     return this.gen;
@@ -555,6 +572,28 @@ export class LiveWindows {
     const window = this.reach(key, adapter);
     await window.tick(key);
     return window.body(params.after ?? null, params.limit);
+  }
+
+  /**
+   * Re-read the owner source for a guarded action, even inside the ordinary live polling floor.
+   * This is intentionally separate from `window`: only admission paths that must bind a one-shot
+   * action to current owner state should bypass the presentation poll cadence. It still uses the
+   * same bounded live window/reducer and cursor, but asks the source to validate the latest queue
+   * before returning the generation/revision and queued state.
+   */
+  async windowFresh(
+    adapter: JournalAdapter,
+    ref: AgentSessionRef,
+    params: ChatParams,
+  ): Promise<GuardedChatWindow | null> {
+    const guarded = await adapter.source.guardedResolution?.(ref);
+    if (guarded === undefined || guarded === null) return null;
+    const key = guarded.path;
+    const window = this.reach(key, adapter);
+    await window.tick(key, true);
+    const body = window.body(params.after ?? null, params.limit);
+    if (!guarded.isCurrent() || !window.matches(body)) return null;
+    return { body, isCurrent: () => guarded.isCurrent() && window.matches(body) };
   }
 
   /**

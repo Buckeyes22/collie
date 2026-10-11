@@ -17,6 +17,7 @@ the first Android release from this fork.
 - Keep restored History images inert until a reachable fresh read admits their turns; carry the same captured authority through live and legacy older-page reads.
 - Make Space Look now refresh its owning session before reloading, with an ordinary-reload explanation for older peers.
 - Show declared mux topology freshness separately from the last successful read, negotiate bounded pane mirror growth, and label Find as search within loaded turns.
+- Expose the server-declared Send now action for queued messages; bind one guarded key dispatch to the current queue and pane occupant, with encrypted outcome-unknown latching across process recreation.
 
 - Sync the server foundation to upstream Collie 1.19.0 and adapt Crew, scoped configuration, paired reads, device expiry, mounted HTTPS origins, launcher and worktree contracts, upload capabilities, notification fields, and update progress.
 - Recover the requested session on narrow snapshots and resolve the local lead identity before pane write checks.

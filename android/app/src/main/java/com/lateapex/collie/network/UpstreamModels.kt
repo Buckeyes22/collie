@@ -4,6 +4,7 @@ package com.lateapex.collie.network
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.json.JsonObject
 
 @Serializable
@@ -125,4 +126,22 @@ data class PaneChatResponse(
     val upserts: List<TranscriptEntry> = emptyList(),
     val queued: List<String> = emptyList(),
     val sendQueuedNow: List<String>? = null,
+    /** Opaque, server-derived pane occupant identity; absent when guarded sends are unsupported. */
+    val queuedSendOccupant: String? = null,
+    /** Digest of the ordered queue, computed by the owner; no queued text is repeated on writes. */
+    val queuedDigest: String? = null,
+)
+
+/** Server-issued binding for one guarded queue action; deliberately contains no queued message text. */
+private val QUEUED_SEND_IDENTITY = Regex("^[0-9a-f]{64}$")
+
+internal fun isCanonicalQueuedSendIdentity(value: String?): Boolean =
+    value != null && QUEUED_SEND_IDENTITY.matches(value)
+
+@Serializable
+data class QueuedSendGuard(
+    val generation: Long,
+    val revision: Long,
+    @SerialName("queue_digest") val queueDigest: String,
+    val occupant: String,
 )

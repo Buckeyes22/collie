@@ -206,6 +206,31 @@ class CollieApiClientTest {
     }
 
     @Test
+    fun guardedQueuedSendPostsOnlyDeclaredKeysAndOpaqueQueueIdentity() = runBlocking {
+        server.enqueue(MockResponse().setBody("{\"ok\":true}"))
+        val connection = Connection(origin, "phone", "bearer-secret")
+        val guard = QueuedSendGuard(7, 12, "a".repeat(64), "b".repeat(64))
+        assertTrue(api.queuedSendNow(
+            connection,
+            PaneAddress(Scope(host = "peer", session = "work"), "w1:p1"),
+            listOf("ctrl+Enter"),
+            "› ",
+            guard,
+        ) is ApiResult.Success)
+        val request = server.takeRequest()
+        assertEquals("POST", request.method)
+        assertEquals("/api/pane/w1%3Ap1/keys?host=peer&session=work", request.path)
+        assertEquals("Bearer bearer-secret", request.getHeader("Authorization"))
+        assertEquals("XMLHttpRequest", request.getHeader("X-Requested-With"))
+        val body = request.body.readUtf8()
+        assertTrue(body.contains("\"queued_send\""))
+        assertTrue(body.contains("\"queue_digest\":\"${"a".repeat(64)}\""))
+        assertTrue(body.contains("\"occupant\":\"${"b".repeat(64)}\""))
+        assertTrue(body.contains("\"keys\":[\"ctrl+Enter\"]"))
+        assertFalse(body.contains("queued message"))
+    }
+
+    @Test
     fun configReadsMuxDisplayNameForTheSharedHeader() = runBlocking {
         server.enqueue(
             MockResponse()
@@ -560,8 +585,11 @@ class CollieApiClientTest {
     fun liveChatUsesGenerationAndRevisionWhileOlderPagesUseTheTurnCursor() = runBlocking {
         val connection = Connection(origin, "phone", "token")
         val pane = PaneAddress(Scope(host = "peer", session = "work"), "p")
-        server.enqueue(jsonResponse("""{"paneId":"p","available":true,"page":"live","gen":2,"rev":3,"head":1,"oldest":1,"hasOlder":false,"upserts":[{"uuid":"u","ts":"","role":"assistant","seq":1,"parts":[]}],"queued":[]}""").setHeader("ETag", "live-3"))
+        server.enqueue(jsonResponse("""{"paneId":"p","available":true,"page":"live","gen":2,"rev":3,"head":1,"oldest":1,"hasOlder":false,"upserts":[{"uuid":"u","ts":"","role":"assistant","seq":1,"parts":[]}],"queued":["pending"],"sendQueuedNow":["ctrl+Enter"],"queuedDigest":"${"a".repeat(64)}","queuedSendOccupant":"${"b".repeat(64)}"}""").setHeader("ETag", "live-3"))
         val first = api.chat(connection, pane, etag = "must-not-send") as ApiResult.Success
+        assertEquals(listOf("ctrl+Enter"), first.value.sendQueuedNow)
+        assertEquals("a".repeat(64), first.value.queuedDigest)
+        assertEquals("b".repeat(64), first.value.queuedSendOccupant)
         val initial = server.takeRequest()
         assertNull(initial.getHeader("If-None-Match"))
         assertEquals("1", initial.getHeader("X-Collie-Seen"))
@@ -575,6 +603,68 @@ class CollieApiClientTest {
         val older = server.takeRequest()
         assertEquals("/api/pane/p/chat?limit=200&before=1%3Au%3Aa&host=peer&session=work", older.path)
         assertNull(older.getHeader("If-None-Match"))
+    }
+
+    @Test
+    fun malformedQueuedSendIdentityIsATypedRefusalBeforeAnyNetworkRequest() = runBlocking {
+        val result = api.queuedSendNow(
+            Connection(origin, "phone", "token"),
+            PaneAddress(paneId = "p"),
+            listOf("ctrl+Enter"),
+            expectedPrompt = "prompt",
+            guard = QueuedSendGuard(2, 3, "malformed", "b".repeat(64)),
+        )
+
+        assertEquals(ApiFailure.Protocol("Queued send action is malformed"), (result as ApiResult.Failure).error)
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test
+    fun actualLegacyLiveChatWithoutRevisionRemainsDisplayOnlyAndClearsTheCursor(): Unit = runBlocking {
+        val connection = Connection(CollieOrigin(server.url("/tools/collie/").toString()), "phone", "token")
+        val pane = PaneAddress(Scope(host = "peer", session = "work"), "p")
+        server.enqueue(jsonResponse("""{"paneId":"p","available":true,"page":"live","gen":2,"head":1,"oldest":1,"upserts":[{"uuid":"legacy","ts":"","role":"assistant","seq":1,"parts":[]}],"queued":["pending"],"sendQueuedNow":["ctrl+Enter"],"queuedDigest":"${"a".repeat(64)}","queuedSendOccupant":"${"b".repeat(64)}"}""").setHeader("ETag", "legacy"))
+        val result = api.chat(connection, pane, after = ChatAfter(2, 3), etag = "accepted") as ApiResult.Success
+        val request = server.takeRequest()
+        assertEquals("/tools/collie/api/pane/p/chat?limit=200&after=2%3A3&host=peer&session=work", request.path)
+        assertEquals("Bearer token", request.getHeader("Authorization"))
+        assertNull(result.value.rev)
+        val window = com.lateapex.collie.ui.LiveChatWindow()
+        assertTrue(window.merge(result.value))
+        assertEquals(listOf("legacy"), window.entries.map { it.uuid })
+        assertEquals(listOf("pending"), window.queued)
+        assertNull(window.sendNow)
+        assertNull(window.after)
+
+        server.enqueue(jsonResponse("""{"paneId":"p","available":true,"page":"live","gen":2,"rev":4,"head":1,"oldest":1,"upserts":[]}"""))
+        assertTrue(api.chat(connection, pane, after = window.after, etag = result.etag) is ApiResult.Success)
+        val next = server.takeRequest()
+        assertFalse(next.path!!.contains("after="))
+        assertNull(next.getHeader("If-None-Match"))
+        Unit
+    }
+
+    @Test
+    fun actualLegacyChatStillRequiresNonnegativeGenerationAndNumberedTurns(): Unit = runBlocking {
+        val malformed = listOf(
+            """{"gen":2,"head":1,"oldest":1,"upserts":[{"uuid":"u","ts":"","role":"assistant","parts":[]}]}""",
+            """{"head":1,"oldest":1,"upserts":[]}""",
+            """{"gen":2,"oldest":1,"upserts":[]}""",
+            """{"gen":2,"head":1,"upserts":[]}""",
+            """{"gen":-1,"head":1,"oldest":1,"upserts":[]}""",
+            """{"gen":2,"head":-1,"oldest":1,"upserts":[]}""",
+            """{"gen":2,"head":1,"oldest":-1,"upserts":[]}""",
+            """{"gen":2,"rev":-1,"head":1,"oldest":1,"upserts":[]}""",
+            """{"gen":2,"head":1,"oldest":1,"upserts":[{"uuid":"u","ts":"","role":"assistant","seq":-1,"parts":[]}]}""",
+        )
+        for (fields in malformed) {
+            server.enqueue(jsonResponse("""{"paneId":"p","available":true,"page":"live",${fields.drop(1)}"""))
+            val result = api.chat(Connection(origin, "phone", "token"), PaneAddress(paneId = "p"))
+            assertTrue(result is ApiResult.Failure && result.error is ApiFailure.Protocol)
+            assertEquals("GET", server.takeRequest().method)
+        }
+        assertEquals(malformed.size, server.requestCount)
+        Unit
     }
 
     @Test

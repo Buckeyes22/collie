@@ -138,6 +138,10 @@ server revocation action.
   URLs: blob paths stay within the selected Collie connection, inline raster data is bounded, and
   decoded memory is shared across visible cards and viewers. After an access or navigation change,
   a fresh admitted journal read is required before old entries can load images again.
+- A live transcript can show the bridge-declared **Send now** action for a pending queue. It is
+  available only for a paired, write-authorized, working pane with supported declared keys and a
+  freshly verified non-modal composer; it sends the keys once and never resends queued text.
+  Older bridges and peers that do not declare the guarded action leave the control unavailable.
 - The Keys drawer keeps primary keys and modifiers together, wrapping on narrow phones to retain
   48 dp touch targets. Its More sheet holds presets and function keys.
 - The worktree sheet lists a repository's linked worktrees that have no open space; selecting one

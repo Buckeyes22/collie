@@ -374,7 +374,10 @@ answering build:
   and `snapshot` is polled every 1500 ms (§10.1). `logoUrl` is deliberately **not** carried: the mark
   is a path, and a path only answers on the machine that serves it. It names no secret, and it is
   admissible here for `member`'s reason, being the same block that member already serves to every
-  read client of its own front door.
+  read client of its own front door. The `guardedQueuedSend` key is a stricter additive write
+  declaration: a missing/older member refuses that guarded `/api/pane/:id/keys` form before
+  forwarding; it must never fall back to an unbound keys write, even though other absent mux fields
+  retain their legacy lead-answer behavior.
 
 `hello` gains nothing else. It is what an *admitted* member uses to confirm a link, so it must not
 become a place to learn something an unadmitted caller wants; a version is admissible there for the

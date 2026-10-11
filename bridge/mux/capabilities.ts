@@ -33,6 +33,7 @@ export const MUX_CAPABILITIES = [
   "paneProcesses",
   "typeText",
   "sendKeys",
+  "guardedQueuedSend",
   "renamePane",
   "closePane",
   "setFocus",
@@ -95,6 +96,8 @@ export const MUX_CAPABILITY_ROUTES = {
   paneProcesses: "GET /api/pane/:id/processes — sensitive process and foreground-directory diagnostics from the owning runtime; requires device-read.",
   typeText: "POST /api/pane/:id/reply — step one, the literal text.",
   sendKeys: "POST /api/pane/:id/reply (step two, the submit key) and POST /api/pane/:id/keys (the Keys tray).",
+  guardedQueuedSend:
+    "POST /api/pane/:id/keys with the queued-send identity, occupant, and prompt guard revalidated before dispatch.",
   renamePane: "POST /api/pane/:id/rename — set or clear a pane's operator-chosen label.",
   closePane: "POST /api/pane/:id/close — kill the pane and the agent in it.",
   setFocus:
@@ -217,6 +220,9 @@ export function declareCapabilities(input: MuxCapabilityInput): MuxCapabilityDec
     paneProcesses: claimed.has("paneProcesses"),
     typeText: claimed.has("typeText"),
     sendKeys: claimed.has("sendKeys"),
+    // This is a bridge-owned guard around the same one-shot keys port; adapters with no keys door
+    // cannot implement it. The recipe is still filtered through keysDeliverable at the route.
+    guardedQueuedSend: claimed.has("sendKeys"),
     renamePane: claimed.has("renamePane"),
     closePane: claimed.has("closePane"),
     setFocus: claimed.has("setFocus"),

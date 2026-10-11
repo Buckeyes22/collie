@@ -28,6 +28,8 @@ import com.lateapex.collie.network.CrewStatusResponse
 import com.lateapex.collie.network.ChatAfter
 import com.lateapex.collie.network.ChatBefore
 import com.lateapex.collie.network.PaneChatResponse
+import com.lateapex.collie.network.QueuedSendGuard
+import com.lateapex.collie.network.isCanonicalQueuedSendIdentity
 import com.lateapex.collie.network.StartTarget
 import com.lateapex.collie.network.WorktreeBase
 import com.lateapex.collie.network.WorktreeFolder
@@ -1144,6 +1146,52 @@ class CollieRepository(
         api.keys(it, address, keys, expectedPrompt)
     }
 
+    /** A new guarded action: positive capability negotiation precedes its single scoped keys POST. */
+    suspend fun queuedSendNow(
+        address: PaneAddress,
+        keys: List<String>,
+        expectedPrompt: String,
+        guard: QueuedSendGuard,
+        actor: ScopedReadContext,
+    ): ApiResult<ActionResponse> {
+        if (keys.isEmpty() || keys.size > 12 || !keys.all(MuxKeyGrammar::isValid) ||
+            guard.generation < 0L || guard.revision < 0L ||
+            !isCanonicalQueuedSendIdentity(guard.queueDigest) || !isCanonicalQueuedSendIdentity(guard.occupant)
+        ) return ApiResult.Failure(ApiFailure.Protocol("Queued send action is malformed"))
+        if (actor.key.scope != address.scope || actor.key.subjectIdentity != address.paneId || !isCurrent(actor)) {
+            return staleScope()
+        }
+        val connection = actor.connection
+        if (!connection.isPaired) return ApiResult.Failure(ApiFailure.Protocol("Pair this device before controlling a terminal"))
+        if (!writesAllowed(address.scope, actor.key.subjectIdentity)) {
+            return ApiResult.Failure(ApiFailure.Http(403, "device not authorised", "device.not_authorised"))
+        }
+
+        // Capability negotiation is part of this one captured actor. Process its authority headers
+        // through the same repository path as every other response before considering a write.
+        val rawConfig = api.config(connection, address.scope)
+        if (!isCurrent(actor)) return staleScope()
+        val config = processConnectionResult(actor, rawConfig)
+        if (config !is ApiResult.Success) return when (config) {
+            is ApiResult.Failure -> config
+            is ApiResult.NotModified -> ApiResult.Failure(ApiFailure.Protocol("Guarded queued send capability could not be verified"))
+            is ApiResult.Success -> error("unreachable")
+        }
+        if (config.value.mux?.supportsNew("guardedQueuedSend") != true) {
+            return ApiResult.Failure(ApiFailure.Http(404, "Guarded queued send is unsupported on this server", "capability.unsupported"))
+        }
+
+        // This is the last check before the only POST. The connection object, scoped actor and
+        // current device write admission must still be the ones that began negotiation.
+        if (!isCurrent(actor) || this.connection.value !== actor.connection) return staleScope()
+        if (!writesAllowed(address.scope, actor.key.subjectIdentity)) {
+            return ApiResult.Failure(ApiFailure.Http(403, "device not authorised", "device.not_authorised"))
+        }
+        val result = api.queuedSendNow(connection, address, keys, expectedPrompt, guard)
+        if (!isCurrent(actor)) return staleScope()
+        return processConnectionResult(actor, result)
+    }
+
     suspend fun disconnect() {
         invalidateAuthority(AuthorityInvalidation.DISCONNECTED)
         connectionStore.clear()
@@ -1205,36 +1253,7 @@ class CollieRepository(
         try {
             val result = block(configured)
             if (!isCurrent(context)) return@coroutineScope staleScope()
-            val responseAuthority = when (result) {
-                is ApiResult.Success -> result.controlAuthority
-                is ApiResult.NotModified -> result.controlAuthority
-                is ApiResult.Failure -> null
-            }
-            if (responseAuthority != null) {
-                val authority = "${responseAuthority.leadId}/${responseAuthority.epoch}"
-                val previous = observedLeadAuthority
-                observedLeadAuthority = authority
-                if (previous != null && previous != authority) {
-                    synchronized(readAdmissionLock) { scopeJobs.remove(job) }
-                    setLeadEpoch(leadEpoch + 1)
-                    return@coroutineScope staleScope()
-                }
-            }
-            if (result is ApiResult.Failure) {
-                mutableDeviceWriteAuthorization.value = DeviceWriteAuthorization.UNVERIFIED
-                mutableReadSource.value = ReadSourceState.Unavailable(context.key.connectionGeneration)
-                accessFailure = result.error
-                if (result.error is ApiFailure.Http && result.error.status in setOf(401, 403) && !result.error.retiresPairing()) {
-                    synchronized(readAdmissionLock) { scopeJobs.remove(job) }
-                    invalidateAuthority(AuthorityInvalidation.ACCESS_FROZEN)
-                } else authorityInvalidations.forEach { listener -> runCatching { listener(AuthorityInvalidation.ACCESS_FROZEN) } }
-                if (result.error is ApiFailure.Http && result.error.retiresPairing()) {
-                    synchronized(readAdmissionLock) { scopeJobs.remove(job) }
-                    invalidateAuthority(AuthorityInvalidation.PAIRING_RETIRED)
-                    demoteToReadOnly()
-                }
-            }
-            result
+            processConnectionResult(context, result) { synchronized(readAdmissionLock) { scopeJobs.remove(job) } }
         } finally { synchronized(readAdmissionLock) { scopeJobs.remove(job) } }
     } } catch (cancelled: kotlinx.coroutines.CancellationException) {
         // A cancelled request child must not kill its screen's poll loop. External screen/lifecycle
@@ -1244,6 +1263,45 @@ class CollieRepository(
     }
 
     private fun <T> staleScope(): ApiResult<T> = ApiResult.Failure(ApiFailure.Protocol("Connection or scope changed; refresh before trying again"))
+
+    /** Canonical authority/refusal processing shared by ordinary calls and queued-send negotiation. */
+    private fun <T> processConnectionResult(
+        context: ScopedReadContext,
+        result: ApiResult<T>,
+        beforeInvalidation: () -> Unit = {},
+    ): ApiResult<T> {
+        if (!isCurrent(context)) return staleScope()
+        val responseAuthority = when (result) {
+            is ApiResult.Success -> result.controlAuthority
+            is ApiResult.NotModified -> result.controlAuthority
+            is ApiResult.Failure -> null
+        }
+        if (responseAuthority != null) {
+            val authority = "${responseAuthority.leadId}/${responseAuthority.epoch}"
+            val previous = observedLeadAuthority
+            observedLeadAuthority = authority
+            if (previous != null && previous != authority) {
+                beforeInvalidation()
+                setLeadEpoch(leadEpoch + 1)
+                return staleScope()
+            }
+        }
+        if (result is ApiResult.Failure) {
+            mutableDeviceWriteAuthorization.value = DeviceWriteAuthorization.UNVERIFIED
+            mutableReadSource.value = ReadSourceState.Unavailable(context.key.connectionGeneration)
+            accessFailure = result.error
+            if (result.error is ApiFailure.Http && result.error.status in setOf(401, 403) && !result.error.retiresPairing()) {
+                beforeInvalidation()
+                invalidateAuthority(AuthorityInvalidation.ACCESS_FROZEN)
+            } else authorityInvalidations.forEach { listener -> runCatching { listener(AuthorityInvalidation.ACCESS_FROZEN) } }
+            if (result.error is ApiFailure.Http && result.error.retiresPairing()) {
+                beforeInvalidation()
+                invalidateAuthority(AuthorityInvalidation.PAIRING_RETIRED)
+                demoteToReadOnly()
+            }
+        }
+        return result
+    }
 
     /** Device-owned preferences keep read admission; saved/offline authority cannot dispatch writes. */
     private suspend fun <T> withDeviceOwnedConnection(block: suspend (Connection) -> ApiResult<T>): ApiResult<T> {

@@ -260,6 +260,9 @@
     <string name="pane_status_checking_device">Checking device authorization before enabling terminal controls.</string>
     <string name="pane_status_unauthorised">Read-only — device not authorised by the fronting proxy.</string>
     <string name="pane_transcript_load_older">Load older</string>
+    <string name="pane_transcript_send_now">Send now</string>
+    <string name="pane_transcript_sending_now">Sending queued messages…</string>
+    <string name="pane_transcript_send_check_queue">Check the queue before trying again</string>
     <string name="pane_body_showing_transcript">Transcript</string>
     <string name="pane_body_showing_mirror_dialog">Terminal · agent is asking</string>
     <string name="pane_body_showing_mirror_raw">Terminal · raw</string>

@@ -132,6 +132,13 @@ export interface TranscriptSource {
   /** Absolute path of the log this ref names, or null when it isn't on disk / isn't ours to read. */
   resolve(ref: AgentSessionRef): Promise<string | null>;
   /**
+   * Resolve and synchronously fence the source dependencies which could change that resolution.
+   * Guarded owner actions require this stronger seam; a file-only freshness lease does not prove
+   * that an adapter would still choose the same key. The key and closure remain source-internal and
+   * are never serialized to a client.
+   */
+  guardedResolution?(ref: AgentSessionRef): Promise<{ path: string; isCurrent: () => boolean } | null>;
+  /**
    * Size + mtime of a log, WITHOUT reading it — the store's cache-validity check.
    *
    * Split out from `load` on purpose: a journal can be 32 MB, and paging back through a long

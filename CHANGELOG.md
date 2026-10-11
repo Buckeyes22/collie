@@ -30,6 +30,7 @@ Running a crew? Update the lead first; members follow on their own. Details:
 
 - **Scoped control reads preserve authority across Crew and reconnects.** Declare independent positive control capabilities, carry typed refusal provenance, forward session refresh as a read, and expose device-bound durable operation receipts without repeating uncertain dispatch.
 - **Pane reads negotiate a bounded adapter budget.** Publish verified adapter ceilings, report admitted and served rows separately, and refuse a response that exceeds the admitted limit.
+- **Queued sends revalidate their live queue and pane occupant.** Add a closed guarded form to the existing keys route, refuse older Crew peers, and latch duplicate or uncertain attempts without sending queued text.
 
 ### Changed
 
