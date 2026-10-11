@@ -40,7 +40,7 @@ internal data class PaneBufferAffordance(
 
 internal object PaneBufferPolicy {
     // Muse discovers its own sessions; installing a Herdr hook cannot repair that adapter.
-    private val journalAgents = setOf("claude", "codex", "grok", "hermes", "omp", "opencode", "pi")
+    private val journalAgents = setOf("claude", "codex", "gemini", "grok", "hermes", "omp", "opencode", "pi")
 
     fun resolve(
         pane: PaneSummary?,

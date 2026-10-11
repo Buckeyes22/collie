@@ -18,6 +18,8 @@
     <string name="semantic_review_answers" translatable="false">Review your answers</string>
     <string name="semantic_incomplete" translatable="false">Some questions are unanswered.</string>
     <string name="semantic_submit_answers" translatable="false">Submit answers</string>
+    <string name="semantic_interrupt_turn" translatable="false">Interrupt turn</string>
+    <string name="semantic_edit_answers" translatable="false">Edit answers</string>
     <string name="semantic_previous" translatable="false">Previous question</string>
     <string name="semantic_next" translatable="false">Next question</string>
     <string name="semantic_ends_questions" translatable="false">This ends the questions.</string>

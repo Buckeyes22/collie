@@ -106,6 +106,9 @@ class SettingsActivity : AppCompatActivity() {
         binding.settingsLicensesButton.setOnClickListener {
             startActivity(Intent(this, LicensesActivity::class.java))
         }
+        binding.root.findViewById<View>(R.id.settings_agent_catalog_button)?.setOnClickListener {
+            startActivity(AgentCatalogActivity.intent(this))
+        }
         binding.root.findViewById<View>(R.id.settings_diagnostics_send_button)?.setOnClickListener {
             confirmSendDiagnostics()
         }

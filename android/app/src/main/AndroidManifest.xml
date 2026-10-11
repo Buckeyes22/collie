@@ -56,6 +56,10 @@
             android:exported="false"
             android:parentActivityName=".ui.MainActivity" />
         <activity
+            android:name=".ui.AgentCatalogActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.SettingsActivity" />
+        <activity
             android:name=".ui.UpdatesActivity"
             android:exported="false"
             android:parentActivityName=".ui.SettingsActivity" />

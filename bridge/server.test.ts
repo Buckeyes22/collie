@@ -175,6 +175,7 @@ function cfg(overrides: Partial<Config> = {}): Config {
     journalRoots: {
       claude: ["/tmp/claude-projects"],
       codex: ["/nope/codex"],
+      gemini: ["/nope/gemini"],
       pi: ["/nope/pi"],
       opencode: ["/nope/opencode"],
       grok: ["/nope/grok"],
@@ -3237,7 +3238,7 @@ describe("the host gate — `?host=` selects among enrolled members and nothing 
     // The load-bearing claim: `?h=laptop` + `w1:p1` must never be served the DESK's `w1:p1`, and
     // pane ids collide across machines, so a fall-through here is a cross-host write.
     //
-    // All TWENTY-THREE session-scoped route handlers (tab create, workspace create, launch, this host's launcher
+    // All TWENTY-FOUR session-scoped route handlers (tab create, workspace create, launch, this host's launcher
     // rows, this host's folder list and a star on it, one journal blob, a workspace's Changes list,
     // a workspace's Files view, the Files existence check by pane or workspace, the Files image read
     // by pane or workspace (ADR 0090), tab action, the pane family, "look now", the worktree listing,
@@ -3245,9 +3246,9 @@ describe("the host gate — `?host=` selects among enrolled members and nothing 
     // three writes on a phone's own launcher rows, served by one function (ADR 0094), and the two
     // writes on this machine's one-off command history, served by one function (ADR 0095), and the
     // read that checks a typed line before it runs (ADR 0095, amendment), and the
-    // owning workspace's Source read) reach
+    // owning workspace's Source read and the scoped agent capability inventory) reach
     // their runtime through the caller's resolver and nothing else.
-    expect([...src.matchAll(/await caller\.resolve\(\);/g)]).toHaveLength(23);
+    expect([...src.matchAll(/await caller\.resolve\(\);/g)]).toHaveLength(24);
     // Exactly eight `registry.get(` calls remain, and each is a sanctioned one, named here rather
     // than exempted: assembling THIS collie's own snapshot body; `localRuntime`, the single
     // "(session) → runtime, or 404" helper both callers share; `/api/config`, which reports THIS

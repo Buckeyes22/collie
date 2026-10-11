@@ -52,6 +52,63 @@ import org.robolectric.shadows.ShadowSystemClock
 @RunWith(RobolectricTestRunner::class)
 class PaneActivityTest {
     @Test
+    fun ompMultiCardShowsCheckedRowsAndKeepsUnmeasuredCustomAnswerOutOfToggleActions() {
+        val activity = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("omp:multi", "omp"))
+            .create().start().resume().get()
+        val fixture = generateSequence(File(System.getProperty("user.dir")).absoluteFile) { it.parentFile }
+            .map { File(it, "web/src/fixtures/panes/omp--v18-4-ask-multi-checked.txt") }
+            .firstOrNull(File::isFile)?.readText() ?: error("Could not locate the OMP fixture")
+        val writableScope = PaneUiState(
+            pane = PaneReadResponse("omp:multi", fixture, truncated = false, revision = 51),
+            loading = false,
+            canWrite = true,
+            topologyKnown = true,
+            panes = listOf(PaneSummary(
+                paneId = "omp:multi",
+                workspaceId = "w1",
+                workspaceLabel = "project",
+                workspaceNumber = 1,
+                tabId = "w1:t1",
+                agent = "omp",
+                status = AgentStatus.WORKING,
+                cwd = "/repo",
+                focused = true,
+            )),
+        )
+        assertNull(PaneWriteGate.block(com.lateapex.collie.domain.PaneAddress(com.lateapex.collie.domain.Scope(), "omp:multi"), writableScope))
+        render(activity, writableScope)
+
+        val rows = descendants(activity.findViewById<ViewGroup>(R.id.semantic_actions)).toList()
+        val cheese = rows.filterIsInstance<MaterialButton>().single { it.text.contains("Cheese") }
+        val other = rows.filterIsInstance<TextView>().single { it.text.contains("Other (type your own)") }
+        val submit = rows.filterIsInstance<MaterialButton>().single { it.text.contains("Submit selected answers") }
+        assertTrue(cheese.text.toString().contains("☑"))
+        assertFalse(other.isClickable)
+        assertTrue(other.text.toString().contains("Use the terminal to enter a custom answer"))
+        assertTrue(submit.isEnabled)
+    }
+
+    @Test
+    fun ompWriteApprovalRendersTheWholeApprovedPathAndLongContentOnTheActionCard() {
+        val activity = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("omp:write", "omp"))
+            .create().start().resume().get()
+        val fixture = generateSequence(File(System.getProperty("user.dir")).absoluteFile) { it.parentFile }
+            .map { File(it, "web/src/fixtures/panes/omp--v18-4-approval-write-long.txt") }
+            .firstOrNull(File::isFile)?.readText() ?: error("Could not locate the OMP fixture")
+        render(activity, PaneUiState(
+            pane = PaneReadResponse("omp:write", fixture, truncated = false, revision = 52),
+            loading = false,
+        ))
+
+        val actions = descendants(activity.findViewById<ViewGroup>(R.id.semantic_actions)).filterIsInstance<MaterialButton>().toList()
+        val approve = actions.single { it.text.toString().contains("Approve") }
+        assertTrue(approve.text.toString().contains("Path: /tmp/omp-sandbox-approval/long.txt"))
+        assertTrue(approve.text.toString().contains("sample line 1 for the approval dialog"))
+        assertTrue(approve.text.toString().contains("sample line 14 for the approval dialog"))
+    }
+
+
+    @Test
     fun printedPathRedrawCannotAcquireANewActorForRetiredMirrorOutput() {
         val app = ApplicationProvider.getApplicationContext<CollieApplication>()
         val initialConnection = com.lateapex.collie.domain.Connection(

@@ -1602,6 +1602,50 @@ export interface HarnessInfo {
   found: boolean;
 }
 
+/** One independently assessed cell in GET /api/agents/capabilities. `unverified` is not
+ * synonymous with unsupported: evidence or adapter work is still required. */
+export type AgentCapabilityState = "implemented" | "unsupported" | "unverified" | "interface-ready";
+
+export interface AgentCapabilityEvidence {
+  /** A short explanation; executable output and filesystem paths never cross this contract. */
+  version: string;
+  journal: string;
+  semantic: string;
+  media: string;
+}
+
+export interface AgentCapabilityRow {
+  kind: string;
+  label: string;
+  executableFound: boolean | null;
+  version: string | null;
+  launch: AgentCapabilityState;
+  detection: AgentCapabilityState;
+  sessionReference: AgentCapabilityState;
+  journal: AgentCapabilityState;
+  webSemanticDialog: AgentCapabilityState;
+  webComposer: AgentCapabilityState;
+  media: AgentCapabilityState;
+  /** Current owner-runtime observations only; zero is real and does not imply unsupported. */
+  observedPanes?: number;
+  /** Number of observed pane identities that carried an owner-reported session reference. */
+  observedSessionReferences?: number;
+  evidence: AgentCapabilityEvidence;
+}
+
+/** Current host/session result; no PATH or executable location crosses the API. */
+export interface AgentCapabilitiesResponse {
+  schema: 1;
+  mux: string;
+  muxCapabilities: {
+    agentDetection: boolean;
+    agentSessionRef: boolean;
+  };
+  runtimeVersion: string | null;
+  rows: AgentCapabilityRow[];
+  note: string;
+}
+
 /**
  * GET /api/folders, and the answer to POST /api/folders/star — THIS host's own folder list for the
  * new-space sheet (#289), read from its `folders.json` (bridge/folders.ts). Session-scoped only so a

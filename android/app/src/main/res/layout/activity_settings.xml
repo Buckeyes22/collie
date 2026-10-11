@@ -339,6 +339,15 @@
             </LinearLayout>
 
             <com.google.android.material.button.MaterialButton
+                android:id="@+id/settings_agent_catalog_button"
+                style="@style/Widget.Collie.Button.Borderless"
+                android:layout_width="wrap_content"
+                android:layout_height="@dimen/collie_touch_target"
+                android:layout_gravity="center_horizontal"
+                android:layout_marginTop="8dp"
+                android:text="@string/agent_catalog_title" />
+
+            <com.google.android.material.button.MaterialButton
                 android:id="@+id/settings_licenses_button"
                 style="@style/Widget.Collie.Button.Borderless"
                 android:layout_width="wrap_content"

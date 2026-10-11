@@ -22,6 +22,7 @@ import com.lateapex.collie.network.ImageUpload
 import com.lateapex.collie.network.UploadSource
 import com.lateapex.collie.network.ImageBlob
 import com.lateapex.collie.network.LaunchersResponse
+import com.lateapex.collie.network.AgentCapabilitiesResponse
 import com.lateapex.collie.network.NotificationState
 import com.lateapex.collie.network.NotifyPreferences
 import com.lateapex.collie.network.NotifyPreferencesPatch
@@ -1332,6 +1333,10 @@ class CollieRepository(
 
     suspend fun starFolder(scope: Scope = selectedScope.value, folder: String, starred: Boolean): ApiResult<FoldersResponse> =
         withWritableConnection(scope) { api.starFolder(it, scope, folder, starred) }
+
+    /** Read-only per-harness implementation inventory from the exact owning host/session. */
+    suspend fun agentCapabilities(scope: Scope = selectedScope.value): ApiResult<AgentCapabilitiesResponse> =
+        withConnection(scope) { api.agentCapabilities(it, scope) }
 
     /** `command` must be a value returned by [launchers], never caller-authored shell text. */
     suspend fun launch(

@@ -14,6 +14,37 @@ data class UploadCapability(val maxBytes: Long, val imageTypes: List<String>, va
 data class HarnessInfo(val id: String, val label: String, val found: Boolean)
 
 @Serializable
+data class MuxAgentCapabilities(val agentDetection: Boolean, val agentSessionRef: Boolean)
+
+@Serializable
+data class AgentCapabilityRow(
+    val kind: String,
+    val label: String,
+    val executableFound: Boolean? = null,
+    val version: String? = null,
+    val launch: String = "unverified",
+    val detection: String = "unverified",
+    val sessionReference: String = "unverified",
+    val journal: String = "unverified",
+    val webSemanticDialog: String = "unverified",
+    val webComposer: String = "unverified",
+    val media: String = "unverified",
+    val observedPanes: Int? = null,
+    val observedSessionReferences: Int? = null,
+    val evidence: JsonObject? = null,
+)
+
+@Serializable
+data class AgentCapabilitiesResponse(
+    val schema: Int,
+    val mux: String,
+    val muxCapabilities: MuxAgentCapabilities? = null,
+    val runtimeVersion: String? = null,
+    val rows: List<AgentCapabilityRow> = emptyList(),
+    val note: String = "",
+)
+
+@Serializable
 data class StartTarget(
     val harness: String? = null,
     val command: String? = null,

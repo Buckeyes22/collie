@@ -165,6 +165,8 @@ interface CollieApi {
     suspend fun launchers(connection: Connection, scope: Scope): ApiResult<LaunchersResponse> = unavailable("Launchers")
     suspend fun folders(connection: Connection, scope: Scope): ApiResult<FoldersResponse> = unavailable("Folders")
     suspend fun starFolder(connection: Connection, scope: Scope, folder: String, starred: Boolean): ApiResult<FoldersResponse> = unavailable("Folder favorites")
+    suspend fun agentCapabilities(connection: Connection, scope: Scope): ApiResult<AgentCapabilitiesResponse> =
+        unavailable("Agent capability inventory")
     suspend fun launch(
         connection: Connection,
         scope: Scope,
@@ -1119,6 +1121,16 @@ class CollieApiClient(
             response.favourites.all { it.isNotBlank() && it.length <= 4096 } && response.recent.toSet().intersect(response.favourites.toSet()).isEmpty()
         }
     }
+
+    override suspend fun agentCapabilities(connection: Connection, scope: Scope): ApiResult<AgentCapabilitiesResponse> =
+        requireContract(
+            executeJson(
+                request(connection, scopedUrl(connection.origin, path("agents", "capabilities"), scope)),
+                AgentCapabilitiesResponse.serializer(),
+                READ_TIMEOUT_SECONDS,
+            ),
+            "Unsupported agent capability schema",
+        ) { it.schema == 1 }
 
     override suspend fun launch(
         connection: Connection,

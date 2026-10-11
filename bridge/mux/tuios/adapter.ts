@@ -207,6 +207,9 @@ const AGENT_BY_TUIOS_HARNESS = new Map<string, string>([
   ["grok", "grok"],
   ["hermes", "hermes"],
   ["antigravity", "antigravity"],
+  // TUIOS publishes Gemini's Herdr identity as `gemini`, while its integration id is `gemini-cli`.
+  // This is documented by TUIOS' pinned AGENT_STATE.md; keep this one explicit translation here.
+  ["gemini-cli", "gemini"],
 ]);
 
 // A compile-time-shaped tie, checked at load: every name above must be one the contract accepts.
@@ -216,7 +219,12 @@ for (const name of AGENT_BY_TUIOS_HARNESS.values()) {
 
 /** The Collie harness name for a tuios harness id, or `null` when Collie has no such harness. */
 function agentName(harnessId: string): string | null {
-  return AGENT_BY_TUIOS_HARNESS.get(harnessId.trim().toLowerCase()) ?? null;
+  const id = harnessId.trim().toLowerCase();
+  const mapped = AGENT_BY_TUIOS_HARNESS.get(id);
+  if (mapped !== undefined) return mapped;
+  // TUIOS documents that other integrations use their manifest id as the Herdr pane identity.
+  // Accept only an exact Collie canonical id; never fold prefixes or infer from process names.
+  return MUX_AGENT_NAMES.includes(id) ? id : null;
 }
 
 /** tuios's agent state in the contract's words. `none` never reaches here: it is not an agent. */

@@ -92,6 +92,7 @@ const FORWARDABLE: readonly RegExp[] = [
   // lead's. Both ride the crew link exactly like `workspace` does.
   /^launch$/,
   /^launchers$/,
+  /^agents\/capabilities$/,
   // The rows a phone adds, removes and renames (ADR 0094). Each machine keeps its own store, so a
   // `?host=` write lands in THAT member's `launchers-added.json` and nowhere else; no row is ever
   // copied between machines. `forget-device` is the lead's own call when it revokes a device; the
@@ -173,7 +174,7 @@ export function forwardKind(route: string, method = "POST"): ForwardKind {
   // A GET that changes nothing, exactly like `pane/:id/history` — attempted even against a member
   // this lead has not heard from in a while, never refused before it is tried (§10.3's "a READ to a
   // dead member is still attempted").
-  if (route === "launchers") return "read";
+  if (route === "launchers" || route === "agents/capabilities") return "read";
   // The line check is a POST that changes nothing: attempted even against a stale member, never refused
   // before it is tried (§10.3).
   if (route === "launch/check") return "read";

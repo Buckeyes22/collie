@@ -28,6 +28,8 @@ Running a crew? Update the lead first; members follow on their own. Details:
 
 - **Review repository history without leaving Changes.** Expose bounded first-parent commit pages through the scoped read and Crew routes, pin later pages to the first page's HEAD, and read selected commits plus their listed file diffs without enabling Git writes. Stop at 10,000 commits and show truncation separately from the end of history. Bound displayed author names and serialized pages to the native transport envelope, and refuse malformed cap metadata.
 - **Launch, worktree and launcher-add intents keep durable owner-bound tombstones.** The shared operation journal reserves each frozen effect before dispatch and never evicts those reservations; bounded success-response caches may replay a known result, while a lost or evicted body stays unknown and cannot trigger a second effect. The bridge advertises readiness only when its protected receipt key and durable journal are available.
+- **Inspect harness support per owning host.** Add a paired read-only 24-kind capability inventory and a native Settings screen, use bounded fixed-argument version probes for registered binaries, and report per-kind identities only from the current owner snapshot while keeping unmeasured behavior explicitly unverified.
+
 - **Inspect pane process context from the owning runtime.** Add a bounded device-read endpoint for foreground process, directory and restore diagnostics, with explicit Herdr pane targeting, occupant checks and Crew forwarding.
 
 - **Plan and reconcile pane layout changes.** Declare bounded neutral layout reads and one-shot split, resize, zoom, swap, focus and move routes with durable move aliases and Crew gate parity.
@@ -47,6 +49,7 @@ Running a crew? Update the lead first; members follow on their own. Details:
 - **Claude command help reflects current review and fork behavior.** Describe `/review` as a current-diff or specified-target review and `/fork` as a copied background session with an optional prompt in the shared Android and web catalogs.
 - **Cache watches preserve each peer session’s exact pane identity.** Ambiguous old peer watches remain removable orphan rows, and current cache details retire their copied facts and catalog validators with their actor.
 
+- **Gemini journal drift canaries follow structural Part fields.** Count unknown field names without recording their payloads, including appended patches and replacement snapshots.
 
 ## [1.19.0] - 2026-10-09
 

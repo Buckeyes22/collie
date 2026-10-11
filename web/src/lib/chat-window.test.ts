@@ -288,6 +288,22 @@ describe("what is queued", () => {
     expect(two.queued).toEqual([]);
   });
 
+  it("uses a new generation to apply authoritative history ordering and deletion", () => {
+    const one = mergeChat(held(), live({ rev: 2, upserts: [] }));
+    const two = mergeChat(
+      one,
+      live({
+        gen: GEN + 1,
+        rev: 1,
+        head: BASE + 1,
+        oldest: BASE,
+        upserts: [entry("c", BASE), entry("a", BASE + 1)],
+      }),
+    );
+    expect(uuids(two)).toEqual(["c", "a"]);
+    expect(seqs(two)).toEqual([BASE, BASE + 1]);
+  });
+
   it("carries the keys the bridge declared to send the queue now, and drops them when it stops", () => {
     expect(EMPTY_CHAT_WINDOW.sendQueuedNow).toEqual([]);
     const one = mergeChat(held(), live({ rev: 2, upserts: [], queued: ["waiting"], sendQueuedNow: ["ctrl+Enter"] }));

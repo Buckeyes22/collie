@@ -25,6 +25,11 @@ the first Android release from this fork.
 - Add a native New workflow for declared agent, shell and launcher choices, with host-owned recent and favourite folders in New, workspace and worktree forms.
 - Persist encrypted, owner-bound launch, worktree and launcher-add intents; keep uncertain outcomes visible and require an explicit same-request retry only where the owning host advertises durable receipt support. Preserve the one-shot legacy workspace-branch create without offering an unverifiable retry, and add native launch choices plus worktree planning with base and parent-folder selection.
 - Add reachable native recipe management and one-off Run workflows with host-declared policy gates, exact checked command text, explicit no-prompts consent, scoped recent history, and same-request recovery for uncertain runs.
+- Add bounded Gemini CLI transcript history from its documented session JSONL format, verifying the full session ID beneath the configured Gemini home.
+- Add a scoped Agent support screen that shows bounded registered-binary versions, current owner-snapshot detections/session references, all 24 H12 dimensions and media owner-integration readiness.
+- Add fixture-bound OMP single- and multi-select Ask, guarded note entry, fully visible bash/write approvals, resume and session-only model selection plus Muse and OpenCode flows. OMP checkbox toggles and pointer selections require current-frame read-back; custom multi-answer remains available in the terminal until its matching editor capture is added.
+- Project OMP's measured unnumbered pointer rows so native selection checks the current highlight before dispatch.
+
 - Add a scoped, device-authorized pane process details screen for foreground processes, runtime directory and restore diagnostics, with explicit unsupported and unavailable states.
 
 - Add a read-only Changes browser from pane actions and Space headers, with bounded nested-repository listings, file diffs, latest-commit views and pinned paged commit history, with captured-authority admission, a visible 10,000-commit boundary and strict page/metadata bounds compatible with the native streaming limit.

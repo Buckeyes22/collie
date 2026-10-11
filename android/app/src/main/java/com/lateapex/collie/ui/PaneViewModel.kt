@@ -871,7 +871,12 @@ class PaneViewModel(
 
     private fun semanticIntentLabel(intent: SemanticIntent): String = when (intent) {
         is SemanticIntent.Static -> intent.action.label
+        is SemanticIntent.PointerSelect -> intent.action.label
         is SemanticIntent.PromptFeedback -> "feedback"
+        is SemanticIntent.MultiToggle -> intent.action.label
+        is SemanticIntent.OmpMultiToggle -> intent.action.label
+        is SemanticIntent.OmpNoteSubmit -> "submit note"
+        is SemanticIntent.MultiReviewSelect -> intent.action.label
         is SemanticIntent.PreviewOption -> "option ${intent.number}"
         is SemanticIntent.PreviewNote -> "note"
         SemanticIntent.MultiAdvance -> "advance"

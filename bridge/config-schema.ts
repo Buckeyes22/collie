@@ -551,6 +551,15 @@ export const CONFIG_SETTINGS: readonly ConfigSetting[] = [
     configField: "journalRoots",
   },
   {
+    key: "gemini_root",
+    env: "COLLIE_GEMINI_ROOT",
+    section: "journal",
+    kind: "roots",
+    default: [],
+    doc: "Where Gemini CLI keeps project session logs. Empty follows GEMINI_CLI_HOME/.gemini/tmp.",
+    configField: "journalRoots",
+  },
+  {
     key: "pi_root",
     env: "COLLIE_PI_ROOT",
     section: "journal",

@@ -7,22 +7,37 @@
 // pane is rendered raw with its prompts unread. Nothing used to say so: the conformance suite only
 // asked for a lower-cased, non-empty name.
 //
-// The rule: an agent name is `shell` or one of the names below. An adapter translates its own ids
-// into these, and an agent Collie has no harness for reads as a shell. The list is the union of the
-// two registries plus the journal's aliases, and `agents.test.ts` fails when it drifts from them.
+// The rule: an agent name is `shell` or one of the exact names below. An adapter translates its own
+// ids into these. The list includes actual reader IDs, journal aliases, and launch-only IDs; a
+// launch-only ID without an exact reader stays raw and is not positive detection/session evidence.
 
-/** Every agent name a harness reader of Collie's answers to, sorted. */
+/** Every exact agent identity the mux contract accepts, sorted. */
 export const MUX_AGENT_NAMES: readonly string[] = [
   "agy",
+  "amp",
   "antigravity",
   "claude",
+  "cline",
   "codex",
+  "copilot",
+  "cursor",
+  "devin",
+  "droid",
+  "gemini",
   "grok",
   "hermes",
+  "kiro",
+  "kimi",
+  "kilo",
+  "letta",
+  "maki",
+  "mastracode",
   "muse",
   "omp",
   "opencode",
   "pi",
+  "qodercli",
+  "qwen",
 ];
 
 /** The agent name of a pane with no agent. */

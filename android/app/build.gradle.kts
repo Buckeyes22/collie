@@ -113,7 +113,8 @@ tasks.withType<Test>().configureEach {
     // single test class still passes there.
     maxHeapSize = "2g"
     // The expanded audit suite exhausts 2g when 100 classes share one resource sandbox.
-    forkEvery = 25
+    // Bound retained Robolectric/HTTP state to one test class without increasing its heap.
+    forkEvery = 1
 }
 
 dependencyLocking {

@@ -2,18 +2,27 @@ import { describe, expect, test } from "bun:test";
 
 import { AGENT_ALIASES, KNOWN_HARNESS_NAMES } from "../journal/registry.ts";
 import { registeredAgents } from "../../web/src/lib/harness/registry.ts";
+import { HARNESS_CATALOG_NAMES } from "../harness-catalog.ts";
 import { isMuxAgentName, MUX_AGENT_NAMES } from "./agents.ts";
 import { agentNameProblems } from "./conformance.ts";
 import type { MuxPane } from "./types.ts";
 
-// The agent-name rule (agents.ts), and the list it checks against. The web and bridge trees cannot
-// import one another in production code, so this file imports across the boundary on purpose, as
-// crew-level-contract.test.ts does: the list must be exactly what the two readers answer to.
+// H12's catalog is intentionally broader than pane-agent identities. Launch IDs are accepted for
+// panes created by explicit launch, but do not imply detection or grant a reader.
 
-describe("the contract's agent names are the names Collie's readers answer to", () => {
-  test("the list is the screen readers, the journal readers and the journal's aliases", () => {
+describe("the contract's exact agent names", () => {
+  test("every implemented screen and journal reader names a canonical contract kind", () => {
     const readers = new Set([...registeredAgents(), ...KNOWN_HARNESS_NAMES, ...Object.keys(AGENT_ALIASES)]);
-    expect([...MUX_AGENT_NAMES]).toEqual([...readers].toSorted());
+    for (const name of readers) expect(MUX_AGENT_NAMES).toContain(name);
+    expect([...MUX_AGENT_NAMES]).toEqual([
+      "agy", "amp", "antigravity", "claude", "cline", "codex", "copilot", "cursor", "devin",
+      "droid", "gemini", "grok", "hermes", "kiro", "kimi", "kilo", "letta", "maki",
+      "mastracode", "muse", "omp", "opencode", "pi", "qodercli", "qwen",
+    ]);
+    expect(HARNESS_CATALOG_NAMES).toHaveLength(24);
+    expect(MUX_AGENT_NAMES).toContain("antigravity");
+    expect(HARNESS_CATALOG_NAMES.every((name) => MUX_AGENT_NAMES.includes(name))).toBe(true);
+    expect(MUX_AGENT_NAMES.filter((name) => name !== "antigravity")).toHaveLength(HARNESS_CATALOG_NAMES.length);
   });
 
   test("shell and every harness name pass; a multiplexer's own id does not", () => {

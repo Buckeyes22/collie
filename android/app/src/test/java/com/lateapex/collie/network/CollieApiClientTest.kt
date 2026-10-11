@@ -29,6 +29,42 @@ import org.junit.Test
 import kotlinx.serialization.json.put
 
 class CollieApiClientTest {
+    @Test
+    fun agentCapabilityInventoryIsAnAuthenticatedScopedReadAndRetainsUnknownDimensionStates() = runBlocking {
+        val mounted = Connection(CollieOrigin(server.url("/nested/collie/").toString()), "phone", "token")
+        server.enqueue(jsonResponse(
+            """{"schema":1,"mux":"herdr","muxCapabilities":{"agentDetection":true,"agentSessionRef":false},"runtimeVersion":null,"rows":[{"kind":"gemini","label":"Gemini CLI","launch":"unverified","detection":"implemented","sessionReference":"implemented","journal":"unverified","webSemanticDialog":"unverified","webComposer":"unverified","media":"interface-ready","observedPanes":2,"observedSessionReferences":1,"version":"1.2.3","evidence":{"version":"fixed version probe","journal":"unverified","semantic":"unverified","media":"owner integration pending"}}],"note":"observations are current"}""",
+        ))
+
+        val result = api.agentCapabilities(mounted, Scope(host = "peer-1", session = "session-2"))
+        assertTrue(result is ApiResult.Success)
+        val value = (result as ApiResult.Success).value
+        assertEquals("herdr", value.mux)
+        assertEquals(false, value.muxCapabilities?.agentSessionRef)
+        assertEquals("unverified", value.rows.single().journal)
+        assertEquals("interface-ready", value.rows.single().media)
+        assertEquals("Gemini CLI", value.rows.single().label)
+        assertEquals(2, value.rows.single().observedPanes)
+        assertEquals(1, value.rows.single().observedSessionReferences)
+        assertEquals("1.2.3", value.rows.single().version)
+        val request = server.takeRequest()
+        assertEquals("GET", request.method)
+        assertEquals("/nested/collie/api/agents/capabilities?host=peer-1&session=session-2", request.path)
+        assertEquals("Bearer token", request.getHeader("Authorization"))
+        assertNull(request.getHeader("Origin"))
+
+        server.enqueue(MockResponse().setResponseCode(404).setBody("not found"))
+        assertTrue(api.agentCapabilities(mounted, Scope()) is ApiResult.Failure)
+        assertEquals("/nested/collie/api/agents/capabilities", server.takeRequest().path)
+
+        server.enqueue(jsonResponse("""{"schema":2,"mux":"herdr","rows":[],"note":"future"}"""))
+        val unsupportedSchema = api.agentCapabilities(mounted, Scope())
+        assertTrue(unsupportedSchema is ApiResult.Failure)
+        assertTrue((unsupportedSchema as ApiResult.Failure).error is ApiFailure.Protocol)
+        assertEquals("/nested/collie/api/agents/capabilities", server.takeRequest().path)
+    }
+
+
     private lateinit var server: MockWebServer
     private lateinit var api: CollieApiClient
     private lateinit var trustedHttpClient: OkHttpClient

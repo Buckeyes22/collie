@@ -431,6 +431,14 @@ class LiveWindow {
     let moved = false;
     for (const line of lines) {
       const reduction = reducer.push(line);
+      if (reduction.replace !== undefined) {
+        // A source-declared ordered snapshot can remove or move UUIDs. Those cannot be expressed by
+        // ordinary upserts while keeping old sequence positions. Start a new generation and assign
+        // a coherent sequence to the bounded replacement snapshot; clients already replace on gen.
+        this.replaceFromSnapshot(reduction.replace, rev);
+        moved = true;
+        continue;
+      }
       for (const entry of reduction.added) {
         // A uuid we ALREADY HOLD is a re-emit, not a new turn, and it must keep its place.
         //
@@ -470,6 +478,24 @@ class LiveWindow {
       }
     }
     if (moved) this.rev = rev;
+  }
+
+  private replaceFromSnapshot(entries: readonly TranscriptEntry[], rev: number): void {
+    this.rows = [];
+    this.byUuid.clear();
+    this.weight = 0;
+    this.nextSeq = SEQ_BASE;
+    this.gen = nextGen();
+    this.rev = rev;
+    this.trimmed = false;
+    for (const entry of entries) {
+      if (this.byUuid.has(entry.uuid)) continue;
+      const row: LiveRow = { seq: this.nextSeq++, rev, weight: weigh(entry), entry };
+      this.rows.push(row);
+      this.byUuid.set(entry.uuid, row);
+      this.weight += row.weight;
+    }
+    this.trim();
   }
 
   /** Bring the window back under both bounds, oldest first, never below {@link MIN_LIVE_ENTRIES}. */

@@ -596,4 +596,23 @@ Command: %2$s</string>
         <item quantity="one">%1$d entry</item>
         <item quantity="other">%1$d entries</item>
     </plurals>
+    <string name="agent_catalog_title">Agent support</string>
+    <string name="agent_catalog_explanation">Per-agent support is listed by dimension. Unverified means live version, protocol, or acceptance evidence is still missing.</string>
+    <string name="agent_catalog_refresh">Refresh support evidence</string>
+    <string name="agent_catalog_loading">Loading support evidence…</string>
+    <string name="agent_catalog_unavailable">Support evidence is unavailable for the current connection.</string>
+    <string name="agent_catalog_unsupported">This bridge does not provide the capability inventory.</string>
+    <string name="agent_catalog_backend">Owning runtime: %1$s</string>
+    <string name="agent_catalog_mux_features">Generic mux fields · detection: %1$s · session reference: %2$s</string>
+    <string name="agent_catalog_columns">Launch · detection · session · journal · web dialog · web composer · media</string>
+    <string name="agent_catalog_launch_line">Launch: %1$s · executable: %2$s · version: %3$s</string>
+    <string name="agent_catalog_dimensions">Detect %1$s · Session %2$s · Journal %3$s · Web dialog %4$s · Web composer %5$s · Media %6$s</string>
+    <string name="agent_catalog_observed">Current owner snapshot: %1$d matching panes · %2$d with session references</string>
+    <string name="agent_catalog_implemented">Implemented in source</string>
+    <string name="agent_catalog_unsupported_cell">Unsupported by this runtime</string>
+    <string name="agent_catalog_unverified">Needs evidence</string>
+    <string name="agent_catalog_interface_ready">Adapter ready; owner integration pending</string>
+    <string name="agent_catalog_executable_found">found</string>
+    <string name="agent_catalog_executable_missing">not found</string>
+    <string name="agent_catalog_not_probed">not probed</string>
 </resources>

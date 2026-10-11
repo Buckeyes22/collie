@@ -198,7 +198,12 @@ completed uploads do not persist the provider URI or its grant.
   remain unavailable until **Refresh history images** completes a current read for their turns;
   text, disclosure state, search and the loaded page range stay in place while that read runs.
 - Settings covers connection/reset, theme, terminal/draft sizing, notification
-  switches and snooze, paired-device revocation, connection state, Crew state, and Updates. Update start
+  switches and snooze, paired-device revocation, connection state, Crew state, a per-runtime Agent
+  support inventory, and Updates. Agent support separates all 24 H12 names from launch IDs, shows
+  bounded versions and current owner-snapshot identity/session counts, and keeps unobserved
+  dimensions unverified. Image
+  producers marked interface-ready still require the B34 owner ingestion and authorization path.
+  Update start
   requires preflight and device-write authorization; `/standby/update` retains the freshest visible
   run while the bridge restarts.
 - The dashboard banner and Server updates screen manage the connected Collie server through its

@@ -150,6 +150,7 @@ class SettingsActivityTest {
                 R.id.settings_behavior_preferences,
                 R.id.settings_server_controls,
                 R.id.settings_connection_card,
+                R.id.settings_agent_catalog_button,
                 R.id.settings_licenses_button,
                 R.id.settings_build_stamp,
             ),
@@ -170,6 +171,7 @@ class SettingsActivityTest {
         assertEquals(null, activity.findViewById<View>(R.id.settings_server_diagnostics))
         assertTrue(activity.findViewById<View>(R.id.settings_updates_button) is LinearLayout)
         assertTrue(activity.findViewById<View>(R.id.settings_pack_button) is LinearLayout)
+        assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.settings_agent_catalog_button).visibility)
     }
 
     @Test

@@ -146,6 +146,14 @@ describe("which routes cross a link", () => {
     expect(forwardAuditAction("launchers")).toBeNull();
   });
 
+  test("agent capability inventory is a scoped read forwarded to the owning runtime", () => {
+    expect(crewRouteFor("/api/agents/capabilities")).toBe("agents/capabilities");
+    expect(apiPathFor("agents/capabilities")).toBe("/api/agents/capabilities");
+    expect(forwardKind("agents/capabilities")).toBe("read");
+    expect(forwardAuditAction("agents/capabilities")).toBeNull();
+    expect(crewRouteFor("/api/agents/capabilities/launch")).toBeNull();
+  });
+
   test("the folder list and a star on it cross the link — folders live on the member that has them", () => {
     // #289: the new-space sheet's list is that member's own `folders.json`, so a `?host=` read or star
     // reaches the member, never the lead's file.

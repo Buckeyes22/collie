@@ -1,4 +1,4 @@
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename } from "node:path";
 
 import { HOST, type Host } from "./host.ts";
@@ -15,11 +15,9 @@ import type { HarnessInfo } from "./types.ts";
 // start a binary nobody listed, exactly as it cannot run a command line `launchers.toml` does not hold.
 //
 // ── WHICH NAMES ─────────────────────────────────────────────────────────────────────────────────
-// The ids are agent names the mux contract already accepts (`bridge/mux/agents.ts`): the name a pane
-// reports once the agent runs is the name it was started by, so the started pane reads with its own
-// harness straight away. `harness-launch.test.ts` fails when a contract name is neither here nor in
-// {@link NOT_STARTED}. The binary is the same word: Herdr names an agent by its process, which is
-// what made these the contract's names in the first place.
+// The ids are exact names the mux contract accepts (`bridge/mux/agents.ts`). For launch-only names,
+// accepting the pane identity enables the launch flow but does not imply a screen or journal reader;
+// unknown reader identities remain raw. `harness-launch.test.ts` pins this relationship.
 //
 // ── FOUND, WITH THE LOGIN SHELL'S PATH ──────────────────────────────────────────────────────────
 // A bridge under systemd or Herdr has a short PATH. The operator's shell, the one the new pane runs,
@@ -37,19 +35,48 @@ export interface HarnessLaunch {
   label: string;
   /** The program looked for, and the line typed into the new shell. */
   binary: string;
+  /** A read-only version spelling documented by this exact CLI, or no probe when undocumented. */
+  versionCommand?: VersionCommand;
+}
+
+/** Closed set of version commands. Callers cannot turn the owner probe into an argv passthrough. */
+export type VersionCommand = "double-dash" | "short" | "subcommand";
+
+function versionArgv(command: VersionCommand | undefined): readonly string[] | null {
+  switch (command) {
+    case "double-dash": return ["--version"];
+    case "short": return ["-v"];
+    case "subcommand": return ["version"];
+    case undefined: return null;
+  }
 }
 
 /** Every agent the New sheet may start, in the order the sheet lists them. */
 export const HARNESS_LAUNCHES: readonly HarnessLaunch[] = [
-  { id: "claude", label: "Claude Code", binary: "claude" },
-  { id: "codex", label: "Codex", binary: "codex" },
-  { id: "opencode", label: "opencode", binary: "opencode" },
-  { id: "pi", label: "pi", binary: "pi" },
-  { id: "omp", label: "omp", binary: "omp" },
-  { id: "grok", label: "Grok", binary: "grok" },
+  { id: "claude", label: "Claude Code", binary: "claude", versionCommand: "double-dash" },
+  { id: "codex", label: "Codex", binary: "codex", versionCommand: "double-dash" },
+  { id: "gemini", label: "Gemini CLI", binary: "gemini", versionCommand: "double-dash" },
+  { id: "cursor", label: "Cursor Agent", binary: "cursor-agent", versionCommand: "double-dash" },
+  { id: "devin", label: "Devin CLI", binary: "devin" },
+  { id: "opencode", label: "opencode", binary: "opencode", versionCommand: "double-dash" },
+  { id: "pi", label: "pi", binary: "pi", versionCommand: "double-dash" },
+  { id: "omp", label: "omp", binary: "omp", versionCommand: "double-dash" },
+  { id: "grok", label: "Grok", binary: "grok", versionCommand: "double-dash" },
   { id: "hermes", label: "Hermes", binary: "hermes" },
-  { id: "muse", label: "Muse", binary: "muse" },
-  { id: "agy", label: "Antigravity", binary: "agy" },
+  { id: "muse", label: "Muse", binary: "muse", versionCommand: "double-dash" },
+  { id: "agy", label: "Antigravity", binary: "agy", versionCommand: "double-dash" },
+  { id: "cline", label: "Cline", binary: "cline", versionCommand: "double-dash" },
+  { id: "mastracode", label: "Mastra Code", binary: "mastracode" },
+  { id: "copilot", label: "GitHub Copilot CLI", binary: "copilot", versionCommand: "double-dash" },
+  { id: "kimi", label: "Kimi CLI", binary: "kimi", versionCommand: "double-dash" },
+  { id: "kiro", label: "Kiro CLI", binary: "kiro-cli", versionCommand: "double-dash" },
+  { id: "droid", label: "Factory Droid", binary: "droid", versionCommand: "short" },
+  { id: "amp", label: "Amp", binary: "amp", versionCommand: "subcommand" },
+  { id: "kilo", label: "Kilo CLI", binary: "kilo" },
+  { id: "qodercli", label: "Qoder CLI", binary: "qoder", versionCommand: "double-dash" },
+  { id: "qwen", label: "Qwen Code", binary: "qwen", versionCommand: "double-dash" },
+  { id: "letta", label: "Letta Code", binary: "letta" },
+  { id: "maki", label: "Maki", binary: "maki" },
 ];
 
 /**
@@ -117,14 +144,92 @@ export interface HarnessProbeDeps {
   askPath?: LoginPathAsk;
   /** Whether a binary is found on a PATH. Defaults to {@link findTool}. */
   find?: (binary: string, path: string | undefined) => boolean;
+  /** Resolves a registered binary for bounded version probing. */
+  resolve?: (binary: string, path: string | undefined) => string | null;
+  /** Test seam for the read-only, fixed-argv version probe. */
+  version?: (executable: string, searchPath: string | undefined, command: VersionCommand) => Promise<string | null>;
   now?: () => number;
 }
 
 /** What the routes need: this machine's harnesses with their found flag. */
 export interface HarnessProbe {
   list(): Promise<HarnessInfo[]>;
+  /** Safe, allowlisted documented version results. Values are parsed versions only, never raw output. */
+  versions(): Promise<ReadonlyMap<string, string>>;
   /** Whether `id` is a harness Collie starts here, found or not. */
   launch(id: string): HarnessLaunch | undefined;
+}
+
+/** A version command is fixed, bounded, and only run when documented for an explicit launch row. */
+export const VERSION_PROBE_TIMEOUT_MS = 1_500;
+export const VERSION_PROBE_MAX_BYTES = 4_096;
+const VERSION_RE = /(?:^|[^0-9A-Za-z])v?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?)(?=$|[^0-9A-Za-z.+-]|\.(?=$|[\s,);]))/;
+
+/**
+ * Ask an already allowlisted executable for its version with a fixed `--version` argument.
+ * The child receives no pairing, cloud, provider, or Collie secrets from the bridge environment.
+ * Only a bounded semantic version is returned; arbitrary command output never crosses the API.
+ */
+export async function probeHarnessVersion(
+  executable: string,
+  searchPath?: string,
+  command: VersionCommand = "double-dash",
+): Promise<string | null> {
+  let proc: ReturnType<typeof Bun.spawn> | null = null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const inherited = Object.fromEntries(
+      ["SYSTEMROOT", "WINDIR", "TEMP", "TMP", "LANG", "LC_ALL"]
+        .flatMap((key) => process.env[key] === undefined ? [] : [[key, process.env[key]!]]),
+    );
+    const env = { PATH: searchPath ?? process.env.PATH ?? "", NO_COLOR: "1", CI: "1", ...inherited };
+    const argv = versionArgv(command);
+    if (argv === null) return null;
+    proc = Bun.spawn([executable, ...argv], {
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "ignore",
+      env,
+      cwd: tmpdir(),
+    });
+    let expired = false;
+    timer = setTimeout(() => {
+      expired = true;
+      try { proc?.kill(); } catch { /* already exited */ }
+    }, VERSION_PROBE_TIMEOUT_MS);
+
+    const stdout = proc.stdout;
+    if (!(stdout instanceof ReadableStream)) {
+      try { proc.kill(); } catch { /* already exited */ }
+      return null;
+    }
+    const reader = stdout.getReader();
+    const chunks: Uint8Array[] = [];
+    let length = 0;
+    while (length <= VERSION_PROBE_MAX_BYTES) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      length += value.byteLength;
+      if (length > VERSION_PROBE_MAX_BYTES) {
+        try { proc.kill(); await proc.exited; } catch { /* already exited */ }
+        return null;
+      }
+      chunks.push(value);
+    }
+    const exitCode = await proc.exited;
+    if (expired || exitCode !== 0) return null;
+    const bytes = new Uint8Array(length);
+    let offset = 0;
+    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+    const output = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+    const match = VERSION_RE.exec(output);
+    return match?.[1] ?? null;
+  } catch {
+    try { proc?.kill(); } catch { /* already exited */ }
+    return null;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 /**
@@ -138,8 +243,9 @@ export function createHarnessProbe(deps: HarnessProbeDeps = {}): HarnessProbe {
   const host = deps.host ?? HOST;
   const askPath = deps.askPath ?? askLoginPath;
   const now = deps.now ?? (() => Date.now());
+  const resolve = deps.resolve ?? ((binary: string, path: string | undefined) => findTool(binary, { ...env, PATH: path }, home, host));
   const find =
-    deps.find ?? ((binary: string, path: string | undefined) => findTool(binary, { ...env, PATH: path }, home, host) !== null);
+    deps.find ?? ((binary: string, path: string | undefined) => resolve(binary, path) !== null);
 
   let loginPath: Promise<string | undefined> | null = null;
   const pathForSearch = (): Promise<string | undefined> => {
@@ -156,6 +262,7 @@ export function createHarnessProbe(deps: HarnessProbeDeps = {}): HarnessProbe {
   };
 
   let cached: { at: number; list: HarnessInfo[] } | null = null;
+  let versionCache: { at: number; versions: ReadonlyMap<string, string> } | null = null;
   return {
     async list() {
       // A copy each time, so a caller that edits the answer never edits the cache.
@@ -164,6 +271,30 @@ export function createHarnessProbe(deps: HarnessProbeDeps = {}): HarnessProbe {
       const list = HARNESS_LAUNCHES.map((h) => ({ id: h.id, label: h.label, found: find(h.binary, path) }));
       cached = { at: now(), list };
       return structuredClone(list);
+    },
+    async versions() {
+      if (versionCache !== null && now() - versionCache.at < FOUND_TTL_MS) return new Map(versionCache.versions);
+      const path = await pathForSearch();
+      const version = deps.version ?? probeHarnessVersion;
+      const found = new Set((await this.list()).filter((item) => item.found).map((item) => item.id));
+      const candidates = HARNESS_LAUNCHES.filter((h) => found.has(h.id));
+      const entries: Array<readonly [string, string]> = [];
+      let next = 0;
+      const worker = async () => {
+        while (next < candidates.length) {
+          const h = candidates[next++];
+          if (h === undefined) return;
+          const executable = resolve(h.binary, path);
+          if (executable === null) continue;
+          if (h.versionCommand === undefined) continue;
+          const value = await version(executable, path, h.versionCommand);
+          if (value !== null) entries.push([h.id, value]);
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(3, candidates.length) }, worker));
+      const versions = new Map(entries);
+      versionCache = { at: now(), versions };
+      return new Map(versions);
     },
     launch: harnessLaunch,
   };

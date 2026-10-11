@@ -130,6 +130,42 @@ describe("POST /api/launch — by id", () => {
     expect(mux.texts).toEqual([["w1:p1", "claude"]]);
   });
 
+  test.each([
+    ["cline", "Cline", "cline"],
+    ["copilot", "GitHub Copilot CLI", "copilot"],
+    ["kimi", "Kimi CLI", "kimi"],
+    ["qwen", "Qwen Code", "qwen"],
+  ])("the prepared %s ID launches its registered binary without implying reader support", async (id, label, binary) => {
+    const mux = new FakeMux();
+    const { status, body } = await run(mux, { harness: id, cwd: "/home/op" });
+    expect(status).toBe(200);
+    expect(body?.ok).toBe(true);
+    expect(mux.spaces).toHaveLength(1);
+    expect(mux.spaces[0]?.label).toBe(label);
+    expect(mux.texts).toEqual([["w1:p1", binary]]);
+  });
+
+  test.each([
+    ["gemini", "Gemini CLI", "gemini"],
+    ["cursor", "Cursor Agent", "cursor-agent"],
+    ["devin", "Devin CLI", "devin"],
+    ["mastracode", "Mastra Code", "mastracode"],
+    ["kiro", "Kiro CLI", "kiro-cli"],
+    ["droid", "Factory Droid", "droid"],
+    ["amp", "Amp", "amp"],
+    ["kilo", "Kilo CLI", "kilo"],
+    ["qodercli", "Qoder CLI", "qoder"],
+    ["letta", "Letta Code", "letta"],
+    ["maki", "Maki", "maki"],
+  ])("the documented %s launch uses only its registered binary", async (id, label, binary) => {
+    const mux = new FakeMux();
+    const { status, body } = await run(mux, { harness: id, cwd: "/home/op" });
+    expect(status).toBe(200);
+    expect(body?.ok).toBe(true);
+    expect(mux.spaces).toEqual([{ cwd: "/home/op", label }]);
+    expect(mux.texts).toEqual([["w1:p1", binary]]);
+  });
+
   test("an id the bridge does not start is refused before anything runs", async () => {
     const mux = new FakeMux();
     const { status, body } = await run(mux, { harness: "claude; rm -rf ~" });

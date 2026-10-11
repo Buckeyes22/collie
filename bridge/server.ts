@@ -177,6 +177,7 @@ import type { CrewTlsOptions } from "./crew/transport.ts";
 import { createSttAdmission, MAX_STT_AUDIO_BYTES, sttCapability, transcribeRequest } from "./stt/http.ts";
 import type { SttProvider } from "./stt/provider.ts";
 import { uploadTooLarge } from "./uploads.ts";
+import { agentCapabilities } from "./agent-capabilities.ts";
 import { MUX_LOGO_PATH, OPERATOR_FONTS_PATH, journalAgentOf, toPaneWire } from "./types.ts";
 import type { LaunchCheckResponse, MachineAlertsResponse } from "./types.ts";
 import { parseMachineAlerts } from "./machine-parse.ts";
@@ -1631,6 +1632,22 @@ export async function startServer(opts: {
       const rt = await caller.resolve();
       if (rt instanceof Response) return rt;
       return launchersRoute(allowedLaunchers, req.headers.get("accept-encoding"), harnesses, launchersAdding);
+    }
+    // Per-kind implementation evidence is scoped to the owning runtime just like launchers. It is
+    // a paired read and contains no PATH or argv; only the allowlisted bounded --version probes run.
+    if (pathname === "/api/agents/capabilities" && req.method === "GET") {
+      const denied = caller.gate("read");
+      if (denied) return denied;
+      if (!controlScope(url, "session")) {
+        return refusalResponse(refusal("scope.malformed", "Malformed agent capability scope", "scope"), 400);
+      }
+      const rt = await caller.resolve();
+      if (rt instanceof Response) return rt;
+      return json(await agentCapabilities({
+        mux: rt.herdr,
+        harnesses,
+        journals: journals ?? {},
+      }), req.headers.get("accept-encoding"));
     }
     // Add, remove or rename a row a phone added (ADR 0094). Writes, on the write gate, and
     // session-scoped for `/api/launchers`' reason: `?host=` reaches THAT machine's own store through

@@ -30,8 +30,24 @@ object PromptBinding {
             "grok" -> grokComposerRegion(text)
             "omp" -> ompComposerRegion(text)
             "agy", "antigravity" -> agyComposerRegion(text)
+            "muse" -> museComposerRegion(text)
             else -> tailRegion(text)
         }
+    }
+
+    /** Muse's measured bare prompt is live only when no recognized dialog owns the keyboard. */
+    private fun museComposerRegion(text: String): String? {
+        if (AgentSemanticParser.detect("muse", text, revision = 0) != null) return null
+        val lines = normalizedLines(text)
+        val status = lines.lastOrNull() ?: return null
+        if (!MUSE_STATUS.matches(status)) return null
+        val bottom = lines.lastIndex - 1
+        if (bottom < 2 || !MUSE_RULE.matches(lines[bottom])) return null
+        val prompt = lines[bottom - 1]
+        if (prompt != "❯") return null
+        val voice = lines[bottom - 2]
+        if (!MUSE_VOICE.matches(voice)) return null
+        return prompt.takeIf { verifyNearTail(text, it) }
     }
 
     private fun codexComposerRegion(text: String): String? {
@@ -262,5 +278,8 @@ object PromptBinding {
     private val OMP_OPEN_BOTTOM = Regex("^╰─(?: ([\\s\\S]*))?$")
     private val AGY_BORDER = Regex("^[─━═-]{8,}$")
     private val AGY_PROMPTS = setOf(">", "❯", "›")
+    private val MUSE_RULE = Regex("^[─━═-]{8,}$")
+    private val MUSE_VOICE = Regex("^─{2,} Voice input \\(.*\\) ─{8,}$")
+    private val MUSE_STATUS = Regex("^  \\S.*·.*$")
     private val BOX_DRAWING_RANGE = 0x2500..0x257f
 }

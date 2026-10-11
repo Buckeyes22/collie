@@ -2236,7 +2236,7 @@ class PaneActivity : AppCompatActivity() {
     }
 
     private fun hasNativeSemanticPresentation(surface: SemanticSurface): Boolean = when (val model = surface.nativeModel) {
-        is NativeSemanticModel.Prompt -> model.options.isNotEmpty()
+        is NativeSemanticModel.Prompt -> model.options.isNotEmpty() || model.feedback?.focused == true
         is NativeSemanticModel.Wizard -> model.review || model.options.isNotEmpty()
         is NativeSemanticModel.Preview -> model.options.isNotEmpty()
         is NativeSemanticModel.Multi -> model.review || model.options.isNotEmpty()
@@ -2248,11 +2248,32 @@ class PaneActivity : AppCompatActivity() {
     private fun renderNativePrompt(surface: SemanticSurface, model: NativeSemanticModel.Prompt) {
         binding.semanticDetail.text = model.family
         binding.semanticDetail.isVisible = true
+        if (model.family == "omp-note-editor") {
+            val note = model.feedback
+            if (note?.focused == true && note.text.isEmpty()) {
+                addSemanticEditorOffer(
+                    getString(R.string.semantic_add_note),
+                    getString(R.string.semantic_note_title),
+                    "",
+                    240,
+                    getString(R.string.semantic_save),
+                ) { viewModel.sendSemanticIntent(surface, SemanticIntent.OmpNoteSubmit(it)) }
+            } else {
+                binding.semanticActions.addView(messageText(note?.text.orEmpty()))
+            }
+            addSemanticStaticAction(surface, "cancel", getString(R.string.semantic_cancel))
+            return
+        }
         model.options.forEach { option ->
             option.actionId?.let { id ->
                 surface.actions.firstOrNull { it.id == id }?.let { action ->
                     addSemanticOption(option.numberedLabel(), option.description, option.pointed, option.chosen) {
-                        viewModel.sendSemanticIntent(surface, SemanticIntent.Static(action))
+                        val pointerWalk = action.keys.lastOrNull() == "Enter" &&
+                            action.keys.dropLast(1).all { it == "Up" || it == "Down" }
+                        viewModel.sendSemanticIntent(
+                            surface,
+                            if (pointerWalk) SemanticIntent.PointerSelect(action) else SemanticIntent.Static(action),
+                        )
                     }
                 }
             }
@@ -2341,18 +2362,46 @@ class PaneActivity : AppCompatActivity() {
         addSemanticStepper(model.steps, surface)
         if (surface.interactionLocked) {
             binding.semanticActions.addView(messageText(getString(R.string.semantic_controls_locked)))
+            return
         }
         if (model.review) {
             if (model.incomplete) binding.semanticActions.addView(messageText(getString(R.string.semantic_incomplete)))
-            addSemanticStaticAction(surface, "submit", getString(R.string.semantic_submit_answers))
-            addSemanticStaticAction(surface, "cancel", getString(R.string.semantic_cancel))
+            if (surface.detail != "muse-checkbox-review") {
+                addSemanticStaticAction(surface, "submit", getString(R.string.semantic_submit_answers))
+                addSemanticStaticAction(surface, "cancel", getString(R.string.semantic_cancel))
+                return
+            }
+            model.reviewSummaries.forEach { summary -> binding.semanticActions.addView(messageText(summary)) }
+            surface.actions.firstOrNull { it.id == "review-submit" }?.let { action ->
+                addSemanticButton(getString(R.string.semantic_submit_answers), emphasized = true) {
+                    viewModel.sendSemanticIntent(surface, SemanticIntent.MultiReviewSelect(action))
+                }
+            }
+            surface.actions.firstOrNull { it.id == "review-interrupt" }?.let { action ->
+                addSemanticButton(getString(R.string.semantic_interrupt_turn)) {
+                    viewModel.sendSemanticIntent(surface, SemanticIntent.MultiReviewSelect(action))
+                }
+            }
+            addSemanticStaticAction(surface, "review-back", getString(R.string.semantic_edit_answers))
             return
         }
         model.options.forEach { option ->
-            val action = option.actionId?.let { id -> surface.actions.firstOrNull { it.id == id } } ?: return@forEach
             val mark = if (option.checked == true) "☑" else "☐"
+            val action = option.actionId?.let { id -> surface.actions.firstOrNull { it.id == id } }
+            if (action == null && surface.detail == "omp-multi") {
+                binding.semanticActions.addView(messageText("$mark  ${option.label} — ${option.description.orEmpty()}"))
+                return@forEach
+            }
+            action ?: return@forEach
             addSemanticOption("$mark  ${option.numberedLabel()}", option.description, option.pointed, false) {
-                viewModel.sendSemanticIntent(surface, SemanticIntent.Static(action))
+                val intent = if (surface.detail == "muse-pointer-checkbox") {
+                    SemanticIntent.MultiToggle(action)
+                } else if (surface.detail == "omp-multi") {
+                    SemanticIntent.OmpMultiToggle(action)
+                } else {
+                    SemanticIntent.Static(action)
+                }
+                viewModel.sendSemanticIntent(surface, intent)
             }
         }
         model.advanceLabel?.let { label ->
