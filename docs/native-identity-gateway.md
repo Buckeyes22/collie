@@ -13,6 +13,15 @@ must explicitly declare PKCE S256, DPoP ES256 and response `iss`; declared endpo
 JWKS must match the operator pins. The supported audience is one exact string. All endpoints are
 HTTPS on the declared issuer origin. No opaque tokens, client secret, cookies or arbitrary issuer guessing.
 
+If the issuer requires an API scope to issue that audience, declare it in the profile's optional
+`scopes` array, for example `"scopes": ["collie.native"]`. Collie always requests `openid offline_access`
+and appends only those operator-declared scopes; the `audience` parameter alone does not select an
+API resource on every issuer. Additional scopes are unique RFC 6749 ASCII scope tokens, at most eight
+of 128 characters each, with the complete space-separated request limited to 512 characters.
+Do not repeat `openid` or `offline_access` in this array. The native import review displays the complete
+requested scope list. Profiles without the array preserve their existing request. API scopes do not
+relax the required signed token audience, issuer, client or proof-key validation.
+
 Copy the issuer identifier exactly from trusted discovery, including whether its root URL ends in
 `/`. Both forms are valid; Collie preserves that literal for discovery, callback, signed-token
 and device-binding comparisons. Other profile endpoints retain their canonical URL checks.

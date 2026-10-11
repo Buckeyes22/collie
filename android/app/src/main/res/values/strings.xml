@@ -727,6 +727,7 @@ Command: %2$s</string>
 Issuer: %2$s
 Public client: %3$s
 Only the declared issuer receives this authorization exchange. Pairing is retained.</string>
+    <string name="proxy_identity_review_scopes">Requested identity scopes: %1$s</string>
     <string name="proxy_identity_profile_ready">Profile configured. Sign in to authorize native access.</string>
     <string name="proxy_identity_waiting">Checking the configured identity transaction…</string>
     <string name="proxy_identity_not_connected">Configure a Collie connection first.</string>

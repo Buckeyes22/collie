@@ -7,6 +7,8 @@ export interface NativeAccessProfile {
   readonly issuer: string;
   readonly clientId: string;
   readonly audience: string;
+  /** Additional operator-declared API scopes; OpenID/offline scopes remain mandatory. */
+  readonly scopes?: readonly string[];
   readonly redirectUri: typeof NATIVE_REDIRECT;
   readonly authorizationEndpoint: string;
   readonly tokenEndpoint: string;
@@ -41,7 +43,14 @@ export function validJwk(value: JsonValue | undefined): value is JsonValue & EcP
 export function parseProfile(value: JsonValue): NativeAccessProfile {
   if (!isObject(value) || value.schema !== 1 || value.redirectUri !== NATIVE_REDIRECT || !Array.isArray(value.algorithms) || value.algorithms.length !== 1 || value.algorithms[0] !== "ES256" || !Array.isArray(value.jwks) || value.jwks.length < 1 || value.jwks.length > 8 || !value.jwks.every(validJwk)) throw new Error("native.profile");
   if (value.jwks.some((key) => typeof key.kid !== "string") || new Set(value.jwks.map((key) => key.kid)).size !== value.jwks.length) throw new Error("native.profile_keys");
-  if (Object.keys(value).some((key) => !["schema","issuer","clientId","audience","redirectUri","authorizationEndpoint","tokenEndpoint","jwksEndpoint","gatewayOrigin","algorithms","jwks"].includes(key))) throw new Error("native.profile");
+  if (Object.keys(value).some((key) => !["schema","issuer","clientId","audience","scopes","redirectUri","authorizationEndpoint","tokenEndpoint","jwksEndpoint","gatewayOrigin","algorithms","jwks"].includes(key))) throw new Error("native.profile");
+  let scopes: string[] | undefined;
+  if (value.scopes !== undefined) {
+    if (!Array.isArray(value.scopes) || value.scopes.length < 1 || value.scopes.length > 8 ||
+        !value.scopes.every((scope): scope is string => typeof scope === "string" && /^[\x21\x23-\x5b\x5d-\x7e]{1,128}$/u.test(scope) && scope !== "openid" && scope !== "offline_access")) throw new Error("native.profile_scopes");
+    scopes = value.scopes;
+    if (new Set(scopes).size !== scopes.length || ["openid", "offline_access", ...scopes].join(" ").length > 512) throw new Error("native.profile_scopes");
+  }
   const strings = ["issuer","clientId","audience","authorizationEndpoint","tokenEndpoint","jwksEndpoint","gatewayOrigin"];
   for (const key of strings) if (typeof value[key] !== "string" || value[key].length < 1 || value[key].length > 2048 || hasControl(value[key])) throw new Error("native.profile");
   if (String(value.issuer).length > 256 || String(value.clientId).length > 256 || String(value.audience).length > 256) throw new Error("native.profile");
@@ -50,7 +59,9 @@ export function parseProfile(value: JsonValue): NativeAccessProfile {
   const gateway = httpsEndpoint(String(value.gatewayOrigin));
   if (gateway.pathname !== "/") throw new Error("native.gateway_origin");
   // SAFETY: all required fields and the closed algorithm/key shapes are validated above; project only those fields.
-  return { schema: 1, issuer: String(value.issuer), clientId: String(value.clientId), audience: String(value.audience), redirectUri: NATIVE_REDIRECT, authorizationEndpoint: String(value.authorizationEndpoint), tokenEndpoint: String(value.tokenEndpoint), jwksEndpoint: String(value.jwksEndpoint), gatewayOrigin: gateway.href, algorithms: ["ES256"], jwks: value.jwks as EcPublicJwk[] };
+  const profile: NativeAccessProfile = { schema: 1, issuer: String(value.issuer), clientId: String(value.clientId), audience: String(value.audience), redirectUri: NATIVE_REDIRECT, authorizationEndpoint: String(value.authorizationEndpoint), tokenEndpoint: String(value.tokenEndpoint), jwksEndpoint: String(value.jwksEndpoint), gatewayOrigin: gateway.href, algorithms: ["ES256"], jwks: value.jwks as EcPublicJwk[] };
+  if (scopes === undefined) return profile;
+  return { ...profile, scopes: [...scopes] };
 }
 
 export function validDeviceHeader(value: string): boolean {

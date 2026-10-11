@@ -66,7 +66,8 @@ class ProxySignInActivity : AppCompatActivity() {
             synchronized(custodyLock) { reviewed?.raw?.fill('\u0000'); reviewed = candidate }
             profile.text.clear()
             review = androidx.appcompat.app.AlertDialog.Builder(this).setTitle(R.string.proxy_identity_review)
-                .setMessage(getString(R.string.proxy_identity_review_details, actor.key.origin, parsed.issuer, parsed.clientId))
+                .setMessage(getString(R.string.proxy_identity_review_details, actor.key.origin, parsed.issuer, parsed.clientId) + "\n" +
+                    getString(R.string.proxy_identity_review_scopes, parsed.authorizationScope))
                 .setPositiveButton(R.string.proxy_identity_import) { _, _ ->
                     val owned = synchronized(custodyLock) {
                         if (!started || actorVersion.get() != candidate.version || reviewed !== candidate) null

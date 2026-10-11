@@ -6,6 +6,8 @@ the first Android release from this fork.
 
 ## Unreleased
 
+- Native identity sign-in requests the operator profile's bounded additional API scopes and displays the complete scope list during import review, while preserving exact signed token audience and proof-key verification.
+
 - Accept an exact OIDC root issuer without a trailing slash while preserving literal discovery, callback and signed-token issuer checks.
 
 - Open current, bridge-listed Changes source in native Files with the original scoped read actor; explain historical and deleted diffs and preserve Files device-read refusals.

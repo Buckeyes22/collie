@@ -53,7 +53,7 @@ class ProxySignInCoordinator(private val store: ProxyIdentityStore, private val 
         check(admitted() && store.commit(lease, r.copyCustody(transaction = t)))
         return profile.authorizationEndpoint.toHttpUrl().newBuilder().addQueryParameter("response_type", "code")
             .addQueryParameter("client_id", profile.clientId).addQueryParameter("redirect_uri", ProxyProfile.REDIRECT)
-            .addQueryParameter("scope", "openid offline_access").addQueryParameter("audience", profile.audience)
+            .addQueryParameter("scope", profile.authorizationScope).addQueryParameter("audience", profile.audience)
             .addQueryParameter("state", t.state).addQueryParameter("nonce", t.nonce)
             .addQueryParameter("code_challenge_method", "S256").addQueryParameter("code_challenge", ProxyJose.hash(t.verifier.encodeToByteArray()))
             .addQueryParameter("dpop_jkt", key.thumbprint).build().toString()
