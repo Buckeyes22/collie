@@ -75,7 +75,7 @@ import type {
 } from "./types.ts";
 
 function realpathOf(candidate: string): string {
-  return process.platform === "win32" ? realpathSync.native(candidate) : realpathSync(candidate);
+  return HOST.platform === "win32" ? realpathSync.native(candidate) : realpathSync(candidate);
 }
 
 /** A session uuid as Claude writes it — canonical 8-4-4-4-12 hex. Anything else never touches fs. */
