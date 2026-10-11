@@ -803,7 +803,7 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        val dialog = CollieBottomSheetDialog(this, getString(R.string.new_space))
+        val dialog = CollieBottomSheetDialog(this, getString(R.string.new_space), initiallyExpanded = true)
         val body = sheetBody()
         var selectedId = NewSpaceHostModel.defaultHostId(options, viewModel.currentScope.host)
         lateinit var render: () -> Unit
@@ -973,7 +973,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showPlainSpaceDialog(scope: Scope) {
-        val dialog = CollieBottomSheetDialog(this, getString(R.string.new_space))
+        val dialog = CollieBottomSheetDialog(this, getString(R.string.new_space), initiallyExpanded = true)
         val body = sheetBody()
         val cwd = sheetTextField(R.string.space_directory_optional)
         val label = sheetTextField(R.string.space_label_optional)
@@ -1041,7 +1041,7 @@ class MainActivity : AppCompatActivity() {
     /** B.3: one sheet that names the repository and the base it branches from. */
     private fun showCreateWorktree(repos: List<WorkspaceSummary>, scope: Scope) {
         val repository = (application as CollieApplication).container.repository
-        val dialog = CollieBottomSheetDialog(this, getString(R.string.worktree_create))
+        val dialog = CollieBottomSheetDialog(this, getString(R.string.worktree_create), initiallyExpanded = true)
         val body = sheetBody()
         var selected = repos.first()
 

@@ -6,6 +6,8 @@ the first Android release from this fork.
 
 ## Unreleased
 
+- Open New Space and worktree creation sheets expanded, with a bounded scrolling viewport that keeps Create reachable at large text sizes.
+
 - Decode declared string agent statuses and tolerate bounded object-shaped status compatibility while showing unfamiliar states as unknown.
 
 - Render structured history calls and question choices with distinct completed, denied and failed outcomes.
