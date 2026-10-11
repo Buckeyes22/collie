@@ -345,6 +345,18 @@ describe("GET /api/pane/:id/changes and /api/workspace/:id/changes", () => {
     expect(unlisted).toMatchObject({ available: false, reason: "unknown-path" });
   });
 
+  test("pane and workspace routes expose the same bounded pinned history page", async () => {
+    const workspace = await (await workspaceChanges(engine, "w1", at("?view=history&repo=two&limit=1&offset=0"), req, home)).json();
+    expect(workspace).toMatchObject({ workspaceId: "w1", workspaceLabel: "ws", available: true, repo: "two", offset: 0, limit: 1 });
+    expect(workspace.commits).toHaveLength(1);
+    expect(workspace.commits[0].hash).toBe(workspace.headHash);
+    const paneHistory = await (await paneChanges(engine, "w1:p2", at(`?view=history&repo=two&head=${workspace.headHash}&limit=1&offset=0`), req, home)).json();
+    expect(paneHistory).toMatchObject({ paneId: "w1:p2", workspaceId: "w1", available: true, repo: "two", headHash: workspace.headHash });
+    expect(paneHistory.commits).toEqual(workspace.commits);
+    const unknown = await (await workspaceChanges(engine, "w1", at("?view=history&repo=not-listed&offset=0&limit=1"), req, home)).json();
+    expect(unknown).toMatchObject({ available: false, reason: "unknown-repo" });
+  });
+
   test("the mux folder is preferred over the panes' common folder", async () => {
     const saved = snap;
     snap = { ...snap, workspaces: [space("w1", "ws", join(ws, "two")), space("w2", "home")] };

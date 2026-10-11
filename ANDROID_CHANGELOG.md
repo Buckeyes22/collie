@@ -17,7 +17,7 @@ the first Android release from this fork.
 - Add reachable native recipe management and one-off Run workflows with host-declared policy gates, exact checked command text, explicit no-prompts consent, scoped recent history, and same-request recovery for uncertain runs.
 - Add a scoped, device-authorized pane process details screen for foreground processes, runtime directory and restore diagnostics, with explicit unsupported and unavailable states.
 
-- Add a read-only Changes browser from pane actions and Space headers, with bounded nested-repository listings, file diffs and latest-commit views.
+- Add a read-only Changes browser from pane actions and Space headers, with bounded nested-repository listings, file diffs, latest-commit views and pinned paged commit history, with captured-authority admission, a visible 10,000-commit boundary and strict page/metadata bounds compatible with the native streaming limit.
 - Persist version- and scope-specific update dismissals while keeping digest reminders separate.
 - Bind reads, terminal actions and media to the current server, Crew leader, host, session and pane; freeze unverified access without discarding a valid pairing, and retire sensitive content for authoritative pairing refusal.
 - Keep restored History images inert until a reachable fresh read admits their turns; carry the same captured authority through live and legacy older-page reads.

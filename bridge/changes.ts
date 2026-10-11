@@ -62,6 +62,7 @@ import { containedRealpath } from "./journal/files.ts";
 import type {
   ChangeCommit,
   ChangeCommitDiff,
+  ChangeCommitHistoryAnswer,
   ChangeDiff,
   ChangedFile,
   ChangedRepo,
@@ -110,9 +111,14 @@ export interface ChangesParams {
   nested: boolean;
   repo: string | null;
   path: string | null;
-  /** `commit` (`?view=commit`): the repo's last commit instead of what is uncommitted. Absent
-   *  reads as `changes`. */
-  view?: "changes" | "commit";
+  /** `commit` shows one commit; `history` returns a bounded first-parent page. */
+  view?: "changes" | "commit" | "history";
+  /** Stable history anchor and bounded offset. These are display identities, never paths. */
+  historyHead?: string | null;
+  historyOffset?: number;
+  historyLimit?: number;
+  /** A selected commit from a history page; absent keeps the historical HEAD-only behavior. */
+  commitHash?: string | null;
 }
 
 /** The query, clamped. Pure + exported so the clamping is unit-tested without Bun.serve. */
@@ -125,9 +131,34 @@ export function changesParams(url: URL): ChangesParams {
   const nested = url.searchParams.get("nested") !== "0";
   const repo = url.searchParams.get("repo");
   const path = url.searchParams.get("path");
-  const view = url.searchParams.get("view") === "commit" ? "commit" : "changes";
-  return { depth, nested, repo, path, view };
+  const rawView = url.searchParams.get("view");
+  const view = rawView === "commit" ? "commit" : rawView === "history" ? "history" : "changes";
+  const rawOffsetText = url.searchParams.get("offset");
+  const rawLimitText = url.searchParams.get("limit");
+  const rawOffset = rawOffsetText === null ? 0 : Number(rawOffsetText);
+  const rawLimit = rawLimitText === null ? DEFAULT_HISTORY_PAGE_SIZE : Number(rawLimitText);
+  const rawHead = url.searchParams.get("head");
+  const rawCommit = url.searchParams.get("commit");
+  const result: ChangesParams = { depth, nested, repo, path, view };
+  if (view === "history") {
+    result.historyHead = rawHead;
+    result.historyOffset = Number.isSafeInteger(rawOffset) && rawOffset >= 0 && rawOffset <= MAX_HISTORY_OFFSET ? rawOffset : -1;
+    result.historyLimit = Number.isSafeInteger(rawLimit) && rawLimit > 0 ? Math.min(rawLimit, MAX_HISTORY_PAGE_SIZE) : -1;
+  }
+  if (rawCommit !== null) result.commitHash = rawCommit;
+  return result;
 }
+
+/** History requests cap both work per page and the total traversable first-parent window. */
+export const DEFAULT_HISTORY_PAGE_SIZE = 30;
+export const MAX_HISTORY_PAGE_SIZE = 50;
+export const MAX_HISTORY_OFFSET = 10_000;
+const MAX_HISTORY_BYTES = 14 * 1024 * 1024;
+/** Serialized history DTO, before bounded target metadata. Native retains its 5 MiB ceiling.
+ * Fifty rows at 500 subject / 1024 author UTF-16 units, even six-byte JSON escaping, fit below
+ * 512 KiB; the 1 MiB final check also covers repo/name and future additive fields. Raw commit
+ * messages remain separately bounded and are never copied into this DTO. */
+export const MAX_HISTORY_RESPONSE_BYTES = 1024 * 1024;
 
 // ── Git, run safely ─────────────────────────────────────────────────────────────────────────────
 
@@ -847,6 +878,7 @@ export async function fileDiff(cwd: string, params: ChangesParams): Promise<Chan
 const MAX_COMMIT_BYTES = 256 * 1024;
 /** Characters of a subject kept. */
 const MAX_SUBJECT_CHARS = 500;
+const MAX_AUTHOR_CHARS = 1024;
 
 /** What a commit view needs out of one commit object. */
 export interface ParsedCommit {
@@ -878,8 +910,9 @@ export function parseCommitObject(raw: string): ParsedCommit {
     } else if (line.startsWith("author ")) {
       const m = /^author (.*?) ?<[^>]*> (\d+) [+-]\d{4}$/.exec(line);
       if (m) {
-        author = m[1]!;
-        time = Number(m[2]);
+        author = m[1]!.slice(0, MAX_AUTHOR_CHARS);
+        const parsedTime = Number(m[2]);
+        time = Number.isSafeInteger(parsedTime) && parsedTime >= 0 ? parsedTime : 0;
       }
     }
   }
@@ -938,11 +971,17 @@ interface LoadedCommit {
   truncated: boolean;
 }
 
-async function loadCommit(git: string, repo: RepoDirs): Promise<LoadedCommit | "no-commit" | "unreadable"> {
+async function loadCommit(git: string, repo: RepoDirs, selectedHash?: string | null): Promise<LoadedCommit | "no-commit" | "unreadable"> {
   const config = await filterOverrides(git, repo);
   if (config === null) return "unreadable";
-  const hash = await headCommit(git, repo);
-  if (hash === null) return "no-commit";
+  const currentHead = await headCommit(git, repo);
+  if (currentHead === null) return "no-commit";
+  const hash = selectedHash ?? currentHead;
+  if (!OBJECT_ID.test(hash)) return "no-commit";
+  if (hash !== currentHead) {
+    const reachable = await runGit(git, repo, ["merge-base", "--is-ancestor", hash, currentHead], config, 4096);
+    if (reachable.code !== 0 || reachable.timedOut) return "no-commit";
+  }
   const object = await runGit(git, repo, ["cat-file", "commit", hash], config, MAX_COMMIT_BYTES);
   if (object.timedOut || (object.code !== 0 && !object.capped)) return "unreadable";
   const parsed = parseCommitObject(object.stdout.toString("utf8"));
@@ -978,6 +1017,82 @@ async function loadCommit(git: string, repo: RepoDirs): Promise<LoadedCommit | "
   return { config, base, commit, files, truncated };
 }
 
+/** First-parent history is paged from a pinned commit. No caller-supplied revision expression
+ * reaches git: repo names come from discovery, hashes are validated object ids, and page bounds are
+ * capped before building argv. */
+export async function readCommitHistory(cwd: string, params: ChangesParams): Promise<ChangeCommitHistoryAnswer> {
+  if (!(await usableFolder(cwd))) return { available: false, reason: "no-folder" };
+  const git = await gitBinary();
+  if (git === null) return { available: false, reason: "no-git" };
+  const repo = await discoveredRepo(cwd, params);
+  if (repo === undefined) return { available: false, reason: "unknown-repo" };
+  const config = await filterOverrides(git, repo);
+  if (config === null) return { available: false, reason: "unknown-repo" };
+  const currentHead = await headCommit(git, repo);
+  if (currentHead === null) return { available: false, reason: "no-commit" };
+  const headHash = params.historyHead ?? currentHead;
+  const offset = params.historyOffset;
+  const limit = params.historyLimit;
+  if (!OBJECT_ID.test(headHash) || offset === undefined || offset < 0 || offset >= MAX_HISTORY_OFFSET ||
+      limit === undefined || limit < 1 || limit > MAX_HISTORY_PAGE_SIZE) {
+    return { available: false, reason: "stale-history" };
+  }
+  const remainingLimit = Math.min(limit, MAX_HISTORY_OFFSET - offset);
+  const pinned = await runGit(git, repo, ["merge-base", "--is-ancestor", headHash, currentHead], config, 4096);
+  if (pinned.code !== 0 || pinned.timedOut) return { available: false, reason: "stale-history" };
+  const listed = await runGit(
+    git, repo,
+    ["log", "--first-parent", "--no-decorate", "--no-notes", "--format=%H", `--max-count=${remainingLimit + 1}`, `--skip=${offset}`, headHash],
+    config,
+    (MAX_HISTORY_PAGE_SIZE + 1) * 80,
+  );
+  if (listed.timedOut || listed.capped || listed.code !== 0) return { available: false, reason: "unknown-repo" };
+  const hashes = listed.stdout.toString("ascii").split(/\r?\n/).filter((value) => value.length > 0);
+  if (hashes.some((hash) => !OBJECT_ID.test(hash))) return { available: false, reason: "unknown-repo" };
+  const hasMore = hashes.length > remainingLimit;
+  const selected = hashes.slice(0, remainingLimit);
+  if (selected.length === 0) return { available: false, reason: "stale-history" };
+  const raw = await runGit(git, repo, ["cat-file", "--batch"], config, MAX_HISTORY_BYTES, {
+    input: new TextEncoder().encode(selected.join("\n") + "\n"),
+  });
+  if (raw.timedOut || raw.capped || raw.code !== 0) return { available: false, reason: "unknown-repo" };
+  const commits = parseCommitBatch(raw.stdout, selected);
+  if (commits === null) return { available: false, reason: "unknown-repo" };
+  const truncated = hasMore && offset + selected.length >= MAX_HISTORY_OFFSET;
+  const answer: ChangeCommitHistoryAnswer = {
+    available: true, repo: repo.relPath, name: repo.name, headHash, offset, limit, commits,
+    nextOffset: hasMore && !truncated ? offset + selected.length : null, truncated,
+  };
+  if (repo.relPath.length > 8192 || repo.name.length > 512 ||
+      Buffer.byteLength(JSON.stringify(answer)) > MAX_HISTORY_RESPONSE_BYTES) {
+    return { available: false, reason: "unknown-repo" };
+  }
+  return answer;
+}
+
+/** Parse bounded `git cat-file --batch` output; commit payload bytes are not paths or argv. */
+function parseCommitBatch(raw: Uint8Array, expected: readonly string[]): CommitInfo[] | null {
+  const decoder = new TextDecoder("utf-8", { fatal: false });
+  const commits: CommitInfo[] = [];
+  let at = 0;
+  for (const hash of expected) {
+    let lineEnd = at;
+    while (lineEnd < raw.byteLength && raw[lineEnd] !== 10) lineEnd++;
+    if (lineEnd === raw.byteLength) return null;
+    const header = new TextDecoder("ascii").decode(raw.subarray(at, lineEnd));
+    const match = /^([0-9a-f]{40}(?:[0-9a-f]{24})?) commit (\d+)$/.exec(header);
+    if (!match || match[1] !== hash) return null;
+    const size = Number(match[2]);
+    if (!Number.isSafeInteger(size) || size < 0 || size > MAX_COMMIT_BYTES || lineEnd + 1 + size >= raw.byteLength) return null;
+    const parsed = parseCommitObject(decoder.decode(raw.subarray(lineEnd + 1, lineEnd + 1 + size)));
+    commits.push({ hash, shortHash: hash.slice(0, 7), subject: parsed.subject, author: parsed.author, time: parsed.time });
+    at = lineEnd + 1 + size;
+    if (raw[at] !== 10) return null;
+    at++;
+  }
+  return at === raw.byteLength ? commits : null;
+}
+
 /** A repo the same discovery returns, by `relPath`. */
 async function discoveredRepo(cwd: string, params: ChangesParams): Promise<FoundRepo | undefined> {
   const found = await discoverRepos(cwd, params.depth, params.nested);
@@ -991,7 +1106,7 @@ export async function readCommit(cwd: string, params: ChangesParams): Promise<Ch
   if (git === null) return { available: false, reason: "no-git" };
   const repo = await discoveredRepo(cwd, params);
   if (repo === undefined) return { available: false, reason: "unknown-repo" };
-  const loaded = await loadCommit(git, repo);
+  const loaded = await loadCommit(git, repo, params.commitHash);
   if (loaded === "no-commit") return { available: false, reason: "no-commit" };
   if (loaded === "unreadable") return { available: false, reason: "unknown-repo" };
   return {
@@ -1014,7 +1129,7 @@ export async function commitFileDiff(cwd: string, params: ChangesParams): Promis
   if (git === null) return { available: false, reason: "no-git" };
   const repo = await discoveredRepo(cwd, params);
   if (repo === undefined) return { available: false, reason: "unknown-repo" };
-  const loaded = await loadCommit(git, repo);
+  const loaded = await loadCommit(git, repo, params.commitHash);
   if (loaded === "no-commit") return { available: false, reason: "no-commit" };
   if (loaded === "unreadable") return { available: false, reason: "unknown-repo" };
   const entry = loaded.files.find((f) => f.path === params.path);
@@ -1131,17 +1246,26 @@ export function sharedFileDiff(cwd: string, params: ChangesParams): Promise<Chan
 
 /** The shared last-commit reads, keyed on (root, repo, depth, nested). */
 export const sharedCommits = new SharedReads<ChangeCommit>(CHANGES_SHARE_MS);
+/** The shared first-parent history page reads, keyed on root/repo/anchor/offset/limit. */
+export const sharedCommitHistories = new SharedReads<ChangeCommitHistoryAnswer>(CHANGES_SHARE_MS);
+/** The shared first-parent history pages, keyed by pinned head and bounded page coordinates. */
 /** The shared last-commit file reads, keyed on (root, repo, path, depth, nested). */
 export const sharedCommitDiffs = new SharedReads<ChangeCommitDiff>(CHANGES_SHARE_MS);
 
 /** `readCommit`, shared across askers for {@link CHANGES_SHARE_MS}. What the routes call. */
 export function sharedReadCommit(cwd: string, params: ChangesParams): Promise<ChangeCommit> {
-  const key = JSON.stringify([cwd, params.repo, params.depth, params.nested]);
+  const key = JSON.stringify([cwd, params.repo, params.depth, params.nested, params.commitHash]);
   return sharedCommits.read(key, () => readCommit(cwd, params));
+}
+
+/** `readCommitHistory`, shared for the same short window as the Changes list. */
+export function sharedReadCommitHistory(cwd: string, params: ChangesParams): Promise<ChangeCommitHistoryAnswer> {
+  const key = JSON.stringify([cwd, params.repo, params.depth, params.nested, params.historyHead, params.historyOffset, params.historyLimit]);
+  return sharedCommitHistories.read(key, () => readCommitHistory(cwd, params));
 }
 
 /** `commitFileDiff`, shared across askers for {@link CHANGES_SHARE_MS}. What the routes call. */
 export function sharedCommitFileDiff(cwd: string, params: ChangesParams): Promise<ChangeCommitDiff> {
-  const key = JSON.stringify([cwd, params.repo, params.path, params.depth, params.nested]);
+  const key = JSON.stringify([cwd, params.repo, params.path, params.depth, params.nested, params.commitHash]);
   return sharedCommitDiffs.read(key, () => commitFileDiff(cwd, params));
 }

@@ -110,8 +110,9 @@ interface CollieApi {
     suspend fun imageBlob(connection: Connection, scope: Scope, sha256: String): ApiResult<ImageBlob> = unavailable("Journal image")
     suspend fun changes(connection: Connection, target: ChangesTarget, scope: Scope, lookup: ChangesLookup): ApiResult<ChangesListAnswer> = unavailable("Changes")
     suspend fun changeDiff(connection: Connection, target: ChangesTarget, scope: Scope, lookup: ChangesLookup, repo: String, path: String): ApiResult<ChangeDiffAnswer> = unavailable("Changes diff")
-    suspend fun changeCommit(connection: Connection, target: ChangesTarget, scope: Scope, lookup: ChangesLookup, repo: String): ApiResult<ChangeCommitAnswer> = unavailable("Changes commit")
-    suspend fun changeCommitDiff(connection: Connection, target: ChangesTarget, scope: Scope, lookup: ChangesLookup, repo: String, path: String): ApiResult<ChangeCommitDiffAnswer> = unavailable("Changes commit diff")
+    suspend fun changeCommitHistory(connection: Connection, target: ChangesTarget, scope: Scope, lookup: ChangesLookup, repo: String, head: String?, offset: Int, limit: Int): ApiResult<ChangeCommitHistoryAnswer> = unavailable("Changes commit history")
+    suspend fun changeCommit(connection: Connection, target: ChangesTarget, scope: Scope, lookup: ChangesLookup, repo: String, commitHash: String? = null): ApiResult<ChangeCommitAnswer> = unavailable("Changes commit")
+    suspend fun changeCommitDiff(connection: Connection, target: ChangesTarget, scope: Scope, lookup: ChangesLookup, repo: String, path: String, commitHash: String? = null): ApiResult<ChangeCommitDiffAnswer> = unavailable("Changes commit diff")
     suspend fun startLaunch(connection: Connection, scope: Scope, target: StartTarget, requestId: String, cwd: String? = null): ApiResult<CreateResponse> = unavailable("Launch by id")
     /** Sends the exact encrypted-journal body for a deliberate replay; never rebuilds an intent. */
     suspend fun startLaunchFrozen(connection: Connection, scope: Scope, canonicalBody: String): ApiResult<CreateResponse> = unavailable("Frozen launch retry")
@@ -507,16 +508,17 @@ class CollieApiClient(
         scope: Scope,
         lookup: ChangesLookup,
         repo: String,
+        commitHash: String?,
     ): ApiResult<ChangeCommitAnswer> {
         validateChangesTarget(target)
-        validateChangesReference(repo)
+        validateChangesReference(repo, commitHash = commitHash)
         val query = listOf(
             "depth" to lookup.depth.toString(), "nested" to if (lookup.nested) "1" else "0",
             "view" to "commit", "repo" to repo,
-        )
+        ) + listOfNotNull(commitHash?.let { "commit" to it })
         val url = scopedUrl(connection.origin, changesPath(target), scope, query)
         return executeChanges(request(connection, url), "Malformed Changes commit response") {
-            ChangesWire.commit(it, target, repo)
+            ChangesWire.commit(it, target, repo, commitHash)
         }
     }
 
@@ -527,18 +529,43 @@ class CollieApiClient(
         lookup: ChangesLookup,
         repo: String,
         path: String,
+        commitHash: String?,
     ): ApiResult<ChangeCommitDiffAnswer> {
         validateChangesTarget(target)
-        validateChangesReference(repo, path)
+        validateChangesReference(repo, path, commitHash)
         val query = listOf(
             "depth" to lookup.depth.toString(), "nested" to if (lookup.nested) "1" else "0",
             "repo" to repo, "path" to path, "view" to "commit",
         )
-        val url = scopedUrl(connection.origin, changesPath(target), scope, query)
+        val scopedQuery = query + listOfNotNull(commitHash?.let { "commit" to it })
+        val url = scopedUrl(connection.origin, changesPath(target), scope, scopedQuery)
         return executeChanges(request(connection, url), "Malformed Changes commit diff response") { element ->
-            ChangesWire.diff(element, target, repo, path, commit = true)?.let {
+            ChangesWire.diff(element, target, repo, path, commit = true, expectedHash = commitHash)?.let {
                 ChangeCommitDiffAnswer(it.target, it.workspaceLabel, it.state)
             }
+        }
+    }
+
+    override suspend fun changeCommitHistory(
+        connection: Connection,
+        target: ChangesTarget,
+        scope: Scope,
+        lookup: ChangesLookup,
+        repo: String,
+        head: String?,
+        offset: Int,
+        limit: Int,
+    ): ApiResult<ChangeCommitHistoryAnswer> {
+        validateChangesTarget(target)
+        validateChangesReference(repo, commitHash = head)
+        require(offset in 0..10_000 && limit in 1..50)
+        val query = listOf(
+            "depth" to lookup.depth.toString(), "nested" to if (lookup.nested) "1" else "0",
+            "view" to "history", "repo" to repo, "offset" to offset.toString(), "limit" to limit.toString(),
+        ) + listOfNotNull(head?.let { "head" to it })
+        val url = scopedUrl(connection.origin, changesPath(target), scope, query)
+        return executeChanges(request(connection, url), "Malformed Changes history response") {
+            ChangesWire.history(it, target, repo, head, offset, limit)
         }
     }
 
@@ -551,9 +578,10 @@ class CollieApiClient(
         require(target.id.isNotBlank() && target.id.length <= MAX_CHANGES_ID_CHARS && '\u0000' !in target.id)
     }
 
-    private fun validateChangesReference(repo: String, path: String? = null) {
+    private fun validateChangesReference(repo: String, path: String? = null, commitHash: String? = null) {
         require(repo.isNotBlank() && repo.length <= MAX_CHANGES_ID_CHARS && '\u0000' !in repo)
         require(path == null || (path.isNotBlank() && path.length <= MAX_CHANGES_ID_CHARS && '\u0000' !in path))
+        require(commitHash == null || Regex("(?:[0-9a-f]{40}|[0-9a-f]{64})").matches(commitHash))
     }
 
     override suspend fun startLaunch(connection: Connection, scope: Scope, target: StartTarget, requestId: String, cwd: String?): ApiResult<CreateResponse> {

@@ -70,6 +70,7 @@ import com.lateapex.collie.network.retiresPairing
 import com.lateapex.collie.network.ControlOperationResponse
 import com.lateapex.collie.network.ChangeCommitAnswer
 import com.lateapex.collie.network.ChangeCommitDiffAnswer
+import com.lateapex.collie.network.ChangeCommitHistoryAnswer
 import com.lateapex.collie.network.ChangeDiffAnswer
 import com.lateapex.collie.network.ChangesListAnswer
 import com.lateapex.collie.network.ChangesLookup
@@ -472,17 +473,20 @@ class CollieRepository(
         }
     }
     /** Ordinary paired reads. Change paths remain opaque; the bridge validates repository membership. */
-    suspend fun changes(target: ChangesTarget, scope: Scope, lookup: ChangesLookup): ApiResult<ChangesListAnswer> =
-        withConnection(scope, target.id) { api.changes(it, target, scope, lookup) }
+    suspend fun changes(target: ChangesTarget, scope: Scope, lookup: ChangesLookup, expectedContext: ScopedReadContext? = null): ApiResult<ChangesListAnswer> =
+        withConnection(scope, target.id, expectedContext) { api.changes(it, target, scope, lookup) }
 
-    suspend fun changeDiff(target: ChangesTarget, scope: Scope, lookup: ChangesLookup, repo: String, path: String): ApiResult<ChangeDiffAnswer> =
-        withConnection(scope, target.id) { api.changeDiff(it, target, scope, lookup, repo, path) }
+    suspend fun changeDiff(target: ChangesTarget, scope: Scope, lookup: ChangesLookup, repo: String, path: String, expectedContext: ScopedReadContext? = null): ApiResult<ChangeDiffAnswer> =
+        withConnection(scope, target.id, expectedContext) { api.changeDiff(it, target, scope, lookup, repo, path) }
 
-    suspend fun changeCommit(target: ChangesTarget, scope: Scope, lookup: ChangesLookup, repo: String): ApiResult<ChangeCommitAnswer> =
-        withConnection(scope, target.id) { api.changeCommit(it, target, scope, lookup, repo) }
+    suspend fun changeCommitHistory(target: ChangesTarget, scope: Scope, lookup: ChangesLookup, repo: String, head: String?, offset: Int, limit: Int, expectedContext: ScopedReadContext? = null): ApiResult<ChangeCommitHistoryAnswer> =
+        withConnection(scope, target.id, expectedContext) { api.changeCommitHistory(it, target, scope, lookup, repo, head, offset, limit) }
 
-    suspend fun changeCommitDiff(target: ChangesTarget, scope: Scope, lookup: ChangesLookup, repo: String, path: String): ApiResult<ChangeCommitDiffAnswer> =
-        withConnection(scope, target.id) { api.changeCommitDiff(it, target, scope, lookup, repo, path) }
+    suspend fun changeCommit(target: ChangesTarget, scope: Scope, lookup: ChangesLookup, repo: String, commitHash: String? = null, expectedContext: ScopedReadContext? = null): ApiResult<ChangeCommitAnswer> =
+        withConnection(scope, target.id, expectedContext) { api.changeCommit(it, target, scope, lookup, repo, commitHash) }
+
+    suspend fun changeCommitDiff(target: ChangesTarget, scope: Scope, lookup: ChangesLookup, repo: String, path: String, commitHash: String? = null, expectedContext: ScopedReadContext? = null): ApiResult<ChangeCommitDiffAnswer> =
+        withConnection(scope, target.id, expectedContext) { api.changeCommitDiff(it, target, scope, lookup, repo, path, commitHash) }
 
     suspend fun startLaunch(scope: Scope, target: StartTarget, requestId: String, cwd: String? = null): ApiResult<CreateResponse> = withWritableConnection(scope) {
         api.startLaunch(it, scope, target, requestId, cwd)

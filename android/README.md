@@ -13,6 +13,15 @@ for the architecture decision. The former TWA [specification](../ANDROID_TWA_SPE
 [implementation plan](../ANDROID_TWA_IMPLEMENTATION_PLAN.md) are retained only as superseded
 history.
 
+The read-only Changes screen lists bridge-discovered repositories and their working-tree diffs.
+Its commit history is delivered in bounded first-parent pages pinned to the first page's HEAD;
+selecting a row loads that commit and only its listed file diffs. Older peers that do not return
+the history contract are shown as unsupported.
+History stops at 10,000 commits. A terminal cap page says when older commits were omitted;
+a real end stays distinct. Display subjects are capped at 500 characters and author names at
+1,024 characters. Each bridge history page is bounded below 1 MiB; native transport keeps its
+5 MiB streaming ceiling and refuses malformed page offsets or truncation metadata.
+
 ## Architecture and security boundary
 
 - Native screens render immutable ViewModel state with View Binding. The bridge's rendered pane

@@ -945,6 +945,23 @@ export interface CommitInfo {
   time: number;
 }
 
+/** A bounded first-parent page. `headHash` pins every subsequent offset to the same history. */
+export interface ChangeCommitHistory {
+  available: true;
+  repo: string;
+  name: string;
+  headHash: string;
+  offset: number;
+  limit: number;
+  commits: CommitInfo[];
+  nextOffset: number | null;
+  truncated: boolean;
+}
+
+export type ChangeCommitHistoryAnswer =
+  | { available: false; reason: ChangesUnavailableReason | "unknown-repo" | "no-commit" | "stale-history" }
+  | ChangeCommitHistory;
+
 /**
  * The last commit of one discovered repo, read-only (ADR 0065, the commit view): HEAD against its
  * first parent, or against the empty tree for a root commit. `files` carry `M`, `A`, `D` or `R`.
@@ -991,6 +1008,10 @@ export type PaneChangeCommitDiffResponse = { paneId: string } & ChangesWorkspace
 export type WorkspaceChangeCommitResponse = { workspaceId: string; workspaceLabel?: string } & ChangeCommit;
 /** GET /api/workspace/:id/changes?view=commit&repo=&path= — the same file, asked by workspace. */
 export type WorkspaceChangeCommitDiffResponse = { workspaceId: string; workspaceLabel?: string } & ChangeCommitDiff;
+/** GET /api/{pane|workspace}/:id/changes?view=history&repo=&head=&offset=&limit=. */
+export type PaneChangeCommitHistoryResponse = { paneId: string } & ChangesWorkspace & ChangeCommitHistoryAnswer;
+export type WorkspaceChangeCommitHistoryResponse = { workspaceId: string; workspaceLabel?: string } & ChangeCommitHistoryAnswer;
+/** GET /api/{pane|workspace}/:id/changes?view=history&repo=&head=&offset=&limit=. */
 
 // ── The Files view (ADR 0083): one folder, or one text file, under the Changes root ──────────────
 

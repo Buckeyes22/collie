@@ -7,6 +7,9 @@ import com.lateapex.collie.domain.Scope
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.ConnectionPool
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
@@ -337,6 +340,107 @@ class CollieApiClientTest {
         assertEquals("0123456789abcdef0123456789abcdef01234567", commitValue.commitHash)
         val commitRequest = server.takeRequest()
         assertEquals("/api/workspace/work%2F1/changes?depth=3&nested=1&repo=nested%2Frepo&path=dir%2Fa%20b.kt&view=commit", commitRequest.path)
+    }
+
+    @Test
+    fun commitHistoryPagesAreScopedBoundedAndPinTheFirstHead(): Unit = runBlocking {
+        val firstHash = "0123456789abcdef0123456789abcdef01234567"
+        val secondHash = "1123456789abcdef0123456789abcdef01234567"
+        val pageOne = """{"workspaceId":"w","available":true,"repo":"nested/repo","name":"repo","headHash":"$firstHash","offset":0,"limit":2,"commits":[{"hash":"$firstHash","shortHash":"0123456","subject":"new","author":"A","time":1700000000},{"hash":"$secondHash","shortHash":"1123456","subject":"older","author":"B","time":1690000000}],"nextOffset":2,"truncated":false}"""
+        server.enqueue(MockResponse().setBody(pageOne))
+        val target = ChangesTarget.Workspace("w")
+        val connection = Connection(origin, "phone", "token")
+        val first = api.changeCommitHistory(connection, target, Scope(host = "peer", session = "work"), ChangesLookup(), "nested/repo", null, 0, 2)
+        val firstPage = ((first as ApiResult.Success).value.state as ChangeCommitHistoryState.Available).page
+        assertEquals(firstHash, firstPage.headHash)
+        assertEquals(2, firstPage.nextOffset)
+        assertEquals("/api/workspace/w/changes?depth=2&nested=1&view=history&repo=nested%2Frepo&offset=0&limit=2&host=peer&session=work", server.takeRequest().path)
+
+        server.enqueue(MockResponse().setBody(
+            """{"workspaceId":"w","available":true,"repo":"nested/repo","name":"repo","headHash":"$firstHash","offset":2,"limit":2,"commits":[{"hash":"2123456789abcdef0123456789abcdef01234567","shortHash":"2123456","subject":"oldest","author":"C","time":1680000000}],"nextOffset":null,"truncated":false}""",
+        ))
+        val next = api.changeCommitHistory(connection, target, Scope(), ChangesLookup(), "nested/repo", firstPage.headHash, firstPage.nextOffset!!, 2)
+        val nextPage = ((next as ApiResult.Success).value.state as ChangeCommitHistoryState.Available).page
+        assertEquals(firstPage.headHash, nextPage.headHash)
+        assertEquals(2, nextPage.offset)
+        assertEquals("/api/workspace/w/changes?depth=2&nested=1&view=history&repo=nested%2Frepo&offset=2&limit=2&head=$firstHash", server.takeRequest().path)
+        assertTrue((firstPage.commits + nextPage.commits).map { it.hash }.toSet().size == 3)
+
+        server.enqueue(MockResponse().setBody(
+            """{"workspaceId":"w","available":true,"repo":"nested/repo","name":"repo","commit":{"hash":"$secondHash","shortHash":"1123456","subject":"older","author":"B","time":1690000000},"files":[],"truncated":false}""",
+        ))
+        val detail = api.changeCommit(connection, target, Scope(), ChangesLookup(), "nested/repo", secondHash)
+        assertTrue((detail as ApiResult.Success).value.state is ChangeCommitState.Available)
+        assertEquals("/api/workspace/w/changes?depth=2&nested=1&view=commit&repo=nested%2Frepo&commit=$secondHash", server.takeRequest().path)
+    }
+
+    @Test
+    fun historyRejectsCrossingCapAndFalseTruncationButAcceptsRealTerminalPages(): Unit = runBlocking {
+        val head = "f".repeat(40)
+        val connection = Connection(origin, "phone", "token")
+        val target = ChangesTarget.Workspace("w")
+        suspend fun page(offset: Int, count: Int, limit: Int, truncated: Boolean, next: Int? = null): ApiResult<ChangeCommitHistoryAnswer> {
+            val rows = (1..count).joinToString(",") { n ->
+                val hash = n.toString(16).padStart(40, '0')
+                """{"hash":"$hash","shortHash":"${hash.take(7)}","subject":"row$n","author":"A","time":1}"""
+            }
+            server.enqueue(MockResponse().setBody("""{"workspaceId":"w","available":true,"repo":".","name":"r","headHash":"$head","offset":$offset,"limit":$limit,"commits":[$rows],"nextOffset":${next ?: "null"},"truncated":$truncated}"""))
+            val result = api.changeCommitHistory(connection, target, Scope(), ChangesLookup(), ".", head, offset, limit)
+            server.takeRequest()
+            return result
+        }
+        assertTrue(page(9990, 50, 50, false) is ApiResult.Failure)
+        assertTrue(page(0, 1, 1, true) is ApiResult.Failure)
+        assertTrue(page(9990, 10, 50, true, 10000) is ApiResult.Failure)
+        assertTrue(page(9990, 10, 50, false, 10000) is ApiResult.Failure)
+        assertTrue(page(3, 2, 1, false) is ApiResult.Failure)
+        assertTrue(page(3, 1, 2, false, 4) is ApiResult.Failure)
+        assertTrue(page(9990, 10, 50, true) is ApiResult.Success)
+        assertTrue(page(9999, 1, 50, true) is ApiResult.Success)
+        assertTrue(page(9990, 10, 50, false) is ApiResult.Success)
+        assertTrue(page(3, 1, 2, false) is ApiResult.Success)
+    }
+
+    @Test
+    fun maximumEscapedRealBridgeHistoryPagePassesChunkedNativeTransport(): Unit = runBlocking {
+        val body = requireNotNull(javaClass.classLoader?.getResource("changes-history-upper-bound.json")).readText()
+        assertTrue(body.toByteArray(Charsets.UTF_8).size < 1024 * 1024)
+        val tree = Json.parseToJsonElement(body)
+        val rows = tree.jsonObject.getValue("commits").jsonArray
+        assertEquals(50, rows.size)
+        assertTrue(rows.all { it.jsonObject.getValue("subject").jsonPrimitive.content.length == 500 })
+        assertTrue(rows.all { it.jsonObject.getValue("author").jsonPrimitive.content.length == 1024 })
+        assertTrue("Real bridge fixture failed direct typed parser", ChangesWire.history(tree, ChangesTarget.Workspace("w"), ".", null, 0, 50) != null)
+        // MockWebServer 4.12's setChunkedBody pre-encodes HTTP/1 chunk framing. Use the
+        // existing HTTP/1 fixture client for it; HTTP/2 DATA frames use setBody below.
+        server.enqueue(MockResponse().setChunkedBody(body, 4096))
+        val result = boundaryHttp1Api.changeCommitHistory(Connection(origin, "phone", "token"), ChangesTarget.Workspace("w"), Scope(), ChangesLookup(), ".", null, 0, 50)
+        val failureKind = (result as? ApiResult.Failure)?.error?.let { error ->
+            if (error is ApiFailure.Protocol) error.message else error.javaClass.simpleName
+        }
+        assertTrue("Real bridge history transport failed: $failureKind", result is ApiResult.Success)
+        val page = ((result as ApiResult.Success).value.state as ChangeCommitHistoryState.Available).page
+        assertEquals(50, page.commits.size)
+        assertTrue(page.commits.all { it.author == "\u0001".repeat(1024) && it.subject == "\u0002".repeat(500) })
+        assertEquals(50, page.commits.map { it.hash }.toSet().size)
+        assertNull(page.nextOffset)
+        assertFalse(page.truncated)
+        assertEquals("/api/workspace/w/changes?depth=2&nested=1&view=history&repo=.&offset=0&limit=50", server.takeRequest().path)
+        server.enqueue(MockResponse().setBody(body))
+        val http2 = api.changeCommitHistory(Connection(origin, "phone", "token"), ChangesTarget.Workspace("w"), Scope(), ChangesLookup(), ".", null, 0, 50)
+        assertTrue("Real bridge page must also pass native HTTP/2 transport", http2 is ApiResult.Success)
+        assertEquals(page, ((http2 as ApiResult.Success).value.state as ChangeCommitHistoryState.Available).page)
+        assertEquals("/api/workspace/w/changes?depth=2&nested=1&view=history&repo=.&offset=0&limit=50", server.takeRequest().path)
+    }
+
+    @Test
+    fun historyParserRejectsDuplicateRowsAndChangedPinnedHead(): Unit = runBlocking {
+        val head = "0123456789abcdef0123456789abcdef01234567"
+        val body = """{"workspaceId":"w","available":true,"repo":".","name":"r","headHash":"$head","offset":2,"limit":1,"commits":[{"hash":"$head","shortHash":"0123456","subject":"x","author":"A","time":1}],"nextOffset":3,"truncated":false}"""
+        server.enqueue(MockResponse().setBody(body))
+        val result = api.changeCommitHistory(Connection(origin, "phone", "token"), ChangesTarget.Workspace("w"), Scope(), ChangesLookup(), ".", "1123456789abcdef0123456789abcdef01234567", 2, 1)
+        assertEquals(ApiFailure.Protocol("Malformed Changes history response"), (result as ApiResult.Failure).error)
+        server.takeRequest()
     }
 
     @Test

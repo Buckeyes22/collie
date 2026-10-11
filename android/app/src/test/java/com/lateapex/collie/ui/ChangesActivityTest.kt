@@ -16,6 +16,9 @@ import com.lateapex.collie.network.ApiResult
 import com.lateapex.collie.network.ChangeCommitAnswer
 import com.lateapex.collie.network.ChangeCommitDiffAnswer
 import com.lateapex.collie.network.ChangeCommitInfo
+import com.lateapex.collie.network.ChangeCommitHistoryAnswer
+import com.lateapex.collie.network.ChangeCommitHistoryPage
+import com.lateapex.collie.network.ChangeCommitHistoryState
 import com.lateapex.collie.network.ChangeCommitState
 import com.lateapex.collie.network.ChangeDiffAnswer
 import com.lateapex.collie.network.ChangeDiffState
@@ -73,7 +76,7 @@ class ChangesActivityTest {
                     false, false, false, "+new line\n")), 200,
             ).also { diffReads++ }
 
-            override suspend fun changeCommit(connection: Connection, target: ChangesTarget, scope: Scope, lookup: ChangesLookup, repo: String): ApiResult<ChangeCommitAnswer> =
+            override suspend fun changeCommit(connection: Connection, target: ChangesTarget, scope: Scope, lookup: ChangesLookup, repo: String, commitHash: String?): ApiResult<ChangeCommitAnswer> =
                 ApiResult.Success(ChangeCommitAnswer(target, "Project", ChangeCommitState.Unavailable("no-commit")), 200)
         }
         val repository = CollieRepository(api, store, app.container.originValidator)
@@ -140,7 +143,7 @@ class ChangesActivityTest {
         val app = ApplicationProvider.getApplicationContext<CollieApplication>()
         val store = connectedStore()
         val file = ChangedFile("src/a.kt", null, ChangeStatus.MODIFIED, 1, 0, false)
-        val commitHash = "a".repeat(40)
+        val latestHash = "a".repeat(40)
         var commitDiffReads = 0
         val target = ChangesTarget.Workspace("workspace")
         val api = object : CollieApi by app.container.api {
@@ -149,13 +152,13 @@ class ChangesActivityTest {
                     "/opaque/root", listOf(ChangedRepo(".", "repo", listOf(file))), false, false, emptyList(),
                 )), 200)
 
-            override suspend fun changeCommit(connection: Connection, target: ChangesTarget, scope: Scope, lookup: ChangesLookup, repo: String) =
+            override suspend fun changeCommit(connection: Connection, target: ChangesTarget, scope: Scope, lookup: ChangesLookup, repo: String, commitHash: String?) =
                 ApiResult.Success(ChangeCommitAnswer(target, "Project", ChangeCommitState.Available(
-                    repo, "repo", ChangeCommitInfo(commitHash, commitHash.take(7), "latest change", "author", 1),
+                    repo, "repo", ChangeCommitInfo(latestHash, latestHash.take(7), "latest change", "author", 1),
                     listOf(file), truncated = true,
                 )), 200)
 
-            override suspend fun changeCommitDiff(connection: Connection, target: ChangesTarget, scope: Scope, lookup: ChangesLookup, repo: String, path: String) =
+            override suspend fun changeCommitDiff(connection: Connection, target: ChangesTarget, scope: Scope, lookup: ChangesLookup, repo: String, path: String, commitHash: String?) =
                 ApiResult.Success(ChangeCommitDiffAnswer(target, "Project", ChangeDiffState.Available(
                     repo, path, null, ChangeStatus.MODIFIED, false, false, false, "+committed line\n", commitHash,
                 )), 200).also { commitDiffReads++ }
@@ -182,6 +185,139 @@ class ChangesActivityTest {
             shadowOf(Looper.getMainLooper()).idle()
             assertEquals(1, commitDiffReads)
             assertNotNull(findText(activity.findViewById(R.id.changes_content), "   1 │ +committed line"))
+        } finally {
+            controller.pause().stop().destroy()
+            field.set(app.container, original)
+        }
+    }
+
+    @Test
+    fun commitHistoryPagesWithoutDuplicatesAndReturnsFromSelectedCommitDetail() {
+        val app = ApplicationProvider.getApplicationContext<CollieApplication>()
+        val store = connectedStore()
+        val target = ChangesTarget.Workspace("workspace")
+        val hashes = listOf("a".repeat(40), "b".repeat(40), "c".repeat(40))
+        val commitFile = ChangedFile("src/a.kt", null, ChangeStatus.MODIFIED, 1, 0, false)
+        val seen = mutableListOf<String>()
+        var detailReads = 0
+        val api = object : CollieApi by app.container.api {
+            override suspend fun changes(connection: Connection, target: ChangesTarget, scope: Scope, lookup: ChangesLookup) =
+                ApiResult.Success(ChangesListAnswer(target, "Project", null, ChangesListState.Available(
+                    "/opaque/root", emptyList(), false, false, listOf(com.lateapex.collie.network.CleanRepo(".", "repo")),
+                )), 200)
+
+            override suspend fun changeCommitHistory(
+                connection: Connection, target: ChangesTarget, scope: Scope, lookup: ChangesLookup,
+                repo: String, head: String?, offset: Int, limit: Int,
+            ): ApiResult<ChangeCommitHistoryAnswer> {
+                val selected = if (offset == 0) hashes.take(2) else hashes.drop(offset).take(2)
+                seen += selected
+                val commits = selected.mapIndexed { index, hash ->
+                    val ordinal = hashes.indexOf(hash)
+                    ChangeCommitInfo(hash, hash.take(7), "revision $ordinal", "author $ordinal", 1_700_000_000L - ordinal)
+                }
+                val page = ChangeCommitHistoryPage(repo, "repo", hashes.first(), offset, limit, commits,
+                    if (offset + selected.size < hashes.size) offset + selected.size else null, truncated = false)
+                return ApiResult.Success(ChangeCommitHistoryAnswer(target, "Project", ChangeCommitHistoryState.Available(page)), 200)
+            }
+
+            override suspend fun changeCommit(
+                connection: Connection, target: ChangesTarget, scope: Scope, lookup: ChangesLookup, repo: String, commitHash: String?,
+            ): ApiResult<ChangeCommitAnswer> {
+                detailReads++
+                return ApiResult.Success(ChangeCommitAnswer(target, "Project", ChangeCommitState.Available(
+                    repo, "repo", ChangeCommitInfo(commitHash!!, commitHash.take(7), "revision ${hashes.indexOf(commitHash)}", "author", 1),
+                    listOf(commitFile), false,
+                )), 200)
+            }
+        }
+        val repository = CollieRepository(api, store, app.container.originValidator)
+        val field = app.container.javaClass.getDeclaredField("repository").apply { isAccessible = true }
+        val original = app.container.repository
+        field.set(app.container, repository)
+        val controller = Robolectric.buildActivity(
+            ChangesActivity::class.java, ChangesActivity.intentForWorkspace(app, "workspace", Scope(), "Project"),
+        ).create().start().resume()
+        try {
+            shadowOf(Looper.getMainLooper()).idle()
+            var content = controller.get().findViewById<ViewGroup>(R.id.changes_content)
+            findText(content, "Commit history")!!.performClick()
+            shadowOf(Looper.getMainLooper()).idle()
+            content = controller.get().findViewById(R.id.changes_content)
+            assertNotNull(findText(content, hashes[0].take(7) + "  revision 0"))
+            assertNotNull(findText(content, hashes[1].take(7) + "  revision 1"))
+            findText(content, "Older commits")!!.performClick()
+            shadowOf(Looper.getMainLooper()).idle()
+            content = controller.get().findViewById(R.id.changes_content)
+            assertNotNull(findText(content, hashes[2].take(7) + "  revision 2"))
+            findText(content, "Previous commits")!!.performClick()
+            shadowOf(Looper.getMainLooper()).idle()
+            content = controller.get().findViewById(R.id.changes_content)
+            assertNotNull(findText(content, hashes[0].take(7) + "  revision 0"))
+            findText(content, hashes[1].take(7) + "  revision 1")!!.performClick()
+            shadowOf(Looper.getMainLooper()).idle()
+            content = controller.get().findViewById(R.id.changes_content)
+            assertEquals(1, detailReads)
+            assertNotNull(findText(content, "revision 1"))
+            assertNotNull(findText(content, "Selected commit"))
+            assertNull(findText(content, "Last commit"))
+            assertNotNull(findText(content, "M  src/a.kt"))
+            findText(content, "Back to history")!!.performClick()
+            shadowOf(Looper.getMainLooper()).idle()
+            content = controller.get().findViewById(R.id.changes_content)
+            assertNotNull(findText(content, hashes[0].take(7) + "  revision 0"))
+            assertEquals(listOf(hashes[0], hashes[1], hashes[2]), seen)
+        } finally {
+            controller.pause().stop().destroy()
+            field.set(app.container, original)
+        }
+    }
+
+    @Test
+    fun cappedHistoryShowsItsPinnedRangeWithoutClaimingThereAreNoOlderCommits() {
+        val app = ApplicationProvider.getApplicationContext<CollieApplication>()
+        val target = ChangesTarget.Workspace("workspace")
+        val headHash = "a".repeat(40)
+        var reads = 0
+        val api = object : CollieApi by app.container.api {
+            override suspend fun changes(connection: Connection, target: ChangesTarget, scope: Scope, lookup: ChangesLookup) =
+                ApiResult.Success(ChangesListAnswer(target, "Project", null, ChangesListState.Available(
+                    "/opaque/root", emptyList(), false, false, listOf(com.lateapex.collie.network.CleanRepo(".", "repo")),
+                )), 200)
+            override suspend fun changeCommitHistory(connection: Connection, target: ChangesTarget, scope: Scope, lookup: ChangesLookup,
+                repo: String, head: String?, offset: Int, limit: Int): ApiResult<ChangeCommitHistoryAnswer> {
+                reads++
+                val end = minOf(offset + limit, 10_000)
+                val commits = (offset until end).map { ordinal ->
+                    val hash = if (ordinal == 0) headHash else ordinal.toString(16).padStart(40, '0')
+                    ChangeCommitInfo(hash, hash.take(7), "revision $ordinal", "author", 1)
+                }
+                val page = ChangeCommitHistoryPage(repo, "repo", headHash, offset, limit, commits,
+                    if (end < 10_000) end else null, truncated = end == 10_000)
+                return ApiResult.Success(ChangeCommitHistoryAnswer(target, "Project", ChangeCommitHistoryState.Available(page)), 200)
+            }
+        }
+        val repository = CollieRepository(api, connectedStore(), app.container.originValidator)
+        val field = app.container.javaClass.getDeclaredField("repository").apply { isAccessible = true }
+        val original = app.container.repository
+        field.set(app.container, repository)
+        val controller = Robolectric.buildActivity(ChangesActivity::class.java,
+            ChangesActivity.intentForWorkspace(app, "workspace", Scope(), "Project")).create().start().resume()
+        try {
+            shadowOf(Looper.getMainLooper()).idle()
+            findText(controller.get().findViewById(R.id.changes_content), "Commit history")!!.performClick()
+            shadowOf(Looper.getMainLooper()).idle()
+            repeat(333) {
+                findText(controller.get().findViewById(R.id.changes_content), "Older commits")!!.performClick()
+                shadowOf(Looper.getMainLooper()).idle()
+            }
+            val content = controller.get().findViewById<ViewGroup>(R.id.changes_content)
+            assertEquals(334, reads)
+            assertNotNull(findText(content, "Commits 9991–10000 · pinned at ${headHash.take(12)}"))
+            assertNotNull(findText(content, app.getString(R.string.changes_history_truncated)))
+            assertNull(findText(content, "No older commits"))
+            assertNull(findText(content, "Older commits"))
+            assertNotNull(findText(content, 9999.toString(16).padStart(40, '0').take(7) + "  revision 9999"))
         } finally {
             controller.pause().stop().destroy()
             field.set(app.container, original)

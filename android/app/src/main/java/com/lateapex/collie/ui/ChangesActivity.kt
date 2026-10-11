@@ -60,7 +60,13 @@ class ChangesActivity : AppCompatActivity() {
             .get(ChangesViewModel::class.java)
         onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                if (viewModel.state.value.detail != null) viewModel.backToList() else finish()
+                val current = viewModel.state.value
+                when {
+                    current.detail != null && current.history != null -> viewModel.backToHistory()
+                    current.detail != null -> viewModel.backToList()
+                    current.history != null -> viewModel.backToList()
+                    else -> finish()
+                }
             }
         })
         lifecycleScope.launch {
@@ -81,6 +87,8 @@ class ChangesActivity : AppCompatActivity() {
         val detail = state.detail
         if (detail != null) {
             renderDetail(state, detail)
+        } else if (state.history != null) {
+            renderHistory(state)
         } else {
             addLookupControls(state.lookup.depth, state.lookup.nested)
             renderList(state.list)
@@ -125,6 +133,10 @@ class ChangesActivity : AppCompatActivity() {
                         filePage = 0
                         viewModel.openLastCommit(repo.relPath)
                     }
+                    addButton(getString(R.string.changes_commit_history)) {
+                        filePage = 0
+                        viewModel.openHistory(repo.relPath)
+                    }
                     if (repo.files.isEmpty()) addMuted(getString(R.string.changes_repo_no_files))
                     pageFiles.forEach { file -> addFile(repo.relPath, file, onCommit = false) }
                 }
@@ -135,14 +147,38 @@ class ChangesActivity : AppCompatActivity() {
                         filePage = 0
                         viewModel.openLastCommit(repo.relPath)
                     }
+                    addButton(getString(R.string.changes_commit_history)) {
+                        filePage = 0
+                        viewModel.openHistory(repo.relPath)
+                    }
                 }
                 if (fileCount > FILES_PER_PAGE) addFilePager(fileCount, pageCount)
             }
         }
     }
 
-    private fun renderDetail(state: ChangesScreenState, detail: ChangeDetail) {
+    private fun renderHistory(state: ChangesScreenState) {
+        val history = state.history ?: return
+        val page = history.page
         addButton(getString(R.string.changes_back_to_list)) { viewModel.backToList() }
+        addHeading(page.name + " · " + page.repo)
+        addMuted(getString(R.string.changes_history_page, page.offset + 1, page.offset + page.commits.size, page.headHash.take(12)))
+        if (page.truncated) addNotice(getString(R.string.changes_history_truncated))
+        page.commits.forEach { commit ->
+            val label = buildString {
+                append(commit.shortHash).append("  ").append(safeDisplay(commit.subject))
+                append("\n").append(safeDisplay(commit.author)).append(" · ").append(commit.timeSeconds)
+            }
+            addButton(label) { viewModel.openHistoryCommit(history.repo, commit) }
+        }
+        if (history.pageIndex > 0) addButton(getString(R.string.changes_previous_commits)) { viewModel.previousHistoryPage() }
+        if (page.nextOffset != null) addButton(getString(R.string.changes_older_commits)) { viewModel.nextHistoryPage() }
+        else if (!page.truncated) addMuted(getString(R.string.changes_history_end))
+    }
+
+    private fun renderDetail(state: ChangesScreenState, detail: ChangeDetail) {
+        if (state.history != null) addButton(getString(R.string.changes_back_to_history)) { viewModel.backToHistory() }
+        else addButton(getString(R.string.changes_back_to_list)) { viewModel.backToList() }
         addHeading(detail.title)
         if (detail.subtitle.isNotBlank()) addMuted(detail.subtitle)
         val isCommitDetail = state.selection?.commit == true

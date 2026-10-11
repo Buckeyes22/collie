@@ -48,6 +48,24 @@ data class ChangeCommitInfo(
     val timeSeconds: Long,
 )
 
+data class ChangeCommitHistoryPage(
+    val repo: String,
+    val name: String,
+    val headHash: String,
+    val offset: Int,
+    val limit: Int,
+    val commits: List<ChangeCommitInfo>,
+    val nextOffset: Int?,
+    val truncated: Boolean,
+)
+
+sealed interface ChangeCommitHistoryState {
+    data class Unavailable(val reason: String) : ChangeCommitHistoryState
+    data class Available(val page: ChangeCommitHistoryPage) : ChangeCommitHistoryState
+}
+
+data class ChangeCommitHistoryAnswer(val target: ChangesTarget, val workspaceLabel: String?, val state: ChangeCommitHistoryState)
+
 sealed interface ChangesListState {
     data class Unavailable(val reason: String) : ChangesListState
     data class Available(
@@ -128,7 +146,7 @@ internal object ChangesWire {
         return ChangesListAnswer(target, metadata.workspaceLabel, metadata.paneRepo, state)
     }
 
-    fun diff(element: JsonElement, target: ChangesTarget, repo: String, path: String, commit: Boolean): ChangeDiffAnswer? {
+    fun diff(element: JsonElement, target: ChangesTarget, repo: String, path: String, commit: Boolean, expectedHash: String? = null): ChangeDiffAnswer? {
         val obj = element as? JsonObject ?: return null
         val metadata = targetMetadata(obj, target) ?: return null
         val available = obj.bool("available") ?: return null
@@ -146,13 +164,13 @@ internal object ChangesWire {
             val directory = obj.bool("directory") ?: return null
             val truncated = obj.bool("truncated") ?: return null
             val diff = obj.string("diff", MAX_DIFF_BYTES)?.takeIf { validDiff(it) } ?: return null
-            val hash = if (commit) obj.string("hash", 64)?.takeIf { objectId.matches(it) } ?: return null else null
+            val hash = if (commit) obj.string("hash", 64)?.takeIf { objectId.matches(it) && (expectedHash == null || it == expectedHash) } ?: return null else null
             ChangeDiffState.Available(returnedRepo, returnedPath, oldPath, status, binary, directory, truncated, diff, hash)
         }
         return ChangeDiffAnswer(target, metadata.workspaceLabel, state)
     }
 
-    fun commit(element: JsonElement, target: ChangesTarget, repo: String): ChangeCommitAnswer? {
+    fun commit(element: JsonElement, target: ChangesTarget, repo: String, expectedHash: String? = null): ChangeCommitAnswer? {
         val obj = element as? JsonObject ?: return null
         val metadata = targetMetadata(obj, target) ?: return null
         val available = obj.bool("available") ?: return null
@@ -163,11 +181,52 @@ internal object ChangesWire {
             val returnedRepo = obj.string("repo", MAX_PATH_CHARS)?.takeIf { it == repo } ?: return null
             val name = obj.string("name", MAX_LABEL_CHARS)?.takeIf(String::isNotBlank) ?: return null
             val commit = parseCommit(obj.obj("commit") ?: return null) ?: return null
+            if (expectedHash != null && commit.hash != expectedHash) return null
             val files = obj.array("files", MAX_FILES_PER_REPO)?.map { parseFile(it) ?: return null } ?: return null
             val truncated = obj.bool("truncated") ?: return null
             ChangeCommitState.Available(returnedRepo, name, commit, files, truncated)
         }
         return ChangeCommitAnswer(target, metadata.workspaceLabel, state)
+    }
+
+    fun history(
+        element: JsonElement,
+        target: ChangesTarget,
+        repo: String,
+        requestedHead: String?,
+        requestedOffset: Int,
+        requestedLimit: Int,
+    ): ChangeCommitHistoryAnswer? {
+        val obj = element as? JsonObject ?: return null
+        val metadata = targetMetadata(obj, target) ?: return null
+        val available = obj.bool("available") ?: return null
+        val state = if (!available) {
+            val reason = obj.string("reason", 64)?.takeIf { it in HISTORY_UNAVAILABLE } ?: return null
+            ChangeCommitHistoryState.Unavailable(reason)
+        } else {
+            val returnedRepo = obj.string("repo", MAX_PATH_CHARS)?.takeIf { it == repo } ?: return null
+            val name = obj.string("name", MAX_LABEL_CHARS)?.takeIf(String::isNotBlank) ?: return null
+            val headHash = obj.string("headHash", 64)?.takeIf { objectId.matches(it) } ?: return null
+            if (requestedHead != null && headHash != requestedHead) return null
+            val offset = obj.number("offset")?.takeIf { it in 0L..10_000L }?.toInt() ?: return null
+            if (offset != requestedOffset) return null
+            val limit = obj.number("limit")?.takeIf { it in 1L..50L }?.toInt() ?: return null
+            if (limit != requestedLimit) return null
+            val commits = obj.array("commits", 50)?.map { parseCommit(it as? JsonObject ?: return null) ?: return null } ?: return null
+            if (commits.isEmpty() || commits.size > limit || offset + commits.size > 10_000 ||
+                commits.map { it.hash }.toSet().size != commits.size) return null
+            if (requestedHead == null && offset == 0 && commits.first().hash != headHash) return null
+            val nextOffset = when (val next = obj["nextOffset"]) {
+                null, kotlinx.serialization.json.JsonNull -> null
+                else -> (next as? JsonPrimitive)?.longOrNull?.takeIf { it in (offset + commits.size).toLong()..10_000L }?.toInt() ?: return null
+            }
+            val truncated = obj.bool("truncated") ?: return null
+            if (nextOffset != null && nextOffset != offset + commits.size) return null
+            if (nextOffset != null && (commits.size != limit || nextOffset >= 10_000)) return null
+            if (truncated && (nextOffset != null || offset + commits.size != 10_000)) return null
+            ChangeCommitHistoryState.Available(ChangeCommitHistoryPage(returnedRepo, name, headHash, offset, limit, commits, nextOffset, truncated))
+        }
+        return ChangeCommitHistoryAnswer(target, metadata.workspaceLabel, state)
     }
 
     private data class Metadata(val workspaceLabel: String?, val paneRepo: String?)
@@ -243,8 +302,9 @@ internal object ChangesWire {
 
     private val LIST_UNAVAILABLE = setOf("no-pane", "no-workspace", "no-folder", "no-git")
     private val DIFF_UNAVAILABLE = LIST_UNAVAILABLE + setOf("unknown-repo", "unknown-path")
-    private val COMMIT_UNAVAILABLE = LIST_UNAVAILABLE + setOf("unknown-repo", "no-commit")
-    private val COMMIT_DIFF_UNAVAILABLE = DIFF_UNAVAILABLE + "no-commit"
+    private val COMMIT_UNAVAILABLE = LIST_UNAVAILABLE + setOf("unknown-repo", "no-commit", "stale-history")
+    private val COMMIT_DIFF_UNAVAILABLE = DIFF_UNAVAILABLE + setOf("no-commit", "stale-history")
+    private val HISTORY_UNAVAILABLE = LIST_UNAVAILABLE + setOf("unknown-repo", "no-commit", "stale-history")
 }
 
 const val DEFAULT_CHANGES_DEPTH = 2

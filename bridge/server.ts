@@ -18,6 +18,7 @@ import { isLoopbackBindHost, type Config } from "./config.ts";
 import {
   changesParams,
   repoOfFolder,
+  sharedReadCommitHistory,
   sharedCommitFileDiff,
   sharedFileDiff,
   sharedListChanges,
@@ -204,6 +205,7 @@ import type {
   CacheWatchListResponse,
   CacheWatchResponse,
   PaneCache,
+  PaneChangeCommitHistoryResponse,
   PaneChangeCommitDiffResponse,
   PaneChangeCommitResponse,
   PaneChangeDiffResponse,
@@ -212,6 +214,7 @@ import type {
   WorkspaceChangeCommitDiffResponse,
   WorkspaceChangeCommitResponse,
   WorkspaceChangeDiffResponse,
+  WorkspaceChangeCommitHistoryResponse,
   WorkspaceChangesResponse,
   WorkspaceFilesResponse,
   ChatBody,
@@ -3588,6 +3591,9 @@ export async function paneChanges(
       }
       return json({ ...subject, ...(await sharedReadCommit(root, params)) } satisfies PaneChangeCommitResponse, accept);
     }
+    if (params.view === "history") {
+      return json({ ...subject, ...(await sharedReadCommitHistory(root, params)) } satisfies PaneChangeCommitHistoryResponse, accept);
+    }
     if (wantsDiff) return json({ ...subject, ...maskDiff(await sharedFileDiff(root, params), redact) } satisfies PaneChangeDiffResponse, accept);
     const list = await sharedListChanges(root, params);
     const paneRepo = list.available ? await repoOfFolder(list.root, list.repos, pane.cwd) : undefined;
@@ -3634,6 +3640,9 @@ export async function workspaceChanges(
         );
       }
       return json({ ...subject, ...(await sharedReadCommit(found.root, params)) } satisfies WorkspaceChangeCommitResponse, accept);
+    }
+    if (params.view === "history") {
+      return json({ ...subject, ...(await sharedReadCommitHistory(found.root, params)) } satisfies WorkspaceChangeCommitHistoryResponse, accept);
     }
     if (wantsDiff) {
       return json({ ...subject, ...maskDiff(await sharedFileDiff(found.root, params), redact) } satisfies WorkspaceChangeDiffResponse, accept);

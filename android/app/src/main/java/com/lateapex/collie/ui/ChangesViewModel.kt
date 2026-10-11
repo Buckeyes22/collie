@@ -12,6 +12,9 @@ import com.lateapex.collie.domain.Scope
 import com.lateapex.collie.network.ApiFailure
 import com.lateapex.collie.network.ApiResult
 import com.lateapex.collie.network.ChangeCommitState
+import com.lateapex.collie.network.ChangeCommitInfo
+import com.lateapex.collie.network.ChangeCommitHistoryPage
+import com.lateapex.collie.network.ChangeCommitHistoryState
 import com.lateapex.collie.network.ChangeDiffAnswer
 import com.lateapex.collie.network.ChangeDiffState
 import com.lateapex.collie.network.ChangedFile
@@ -28,11 +31,15 @@ internal data class ChangesScreenState(
     val list: ChangesListAnswer? = null,
     val lookup: ChangesLookup = ChangesLookup(),
     val selection: ChangesSelection? = null,
+    val history: ChangeHistoryView? = null,
     val detail: ChangeDetail? = null,
     val error: ChangesMessage? = null,
 )
 
-internal data class ChangesSelection(val repo: String, val path: String?, val commit: Boolean)
+internal data class ChangesSelection(val repo: String, val path: String?, val commit: Boolean, val commitHash: String? = null)
+internal data class ChangeHistoryView(val repo: String, val pages: List<ChangeCommitHistoryPage>, val pageIndex: Int = 0) {
+    val page: ChangeCommitHistoryPage get() = pages[pageIndex]
+}
 internal data class ChangeDetail(
     val title: String,
     val subtitle: String,
@@ -51,6 +58,7 @@ internal class ChangesViewModel(
     private val scope: Scope,
 ) : AndroidViewModel(application) {
     private val preferences = NativePreferences(application)
+    private companion object { const val HISTORY_PAGE_SIZE = 30; const val MAX_HISTORY_PAGES = 334 }
     private var lookup = ChangesLookup(preferences.changesDepth, preferences.changesNested)
     private val mutableState = MutableStateFlow(ChangesScreenState(lookup = lookup))
     val state: StateFlow<ChangesScreenState> = mutableState.asStateFlow()
@@ -59,26 +67,12 @@ internal class ChangesViewModel(
 
     init {
         repository.selectSubject(scope, target.id)
-        authorityRegistration = repository.onAuthorityInvalidated { reason ->
-            val terminal = reason in setOf(
-                AuthorityInvalidation.PAIRING_RETIRED,
-                AuthorityInvalidation.CONNECTION_CHANGED,
-                AuthorityInvalidation.DISCONNECTED,
-                AuthorityInvalidation.SAVED_COPY,
-                AuthorityInvalidation.SCOPE_CHANGED,
-                AuthorityInvalidation.LEAD_CHANGED,
-            )
-            val forbidden = reason == AuthorityInvalidation.ACCESS_FROZEN &&
-                (repository.accessFailure as? ApiFailure.Http)?.status in setOf(401, 403)
-            if (terminal || forbidden) {
-                generation++
-                val message = if (forbidden || reason == AuthorityInvalidation.PAIRING_RETIRED) {
-                    ChangesMessage.UNAUTHORIZED
-                } else {
-                    ChangesMessage.UNAVAILABLE
-                }
-                mutableState.value = ChangesScreenState(lookup = lookup, error = message)
-            }
+        authorityRegistration = repository.onReadContextInvalidated { reason ->
+            generation++
+            val message = if (reason == AuthorityInvalidation.ACCESS_FROZEN || reason == AuthorityInvalidation.PAIRING_RETIRED) {
+                ChangesMessage.UNAUTHORIZED
+            } else ChangesMessage.UNAVAILABLE
+            mutableState.value = ChangesScreenState(lookup = lookup, error = message)
         }
         refresh()
     }
@@ -92,14 +86,9 @@ internal class ChangesViewModel(
         }
         mutableState.value = mutableState.value.copy(loading = true, error = null)
         viewModelScope.launch {
-            val result = repository.changes(target, scope, lookup)
+            val result = repository.changes(target, scope, lookup, expectedContext = context)
             if (request != generation) return@launch
-            if (!repository.isCurrent(context)) {
-                if ((repository.accessFailure as? ApiFailure.Http)?.status in setOf(401, 403)) {
-                    mutableState.value = ChangesScreenState(lookup = lookup, error = ChangesMessage.UNAUTHORIZED)
-                }
-                return@launch
-            }
+            if (!repository.isCurrent(context)) return@launch
             when (result) {
                 is ApiResult.Success -> mutableState.value = ChangesScreenState(list = result.value, lookup = lookup)
                 is ApiResult.Failure -> mutableState.value = ChangesScreenState(lookup = lookup, error = failureMessage(result.error))
@@ -132,8 +121,83 @@ internal class ChangesViewModel(
         loadDiff(selection)
     }
 
-    fun openLastCommit(repo: String) {
-        val selection = ChangesSelection(repo, null, commit = true)
+    fun openLastCommit(repo: String) = loadCommit(repo, null)
+
+    fun openHistory(repo: String) {
+        val request = ++generation
+        val context = repository.readContext(scope, target.id)
+        if (context == null) {
+            mutableState.value = mutableState.value.copy(loading = false, history = null, error = ChangesMessage.NOT_CONNECTED)
+            return
+        }
+        mutableState.value = mutableState.value.copy(loading = true, selection = null, detail = null, history = null, error = null)
+        viewModelScope.launch {
+            val result = repository.changeCommitHistory(target, scope, lookup, repo, head = null, offset = 0, limit = HISTORY_PAGE_SIZE, expectedContext = context)
+            if (request != generation) return@launch
+            if (!repository.isCurrent(context)) return@launch
+            when (result) {
+                is ApiResult.Success -> when (val page = result.value.state) {
+                    is ChangeCommitHistoryState.Unavailable -> mutableState.value = mutableState.value.copy(loading = false, error = messageForReason(page.reason))
+                    is ChangeCommitHistoryState.Available -> mutableState.value = mutableState.value.copy(
+                        loading = false, history = ChangeHistoryView(repo, listOf(page.page)), error = null,
+                    )
+                }
+                is ApiResult.Failure -> mutableState.value = mutableState.value.copy(loading = false, error = failureMessage(result.error))
+                is ApiResult.NotModified -> mutableState.value = mutableState.value.copy(loading = false, error = ChangesMessage.MALFORMED)
+            }
+        }
+    }
+
+    fun nextHistoryPage() {
+        val current = mutableState.value.history ?: return
+        val nextOffset = current.page.nextOffset ?: return
+        if (current.pages.any { it.offset == nextOffset }) {
+            mutableState.value = mutableState.value.copy(history = current.copy(pageIndex = current.pages.indexOfFirst { it.offset == nextOffset }))
+            return
+        }
+        val request = ++generation
+        val context = repository.readContext(scope, target.id)
+        if (context == null) {
+            mutableState.value = mutableState.value.copy(loading = false, error = ChangesMessage.NOT_CONNECTED)
+            return
+        }
+        mutableState.value = mutableState.value.copy(loading = true, error = null)
+        viewModelScope.launch {
+            val result = repository.changeCommitHistory(target, scope, lookup, current.repo, current.page.headHash, nextOffset, current.page.limit, expectedContext = context)
+            if (request != generation) return@launch
+            if (!repository.isCurrent(context)) {
+                mutableState.value = ChangesScreenState(lookup = lookup, error = ChangesMessage.UNAVAILABLE)
+                return@launch
+            }
+            when (result) {
+                is ApiResult.Success -> when (val state = result.value.state) {
+                    is ChangeCommitHistoryState.Unavailable -> mutableState.value = mutableState.value.copy(loading = false, error = messageForReason(state.reason))
+                    is ChangeCommitHistoryState.Available -> {
+                        val page = state.page
+                        val known = current.pages.flatMap { it.commits }.mapTo(mutableSetOf()) { it.hash }
+                        if (page.offset != nextOffset || page.headHash != current.page.headHash || page.commits.any { it.hash in known }) {
+                            mutableState.value = mutableState.value.copy(loading = false, error = ChangesMessage.MALFORMED)
+                        } else {
+                            val pages = (current.pages + page).takeLast(MAX_HISTORY_PAGES)
+                            mutableState.value = mutableState.value.copy(loading = false, history = ChangeHistoryView(current.repo, pages, pages.lastIndex), error = null)
+                        }
+                    }
+                }
+                is ApiResult.Failure -> mutableState.value = mutableState.value.copy(loading = false, error = failureMessage(result.error))
+                is ApiResult.NotModified -> mutableState.value = mutableState.value.copy(loading = false, error = ChangesMessage.MALFORMED)
+            }
+        }
+    }
+
+    fun previousHistoryPage() {
+        val current = mutableState.value.history ?: return
+        if (current.pageIndex > 0) mutableState.value = mutableState.value.copy(history = current.copy(pageIndex = current.pageIndex - 1), error = null)
+    }
+
+    fun openHistoryCommit(repo: String, commit: ChangeCommitInfo) = loadCommit(repo, commit.hash)
+
+    private fun loadCommit(repo: String, commitHash: String?) {
+        val selection = ChangesSelection(repo, null, commit = true, commitHash = commitHash)
         val request = ++generation
         val context = repository.readContext(scope, target.id)
         if (context == null) {
@@ -142,14 +206,9 @@ internal class ChangesViewModel(
         }
         mutableState.value = mutableState.value.copy(loading = true, selection = selection, detail = null, error = null)
         viewModelScope.launch {
-            val result = repository.changeCommit(target, scope, lookup, repo)
+            val result = repository.changeCommit(target, scope, lookup, repo, commitHash, expectedContext = context)
             if (request != generation) return@launch
-            if (!repository.isCurrent(context)) {
-                if ((repository.accessFailure as? ApiFailure.Http)?.status in setOf(401, 403)) {
-                    mutableState.value = ChangesScreenState(lookup = lookup, error = ChangesMessage.UNAUTHORIZED)
-                }
-                return@launch
-            }
+            if (!repository.isCurrent(context)) return@launch
             when (result) {
                 is ApiResult.Success -> when (val state = result.value.state) {
                     is ChangeCommitState.Unavailable -> mutableState.value = mutableState.value.copy(loading = false, error = messageForReason(state.reason))
@@ -161,15 +220,9 @@ internal class ChangesViewModel(
                             append(" · ").append(state.commit.timeSeconds)
                         }
                         mutableState.value = mutableState.value.copy(
-                            loading = false,
-                            selection = selection,
-                            detail = ChangeDetail(
-                                state.name,
-                                getApplication<Application>().getString(com.lateapex.collie.R.string.changes_last_commit),
-                                body,
-                                commitFiles = state.files,
-                                commitFilesTruncated = state.truncated,
-                            ),
+                            loading = false, selection = selection,
+                            detail = ChangeDetail(state.name, getApplication<Application>().getString(if (commitHash == null) com.lateapex.collie.R.string.changes_last_commit else com.lateapex.collie.R.string.changes_selected_commit), body,
+                                commitFiles = state.files, commitFilesTruncated = state.truncated),
                         )
                     }
                 }
@@ -179,8 +232,13 @@ internal class ChangesViewModel(
         }
     }
 
+    fun backToHistory() {
+        generation++
+        mutableState.value = mutableState.value.copy(loading = false, selection = null, detail = null, error = null)
+    }
+
     fun openCommitFile(repo: String, file: ChangedFile) {
-        val selection = ChangesSelection(repo, file.path, commit = true)
+        val selection = ChangesSelection(repo, file.path, commit = true, commitHash = mutableState.value.selection?.commitHash)
         val request = ++generation
         val context = repository.readContext(scope, target.id)
         if (context == null) {
@@ -189,14 +247,9 @@ internal class ChangesViewModel(
         }
         mutableState.value = mutableState.value.copy(loading = true, selection = selection, error = null)
         viewModelScope.launch {
-            val result = repository.changeCommitDiff(target, scope, lookup, repo, file.path)
+            val result = repository.changeCommitDiff(target, scope, lookup, repo, file.path, selection.commitHash, expectedContext = context)
             if (request != generation) return@launch
-            if (!repository.isCurrent(context)) {
-                if ((repository.accessFailure as? ApiFailure.Http)?.status in setOf(401, 403)) {
-                    mutableState.value = ChangesScreenState(lookup = lookup, error = ChangesMessage.UNAUTHORIZED)
-                }
-                return@launch
-            }
+            if (!repository.isCurrent(context)) return@launch
             when (result) {
                 is ApiResult.Success -> applyDiff(
                     ChangeDiffAnswer(result.value.target, result.value.workspaceLabel, result.value.state),
@@ -210,7 +263,7 @@ internal class ChangesViewModel(
 
     fun backToList() {
         generation++
-        mutableState.value = mutableState.value.copy(loading = false, selection = null, detail = null, error = null)
+        mutableState.value = mutableState.value.copy(loading = false, selection = null, detail = null, history = null, error = null)
     }
 
     private fun loadDiff(selection: ChangesSelection) {
@@ -223,14 +276,9 @@ internal class ChangesViewModel(
         }
         mutableState.value = mutableState.value.copy(loading = true, selection = selection, detail = null, error = null)
         viewModelScope.launch {
-            val result = repository.changeDiff(target, scope, lookup, selection.repo, path)
+            val result = repository.changeDiff(target, scope, lookup, selection.repo, path, expectedContext = context)
             if (request != generation) return@launch
-            if (!repository.isCurrent(context)) {
-                if ((repository.accessFailure as? ApiFailure.Http)?.status in setOf(401, 403)) {
-                    mutableState.value = ChangesScreenState(lookup = lookup, error = ChangesMessage.UNAUTHORIZED)
-                }
-                return@launch
-            }
+            if (!repository.isCurrent(context)) return@launch
             when (result) {
                 is ApiResult.Success -> applyDiff(result.value, selection)
                 is ApiResult.Failure -> mutableState.value = mutableState.value.copy(loading = false, error = failureMessage(result.error))
