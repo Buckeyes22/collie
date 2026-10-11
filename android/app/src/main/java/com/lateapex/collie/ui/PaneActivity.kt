@@ -3780,6 +3780,44 @@ class PaneActivity : AppCompatActivity() {
 
             closingRow(getString(R.string.pane_refresh)) { viewModel.refresh() }
 
+            if (currentState.canWrite) {
+                val focus = PaneStructuralGate.action(
+                    "setFocus", address, true, currentState.mux, currentState.servers, paneActionInFlight,
+                )
+                val rename = PaneStructuralGate.action(
+                    "renamePane", address, true, currentState.mux, currentState.servers, paneActionInFlight,
+                )
+                val close = PaneStructuralGate.action(
+                    "closePane", address, true, currentState.mux, currentState.servers, paneActionInFlight,
+                )
+                if (focus.visible) {
+                    closingRow(getString(R.string.pane_action_focus), focus.enabled, ::focusPane)
+                }
+                if (rename.visible) {
+                    content.addView(sheetActionButton(getString(R.string.pane_action_rename)) {
+                        showRenameCurrentPane(dialog, renderActions)
+                    }.apply { isEnabled = rename.enabled })
+                }
+                if (close.visible) {
+                    content.addView(
+                        sheetActionButton(getString(R.string.pane_action_close)) {
+                            dialog.dismiss()
+                            showCloseConfirmSheet()
+                        }.apply {
+                            id = R.id.pane_action_close_button
+                            isEnabled = close.enabled
+                        },
+                    )
+                }
+                listOfNotNull(focus.refusal, rename.refusal, close.refusal).firstOrNull()?.let { refusal ->
+                    content.addView(sheetActionButton(hostRefusalText(refusal)) {}.apply { isEnabled = false })
+                }
+            } else {
+                content.addView(
+                    sheetActionButton(getString(R.string.pane_action_read_only)) {}.apply { isEnabled = false },
+                )
+            }
+
             fun switchRow(label: String, id: Int, checked: Boolean, onToggle: (Boolean) -> Unit) {
                 content.addView(
                     com.google.android.material.materialswitch.MaterialSwitch(this).apply {
@@ -3853,43 +3891,6 @@ class PaneActivity : AppCompatActivity() {
                         putExtra(LayoutActivity.EXTRA_SESSION, address.scope.session)
                     })
                 })
-            }
-            if (currentState.canWrite) {
-                val focus = PaneStructuralGate.action(
-                    "setFocus", address, true, currentState.mux, currentState.servers, paneActionInFlight,
-                )
-                val rename = PaneStructuralGate.action(
-                    "renamePane", address, true, currentState.mux, currentState.servers, paneActionInFlight,
-                )
-                val close = PaneStructuralGate.action(
-                    "closePane", address, true, currentState.mux, currentState.servers, paneActionInFlight,
-                )
-                if (focus.visible) {
-                    closingRow(getString(R.string.pane_action_focus), focus.enabled, ::focusPane)
-                }
-                if (rename.visible) {
-                    content.addView(sheetActionButton(getString(R.string.pane_action_rename)) {
-                        showRenameCurrentPane(dialog, renderActions)
-                    }.apply { isEnabled = rename.enabled })
-                }
-                if (close.visible) {
-                    content.addView(
-                        sheetActionButton(getString(R.string.pane_action_close)) {
-                            dialog.dismiss()
-                            showCloseConfirmSheet()
-                        }.apply {
-                            id = R.id.pane_action_close_button
-                            isEnabled = close.enabled
-                        },
-                    )
-                }
-                listOfNotNull(focus.refusal, rename.refusal, close.refusal).firstOrNull()?.let { refusal ->
-                    content.addView(sheetActionButton(hostRefusalText(refusal)) {}.apply { isEnabled = false })
-                }
-            } else {
-                content.addView(
-                    sheetActionButton(getString(R.string.pane_action_read_only)) {}.apply { isEnabled = false },
-                )
             }
             dialog.setSheetContent(content)
         }

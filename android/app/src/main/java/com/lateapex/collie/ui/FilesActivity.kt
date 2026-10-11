@@ -62,6 +62,7 @@ class FilesActivity : AppCompatActivity() {
     private lateinit var ignoredCheck: CheckBox
     private lateinit var sourceText: TextView
     private var showPreview = false
+    private var savedHandoffRequired = false
     private var lastFindOffset = 0
     private var currentSource: FilesAnswer.Source? = null
     @Volatile private var acceptedPageContext: com.lateapex.collie.data.ScopedReadContext? = null
@@ -87,6 +88,9 @@ class FilesActivity : AppCompatActivity() {
         }
         scope = Scope(intent.getStringExtra(EXTRA_HOST)?.takeIf(String::isNotBlank), intent.getStringExtra(EXTRA_SESSION)?.takeIf(String::isNotBlank))
         buildContent()
+        val handoffRequired = savedInstanceState?.getBoolean(STATE_HANDOFF_REQUIRED, false) == true ||
+            intent.getBooleanExtra(EXTRA_HANDOFF_REQUIRED, false)
+        savedHandoffRequired = handoffRequired
         val directory = if (savedInstanceState != null) savedInstanceState.getString(STATE_DIRECTORY).orEmpty() else intent.getStringExtra(EXTRA_DIRECTORY).orEmpty()
         val path = if (savedInstanceState != null) savedInstanceState.getString(STATE_PATH) else intent.getStringExtra(EXTRA_PATH)
         val openReference = if (savedInstanceState == null) intent.getStringExtra(EXTRA_REFERENCE) else null
@@ -96,7 +100,8 @@ class FilesActivity : AppCompatActivity() {
         currentFind = savedInstanceState?.getString(STATE_FIND)?.take(256).orEmpty()
         pendingAnchor = (if (savedInstanceState != null) savedInstanceState.getString(STATE_ANCHOR) else intent.getStringExtra(EXTRA_ANCHOR))?.take(256)
         showPreview = savedInstanceState?.getBoolean(STATE_PREVIEW) ?: (pendingAnchor != null)
-        viewModel = ViewModelProvider(this, FilesViewModel.Factory(application, target, scope, directory, path, ignored, openReference))[FilesViewModel::class.java]
+        viewModel = ViewModelProvider(this, FilesViewModel.Factory(application, target, scope, directory, path, ignored, openReference,
+            handoffRequired, intent.getStringExtra(EXTRA_HANDOFF_TOKEN), intent.getStringExtra(EXTRA_PATH)))[FilesViewModel::class.java]
         invalidationSubscription = repository.onReadContextInvalidated {
             // Revoke the Activity's own accepted page synchronously. Invalidation can arrive from
             // a repository worker, so wait for the view wipe before returning to that caller.
@@ -150,6 +155,8 @@ class FilesActivity : AppCompatActivity() {
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
+        outState.putBoolean(STATE_HANDOFF_REQUIRED, intent.getBooleanExtra(EXTRA_HANDOFF_REQUIRED, false) ||
+            savedHandoffRequired)
         if (::viewModel.isInitialized) {
             val state = viewModel.state.value
             outState.putString(STATE_DIRECTORY, state.directory.take(4096))
@@ -588,6 +595,9 @@ class FilesActivity : AppCompatActivity() {
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
 
     companion object {
+        private const val EXTRA_HANDOFF_REQUIRED = "files_handoff_required"
+        private const val EXTRA_HANDOFF_TOKEN = "files_handoff_token"
+        private const val STATE_HANDOFF_REQUIRED = "files.state.handoff_required"
         private const val EXTRA_TARGET_KIND = "files_target_kind"
         private const val EXTRA_TARGET_ID = "files_target_id"
         private const val EXTRA_HOST = "host"
@@ -607,6 +617,12 @@ class FilesActivity : AppCompatActivity() {
         private const val STATE_ANCHOR = "files.state.anchor"
         private const val HEADING_TAG = "files.heading"
         private val PREVIEW_EXTENSIONS = setOf("md", "markdown", "mdown", "json", "jsonc", "html", "htm", "csv", "tsv", "svg")
+
+        internal fun intentForAcceptedSource(context: Context, target: FilesTarget, scope: Scope, path: com.lateapex.collie.network.RelativeFilePath, handoff: String): Intent =
+            intent(context, target, scope, path = path.value).apply {
+                putExtra(EXTRA_HANDOFF_REQUIRED, true)
+                putExtra(EXTRA_HANDOFF_TOKEN, handoff)
+            }
 
         fun intent(context: Context, target: FilesTarget, scope: Scope, directory: String = "", path: String? = null, ignored: Boolean = false, line: Int? = null, openReference: Boolean = false, anchor: String? = null): Intent =
             Intent(context, FilesActivity::class.java).apply {

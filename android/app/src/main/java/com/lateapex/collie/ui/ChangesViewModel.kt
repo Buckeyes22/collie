@@ -8,6 +8,11 @@ import androidx.lifecycle.viewModelScope
 import com.lateapex.collie.CollieApplication
 import com.lateapex.collie.data.AuthorityInvalidation
 import com.lateapex.collie.data.CollieRepository
+import com.lateapex.collie.data.ScopedReadContext
+import com.lateapex.collie.network.FilesTarget
+import com.lateapex.collie.network.RelativeFilePath
+import com.lateapex.collie.network.ChangesListState
+import com.lateapex.collie.network.ChangeStatus
 import com.lateapex.collie.domain.Scope
 import com.lateapex.collie.network.ApiFailure
 import com.lateapex.collie.network.ApiResult
@@ -34,6 +39,7 @@ internal data class ChangesScreenState(
     val history: ChangeHistoryView? = null,
     val detail: ChangeDetail? = null,
     val error: ChangesMessage? = null,
+    val listContext: ScopedReadContext? = null,
 )
 
 internal data class ChangesSelection(val repo: String, val path: String?, val commit: Boolean, val commitHash: String? = null)
@@ -48,7 +54,11 @@ internal data class ChangeDetail(
     val isDiff: Boolean = false,
     val commitFiles: List<ChangedFile> = emptyList(),
     val commitFilesTruncated: Boolean = false,
+    val currentSource: AcceptedChangeSource? = null,
+    val sourceNotice: ChangeSourceNotice? = null,
 )
+internal data class AcceptedChangeSource(val target: FilesTarget, val scope: Scope, val path: RelativeFilePath, val context: ScopedReadContext)
+internal enum class ChangeSourceNotice { DELETED, HISTORICAL }
 internal enum class ChangesMessage { NOT_CONNECTED, UNSUPPORTED, UNAUTHORIZED, UNKNOWN_REPO, UNKNOWN_PATH, NO_COMMIT, UNAVAILABLE, MALFORMED }
 
 internal class ChangesViewModel(
@@ -78,19 +88,21 @@ internal class ChangesViewModel(
     }
 
     fun refresh() {
-        val request = ++generation
         val context = repository.readContext(scope, target.id)
         if (context == null) {
             mutableState.value = mutableState.value.copy(loading = false, error = ChangesMessage.NOT_CONNECTED)
             return
         }
-        mutableState.value = mutableState.value.copy(loading = true, error = null)
+        val request = ++generation
+        mutableState.value = mutableState.value.copy(loading = true, detail = null, selection = null, listContext = null, error = null)
         viewModelScope.launch {
             val result = repository.changes(target, scope, lookup, expectedContext = context)
             if (request != generation) return@launch
             if (!repository.isCurrent(context)) return@launch
             when (result) {
-                is ApiResult.Success -> mutableState.value = ChangesScreenState(list = result.value, lookup = lookup)
+                is ApiResult.Success -> mutableState.value = if (result.status == 200 && result.value.target == target) {
+                    ChangesScreenState(list = result.value, lookup = lookup, listContext = context)
+                } else ChangesScreenState(lookup = lookup, error = ChangesMessage.MALFORMED)
                 is ApiResult.Failure -> mutableState.value = ChangesScreenState(lookup = lookup, error = failureMessage(result.error))
                 is ApiResult.NotModified -> mutableState.value = ChangesScreenState(lookup = lookup, error = ChangesMessage.MALFORMED)
             }
@@ -253,7 +265,7 @@ internal class ChangesViewModel(
             when (result) {
                 is ApiResult.Success -> applyDiff(
                     ChangeDiffAnswer(result.value.target, result.value.workspaceLabel, result.value.state),
-                    selection,
+                    selection, context, result.status,
                 )
                 is ApiResult.Failure -> mutableState.value = mutableState.value.copy(loading = false, error = failureMessage(result.error))
                 is ApiResult.NotModified -> mutableState.value = mutableState.value.copy(loading = false, error = ChangesMessage.MALFORMED)
@@ -269,7 +281,7 @@ internal class ChangesViewModel(
     private fun loadDiff(selection: ChangesSelection) {
         val path = selection.path ?: return
         val request = ++generation
-        val context = repository.readContext(scope, target.id)
+        val context = mutableState.value.listContext?.takeIf { repository.isCurrent(it) }
         if (context == null) {
             mutableState.value = mutableState.value.copy(loading = false, selection = selection, error = ChangesMessage.NOT_CONNECTED)
             return
@@ -280,14 +292,14 @@ internal class ChangesViewModel(
             if (request != generation) return@launch
             if (!repository.isCurrent(context)) return@launch
             when (result) {
-                is ApiResult.Success -> applyDiff(result.value, selection)
+                is ApiResult.Success -> applyDiff(result.value, selection, context, result.status)
                 is ApiResult.Failure -> mutableState.value = mutableState.value.copy(loading = false, error = failureMessage(result.error))
                 is ApiResult.NotModified -> mutableState.value = mutableState.value.copy(loading = false, error = ChangesMessage.MALFORMED)
             }
         }
     }
 
-    private fun applyDiff(answer: ChangeDiffAnswer, selection: ChangesSelection) {
+    private fun applyDiff(answer: ChangeDiffAnswer, selection: ChangesSelection, context: ScopedReadContext, status: Int) {
         val state = answer.state
         if (state is ChangeDiffState.Unavailable) {
             mutableState.value = mutableState.value.copy(loading = false, error = messageForReason(state.reason))
@@ -309,9 +321,45 @@ internal class ChangesViewModel(
                 body,
                 binary = state.binary || state.directory || state.diff.isEmpty(),
                 isDiff = !state.binary && !state.directory && state.diff.isNotEmpty(),
+                currentSource = acceptedSource(answer, state, selection, context, status),
+                sourceNotice = when {
+                    selection.commit -> ChangeSourceNotice.HISTORICAL
+                    state.status == ChangeStatus.DELETED -> ChangeSourceNotice.DELETED
+                    else -> null
+                },
             ),
             error = null,
         )
+    }
+
+    private fun acceptedSource(answer: ChangeDiffAnswer, diff: ChangeDiffState.Available, selection: ChangesSelection, context: ScopedReadContext, status: Int): AcceptedChangeSource? {
+        if (selection.commit || status != 200 || answer.target != target || diff.repo != selection.repo ||
+            diff.path != selection.path || diff.commitHash != null || diff.status == ChangeStatus.DELETED || diff.directory ||
+            !repository.isCurrent(context)) return null
+        val current = mutableState.value
+        val listing = current.list?.takeIf { it.target == target }?.state as? ChangesListState.Available ?: return null
+        val listActor = current.listContext ?: return null
+        if (!repository.isCurrent(listActor) || listActor != context) return null
+        val listed = listing.repos.singleOrNull { it.relPath == selection.repo }?.files
+            ?.singleOrNull { it.path == selection.path } ?: return null
+        if (listed.status == ChangeStatus.DELETED || listed.status != diff.status || listed.oldPath != diff.oldPath) return null
+        val file = RelativeFilePath.parse(diff.path) ?: return null
+        val path = if (selection.repo == ".") file else {
+            val repo = RelativeFilePath.parse(selection.repo) ?: return null
+            RelativeFilePath.parse(repo.value + "/" + file.value) ?: return null
+        }
+        val filesTarget = when (target) {
+            is ChangesTarget.Pane -> FilesTarget.Pane(target.id)
+            is ChangesTarget.Workspace -> FilesTarget.Workspace(target.id)
+        }
+        return AcceptedChangeSource(filesTarget, scope, path, context)
+    }
+
+    /** Validate the exact rendered detail, never acquire fresh authority from an old button. */
+    fun sourceHandoff(source: AcceptedChangeSource): String? {
+        val current = mutableState.value
+        if (current.loading || current.error != null || current.detail?.currentSource !== source || !repository.isCurrent(source.context)) return null
+        return FilesReadHandoff.issue(repository, source.target, source.scope, source.path, source.context)
     }
 
     private fun failureMessage(error: ApiFailure): ChangesMessage = when (error) {
@@ -332,6 +380,8 @@ internal class ChangesViewModel(
     }
 
     override fun onCleared() {
+        generation++
+        mutableState.value = ChangesScreenState(lookup = lookup)
         authorityRegistration.close()
         super.onCleared()
     }

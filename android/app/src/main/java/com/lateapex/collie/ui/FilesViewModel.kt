@@ -40,10 +40,13 @@ internal class FilesViewModel(
     initialPath: String?,
     initialIgnored: Boolean,
     initialReference: String? = null,
+    private val handoffRequired: Boolean = false,
+    initialContext: ScopedReadContext? = null,
 ) : AndroidViewModel(application) {
     private val mutableState = MutableStateFlow(FilesScreenState(directory = initialDirectory, path = initialPath, ignored = initialIgnored))
     val state: StateFlow<FilesScreenState> = mutableState.asStateFlow()
     private var generation = 0L
+    private var navigationContext = initialContext
     private val invalidation = repository.onReadContextInvalidated { reason ->
         if (reason in setOf(
                 AuthorityInvalidation.CONNECTION_CHANGED, AuthorityInvalidation.PAIRING_RETIRED,
@@ -52,6 +55,7 @@ internal class FilesViewModel(
             ) || (reason == AuthorityInvalidation.ACCESS_FROZEN && repository.accessFailure is ApiFailure.Http)
         ) {
             generation++
+            navigationContext = null
             val previous = mutableState.value
             val currentFailure = repository.accessFailure
             val refusal = if (reason == AuthorityInvalidation.ACCESS_FROZEN && currentFailure != null) failure(currentFailure) else when (reason) {
@@ -72,7 +76,7 @@ internal class FilesViewModel(
     }
 
     init {
-        repository.selectSubject(scope, target.id)
+        if (!handoffRequired) repository.selectSubject(scope, target.id)
         val path = initialPath?.let { RelativeFilePath.parse(it) }
         when {
             initialReference != null -> openReference(initialReference)
@@ -150,8 +154,11 @@ internal class FilesViewModel(
 
     private fun request(loading: FilesScreenState, call: suspend (ScopedReadContext) -> ApiResult<FilesAnswer>) {
         val request = ++generation
-        val context = repository.readContext(scope, target.id)
+        val context = if (handoffRequired) navigationContext?.takeIf {
+            it.key.scope == scope && it.key.subjectIdentity == target.id && repository.isCurrent(it)
+        } else repository.readContext(scope, target.id)
         if (context == null) {
+            if (handoffRequired) navigationContext = null
             mutableState.value = loading.copy(loading = false, error = FilesMessage.NOT_CONNECTED)
             return
         }
@@ -201,6 +208,7 @@ internal class FilesViewModel(
     }
 
     override fun onCleared() {
+        navigationContext = null
         generation++
         invalidation.close()
         super.onCleared()
@@ -214,11 +222,17 @@ internal class FilesViewModel(
         private val path: String?,
         private val ignored: Boolean,
         private val reference: String? = null,
+        private val handoffRequired: Boolean = false,
+        private val handoffToken: String? = null,
+        private val handoffPath: String? = null,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
             val repository = (application as CollieApplication).container.repository
-            return FilesViewModel(application, repository, target, scope, directory, path, ignored, reference) as T
+            val context = if (handoffRequired) FilesReadHandoff.take(
+                handoffToken, repository, target, scope, path?.takeIf { it == handoffPath && reference == null },
+            ) else null
+            return FilesViewModel(application, repository, target, scope, directory, path, ignored, reference, handoffRequired, context) as T
         }
     }
 }

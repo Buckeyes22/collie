@@ -6,6 +6,10 @@ the first Android release from this fork.
 
 ## Unreleased
 
+- Open current, bridge-listed Changes source in native Files with the original scoped read actor; explain historical and deleted diffs and preserve Files device-read refusals.
+
+- Keep focus, rename and close actions near the top of the pane sheet so they remain visible on narrow screens and at large font sizes.
+
 - Preserve native text selection and tap-to-type for plain terminal output when Files links are unavailable.
 
 - Reconfirm retained transcript file links after Files access is withdrawn and restored while the transcript is hidden.

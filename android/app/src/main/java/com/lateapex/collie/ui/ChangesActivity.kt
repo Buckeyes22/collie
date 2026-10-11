@@ -181,6 +181,18 @@ class ChangesActivity : AppCompatActivity() {
         else addButton(getString(R.string.changes_back_to_list)) { viewModel.backToList() }
         addHeading(detail.title)
         if (detail.subtitle.isNotBlank()) addMuted(detail.subtitle)
+        detail.currentSource?.let { source ->
+            addButton(getString(R.string.changes_open_current_source)) {
+                val handoff = viewModel.sourceHandoff(source) ?: return@addButton
+                startActivity(FilesActivity.intentForAcceptedSource(this, source.target, source.scope, source.path, handoff))
+            }
+        }
+        detail.sourceNotice?.let { notice ->
+            addNotice(getString(when (notice) {
+                ChangeSourceNotice.DELETED -> R.string.changes_deleted_source_notice
+                ChangeSourceNotice.HISTORICAL -> R.string.changes_historical_source_notice
+            }))
+        }
         val isCommitDetail = state.selection?.commit == true
         if (isCommitDetail && detail.commitFilesTruncated) {
             addNotice(getString(R.string.changes_commit_files_truncated))

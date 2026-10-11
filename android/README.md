@@ -21,6 +21,12 @@ alert preferences are stored on the lead and affect subscribed bridge notificati
 background delivery is not available in this app, so these controls do not promise a phone alert.
 
 The read-only Changes screen lists bridge-discovered repositories and their working-tree diffs.
+After opening a listed current diff, **Open current source in Files** opens its current root-relative
+file through Files device-read admission. This shows current contents, not a committed revision.
+Deleted current paths and historical commit diffs remain diff-only, with an explanation. The source
+handoff expires after 30 seconds and is tied to its original server, device, scope and target;
+retirement or process restart requires reopening current Changes rather than reusing an old action.
+
 Its commit history is delivered in bounded first-parent pages pinned to the first page's HEAD;
 selecting a row loads that commit and only its listed file diffs. Older peers that do not return
 the history contract are shown as unsupported.
