@@ -64,6 +64,11 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.booleanOrNull
+import com.lateapex.collie.network.FilesAnswer
+import com.lateapex.collie.network.FilesExistAnswer
+import com.lateapex.collie.network.FilesImageBlob
+import com.lateapex.collie.network.FilesTarget
+import com.lateapex.collie.network.RelativeFilePath
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -522,6 +527,35 @@ class CollieRepository(
             context.key.subjectIdentity,
             expectedContext = context,
         ) { api.imageBlob(it, scope, sha256) }
+    }
+
+    /** Files reads retain the ordinary scope plus the device-read factor enforced by the bridge. */
+    suspend fun files(
+        target: FilesTarget,
+        scope: Scope,
+        path: RelativeFilePath? = null,
+        dir: RelativeFilePath? = null,
+        ignored: Boolean = false,
+        expectedContext: ScopedReadContext? = null,
+    ): ApiResult<FilesAnswer> = withConnection(scope, target.id, expectedContext) { api.files(it, target, scope, path, dir, ignored) }
+
+    suspend fun filesExist(
+        target: FilesTarget,
+        scope: Scope,
+        paths: List<RelativeFilePath>,
+        expectedContext: ScopedReadContext? = null,
+    ): ApiResult<FilesExistAnswer> = withConnection(scope, target.id, expectedContext) { api.filesExist(it, target, scope, paths) }
+
+    suspend fun fileImage(
+        context: ScopedReadContext,
+        target: FilesTarget,
+        path: RelativeFilePath,
+    ): ApiResult<FilesImageBlob> {
+        if (!isCurrent(context) || context.key.subjectIdentity != target.id) return staleScope()
+        val scope = Scope(context.key.host, context.key.session)
+        return withConnectionOf(context.connection, scope, target.id, expectedContext = context) {
+            api.fileImage(it, target, scope, path)
+        }
     }
 
     suspend fun chat(

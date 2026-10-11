@@ -200,6 +200,18 @@ class PaneActivity : AppCompatActivity() {
     private var pendingKeyboardFocus: View? = null
     private var findMatches = emptyList<OutputFind.Match>()
     private var findCursor = -1
+    private var printedLinkText: String? = null
+    private var printedLinkContext: com.lateapex.collie.data.ScopedReadContext? = null
+    private var printedLinkRefs: List<PrintedFileReference> = emptyList()
+    private var printedLinkConfirmed: Set<String> = emptySet()
+    private var printedLinkGeneration = 0L
+    private var printedLinkRoot: String? = null
+    private var printedLinkExpiresAt = 0L
+    private var terminalOutputContext: com.lateapex.collie.data.ScopedReadContext? = null
+    private var retiredOutputFingerprint: Pair<Long?, String>? = null
+    private val transcriptLinkBudgetLock = Any()
+    private val transcriptLinkPathsConfirmed = linkedSetOf<String>()
+    private var transcriptLinkBudgetGeneration = 0L
     private var renderedTerminalBlocks = emptyList<RenderedTerminalBlock>()
     private var zenMode = false
     private var paneActionInFlight = false
@@ -302,6 +314,9 @@ class PaneActivity : AppCompatActivity() {
             ),
             paneId,
         )
+        binding.filesButton.setOnClickListener {
+            startActivity(FilesActivity.intent(this, com.lateapex.collie.network.FilesTarget.Pane(paneId), address.scope))
+        }
         panePresenceTracker = PanePresenceTracker(
             fresh = intent.getBooleanExtra(EXTRA_FRESH_PANE, false),
             seen = savedInstanceState?.getBoolean(STATE_FRESH_PANE_SEEN) == true,
@@ -315,6 +330,8 @@ class PaneActivity : AppCompatActivity() {
         )[PaneViewModel::class.java]
         binding.transcriptBody.onLoadOlder = viewModel::loadOlderTranscript
         binding.transcriptBody.onSendQueuedNow = viewModel::sendQueuedNow
+        binding.transcriptBody.onDisplayedFileReferences = ::decorateTranscriptFileReferences
+        binding.transcriptBody.onFileReferenceBatchStarted = ::resetTranscriptLinkBudget
         binding.pendingCodexDismiss.setOnClickListener { viewModel.dismissAcceptedCodexReplies() }
         binding.transcriptBody.onPlaced = { fields ->
             (application as CollieApplication).container.diagnostics.record("transcriptPlacement", fields)
@@ -357,6 +374,12 @@ class PaneActivity : AppCompatActivity() {
         binding.replyInput.onSendShortcut = ::sendReplyDraft
         restoringDraft = true
         authorityRegistration = repository.onAuthorityInvalidated { reason ->
+            if (terminalOutputContext?.let(repository::isCurrent) != true) {
+                retirePrintedPathCustody()
+                terminalOutputContext = null
+                retiredOutputFingerprint = outputFingerprint(renderedRevision, lastRawText)
+                resetTranscriptLinkBudget()
+            }
             ++terminalRenderGeneration
             terminalRenderJob?.cancel()
             terminalRenderJob = null
@@ -400,6 +423,12 @@ class PaneActivity : AppCompatActivity() {
                     binding.semanticPanel.isVisible = false
                     renderAttachmentChip()
                     if (::speechRecorder.isInitialized) speechRecorder.cancel()
+                }
+            } else {
+                runOnUiThread {
+                    // Strip path spans immediately while preserving whatever content policy G2
+                    // allows. The retained mirror alone cannot acquire a replacement actor.
+                    renderTerminalContent(renderedTerminalText)
                 }
             }
         }
@@ -706,6 +735,9 @@ class PaneActivity : AppCompatActivity() {
 
     /** Retire copied content before the next Flow/render dispatch can run. */
     private fun retireSensitiveCustody() {
+        retirePrintedPathCustody()
+        resetTranscriptLinkBudget()
+        terminalOutputContext = null
         ++terminalRenderGeneration
         terminalRenderJob?.cancel()
         terminalRenderJob = null
@@ -1716,6 +1748,16 @@ class PaneActivity : AppCompatActivity() {
     private fun render(state: PaneUiState) = with(binding) {
         currentState = state
         lastRenderedState = state
+        val paneActor = state.paneReadContext?.takeIf(repository::isCurrent)
+        val paneBody = state.pane
+        if (paneActor != null && paneBody != null && renderedRevision == paneBody.revision && lastRawText == paneBody.text &&
+            terminalOutputContext?.let(repository::isCurrent) != true
+        ) {
+            // PaneViewModel attaches this actor only to a successful fresh pane read. That is the
+            // sole event allowed to restore link admission after an authority retirement.
+            terminalOutputContext = paneActor
+            retiredOutputFingerprint = null
+        }
         if (recoverFromClosedPane(state)) return@with
         pendingSent?.let { sent ->
             state.pane?.let { pane ->
@@ -1859,6 +1901,7 @@ class PaneActivity : AppCompatActivity() {
                         restoreScrollbackAnchor()
                         setNewOutputAvailable(false)
                     },
+                    acceptedContext = state.paneReadContext,
                 )
             } else if (grownTarget != null && !state.loadingOlder) {
                 pendingScrollbackTarget = null
@@ -1868,12 +1911,13 @@ class PaneActivity : AppCompatActivity() {
                         pane.revision,
                         scrollToBottom = false,
                         afterRender = { restoreScrollbackAnchor(); setNewOutputAvailable(false) },
+                        acceptedContext = state.paneReadContext,
                     )
                 } else pendingScrollbackAnchor = null
             } else if (changed && renderedRevision == null) {
-                showTerminalRevision(pane.text, pane.revision, scrollToBottom = true)
+                showTerminalRevision(pane.text, pane.revision, scrollToBottom = true, acceptedContext = state.paneReadContext)
             } else if (changed && !findBar.isVisible && followingOutput) {
-                showTerminalRevision(pane.text, pane.revision, scrollToBottom = true)
+                showTerminalRevision(pane.text, pane.revision, scrollToBottom = true, acceptedContext = state.paneReadContext)
             } else if (changed) {
                 // Freeze the actual visible snapshot. Restoring only scrollY lets inserted/reflowed
                 // rows move underneath the reader and is not the web route's freeze contract.
@@ -1951,12 +1995,13 @@ class PaneActivity : AppCompatActivity() {
         revision: Long,
         scrollToBottom: Boolean,
         afterRender: (() -> Unit)? = null,
+        acceptedContext: com.lateapex.collie.data.ScopedReadContext? = lastRenderedState?.paneReadContext,
     ) {
         if (pendingTerminalRevision == revision && pendingTerminalText == text) return
         pendingTerminalRevision = revision
         pendingTerminalText = text
         val generation = ++terminalRenderGeneration
-        val context = repository.readContext(address.scope, address.paneId)
+        val context = acceptedContext?.takeIf(repository::isCurrent)
         val lightTheme = isLightTheme()
         val rawMode = displayPreferences.getBoolean(PREF_RAW, false)
         val claudePane = isClaudePane
@@ -1969,6 +2014,7 @@ class PaneActivity : AppCompatActivity() {
                 prepareTerminalText(text, revision, lightTheme, rawMode, claudePane, displayAgent, omittedMarker),
                 scrollToBottom,
                 afterRender,
+                context,
             )
             return
         }
@@ -1992,7 +2038,7 @@ class PaneActivity : AppCompatActivity() {
             ) {
                 return@launch
             }
-            commitTerminalRender(text, revision, prepared, scrollToBottom, afterRender)
+            commitTerminalRender(text, revision, prepared, scrollToBottom, afterRender, context)
         }
     }
 
@@ -2002,12 +2048,18 @@ class PaneActivity : AppCompatActivity() {
         prepared: PreparedTerminalText,
         scrollToBottom: Boolean,
         afterRender: (() -> Unit)?,
+        context: com.lateapex.collie.data.ScopedReadContext?,
     ) {
         pendingTerminalRevision = null
         pendingTerminalText = null
         lastRawText = text
         renderedRevision = revision
         renderedTerminalText = prepared.text
+        val fingerprint = outputFingerprint(revision, text)
+        terminalOutputContext = context?.takeIf(repository::isCurrent)
+        // A current actor is supplied only by PaneViewModel for a successful fresh pane read. It
+        // can safely admit the exact same text after reconnection; an old redraw has no actor.
+        if (terminalOutputContext != null || fingerprint != retiredOutputFingerprint) retiredOutputFingerprint = null
         renderedStatusRows = prepared.statusRows
         applyFindHighlights(resetCursor = false)
         afterRender?.invoke()
@@ -3895,6 +3947,8 @@ class PaneActivity : AppCompatActivity() {
             val queueKeysSupported = queueAction?.keys?.let { keys ->
                 keys.isNotEmpty() && keys.size <= 12 && keys.all { MuxKeyGrammar.isSupported(it, state.unsupportedKeys) }
             } == true
+            // TranscriptBody owns the actual turn batch. Supporting-state renders and tool
+            // rebuilds preserve its quota while every rebuilt path still needs fresh confirmation.
             transcriptBody.bind(
                 agent = agentName,
                 entries = state.transcript,
@@ -3962,11 +4016,197 @@ class PaneActivity : AppCompatActivity() {
         // in Type mode re-rendered the mirror and the operator had to tap the field again for the
         // next letter (S25 Ultra, 2026-09-10). Whatever owned focus before the render keeps it.
         val focusedBefore = currentFocus?.takeIf { it !== terminalText && it !== terminalBlockContent }
-        renderTerminalBlocks(highlighted)
+        updatePrintedPathLinks(highlighted)
+        val spanActor = printedLinkContext
+        val spanGeneration = printedLinkGeneration
+        val spanRoot = printedLinkRoot
+        val spanExpiry = printedLinkExpiresAt
+        val linked = PrintedPathLinks.confirmedText(highlighted, printedLinkRefs, printedLinkConfirmed) { reference ->
+            openPrintedPath(reference, spanActor, spanGeneration, spanRoot, spanExpiry)
+        }
+        renderTerminalBlocks(linked)
         terminalStatusline.text = renderedStatusRows.joinToString(" · ")
         terminalStatusline.isVisible = !showingTranscriptBody && renderedStatusRows.isNotEmpty() &&
             !displayPreferences.getBoolean(PREF_RAW, false)
         if (focusedBefore != null && !focusedBefore.hasFocus()) focusedBefore.requestFocus()
+    }
+
+    private fun retirePrintedPathCustody() {
+        printedLinkGeneration++
+        printedLinkText = null
+        printedLinkContext = null
+        printedLinkRefs = emptyList()
+        printedLinkConfirmed = emptySet()
+        printedLinkRoot = null
+        printedLinkExpiresAt = 0L
+    }
+
+    private fun resetTranscriptLinkBudget() {
+        synchronized(transcriptLinkBudgetLock) {
+            ++transcriptLinkBudgetGeneration
+            transcriptLinkPathsConfirmed.clear()
+        }
+    }
+
+    /** Opaque comparison only: never retain another plaintext copy after authority retirement. */
+    private fun outputFingerprint(revision: Long?, text: String): Pair<Long?, String> {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+            .digest(text.toByteArray(Charsets.UTF_8))
+        return revision to digest.joinToString("") { "%02x".format(it.toInt() and 0xff) }
+    }
+
+    /** A candidate becomes tappable only after a scoped Files/exist read confirms it. */
+    private fun updatePrintedPathLinks(displayed: CharSequence) {
+        val source = displayed.toString()
+        val context = terminalOutputContext?.takeIf(repository::isCurrent)
+        if (context == null) {
+            retirePrintedPathCustody()
+            return
+        }
+        if (source == printedLinkText && context == printedLinkContext && android.os.SystemClock.uptimeMillis() < printedLinkExpiresAt) return
+        printedLinkText = source
+        printedLinkContext = context
+        printedLinkRefs = emptyList()
+        printedLinkConfirmed = emptySet()
+        printedLinkRoot = null
+        printedLinkExpiresAt = 0L
+        val generation = ++printedLinkGeneration
+        if (context == null) return
+        lifecycleScope.launch {
+            val target = com.lateapex.collie.network.FilesTarget.Pane(address.paneId)
+            val root = when (val answer = repository.files(
+                target,
+                address.scope,
+                dir = com.lateapex.collie.network.RelativeFilePath.parse("", allowRoot = true)!!,
+                expectedContext = context,
+            )) {
+                is com.lateapex.collie.network.ApiResult.Success -> (answer.value as? com.lateapex.collie.network.FilesAnswer.Listing)?.root
+                else -> null
+            }
+            if (generation != printedLinkGeneration || printedLinkText != source || !repository.isCurrent(context)) return@launch
+            val refs = PrintedPathLinks.extract(source, root)
+            printedLinkRefs = refs
+            printedLinkRoot = root
+            val paths = refs.map { it.path }.distinct()
+            if (paths.isEmpty()) { printedLinkExpiresAt = android.os.SystemClock.uptimeMillis() + PRINTED_LINK_TTL_MS; renderTerminalContent(renderedTerminalText); return@launch }
+            val result = repository.filesExist(target, address.scope, paths, context)
+            if (generation != printedLinkGeneration || printedLinkText != source || !repository.isCurrent(context)) return@launch
+            if (result is com.lateapex.collie.network.ApiResult.Success) {
+                printedLinkConfirmed = result.value.exists
+                printedLinkExpiresAt = android.os.SystemClock.uptimeMillis() + PRINTED_LINK_TTL_MS
+                renderTerminalContent(renderedTerminalText)
+            }
+        }
+    }
+
+    private fun openPrintedPath(
+        reference: PrintedFileReference,
+        context: com.lateapex.collie.data.ScopedReadContext?,
+        capturedGeneration: Long,
+        expectedRoot: String?,
+        capturedExpiry: Long,
+    ) {
+        if (context == null || expectedRoot == null || capturedGeneration != printedLinkGeneration ||
+            context !== printedLinkContext || context !== terminalOutputContext || expectedRoot != printedLinkRoot ||
+            capturedExpiry != printedLinkExpiresAt || !repository.isCurrent(context)
+        ) return
+        if (android.os.SystemClock.uptimeMillis() >= capturedExpiry) {
+            updatePrintedPathLinks(renderedTerminalText)
+            return
+        }
+        lifecycleScope.launch {
+            if (capturedGeneration != printedLinkGeneration || !repository.isCurrent(context) || context !== printedLinkContext || context !== terminalOutputContext || expectedRoot != printedLinkRoot || capturedExpiry != printedLinkExpiresAt) return@launch
+            val answer = repository.files(
+                com.lateapex.collie.network.FilesTarget.Pane(address.paneId), address.scope,
+                dir = com.lateapex.collie.network.RelativeFilePath.parse("", allowRoot = true)!!,
+                expectedContext = context,
+            )
+            val currentRoot = (answer as? com.lateapex.collie.network.ApiResult.Success)?.value
+                .let { it as? com.lateapex.collie.network.FilesAnswer.Listing }?.root
+            // Old awaited callbacks must not clear or refresh a replacement body's confirmation.
+            if (capturedGeneration != printedLinkGeneration || !repository.isCurrent(context) || context !== printedLinkContext || context !== terminalOutputContext || expectedRoot != printedLinkRoot || capturedExpiry != printedLinkExpiresAt) return@launch
+            if (currentRoot != expectedRoot) {
+                printedLinkRoot = null
+                printedLinkConfirmed = emptySet()
+                printedLinkExpiresAt = 0L
+                updatePrintedPathLinks(renderedTerminalText)
+                return@launch
+            }
+            startActivity(FilesActivity.intent(
+                this@PaneActivity,
+                com.lateapex.collie.network.FilesTarget.Pane(address.paneId),
+                address.scope,
+                path = reference.path.value,
+                line = reference.line,
+                openReference = true,
+            ))
+        }
+    }
+
+    private fun decorateTranscriptFileReferences(
+        view: android.widget.TextView,
+        displayed: CharSequence,
+        context: com.lateapex.collie.data.ScopedReadContext,
+    ) {
+        val source = displayed.toString().take(PrintedPathLinks.MAX_SOURCE_CHARS)
+        if (!repository.isCurrent(context)) return
+        val batchGeneration = synchronized(transcriptLinkBudgetLock) { transcriptLinkBudgetGeneration }
+        val unconfirmed = PrintedPathLinks.withoutConfirmedPaths(displayed)
+        view.text = unconfirmed
+        lifecycleScope.launch {
+            val target = com.lateapex.collie.network.FilesTarget.Pane(address.paneId)
+            val rootAnswer = repository.files(
+                target, address.scope,
+                dir = com.lateapex.collie.network.RelativeFilePath.parse("", allowRoot = true)!!,
+                expectedContext = context,
+            )
+            val root = (rootAnswer as? com.lateapex.collie.network.ApiResult.Success)?.value
+                .let { it as? com.lateapex.collie.network.FilesAnswer.Listing }?.root ?: return@launch
+            if (!repository.isCurrent(context) || view.parent == null || view.text.toString() != source) return@launch
+            val refs = PrintedPathLinks.extract(source, root)
+            val paths = synchronized(transcriptLinkBudgetLock) {
+                if (batchGeneration != transcriptLinkBudgetGeneration || !repository.isCurrent(context)) return@launch
+                refs.map { it.path }.distinct().filter { path ->
+                    if (path.value in transcriptLinkPathsConfirmed) true
+                    else if (transcriptLinkPathsConfirmed.size < 64) {
+                        transcriptLinkPathsConfirmed += path.value
+                        true
+                    } else false
+                }
+            }
+            if (paths.isEmpty()) return@launch
+            val answer = repository.filesExist(target, address.scope, paths, context)
+            val existing = (answer as? com.lateapex.collie.network.ApiResult.Success)?.value?.exists ?: return@launch
+            val batchCurrent = synchronized(transcriptLinkBudgetLock) { batchGeneration == transcriptLinkBudgetGeneration }
+            if (!batchCurrent || !repository.isCurrent(context) || view.parent == null || view.text.toString() != source) return@launch
+            view.text = PrintedPathLinks.confirmedText(unconfirmed, refs, existing) { reference ->
+                openTranscriptFile(reference, context, root)
+            }
+            view.movementMethod = android.text.method.LinkMovementMethod.getInstance()
+        }
+    }
+
+    private fun openTranscriptFile(
+        reference: PrintedFileReference,
+        context: com.lateapex.collie.data.ScopedReadContext,
+        expectedRoot: String,
+    ) {
+        if (!repository.isCurrent(context)) return
+        lifecycleScope.launch {
+            val target = com.lateapex.collie.network.FilesTarget.Pane(address.paneId)
+            val listing = repository.files(
+                target, address.scope,
+                dir = com.lateapex.collie.network.RelativeFilePath.parse("", allowRoot = true)!!,
+                expectedContext = context,
+            ) as? com.lateapex.collie.network.ApiResult.Success ?: return@launch
+            if ((listing.value as? com.lateapex.collie.network.FilesAnswer.Listing)?.root != expectedRoot || !repository.isCurrent(context)) return@launch
+            val confirmed = repository.filesExist(target, address.scope, listOf(reference.path), context)
+            if ((confirmed as? com.lateapex.collie.network.ApiResult.Success)?.value?.exists?.contains(reference.path.value) != true || !repository.isCurrent(context)) return@launch
+            startActivity(FilesActivity.intent(
+                this@PaneActivity, target, address.scope,
+                path = reference.path.value, line = reference.line, openReference = true,
+            ))
+        }
     }
 
     private fun renderTerminalBlocks(highlighted: CharSequence) = with(binding) {
@@ -3989,6 +4229,9 @@ class PaneActivity : AppCompatActivity() {
                 // view re-lays it out rather than throwing.
                 terminalText.text = if (highlighted is PrecomputedTextCompat) SpannableString(highlighted) else highlighted
             }
+            terminalText.movementMethod = if (terminalText.text is Spanned && (terminalText.text as Spanned).getSpans(0, terminalText.text.length, android.text.style.ClickableSpan::class.java).isNotEmpty()) {
+                LinkMovementMethod.getInstance()
+            } else null
             return@with
         }
         // Visible split blocks own accessibility in this mode; avoid measuring the same full text
@@ -4047,6 +4290,7 @@ class PaneActivity : AppCompatActivity() {
         movementMethod = LinkMovementMethod.getInstance()
         highlightColor = Color.TRANSPARENT
         this.text = text
+        movementMethod = if (text is Spanned && text.getSpans(0, text.length, android.text.style.ClickableSpan::class.java).isNotEmpty()) LinkMovementMethod.getInstance() else null
         bindTerminalTap(this)
     }
 
@@ -4487,6 +4731,7 @@ class PaneActivity : AppCompatActivity() {
 
     companion object {
         private const val MAX_PANNABLE_TABLE_RUNS = 1
+        private const val PRINTED_LINK_TTL_MS = 60_000L
         private const val STATUS_UNKNOWN = "unknown"
         private const val DISPLAY_PREFERENCES = "collie_pane_display"
         private const val PREF_WRAP = "wrap_lines"

@@ -102,6 +102,81 @@ class ScopedImageLoaderTest {
         loader.close()
     }
 
+    @Test fun filesImagesShareScopedDecoderAndCacheOnlyWhenSourceAndImageVersionsMatch() {
+        val api = FakeApi()
+        val repository = CollieRepository(api, Store(connection), OriginValidator())
+        repository.selectSubject(Scope(), "pane-1")
+        val loader = ScopedImageLoader(repository)
+        val context = repository.readContext(Scope(), "pane-1")!!
+        val bytes = Base64.decode(inlinePng(0xff227744.toInt(), 8).substringAfter(','), Base64.NO_WRAP)
+        val path = RelativeFilePath.parse("docs/diagram.png")!!
+        api.fileImageValue = FilesImageBlob("image/png", bytes, bytes.size.toLong(), 1.25)
+
+        repeat(2) {
+            val result = loadFileAndWait(loader, context, FilesTarget.Pane("pane-1"), path, bytes.size.toLong(), 1.25)
+            assertTrue(result is ScopedImageResult.Ready)
+            (result as ScopedImageResult.Ready).lease.close()
+        }
+        assertEquals("matching size and fractional mtime permit the existing scoped cache", 1, api.fileImageReads)
+
+        api.fileImageValue = FilesImageBlob("image/png", bytes, bytes.size.toLong() + 1, 1.25)
+        repeat(2) {
+            val result = loadFileAndWait(loader, context, FilesTarget.Pane("pane-1"), path, bytes.size.toLong() + 2, 1.25)
+            assertTrue(result is ScopedImageResult.Ready)
+            (result as ScopedImageResult.Ready).lease.close()
+        }
+        assertEquals("a changed image version is decoded each time and never retained", 3, api.fileImageReads)
+        loader.close()
+    }
+
+    @Test fun pinnedFilePixelsAreNeverReusedWithoutAnExactSourceVersion() {
+        val path = RelativeFilePath.parse("docs/diagram.png")!!
+        for (mismatched in listOf(false, true)) {
+            val api = FakeApi()
+            val repository = CollieRepository(api, Store(connection), OriginValidator())
+            repository.selectSubject(Scope(), "pane-1")
+            val loader = ScopedImageLoader(repository)
+            val context = repository.readContext(Scope(), "pane-1")!!
+            val sourceSize = if (mismatched) 100L else null
+            val sourceMtime = if (mismatched) 1.0 else null
+            val firstBytes = Base64.decode(inlinePng(0xffcc2200.toInt(), 8).substringAfter(','), Base64.NO_WRAP)
+            val secondBytes = Base64.decode(inlinePng(0xff1166dd.toInt(), 8).substringAfter(','), Base64.NO_WRAP)
+            api.fileImageValue = FilesImageBlob("image/png", firstBytes, if (mismatched) 101 else null, if (mismatched) 1.0 else null)
+            val first = loadFileAndWait(loader, context, FilesTarget.Pane("pane-1"), path, sourceSize, sourceMtime) as ScopedImageResult.Ready
+            val firstBitmap = first.lease.bitmap
+            val firstPixel = firstBitmap.getPixel(2, 2)
+
+            api.fileImageValue = FilesImageBlob("image/png", secondBytes, if (mismatched) 102 else null, if (mismatched) 1.0 else null)
+            val second = loadFileAndWait(loader, context, FilesTarget.Pane("pane-1"), path, sourceSize, sourceMtime) as ScopedImageResult.Ready
+            val secondBitmap = second.lease.bitmap
+            assertTrue("changed no-version or mismatched-version response returns new pixels", firstPixel != secondBitmap.getPixel(2, 2))
+            assertFalse("both independent leases are resident while pinned", firstBitmap.isRecycled || secondBitmap.isRecycled)
+            assertTrue("both allocations count against one residency budget", loader.residentBytesForTest() >= firstBitmap.allocationByteCount + secondBitmap.allocationByteCount)
+            second.lease.close()
+            assertTrue("the second uncached bitmap recycles at its last release", secondBitmap.isRecycled)
+            assertFalse("the first pinned bitmap remains live", firstBitmap.isRecycled)
+            first.lease.close()
+            assertTrue("the first bitmap recycles at its last release", firstBitmap.isRecycled)
+            assertEquals(0L, loader.residentBytesForTest())
+            loader.close()
+        }
+    }
+
+    private fun loadFileAndWait(
+        loader: ScopedImageLoader,
+        context: ScopedReadContext,
+        target: FilesTarget,
+        path: RelativeFilePath,
+        sourceSize: Long?,
+        sourceMtime: Double?,
+    ): ScopedImageResult {
+        val done = java.util.concurrent.CountDownLatch(1)
+        var result: ScopedImageResult? = null
+        loader.loadFile(context, target, path, sourceSize, sourceMtime, 120, 120, callback = { result = it; done.countDown() })
+        pumpMainUntil(done)
+        return result ?: error("Files image read did not complete")
+    }
+
     private fun assertInlineDecodes(loader: ScopedImageLoader, context: ScopedReadContext, mime: String, format: Bitmap.CompressFormat) {
         val output = ByteArrayOutputStream()
         Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888).compress(format, 100, output)
@@ -530,6 +605,8 @@ class ScopedImageLoaderTest {
 
     private class FakeApi : CollieApi {
         var imageReads = 0
+        var fileImageReads = 0
+        var fileImageValue = FilesImageBlob(null, byteArrayOf(1), 1, 1.0)
         var snapshotResult: ApiResult<SnapshotResponse> = ApiResult.Failure(ApiFailure.Protocol("unused"))
         var imageBlock: suspend () -> ApiResult<ImageBlob> = { ApiResult.Failure(ApiFailure.Http(404, null, null)) }
         override suspend fun health(connection: Connection) = ApiResult.Failure(ApiFailure.Protocol("unused"))
@@ -537,6 +614,10 @@ class ScopedImageLoaderTest {
         override suspend fun imageBlob(connection: Connection, scope: Scope, sha256: String): ApiResult<ImageBlob> {
             imageReads++
             return imageBlock()
+        }
+        override suspend fun fileImage(connection: Connection, target: FilesTarget, scope: Scope, path: RelativeFilePath): ApiResult<FilesImageBlob> {
+            fileImageReads++
+            return ApiResult.Success(fileImageValue, 200)
         }
         override suspend fun pane(connection: Connection, address: PaneAddress, lines: Int, etag: String?, markSeen: Boolean) = ApiResult.Failure(ApiFailure.Protocol("unused"))
         override suspend fun refresh(connection: Connection, scope: Scope) = ApiResult.Failure(ApiFailure.Protocol("unused"))

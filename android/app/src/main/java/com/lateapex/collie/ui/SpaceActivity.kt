@@ -94,6 +94,9 @@ class SpaceActivity : AppCompatActivity() {
             host = intent.getStringExtra(EXTRA_HOST)?.takeIf(String::isNotBlank),
             session = intent.getStringExtra(EXTRA_SESSION)?.takeIf(String::isNotBlank),
         )
+        binding.filesButton.setOnClickListener {
+            startActivity(FilesActivity.intent(this, com.lateapex.collie.network.FilesTarget.Workspace(workspaceId), scope))
+        }
         selectedTabId = savedInstanceState?.getString(STATE_SELECTED_TAB)
         binding.backButton.setOnClickListener { returnToDashboard() }
         binding.changesButton.setOnClickListener {

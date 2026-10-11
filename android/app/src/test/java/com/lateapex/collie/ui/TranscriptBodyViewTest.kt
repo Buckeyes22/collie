@@ -55,6 +55,31 @@ class TranscriptBodyViewTest {
         assertEquals(context.getString(R.string.pane_transcript_send_check_queue), button.text.toString())
     }
 
+    @Test fun replacingTranscriptTurnsKeepsQueuedRowsAndUsesOnlyTheCurrentSendAction() {
+        val context = android.view.ContextThemeWrapper(ApplicationProvider.getApplicationContext<Context>(), R.style.Theme_Collie)
+        val view = TranscriptBodyView(context)
+        val old = QueuedSendNow(7, 12, "a".repeat(64), "b".repeat(64), listOf("pending owned queue"), listOf("ctrl+Enter"))
+        val current = old.copy(revision = 13)
+        val taps = mutableListOf<QueuedSendNow>()
+        view.onSendQueuedNow = { taps += it }
+        view.bind("claude", listOf(entry(0)), true, old.queued, sendNow = old, sendNowEnabled = true)
+        val oldTurn = view.turnViewForTest("e0")!!
+        val button = view.findViewById<android.widget.Button>(R.id.transcript_send_queued_now)
+        view.bind("claude", listOf(entry(1)), true, current.queued, sendNow = current, sendNowEnabled = true)
+        assertEquals(null, oldTurn.parent)
+        assertSame("A replaced turn keeps the reachable queue action", button, view.findViewById(R.id.transcript_send_queued_now))
+        fun textNodes(node: View): List<String> = when (node) {
+            is android.widget.TextView -> listOf(node.text.toString())
+            is ViewGroup -> (0 until node.childCount).flatMap { textNodes(node.getChildAt(it)) }
+            else -> emptyList()
+        }
+        assertTrue("A transcript reset must retain the visible queued message", textNodes(view).any { it.contains("pending owned queue") })
+        assertTrue(button.isEnabled)
+        button.performClick()
+        assertEquals(1, taps.size)
+        assertSame("A delayed retained button cannot dispatch its old recipe", current, taps.single())
+    }
+
     @Test
     fun bindAddsOneViewPerUuidAndReusesOnRebind() {
         val context = android.view.ContextThemeWrapper(
@@ -70,6 +95,68 @@ class TranscriptBodyViewTest {
         assertSame(first, view.turnViewForTest("a"))
         assertEquals(2, view.turnCountForTest())
         assertEquals(View.VISIBLE, view.findViewById<View>(R.id.transcript_load_older).visibility)
+    }
+
+    @Test fun onlyChangedTurnBatchesResetDiscoveryAndAllRetainedTurnsAreRechecked() {
+        val context = android.view.ContextThemeWrapper(ApplicationProvider.getApplicationContext<Context>(), R.style.Theme_Collie)
+        val view = TranscriptBodyView(context)
+        var batches = 0
+        view.onFileReferenceBatchStarted = { batches++ }
+        val a = entry(0)
+        view.bind("claude", listOf(a), false)
+        val retained = view.turnViewForTest(a.uuid)
+        assertEquals(1, batches)
+        view.bind("claude", listOf(a), true, listOf("queue only"))
+        assertEquals("supporting/queued state does not reset a retained batch", 1, batches)
+        assertSame(retained, view.turnViewForTest(a.uuid))
+        view.bind("claude", listOf(a, entry(1)), true)
+        assertEquals("an actual added turn starts a new bounded batch", 2, batches)
+        assertSame(retained, view.turnViewForTest(a.uuid))
+        view.bind("claude", listOf(a.copy(parts = listOf(TranscriptPart("text", text = "changed"))), entry(1)), true)
+        assertEquals("an actual replaced turn starts a new bounded batch", 3, batches)
+    }
+
+    @Test fun drawnTranscriptPathTextIsReportedWithTheExactAcceptedReadActor() {
+        val context = android.view.ContextThemeWrapper(
+            ApplicationProvider.getApplicationContext<Context>(),
+            R.style.Theme_Collie,
+        )
+        val app = ApplicationProvider.getApplicationContext<com.lateapex.collie.CollieApplication>()
+        val initialConnection = com.lateapex.collie.domain.Connection(com.lateapex.collie.domain.CollieOrigin("https://transcript-files.fixture/"), "phone", "token")
+        val repository = com.lateapex.collie.data.CollieRepository(
+            app.container.api,
+            object : com.lateapex.collie.data.ConnectionStore {
+                override val connection = kotlinx.coroutines.flow.MutableStateFlow<com.lateapex.collie.domain.Connection?>(initialConnection)
+                override fun save(connection: com.lateapex.collie.domain.Connection) { this.connection.value = connection }
+                override fun clear() { connection.value = null }
+            },
+            app.container.originValidator,
+        )
+        val scope = com.lateapex.collie.domain.Scope("peer", "work")
+        repository.selectSubject(scope, "w1:p1")
+        val actor = requireNotNull(repository.readContext(scope, "w1:p1"))
+        val view = TranscriptBodyView(context)
+        var delivered: Triple<android.widget.TextView, CharSequence, com.lateapex.collie.data.ScopedReadContext>? = null
+        view.onDisplayedFileReferences = { textView, text, readActor -> delivered = Triple(textView, text, readActor) }
+        val entry = TranscriptEntry("path-turn", "2026-09-10T00:00:00Z", "assistant", listOf(TranscriptPart("text", text = "Open src/Main.kt:42")))
+        view.bind("claude", listOf(entry), hasMore = false, readContext = actor)
+        assertEquals("the callback comes from a visible transcript text node", "Open src/Main.kt:42", delivered?.second?.toString())
+        assertSame("existence confirmation receives the exact actor that admitted this transcript", actor, delivered?.third)
+        assertTrue(delivered?.first?.text?.contains("src/Main.kt") == true)
+        val reported = mutableListOf<Pair<String, com.lateapex.collie.data.ScopedReadContext>>()
+        view.onDisplayedFileReferences = { _, text, readActor -> reported += text.toString() to readActor }
+        view.bind("claude", listOf(entry, entry.copy(uuid = "another-path", parts = listOf(TranscriptPart("text", text = "docs/other.kt")))), false, readContext = actor)
+        assertEquals("the new batch rechecks retained and new paths", setOf("Open src/Main.kt:42", "docs/other.kt"), reported.map { it.first }.toSet())
+        assertTrue(reported.all { it.second === actor })
+        view.onDisplayedFileReferences = { textView, text, readActor -> delivered = Triple(textView, text, readActor) }
+        for ((index, path) in listOf("/srv/project/src/Main.kt:4", "C:\\Work Tree\\src\\Main.kt:9").withIndex()) {
+            delivered = null
+            view.bind("claude", listOf(TranscriptEntry("absolute-$index", "2026-09-10T00:00:00Z", "assistant",
+                listOf(TranscriptPart("text", text = path)))), hasMore = false, readContext = actor)
+            assertEquals("rootless absolute evidence reaches discovery, not navigation", path, delivered?.second?.toString())
+            assertSame(actor, delivered?.third)
+            assertTrue("discovery still needs authoritative root evidence", PrintedPathLinks.extract(path).isEmpty())
+        }
     }
 
     @Test

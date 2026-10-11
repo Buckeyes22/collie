@@ -11,6 +11,12 @@ the first Android release from this fork.
 - Open New Space and worktree creation sheets expanded, with a bounded scrolling viewport that keeps Create reachable at large text sizes.
 
 - Add a native pane-layout screen for inspecting geometry and adjacency, then plan and confirm capability-gated split, resize, zoom, swap, focus and move actions. Unknown writes never replay automatically; same-ID recovery requires the owning peer's durable receipt support. On older peers, an explicit duplicate-risk warning lets the operator abandon only the local recovery record after inspecting the layout. Moved panes reopen from their new server-issued ID.
+- Browse bounded, server-contained Files trees and source; open inert native Markdown, JSON, HTML, CSV, SVG, and authenticated raster previews, and navigate only existence-confirmed printed paths.
+- Keep linked file/folder navigation bound to the accepted 200 response, reject stale rows/spans and cached 304 authority, and preserve exact reference path/line state across refresh and recreation.
+- Bound SVG shape geometry with composed affine matrices and refuse unsupported SVG text before rendering; accept contained cross-document anchors and extension-independent raster references, and localize preview notices and disclosure controls.
+- Keep delayed file taps and breadcrumbs bound to their accepted page, preserve Preview and folder navigation across fresh reads, and leave excessive absolute-path evidence as plain text.
+- Keep the transcript path quota across unchanged renders and repeated tool disclosures; recheck retained cards when turns change and reject delayed discovery from retired batches.
+
 - Decode declared string agent statuses and tolerate bounded object-shaped status compatibility while showing unfamiliar states as unknown.
 
 - Render structured history calls and question choices with distinct completed, denied and failed outcomes.

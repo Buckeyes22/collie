@@ -8,6 +8,8 @@ import android.os.Handler
 import android.os.Looper
 import com.lateapex.collie.network.ApiResult
 import com.lateapex.collie.network.ImageBlob
+import com.lateapex.collie.network.FilesTarget
+import com.lateapex.collie.network.RelativeFilePath
 import java.net.URI
 import java.nio.ByteBuffer
 import java.util.LinkedHashMap
@@ -83,9 +85,10 @@ class ScopedImageLoader(
         viewportHeight: Int,
         callback: (ScopedImageResult) -> Unit,
         expectedMimeType: String? = null,
+        fileRequest: FileImageRequest? = null,
     ): AutoCloseable {
         val requestRetirementGeneration = synchronized(lock) { retirementGeneration.takeUnless { closed } }
-        if (context == null || reference == null || reference.length > MAX_REFERENCE_CHARS || requestRetirementGeneration == null || !repository.isCurrent(context)) {
+        if (context == null || (reference == null) == (fileRequest == null) || (reference?.length ?: 0) > MAX_REFERENCE_CHARS || requestRetirementGeneration == null || !repository.isCurrent(context)) {
             callback(ScopedImageResult.Refused("Image reference is unavailable or outside this connection"))
             return AutoCloseable { }
         }
@@ -98,12 +101,13 @@ class ScopedImageLoader(
             val result = try {
                 decodeSlots.withPermit {
                     if (!isGenerationCurrent(requestRetirementGeneration)) throw StaleImage()
-                    val parsed = parse(reference, context) ?: throw RefusedImage()
+                    val parsed = fileRequest?.let { ImageReference.File(it) } ?: parse(reference!!, context) ?: throw RefusedImage()
                     if (!isGenerationCurrent(requestRetirementGeneration) || !repository.isCurrent(context)) throw StaleImage()
                     val declaredMime = expectedMimeType?.substringBefore(';')?.trim()?.lowercase()
                     if (declaredMime != null && declaredMime !in SUPPORTED_MIME) throw UnsupportedImage()
                     val key = CacheKey(context.key, context.navigationGeneration, parsed.key, width, height)
-                    val existing = synchronized(lock) { if (closed) null else cache[key] ?: entries[key] }
+                    var cacheAllowed = parsed !is ImageReference.File || (parsed.request.sourceSize != null && parsed.request.sourceMtimeMs != null)
+                    val existing = synchronized(lock) { if (closed || !cacheAllowed) null else cache[key] ?: entries[key] }
                     if (existing != null) {
                         if (declaredMime != null && existing.mime != declaredMime) throw UnsupportedImage()
                         val retained = acquire(key, existing) ?: throw StaleImage()
@@ -120,6 +124,15 @@ class ScopedImageLoader(
                                 is ApiResult.Failure -> if (response.error is com.lateapex.collie.network.ApiFailure.Http && response.error.status == 404) {
                                     throw MissingImage()
                                 } else throw ImageUnavailable()
+                                is ApiResult.NotModified -> throw ImageUnavailable()
+                            }
+                            is ImageReference.File -> when (val response = repository.fileImage(context, parsed.request.target, parsed.request.path)) {
+                                is ApiResult.Success -> {
+                                    responseMime = response.value.contentType
+                                    cacheAllowed = cacheAllowed && response.value.size == parsed.request.sourceSize && response.value.mtimeMs == parsed.request.sourceMtimeMs
+                                    response.value.bytes
+                                }
+                                is ApiResult.Failure -> if (response.error is com.lateapex.collie.network.ApiFailure.Http && response.error.status == 404) throw MissingImage() else throw ImageUnavailable()
                                 is ApiResult.NotModified -> throw ImageUnavailable()
                             }
                         }
@@ -152,7 +165,7 @@ class ScopedImageLoader(
                                     } else if (bitmap.allocationByteCount > reservation) {
                                         null
                                     } else {
-                                        val existingAfterDecode = entries[key]
+                                        val existingAfterDecode = if (cacheAllowed) entries[key] else null
                                         if (existingAfterDecode != null) {
                                             if (existingAfterDecode.retired || existingAfterDecode.mime != mime) null else {
                                                 if (existingAfterDecode.cached) {
@@ -168,10 +181,11 @@ class ScopedImageLoader(
                                             // actual resident accounting before exposing this bitmap.
                                             reservedBytes -= reservation
                                             reservationHeld = false
-                                            val entry = CachedBitmap(bitmap, mime, bitmap.allocationByteCount, references = 1)
-                                            entries[key] = entry
+                                            val effectiveKey = if (cacheAllowed) key else key.copy(content = "${key.content}:uncached:${java.util.UUID.randomUUID()}")
+                                            val entry = CachedBitmap(bitmap, mime, bitmap.allocationByteCount, references = 1, cacheable = cacheAllowed)
+                                            entries[effectiveKey] = entry
                                             residentBytes += entry.bytes
-                                            lease(key, entry) to true
+                                            lease(effectiveKey, entry) to true
                                         }
                                     }
                                 }
@@ -235,6 +249,27 @@ class ScopedImageLoader(
             job.cancel()
         }
     }
+
+    /** Files images use this loader's actor checks, byte/pixel caps and bitmap leases. */
+    fun loadFile(
+        context: ScopedReadContext?,
+        target: FilesTarget,
+        path: RelativeFilePath,
+        sourceSize: Long?,
+        sourceMtimeMs: Double?,
+        viewportWidth: Int,
+        viewportHeight: Int,
+        callback: (ScopedImageResult) -> Unit,
+        expectedMimeType: String? = null,
+    ): AutoCloseable = load(context, null, viewportWidth, viewportHeight, callback, expectedMimeType,
+        FileImageRequest(target, path, sourceSize, sourceMtimeMs))
+
+    data class FileImageRequest(
+        val target: FilesTarget,
+        val path: RelativeFilePath,
+        val sourceSize: Long?,
+        val sourceMtimeMs: Double?,
+    )
 
     /** Called synchronously by authority retirement; no old actor can repopulate this cache. */
     fun retire() {
@@ -404,7 +439,7 @@ class ScopedImageLoader(
         if (entries[key] !== entry) return@synchronized
         if (entry.references > 0) entry.references--
         if (entry.references == 0 && !entry.cached) {
-            if (!entry.retired && entry.bytes <= maxCacheBytes) {
+            if (!entry.retired && entry.cacheable && entry.bytes <= maxCacheBytes) {
                 entry.cached = true
                 cache[key] = entry
                 cachedBytes += entry.bytes
@@ -418,6 +453,9 @@ class ScopedImageLoader(
         bytes.size >= 3 && bytes[0] == 0xff.toByte() && bytes[1] == 0xd8.toByte() && bytes[2] == 0xff.toByte() -> "image/jpeg"
         bytes.size >= 6 && String(bytes, 0, 6, Charsets.US_ASCII) in setOf("GIF87a", "GIF89a") -> "image/gif"
         bytes.size >= 12 && String(bytes, 0, 4, Charsets.US_ASCII) == "RIFF" && String(bytes, 8, 4, Charsets.US_ASCII) == "WEBP" -> "image/webp"
+        bytes.size >= 16 && String(bytes, 4, 4, Charsets.US_ASCII) == "ftyp" &&
+            (String(bytes, 8, 4, Charsets.US_ASCII) in setOf("avif", "avis") ||
+                (12 until bytes.size.coerceAtMost(64) step 4).any { String(bytes, it, 4, Charsets.US_ASCII) in setOf("avif", "avis") }) -> "image/avif"
         else -> null
     }
 
@@ -427,6 +465,9 @@ class ScopedImageLoader(
         val key: String
         data class Blob(val sha256: String) : ImageReference { override val key get() = "blob:$sha256" }
         data class Inline(override val key: String, val bytes: ByteArray) : ImageReference
+        data class File(val request: FileImageRequest) : ImageReference {
+            override val key get() = "file:${if (request.target is FilesTarget.Pane) "pane" else "workspace"}:${request.target.id}:${request.path.value}:${request.sourceSize}:${request.sourceMtimeMs}"
+        }
     }
     private data class CacheKey(val actor: ScopedRequestKey, val navigationGeneration: Long, val content: String, val width: Int, val height: Int)
     private class CachedBitmap(
@@ -436,6 +477,7 @@ class ScopedImageLoader(
         var references: Int,
         var cached: Boolean = false,
         var retired: Boolean = false,
+        val cacheable: Boolean = true,
     )
     private class MissingImage : Exception()
     private class ImageUnavailable : Exception()
@@ -450,7 +492,7 @@ class ScopedImageLoader(
         private const val ROW_ALIGNMENT_BYTES = 64L
         private const val MAX_REFERENCE_CHARS = 14 * 1024 * 1024
         private const val MAX_BASE64_CHARS = ((ImageBlob.MAX_BYTES + 2) / 3) * 4
-        private val SUPPORTED_MIME = setOf("image/png", "image/jpeg", "image/gif", "image/webp")
+        private val SUPPORTED_MIME = setOf("image/png", "image/jpeg", "image/gif", "image/webp", "image/avif")
         private val BLOB_PATH = Regex("/api/blobs/([0-9a-fA-F]{64})")
         private val DATA_URI = Regex("data:(image/(?:png|jpeg|gif|webp));base64,([A-Za-z0-9+/]*={0,2})", RegexOption.IGNORE_CASE)
         private val DATA_IMAGE_MIME = Regex("^data:(image/[^;,]+);base64,", RegexOption.IGNORE_CASE)

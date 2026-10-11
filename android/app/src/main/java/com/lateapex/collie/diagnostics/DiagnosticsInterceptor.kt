@@ -68,6 +68,15 @@ class DiagnosticsInterceptor internal constructor(
             diagnostics.record("network", fields)
             return response
         }
+        if (isMountedFilesRequest(tagged)) {
+            // Files payloads contain source paths and source text. Keep the response untouched
+            // and streamed so the API's own bounded reader remains the first body consumer.
+            fields["responseBodyBytes"] = response.body?.contentLength()?.takeIf { it >= 0L }
+            fields["responseBodyStreaming"] = true
+            fields["requestBodyCaptured"] = false
+            diagnostics.record("network", fields)
+            return response
+        }
         // The URL path is decoded into segments before matching, so mounted origins (and encoded
         // segment spellings) follow the same policy. Match complete route suffixes, never substrings.
         val intentPost = tagged.method == "POST" && isIntentCreationPath(tagged.url.pathSegments)
@@ -143,6 +152,21 @@ class DiagnosticsInterceptor internal constructor(
             (segments.size >= 4 && segments[segments.size - 4] == "api" &&
                 segments[segments.size - 3] == "workspace" && segments.last() == "worktree") ||
             segments.takeLast(3) == listOf("api", "launchers", "added")
+
+    private fun isMountedFilesRequest(request: okhttp3.Request): Boolean {
+        val segments = request.url.encodedPath.split('/').filter(String::isNotEmpty)
+        val mount = (0 until segments.size - 3).firstOrNull { index ->
+            segments[index] == "api" && segments[index + 1] in setOf("pane", "workspace") &&
+                segments[index + 2].isNotBlank() && segments[index + 3] == "files"
+        } ?: return false
+        val suffix = segments.drop(mount + 4)
+        return when {
+            suffix.isEmpty() -> request.method == "GET"
+            suffix == listOf("exist") -> request.method == "POST"
+            suffix == listOf("image") -> request.method == "GET"
+            else -> false
+        }
+    }
 
     companion object {
         internal const val TRACE_HEADER = "X-Collie-Trace-Id"

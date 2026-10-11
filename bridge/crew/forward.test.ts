@@ -7,9 +7,9 @@ import { DEFAULT_MAX_UPLOAD_BYTES } from "../uploads.ts";
 import {
   apiPathFor,
   forwardAuditAction,
+  forwardGate,
   forwardHeaders,
   forwardKind,
-  forwardGate,
   forwardPaneId,
   forwardParams,
   forwardToPeer,
@@ -252,8 +252,14 @@ describe("which routes cross a link", () => {
     expect(wsImage).toBe("/^\\/api\\/workspace\\/([^/]+)\\/files\\/image$/");
     expect(crewRouteFor("/api/pane/w1:p1/files/image")).toBe("pane/w1:p1/files/image");
     expect(crewRouteFor("/api/workspace/w1/files/image")).toBe("workspace/w1/files/image");
+    const paneExist = server.match(/^const PANE_FILES_EXIST_ROUTE = (.+);$/m)![1]!;
+    const wsExist = server.match(/^const WORKSPACE_FILES_EXIST_ROUTE = (.+);$/m)![1]!;
+    expect(paneExist).toBe("/^\\/api\\/pane\\/([^/]+)\\/files\\/exist$/");
+    expect(wsExist).toBe("/^\\/api\\/workspace\\/([^/]+)\\/files\\/exist$/");
+    expect(crewRouteFor("/api/pane/w1:p1/files/exist")).toBe("pane/w1:p1/files/exist");
+    expect(crewRouteFor("/api/workspace/w1/files/exist")).toBe("workspace/w1/files/exist");
+    expect(crewRouteFor("/api/pane/w1:p1/files/exist/extra")).toBeNull();
     expect(crewRouteFor("/api/pane/w1:p1/files/image/x")).toBeNull();
-    expect(crewRouteFor("/api/workspace/w1/files/exist")).toBeNull();
     expect(apiPathFor("pane/w1:p1/files/image")).toBe("/api/pane/w1:p1/files/image");
     expect(apiPathFor("workspace/w1/files/image")).toBe("/api/workspace/w1/files/image");
   });
@@ -280,6 +286,27 @@ describe("which routes cross a link", () => {
     // The image read is the same read on another cap (ADR 0090).
     expect(forwardKind("pane/w1:p1/files/image")).toBe("read");
     expect(forwardKind("workspace/w1/files/image")).toBe("read");
+    expect(forwardKind("pane/w1:p1/files/exist")).toBe("read");
+    expect(forwardKind("workspace/w1/files/exist")).toBe("read");
+    expect(forwardGate("pane/w1:p1/files/exist", "POST")).toBe("device-read");
+    expect(forwardGate("workspace/w1/files/exist", "POST")).toBe("device-read");
+  });
+
+  test("the bounded Files existence POST carries its exact body and workspace/session scope over Crew", async () => {
+    const { transport, calls } = transportOf(() => ok(new Response('{"exists":["src/Main.kt"]}', { status: 200 })));
+    const body = JSON.stringify({ paths: ["src/Main.kt", "docs/read me.md"] });
+    const [req, url] = post("/api/workspace/w1/files/exist?host=laptop&session=work", body);
+    const response = await forward(req, url, { transport, device: "phone-7" });
+    expect(response.status).toBe(200);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.route).toBe("workspace/w1/files/exist");
+    expect(calls[0]!.params).toEqual({ session: "work" });
+    expect(calls[0]!.init.method).toBe("POST");
+    const forwardedBody = calls[0]!.init.body;
+    expect(forwardedBody).not.toBeNull();
+    expect(await new Response(forwardedBody).text()).toBe(body);
+    expect(new Headers(calls[0]!.init.headers).get("x-crew-device")).toBe("phone-7");
+    expect(calls[0]!.budgetMs).toBeUndefined();
   });
 
   test("the audit action a forward records is the one the peer will write", () => {
@@ -301,6 +328,8 @@ describe("which routes cross a link", () => {
     expect(forwardAuditAction("workspace/w1/files")).toBeNull();
     expect(forwardAuditAction("pane/w1:p1/files/image")).toBeNull();
     expect(forwardAuditAction("workspace/w1/files/image")).toBeNull();
+    expect(forwardAuditAction("pane/w1:p1/files/exist")).toBeNull();
+    expect(forwardAuditAction("workspace/w1/files/exist")).toBeNull();
   });
 });
 

@@ -2879,9 +2879,15 @@ describe("muxConfigBody — the capability declaration, as the phone reads it", 
     expect(everything.unsupportedKeys).toEqual(["PageUp", "End"]);
   });
 
-  test("the real Herdr adapter publishes every capability — nothing changes for its operators", () => {
+  test("the real Herdr adapter advertises only proven capabilities before layout readiness", () => {
     const wire = muxConfigBody(herdrMuxFactory.create({ endpoint: "/tmp/none.sock", timeoutMs: 100, options: {} }));
-    for (const cap of MUX_CAPABILITIES) expect(wire.capabilities[cap]).toBe(true);
+    const proven = new Set([
+      "paneGrid", "gridScrollback", "agentDetection", "agentSessionRef", "paneProcesses",
+      "typeText", "sendKeys", "guardedQueuedSend", "renamePane", "closePane", "setFocus", "createTab", "renameTab",
+      "closeTab", "createSpace", "listWorktrees", "createWorktree", "openWorktree",
+      "pushTopologyEvents", "pushPaneEvents", "listSessions",
+    ]);
+    for (const cap of MUX_CAPABILITIES) expect(wire.capabilities[cap]).toBe(proven.has(cap));
     expect(wire.notes).toEqual({});
   });
 
@@ -3231,16 +3237,17 @@ describe("the host gate — `?host=` selects among enrolled members and nothing 
     // The load-bearing claim: `?h=laptop` + `w1:p1` must never be served the DESK's `w1:p1`, and
     // pane ids collide across machines, so a fall-through here is a cross-host write.
     //
-    // All TWENTY-ONE session-scoped route handlers (tab create, workspace create, launch, this host's launcher
+    // All TWENTY-THREE session-scoped route handlers (tab create, workspace create, launch, this host's launcher
     // rows, this host's folder list and a star on it, one journal blob, a workspace's Changes list,
     // a workspace's Files view, the Files existence check by pane or workspace, the Files image read
     // by pane or workspace (ADR 0090), tab action, the pane family, "look now", the worktree listing,
     // the worktree actions, the New sheet's branch plan and create from a folder (ADR 0093), and the
     // three writes on a phone's own launcher rows, served by one function (ADR 0094), and the two
     // writes on this machine's one-off command history, served by one function (ADR 0095), and the
-    // read that checks a typed line before it runs (ADR 0095, amendment)) reach
+    // read that checks a typed line before it runs (ADR 0095, amendment), and the
+    // owning workspace's Source read) reach
     // their runtime through the caller's resolver and nothing else.
-    expect([...src.matchAll(/await caller\.resolve\(\);/g)]).toHaveLength(22);
+    expect([...src.matchAll(/await caller\.resolve\(\);/g)]).toHaveLength(23);
     // Exactly eight `registry.get(` calls remain, and each is a sanctioned one, named here rather
     // than exempted: assembling THIS collie's own snapshot body; `localRuntime`, the single
     // "(session) → runtime, or 404" helper both callers share; `/api/config`, which reports THIS

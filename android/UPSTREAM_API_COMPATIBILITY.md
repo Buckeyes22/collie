@@ -30,6 +30,7 @@ is refused. A mutation is attempted once; transport redirects and automatic writ
 | `/api/pane/:id/chat` | Live polls use `after=gen:rev` and ETag; older reads use `before=seq:uuid` without ETag. Generation changes replace the thread. Whole-turn upserts replace partial text/results, abandoned turns are hidden, queued messages are displayed separately, and the optional Send now recipe is shown only when the owner supplies a current guarded action. Stale older pages are discarded. A legacy 404 falls back to history. |
 | `/api/pane/:id/history` | Existing full history/search remains supported with UUID pagination. History merging replaces updated turns. The fork's conditional JSON response remains available for legacy polls. |
 | `/api/pane/:id/changes`, `/api/workspace/:id/changes` | Native Changes uses only bridge-listed repositories and paths for status and diffs. It displays a bounded first-parent commit history in pages pinned to the initial HEAD, then reads the selected commit and its listed file diffs. Page size and the 10,000-row history window are checked at both ends; only a terminal cap page may claim truncation. Subject/author display bounds (500/1,024 characters) and a 1 MiB server page envelope compose with the unchanged 5 MiB native streaming ceiling; delayed results are discarded after scope changes. Older peers that lack the history response are reported as unsupported. This is a paired ordinary read and does not use Files' device-read capability. |
+| `/api/{pane|workspace}/:id/files`, `/files/image`, `/files/exist` | Browse only the server-selected Files root with relative validated paths, a 2,000-entry cap and bounded source reads. Files and image reads use device-read admission; images are streamed to 16 MiB, sniffed and decoded through the shared actor-bound loader with a 16M-pixel limit. File image caching is disabled unless source and byte-response `size` plus exact `mtimeMs` agree. The existence POST carries at most 64 relative paths, stays device-read on Crew lead and peer, and never grants authority to read an unconfirmed path. |
 | Pane/tab close, focus and rename; tab/workspace create | Existing route/body contracts remain compatible, with scoped identities and write authorization retained. |
 | `/api/crew` | Use the renamed endpoint and `crew` field. A legacy 404 permits one `/api/pack` read fallback; a current `crew.not_lead` refusal does not. Legacy response aliases remain decodable. Native labels say Crew. |
 | `/api/devices`, `/api/devices/revoke` | Decode expiry fields and retain the existing confirmed revocation flow. |
@@ -61,6 +62,16 @@ explicitly classified in the native fixture tests; incomplete footers and unprov
 recipes do not become automated key sequences.
 
 ## Regression evidence
+
+Files uses native views only: Markdown is projected through the existing bounded parser, JSON is
+depth/node/output limited before projection, HTML uses pinned jsoup 1.23.2 with an explicit
+Safelist and native block projection, CSV uses bounded rows/cells, and SVG uses pinned AndroidSVG
+1.4 after a strict streaming preflight that refuses active/external/entity constructs. The reviewed
+renderer preserves ordinary viewBox, transform and inherited paint behavior on Canvas. Unsupported
+or hostile content remains available in Source; see [Files preview security](FILES_PREVIEW_SECURITY.md).
+No preview opens remote image or document content. Relative Markdown raster references are capped
+at 20 and must pass the same scoped Files/exist request before the shared `ScopedImageLoader` reads
+them.
 
 Native tests cover mounted URL/header construction, scoped session/lead identity, expiry versus
 unrelated forbidden reads, live and older chat cursors, whole-turn replacement, queue clearing,

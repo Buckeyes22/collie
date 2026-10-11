@@ -1039,6 +1039,24 @@ class PaneViewModelTest {
     }
 
     @Test
+    fun cachedPane304CannotRestoreRetiredFilesLinkActor() = runTest(dispatcher) {
+        val f = fixture(ApiResult.Success(ActionResponse(ok = true), 200))
+        f.viewModel.refresh(); advanceUntilIdle()
+        val original = requireNotNull(f.viewModel.state.value.paneReadContext)
+        assertTrue(f.repository.isCurrent(original))
+        assertEquals("the actor follows the ViewModel's actual fresh pane read", 1, f.api.paneFreshReads)
+        assertTrue("ordinary unavailable live-chat fallback must not retire the accepted pane actor", f.api.chatCalls > 0)
+
+        f.repository.showSavedCopy(1L)
+        assertNull(f.viewModel.state.value.paneReadContext)
+        f.api.paneAlwaysNotModified = true
+        f.viewModel.refresh(); advanceUntilIdle()
+        assertNull("304 without a fresh body cannot re-admit retained terminal text", f.viewModel.state.value.paneReadContext)
+        assertFalse(f.repository.isCurrent(original))
+        assertTrue("the fixture dispatched the actual conditional pane read", f.api.paneConditionalReads > 0)
+    }
+
+    @Test
     fun acceptedOlderLiveChatPageRestoresItsImageActorAndRejectsAQueuedRetiredActor() = runTest(dispatcher) {
         val f = fixture(ApiResult.Success(ActionResponse(ok = true), 200))
         val newest = entry("newest").copy(seq = 2)
@@ -1506,6 +1524,9 @@ class PaneViewModelTest {
             truncated = false,
             revision = 7,
         )
+        var paneAlwaysNotModified = false
+        var paneConditionalReads = 0
+        var paneFreshReads = 0
         val historyPages = ArrayDeque<PaneHistoryResponse>()
         var historyCalls = 0
         var chatPage: PaneChatResponse? = null
@@ -1572,6 +1593,12 @@ class PaneViewModelTest {
         ): ApiResult<PaneReadResponse> {
             paneLines += lines
             paneHook?.invoke()
+            if (paneAlwaysNotModified) {
+                paneConditionalReads++
+                assertNotNull("cached304 test must send the cache's actual ETag", etag)
+                return ApiResult.NotModified(etag)
+            }
+            paneFreshReads++
             return ApiResult.Success(pane, 200, etag = "\"7\"")
         }
 

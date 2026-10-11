@@ -73,6 +73,10 @@ const FORWARDABLE: readonly RegExp[] = [
   // `WORKSPACE_FILES_IMAGE_ROUTE` in bridge/server.ts one-for-one. Additive-optional (§7.1).
   /^pane\/[^/]+\/files\/image$/,
   /^workspace\/[^/]+\/files\/image$/,
+  // A bounded, read-only existence check for printed source links (ADR 0088). It is a
+  // device-read because it reveals paths under the selected Files root.
+  /^pane\/[^/]+\/files\/exist$/,
+  /^workspace\/[^/]+\/files\/exist$/,
   /^tab$/,
   /^tab\/[^/]+\/(?:rename|close)$/,
   /^workspace$/,
@@ -141,7 +145,7 @@ export type AnswerMask = (answer: TextAnswer, body: string, expectedPaneId?: str
 
 /** `workspace/<id>/changes`, `.../files` and `.../files/image` — the workspace routes that are reads. */
 function isWorkspaceRead(route: string): boolean {
-  return /^workspace\/[^/]+\/(?:changes|files|files\/image)$/.test(route);
+  return /^workspace\/[^/]+\/(?:changes|files(?:\/(?:image|exist))?)$/.test(route);
 }
 
 /** The pane actions that only read, as bridge/server.ts's `isPaneReadAction` lists them. */
@@ -784,7 +788,7 @@ export async function forwardToPeer(req: Request, url: URL, deps: ForwardDeps): 
 export function forwardGate(route: string, method: string): "read" | "device-read" | "write" {
   const control = controlGate(`/api/${route}`, method);
   if (control) return control;
-  if (/^(?:pane|workspace)\/[^/]+\/files(?:\/image)?$/.test(route)) return "device-read";
+  if (/^(?:pane|workspace)\/[^/]+\/files(?:\/(?:image|exist))?$/.test(route)) return "device-read";
   if (/^pane\/[^/]+\/processes$/.test(route)) return "device-read";
   return forwardKind(route);
 }

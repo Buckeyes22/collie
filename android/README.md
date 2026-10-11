@@ -173,6 +173,11 @@ completed uploads do not persist the provider URI or its grant.
   available only for a paired, write-authorized, working pane with supported declared keys and a
   freshly verified non-modal composer; it sends the keys once and never resends queued text.
   Older bridges and peers that do not declare the guarded action leave the control unavailable.
+- Files opens the pane or workspace's server-selected root with bounded folder listings, ignored
+  filtering, source Find/line jumps, native inert Markdown/JSON/HTML/CSV/SVG previews, and raster
+  reads through the shared authenticated image loader. Printed relative source paths remain plain
+  text unless a scoped Files/exist read confirms them. Parser bounds and SVG/HTML security policy are
+  documented in [Files preview security](FILES_PREVIEW_SECURITY.md).
 - The Keys drawer keeps primary keys and modifiers together, wrapping on narrow phones to retain
   48 dp touch targets. Its More sheet holds presets and function keys.
 - The worktree sheet lists a repository's linked worktrees that have no open space; selecting one

@@ -76,6 +76,8 @@ data class PaneUiState(
     val desiredLines: Int = PaneScrollbackWindow.INITIAL_LINES,
     val loadedLines: Int = 0,
     val loadingOlder: Boolean = false,
+    /** Actor for the exact accepted pane snapshot; redraws never create a replacement actor. */
+    val paneReadContext: com.lateapex.collie.data.ScopedReadContext? = null,
     val transcript: List<TranscriptEntry> = emptyList(),
     val transcriptAvailable: Boolean? = null,
     val transcriptReason: String? = null,
@@ -164,6 +166,8 @@ class PaneViewModel(
         deviceAuthorizationKnown = false
         deviceWriteAllowed = false
         endDirectTyping()
+        // A failed optional/supporting read freezes writes without retiring an otherwise current
+        // accepted pane body. Actual read-authority retirement clears its actor below.
         mutableState.value = mutableState.value.copy(canWrite = false, composerReady = false)
         if (reason in setOf(com.lateapex.collie.data.AuthorityInvalidation.PAIRING_RETIRED,
             com.lateapex.collie.data.AuthorityInvalidation.CONNECTION_CHANGED, com.lateapex.collie.data.AuthorityInvalidation.DISCONNECTED)) {
@@ -179,7 +183,7 @@ class PaneViewModel(
     private val readContextRegistration = repository.onReadContextInvalidated {
         chatEtag = null
         transcriptEtag = null
-        mutableState.value = mutableState.value.copy(transcriptReadContext = null)
+        mutableState.value = mutableState.value.copy(transcriptReadContext = null, paneReadContext = null)
     }
 
     override fun onCleared() {
@@ -1058,11 +1062,17 @@ class PaneViewModel(
         try {
             run {
                 val lines = paneRequestedLines
-                when (val result = withCurrentActor { repository.readPane(address, lines, markSeen = true) }) {
+                val readActor = repository.readContext(address.scope, address.paneId) ?: throw DiscardedActor()
+                when (val result = repository.readPane(address, lines, markSeen = true)) {
                     is ApiResult.Success -> {
+                        if (!repository.isCurrent(readActor)) throw DiscardedActor()
                         pollingBackoff.succeeded()
+                        val newlyAcceptedBody = result.status == 200 && !result.value.notModified
                         mutableState.value = mutableState.value.copy(
                             pane = result.value.pane,
+                            // A conditional 304 has no newly accepted body. Preserve an already
+                            // current actor through a 304, but never revive a retired one.
+                            paneReadContext = if (newlyAcceptedBody) readActor else mutableState.value.paneReadContext?.takeIf(repository::isCurrent),
                             loading = false,
                             error = null,
                             composerReady = PromptBinding.composerRegion(agent, result.value.pane.text) != null,
@@ -1076,6 +1086,7 @@ class PaneViewModel(
                         loadTranscript()
                     }
                     is ApiResult.Failure -> {
+                        if (!repository.isCurrent(readActor)) throw DiscardedActor()
                         pollingBackoff.failed()
                         // Keep the last successful window actionable so a failed grow can be retried.
                         if (mutableState.value.loadingOlder && mutableState.value.loadedLines > 0) {

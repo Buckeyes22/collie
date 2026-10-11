@@ -232,6 +232,94 @@ class DiagnosticsInterceptorTest {
     }
 
     @Test
+    fun enabledDiagnosticsLeavesMountedFilesResponsesStreamedForEachApiBound() {
+        server.shutdown()
+        val certificate = HeldCertificate.Builder().commonName("localhost").addSubjectAlternativeName("localhost").build()
+        val serverCertificates = HandshakeCertificates.Builder().heldCertificate(certificate).build()
+        val clientCertificates = HandshakeCertificates.Builder().addTrustedCertificate(certificate.certificate).build()
+        server = MockWebServer().apply { useHttps(serverCertificates.sslSocketFactory(), false); start() }
+        val recorder = RecordingDiagnosticsRecorder(recorded)
+        val counted = java.util.concurrent.atomic.AtomicLong()
+        val http = CollieApiClient.defaultHttpClient(recorder).newBuilder()
+            .sslSocketFactory(clientCertificates.sslSocketFactory(), clientCertificates.trustManager)
+            .protocols(listOf(okhttp3.Protocol.HTTP_1_1))
+            .addNetworkInterceptor { chain ->
+                val response = chain.proceed(chain.request())
+                val body = response.body ?: return@addNetworkInterceptor response
+                val source = object : ForwardingSource(body.source()) {
+                    override fun read(sink: okio.Buffer, byteCount: Long): Long {
+                        val read = super.read(sink, byteCount)
+                        if (read > 0) counted.addAndGet(read)
+                        return read
+                    }
+                }.buffer()
+                response.newBuilder().body(object : ResponseBody() {
+                    override fun contentType() = body.contentType()
+                    override fun contentLength() = body.contentLength()
+                    override fun source(): BufferedSource = source
+                }).build()
+            }
+            .build()
+        val api = CollieApiClient(http, Json { ignoreUnknownKeys = true })
+        val connection = Connection(CollieOrigin(server.url("/mounted/").toString()), "phone", "token")
+        val target = com.lateapex.collie.network.FilesTarget.Pane("w1:p1")
+        val routes = listOf("listing", "existence", "image")
+        val smallImage = byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)
+        for (route in routes) {
+            val body = when (route) {
+                "listing" -> "{\"paneId\":\"w1:p1\",\"available\":true,\"root\":\"/repo\",\"path\":\"ok.txt\",\"size\":2,\"mtimeMs\":1,\"binary\":false,\"truncated\":false,\"text\":\"ok\"}".toByteArray()
+                "existence" -> "{\"exists\":[\"a\"]}".toByteArray()
+                else -> smallImage
+            }
+            server.enqueue(MockResponse().setResponseCode(200).setHeader("Content-Type", if (route == "image") "image/png" else "application/json").setBody(okio.Buffer().write(body)))
+            val result = kotlinx.coroutines.runBlocking {
+                when (route) {
+                    "listing" -> api.files(connection, target, Scope(), path = com.lateapex.collie.network.RelativeFilePath.parse("ok.txt"))
+                    "existence" -> api.filesExist(connection, target, Scope(), listOf(com.lateapex.collie.network.RelativeFilePath.parse("a")!!))
+                    else -> api.fileImage(connection, target, Scope(), com.lateapex.collie.network.RelativeFilePath.parse("ok.png")!!)
+                }
+            }
+            assertTrue("$route success remains readable to its API consumer", result is ApiResult.Success)
+            val fields = recorded.last().second
+            assertTrue(fields["responseBodyStreaming"] == true)
+            assertFalse(fields.containsKey("responseBody"))
+            server.takeRequest()
+        }
+        for (route in routes) {
+            val limit = if (route == "image") com.lateapex.collie.network.FilesImageBlob.MAX_BYTES else 8 * 1024 * 1024
+            val oversizedText = when (route) {
+                "image" -> "x"
+                "existence" -> "{\"exists\":[\"" + "a".repeat(limit + 1024) + "\"]}"
+                else -> "{\"paneId\":\"w1:p1\",\"available\":true,\"root\":\"/repo\",\"path\":\"large.txt\",\"size\":0,\"mtimeMs\":null,\"binary\":false,\"truncated\":false,\"text\":\"" + "a".repeat(limit + 1024) + "\"}"
+            }
+            val bytes = if (route == "image") ByteArray(limit + 1024) { (it and 0xff).toByte() } else oversizedText.toByteArray()
+            val response = MockResponse().setResponseCode(200).setHeader("Content-Type", if (route == "image") "text/plain" else "application/json")
+                .setChunkedBody(okio.Buffer().write(bytes), 16 * 1024)
+            counted.set(0)
+            server.enqueue(response)
+            val result = kotlinx.coroutines.runBlocking {
+                when (route) {
+                    "listing" -> api.files(connection, target, Scope(), path = com.lateapex.collie.network.RelativeFilePath.parse("large.txt"))
+                    "existence" -> api.filesExist(connection, target, Scope(), listOf(com.lateapex.collie.network.RelativeFilePath.parse("a")!!))
+                    else -> api.fileImage(connection, target, Scope(), com.lateapex.collie.network.RelativeFilePath.parse("large.txt")!!)
+                }
+            }
+            assertTrue("$route response exceeds its API cap", result is ApiResult.Failure)
+            assertTrue("diagnostics must not drain $route beyond the API limit", counted.get() <= limit + 16 * 1024L)
+            val fields = recorded.last().second
+            assertTrue("the mounted API path is classified and never copied", fields["responseBodyStreaming"] == true)
+            assertFalse(fields.containsKey("responseBody"))
+            assertFalse(fields.containsKey("requestBody"))
+            val requestPath = server.takeRequest().path!!.substringBefore('?')
+            assertTrue(requestPath.endsWith(when (route) {
+                "listing" -> "/files"
+                "existence" -> "/files/exist"
+                else -> "/files/image"
+            }))
+        }
+    }
+
+    @Test
     fun aPollWhoseAnswerHasNotChangedIsNotRecordedAgain() {
         // S25 Ultra, 2026-09-18: 70% of a 20-minute trace was the same transcript page, re-read
         // every 2 seconds and stored whole each time.

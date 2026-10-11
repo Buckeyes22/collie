@@ -30,6 +30,8 @@ Running a crew? Update the lead first; members follow on their own. Details:
 - **Inspect pane process context from the owning runtime.** Add a bounded device-read endpoint for foreground process, directory and restore diagnostics, with explicit Herdr pane targeting, occupant checks and Crew forwarding.
 
 - **Plan and reconcile pane layout changes.** Declare bounded neutral layout reads and one-shot split, resize, zoom, swap, focus and move routes with durable move aliases and Crew gate parity.
+- **Native Files reads can confirm printed paths across Crew.** Forward the exact bounded root-relative existence check with device-read admission on the lead and peer.
+
 - **Scoped control reads preserve authority across Crew and reconnects.** Declare independent positive control capabilities, carry typed refusal provenance, forward session refresh as a read, and expose device-bound durable operation receipts without repeating uncertain dispatch.
 - **Pane reads negotiate a bounded adapter budget.** Publish verified adapter ceilings, report admitted and served rows separately, and refuse a response that exceeds the admitted limit.
 - **Queued sends revalidate their live queue and pane occupant.** Add a closed guarded form to the existing keys route, refuse older Crew peers, and latch duplicate or uncertain attempts without sending queued text.

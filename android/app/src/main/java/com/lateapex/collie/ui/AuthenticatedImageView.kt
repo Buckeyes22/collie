@@ -18,6 +18,8 @@ import com.lateapex.collie.data.ScopedImageLoader
 import com.lateapex.collie.data.ScopedImageLease
 import com.lateapex.collie.data.ScopedImageResult
 import com.lateapex.collie.data.ScopedReadContext
+import com.lateapex.collie.network.FilesTarget
+import com.lateapex.collie.network.RelativeFilePath
 
 /** A transcript image card whose actor is tied to the captured Collie read context. */
 internal class AuthenticatedImageView(
@@ -27,6 +29,10 @@ internal class AuthenticatedImageView(
     private val reference: String?,
     private val description: String,
     private val mimeType: String?,
+    private val fileTarget: FilesTarget? = null,
+    private val filePath: RelativeFilePath? = null,
+    private val fileSize: Long? = null,
+    private val fileMtimeMs: Double? = null,
 ) : FrameLayout(context) {
     private val image = ImageView(context).apply {
         scaleType = ImageView.ScaleType.FIT_CENTER
@@ -92,17 +98,17 @@ internal class AuthenticatedImageView(
             if (android.os.Looper.myLooper() == android.os.Looper.getMainLooper()) clear.run()
             else android.os.Handler(android.os.Looper.getMainLooper()).post(clear)
         }
-        request = activeLoader.load(readContext, reference, dp(320), dp(208), { result ->
+        val onResult: (ScopedImageResult) -> Unit = onResult@{ result ->
             if (!activeLoader.isCurrent(readContext)) {
                 (result as? ScopedImageResult.Ready)?.lease?.close()
                 if (!retired && requestGeneration == attachmentGeneration && isAttachedToWindow) {
                     showRefused(context.getString(R.string.history_image_access_changed))
                 }
-                return@load
+                return@onResult
             }
             if (retired || requestGeneration != attachmentGeneration || !isAttachedToWindow) {
                 (result as? ScopedImageResult.Ready)?.lease?.close()
-                return@load
+                return@onResult
             }
             when (result) {
                 is ScopedImageResult.Ready -> {
@@ -117,7 +123,12 @@ internal class AuthenticatedImageView(
                 is ScopedImageResult.Refused -> showRefused(result.message)
                 ScopedImageResult.Unsupported -> showRefused(context.getString(R.string.history_image_unsupported))
             }
-        }, expectedMimeType = mimeType)
+        }
+        request = if (fileTarget != null && filePath != null) {
+            activeLoader.loadFile(readContext, fileTarget, filePath, fileSize, fileMtimeMs, dp(320), dp(208), onResult, expectedMimeType = mimeType)
+        } else {
+            activeLoader.load(readContext, reference, dp(320), dp(208), onResult, expectedMimeType = mimeType)
+        }
     }
 
     override fun onDetachedFromWindow() {

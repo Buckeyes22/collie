@@ -1209,6 +1209,67 @@ class CollieApiClientTest {
         Unit
     }
 
+    @Test
+    fun filesReadsEscapeOpaquePathsAndPreserveDeviceReadScope() = runBlocking {
+        val connection = Connection(CollieOrigin(server.url("/mounted/").toString()), "phone", "bearer-secret")
+        server.enqueue(jsonResponse("""{"paneId":"w1:p1","available":true,"root":"/repo","dir":"src dir","entries":[{"name":"Main λ.kt","kind":"file","size":3}],"truncated":false}"""))
+        val target = FilesTarget.Pane("w1:p1")
+        val result = api.files(connection, target, Scope(host = "a b", session = "work"), dir = RelativeFilePath.parse("src dir", allowRoot = true), ignored = true)
+        assertTrue(result is ApiResult.Success)
+        val request = server.takeRequest()
+        assertEquals("GET", request.method)
+        assertEquals("/mounted/api/pane/w1%3Ap1/files?dir=src%20dir&ignored=1&host=a%20b&session=work", request.path)
+        assertEquals("Bearer bearer-secret", request.getHeader("Authorization"))
+        assertNull(request.getHeader("Origin"))
+
+        server.enqueue(jsonResponse("""{"paneId":"w1:p1","available":true,"root":"/repo","path":"src dir/Main λ.kt","size":3,"mtimeMs":8,"binary":false,"truncated":false,"text":"fun"}"""))
+        val read = api.files(connection, target, Scope(), path = RelativeFilePath.parse("src dir/Main λ.kt")) as ApiResult.Success
+        assertEquals("fun", (read.value as FilesAnswer.Source).text)
+        assertEquals("/mounted/api/pane/w1%3Ap1/files?path=src%20dir%2FMain%20%CE%BB.kt", server.takeRequest().path)
+    }
+
+    @Test
+    fun filesRejectsNonCanonicalSuccessfulStatusBeforePublishingAnswer() = runBlocking {
+        val connection = Connection(CollieOrigin(server.url("/mounted/").toString()), "phone", "token")
+        server.enqueue(MockResponse().setResponseCode(201).setHeader("Content-Type", "application/json")
+            .setBody("""{"paneId":"w1:p1","available":true,"root":"/repo","dir":"","entries":[{"name":"private","kind":"file"}],"truncated":false}"""))
+        val result = api.files(connection, FilesTarget.Pane("w1:p1"), Scope(), dir = RelativeFilePath.parse("", allowRoot = true))
+        assertTrue(result is ApiResult.Failure && result.error is ApiFailure.Protocol)
+        assertEquals("GET", server.takeRequest().method)
+    }
+
+    @Test
+    fun filesExistUsesOnlyTheExactBoundedRootRelativeRequestBody() = runBlocking {
+        val connection = Connection(origin, "phone", "token")
+        server.enqueue(jsonResponse("""{"exists":["src/Main.kt"]}"""))
+        val paths = listOf(RelativeFilePath.parse("src/Main.kt")!!, RelativeFilePath.parse("docs/read me.md")!!)
+        val result = api.filesExist(connection, FilesTarget.Workspace("ws-1"), Scope(host = "peer", session = "s 1"), paths)
+        assertTrue(result is ApiResult.Success)
+        assertEquals(setOf("src/Main.kt"), (result as ApiResult.Success).value.exists)
+        val request = server.takeRequest()
+        assertEquals("POST", request.method)
+        assertEquals("/api/workspace/ws-1/files/exist?host=peer&session=s%201", request.path)
+        assertEquals("Bearer token", request.getHeader("Authorization"))
+        assertEquals("{\"paths\":[\"src/Main.kt\",\"docs/read me.md\"]}", request.body.readUtf8())
+        assertFalse(request.body.toString().contains("/repo"))
+    }
+
+    @Test
+    fun filesImageUsesTheMountedScopedRouteAndPreservesExactVersionHeaders() = runBlocking {
+        val connection = Connection(CollieOrigin(server.url("/mount/").toString()), "phone", "secret")
+        server.enqueue(MockResponse().setResponseCode(200).setHeader("Content-Type", "image/png").setHeader("X-Collie-File-Size", "3").setHeader("X-Collie-File-Mtime", "1234.5").setBody(okio.Buffer().write(byteArrayOf(1, 2, 3))))
+        val result = api.fileImage(connection, FilesTarget.Workspace("ws1"), Scope(host = "peer", session = "work"), RelativeFilePath.parse("images/diagram.png")!!) as ApiResult.Success
+        assertEquals(byteArrayOf(1, 2, 3).toList(), result.value.bytes.toList())
+        assertEquals(3L, result.value.size)
+        assertEquals(1234.5, result.value.mtimeMs!!, 0.0)
+        val request = server.takeRequest()
+        assertEquals("GET", request.method)
+        assertEquals("/mount/api/workspace/ws1/files/image?path=images%2Fdiagram.png&host=peer&session=work", request.path)
+        assertEquals("Bearer secret", request.getHeader("Authorization"))
+        assertNull(request.getHeader("Origin"))
+        assertFalse(request.getHeader("Accept")?.contains("svg") == true)
+    }
+
     private fun jsonResponse(body: String): MockResponse =
         MockResponse().setResponseCode(200).setHeader("Content-Type", "application/json").setBody(body)
 

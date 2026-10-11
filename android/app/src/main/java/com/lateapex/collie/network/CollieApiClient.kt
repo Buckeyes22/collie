@@ -118,6 +118,9 @@ interface CollieApi {
     suspend fun changeCommitHistory(connection: Connection, target: ChangesTarget, scope: Scope, lookup: ChangesLookup, repo: String, head: String?, offset: Int, limit: Int): ApiResult<ChangeCommitHistoryAnswer> = unavailable("Changes commit history")
     suspend fun changeCommit(connection: Connection, target: ChangesTarget, scope: Scope, lookup: ChangesLookup, repo: String, commitHash: String? = null): ApiResult<ChangeCommitAnswer> = unavailable("Changes commit")
     suspend fun changeCommitDiff(connection: Connection, target: ChangesTarget, scope: Scope, lookup: ChangesLookup, repo: String, path: String, commitHash: String? = null): ApiResult<ChangeCommitDiffAnswer> = unavailable("Changes commit diff")
+    suspend fun files(connection: Connection, target: FilesTarget, scope: Scope, path: RelativeFilePath? = null, dir: RelativeFilePath? = null, ignored: Boolean = false): ApiResult<FilesAnswer> = unavailable("Files")
+    suspend fun filesExist(connection: Connection, target: FilesTarget, scope: Scope, paths: List<RelativeFilePath>): ApiResult<FilesExistAnswer> = unavailable("Files path existence")
+    suspend fun fileImage(connection: Connection, target: FilesTarget, scope: Scope, path: RelativeFilePath): ApiResult<FilesImageBlob> = unavailable("Files image")
     suspend fun startLaunch(connection: Connection, scope: Scope, target: StartTarget, requestId: String, cwd: String? = null): ApiResult<CreateResponse> = unavailable("Launch by id")
     /** Sends the exact encrypted-journal body for a deliberate replay; never rebuilds an intent. */
     suspend fun startLaunchFrozen(connection: Connection, scope: Scope, canonicalBody: String): ApiResult<CreateResponse> = unavailable("Frozen launch retry")
@@ -259,6 +262,106 @@ class CollieApiClient(
     private val client: OkHttpClient,
     private val json: Json,
 ) : CollieApi {
+    override suspend fun files(
+        connection: Connection,
+        target: FilesTarget,
+        scope: Scope,
+        path: RelativeFilePath?,
+        dir: RelativeFilePath?,
+        ignored: Boolean,
+    ): ApiResult<FilesAnswer> {
+        validateFilesTarget(target)
+        require((path == null) xor (dir == null)) { "Files reads name exactly one path or directory" }
+        val query = buildList {
+            path?.let { add("path" to it.value) }
+            dir?.let { add("dir" to it.value) }
+            if (path == null) add("ignored" to if (ignored) "1" else "0")
+        }
+        val url = scopedUrl(connection.origin, filesPath(target), scope, query)
+        val request = request(connection, url)
+        return executeBoundedJson(request, MAX_FILES_RESPONSE_BYTES, "Malformed Files response") { element ->
+            FilesWire.answer(element, target, path, dir)
+        }
+    }
+
+    override suspend fun filesExist(
+        connection: Connection,
+        target: FilesTarget,
+        scope: Scope,
+        paths: List<RelativeFilePath>,
+    ): ApiResult<FilesExistAnswer> {
+        validateFilesTarget(target)
+        require(paths.size <= MAX_FILES_EXIST_PATHS && paths.map { it.value }.toSet().size == paths.size)
+        val url = scopedUrl(connection.origin, filesExistPath(target), scope)
+        val payload = json.encodeToString(FilesExistRequest(paths.map { it.value }))
+        return executeBoundedJson(post(connection, url, payload), MAX_FILES_RESPONSE_BYTES, "Malformed Files existence response") { element ->
+            FilesWire.exists(element, paths)
+        }
+    }
+
+    override suspend fun fileImage(
+        connection: Connection,
+        target: FilesTarget,
+        scope: Scope,
+        path: RelativeFilePath,
+    ): ApiResult<FilesImageBlob> {
+        validateFilesTarget(target)
+        val url = scopedUrl(connection.origin, filesImagePath(target), scope, listOf("path" to path.value))
+        val request = requestBuilder(connection, url).header("Accept", "image/png,image/jpeg,image/gif,image/webp,image/avif").get().build()
+        return executeResponse(request, FILE_IMAGE_TIMEOUT_SECONDS) { response ->
+            if (response.code in REDIRECT_CODES) return@executeResponse ApiResult.Failure(ApiFailure.Redirect(response.code))
+            val body = response.body
+            if (!response.isSuccessful) {
+                val error = body?.source()?.let { source ->
+                    val limit = MAX_ERROR_MESSAGE_CHARS.toLong()
+                    source.request(limit + 1)
+                    source.readUtf8(minOf(source.buffer.size, limit))
+                }.orEmpty()
+                return@executeResponse failure(response, error)
+            }
+            if (body == null) return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Files image response was empty"))
+            val declared = body.contentLength()
+            if (declared > FilesImageBlob.MAX_BYTES) return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Files image exceeds the size limit"))
+            val bytes = try {
+                body.source().use { source ->
+                    val output = java.io.ByteArrayOutputStream(if (declared in 0..FilesImageBlob.MAX_BYTES.toLong()) declared.toInt() else 32 * 1024)
+                    val chunk = okio.Buffer()
+                    while (true) {
+                        val read = source.read(chunk, 8_192L)
+                        if (read == -1L) break
+                        if (output.size().toLong() + read > FilesImageBlob.MAX_BYTES) {
+                            return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Files image exceeds the size limit"))
+                        }
+                        output.write(chunk.readByteArray())
+                    }
+                    output.toByteArray()
+                }
+            } catch (_: IOException) {
+                return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Files image response could not be read"))
+            }
+            if (bytes.isEmpty()) return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Files image response was empty"))
+            val size = response.header("x-collie-file-size")?.toLongOrNull()?.takeIf { it in 0..MAX_SAFE_INTEGER }
+            val mtime = response.header("x-collie-file-mtime")?.toDoubleOrNull()?.takeIf { it.isFinite() && it >= 0.0 && it <= MAX_SAFE_INTEGER.toDouble() }
+            ApiResult.Success(
+                FilesImageBlob(response.header("Content-Type")?.substringBefore(';')?.trim()?.lowercase(), bytes, size, mtime),
+                response.code,
+                controlAuthority = responseAuthority(response),
+            )
+        }
+    }
+
+    private fun validateFilesTarget(target: FilesTarget) {
+        require(target.id.isNotBlank() && target.id.length <= MAX_FILES_ID_CHARS && '\u0000' !in target.id)
+    }
+
+    private fun filesPath(target: FilesTarget): List<String> = when (target) {
+        is FilesTarget.Pane -> path("pane", target.id, "files")
+        is FilesTarget.Workspace -> path("workspace", target.id, "files")
+    }
+
+    private fun filesExistPath(target: FilesTarget): List<String> = filesPath(target) + "exist"
+    private fun filesImagePath(target: FilesTarget): List<String> = filesPath(target) + "image"
+
     override suspend fun imageBlob(connection: Connection, scope: Scope, sha256: String): ApiResult<ImageBlob> {
         require(sha256.matches(Regex("[0-9a-fA-F]{64}")))
         val imageAccept = "image/png,image/jpeg,image/gif,image/webp"
@@ -1435,6 +1538,47 @@ class CollieApiClient(
     }
 
     /** Consume and close the body on OkHttp's worker, before handing a value to the caller. */
+    private suspend fun <T> executeBoundedJson(
+        request: Request,
+        maxBytes: Long,
+        malformedMessage: String,
+        parse: (kotlinx.serialization.json.JsonElement) -> T?,
+    ): ApiResult<T> = executeResponse(request, READ_TIMEOUT_SECONDS) { response ->
+        if (response.code in REDIRECT_CODES) return@executeResponse ApiResult.Failure(ApiFailure.Redirect(response.code))
+        val body = response.body
+        if ((body?.contentLength() ?: -1L) > maxBytes) {
+            return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Files response exceeds the size limit"))
+        }
+        val buffer = okio.Buffer()
+        val source = body?.source()
+        if (source != null) {
+            while (buffer.size < maxBytes) {
+                val read = source.read(buffer, minOf(maxBytes - buffer.size, 8_192L))
+                if (read == -1L) break
+            }
+            if (buffer.size == maxBytes && source.read(okio.Buffer(), 1L) != -1L) {
+                return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Files response exceeds the size limit"))
+            }
+        }
+        val text = buffer.readUtf8()
+        if (!response.isSuccessful) return@executeResponse failure(response, text)
+        if (response.code != 200) return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Unexpected successful Files status"))
+        if (!FilesJsonBounds.accepts(text)) {
+            return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Files response exceeded its structural limit"))
+        }
+        val element = try {
+            json.parseToJsonElement(text)
+        } catch (_: SerializationException) {
+            null
+        } catch (_: IllegalArgumentException) {
+            null
+        }
+        val value = element?.let(parse)
+            ?: return@executeResponse ApiResult.Failure(ApiFailure.Protocol(malformedMessage))
+        ApiResult.Success(value, response.code, response.header("ETag"), response.header(BUILD_HEADER), responseAuthority(response))
+    }
+
+    /** Consume and close the body on OkHttp's worker, before handing a value to the caller. */
     private suspend fun <T> executeResponse(
         request: Request,
         timeoutSeconds: Long,
@@ -1566,6 +1710,11 @@ class CollieApiClient(
         internal const val MAX_LAYOUT_RESPONSE_BYTES = 1_000_000
         private const val MAX_CHANGES_ID_CHARS = 8_192
         private const val MAX_CHANGES_RESPONSE_BYTES = 5L * 1024L * 1024L
+        private const val MAX_FILES_ID_CHARS = 512
+        private const val MAX_FILES_EXIST_PATHS = 64
+        private const val MAX_FILES_RESPONSE_BYTES = 8L * 1024 * 1024
+        private const val FILE_IMAGE_TIMEOUT_SECONDS = 45L
+        private const val MAX_SAFE_INTEGER = 9_007_199_254_740_991L
         private const val MAX_ERROR_MESSAGE_CHARS = 512
         private val REDIRECT_CODES = setOf(301, 302, 303, 307, 308)
         internal fun sttTimeoutSeconds(bytes: Int): Long =
