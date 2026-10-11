@@ -6,7 +6,9 @@ import com.lateapex.collie.domain.PaneAddress
 import com.lateapex.collie.domain.Scope
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
+import okhttp3.ConnectionPool
 import okhttp3.OkHttpClient
+import okhttp3.Protocol
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okhttp3.tls.HandshakeCertificates
@@ -22,6 +24,9 @@ import org.junit.Test
 class CollieApiClientTest {
     private lateinit var server: MockWebServer
     private lateinit var api: CollieApiClient
+    private lateinit var trustedHttpClient: OkHttpClient
+    private lateinit var boundaryHttp1Client: OkHttpClient
+    private lateinit var boundaryHttp1Api: CollieApiClient
     private var origin = CollieOrigin("https://localhost/")
 
     @Before
@@ -40,10 +45,15 @@ class CollieApiClientTest {
             useHttps(serverCertificates.sslSocketFactory(), false)
             start()
         }
-        val client = CollieApiClient.defaultHttpClient().newBuilder()
+        trustedHttpClient = CollieApiClient.defaultHttpClient().newBuilder()
             .sslSocketFactory(clientCertificates.sslSocketFactory(), clientCertificates.trustManager)
             .build()
-        api = CollieApiClient(client, Json { ignoreUnknownKeys = true; encodeDefaults = false })
+        api = CollieApiClient(trustedHttpClient, Json { ignoreUnknownKeys = true; encodeDefaults = false })
+        boundaryHttp1Client = trustedHttpClient.newBuilder()
+            .protocols(listOf(Protocol.HTTP_1_1))
+            .connectionPool(ConnectionPool())
+            .build()
+        boundaryHttp1Api = CollieApiClient(boundaryHttp1Client, Json { ignoreUnknownKeys = true; encodeDefaults = false })
         origin = CollieOrigin(server.url("/").toString())
     }
 
@@ -92,6 +102,65 @@ class CollieApiClientTest {
         assertEquals("1", request.getHeader("X-Collie-Seen"))
         assertEquals("\"rev-6\"", request.getHeader("If-None-Match"))
         assertNull(request.getHeader("Origin"))
+    }
+
+    @Test
+    fun journalBlobUsesOnlyMountedScopedAuthenticatedGetAndRefusesRedirects() = runBlocking {
+        val mounted = CollieOrigin(server.url("/mount/").toString())
+        val connection = Connection(mounted, "phone", "image-token")
+        val hash = "ab".repeat(32)
+        val png = byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)
+        server.enqueue(MockResponse()
+            .setHeader("Content-Type", "image/png")
+            .setHeader("X-Collie-Lead-Id", "new-lead")
+            .setHeader("X-Collie-Lead-Epoch", "epoch-9")
+            .setBody(okio.Buffer().write(png)))
+        val result = api.imageBlob(connection, Scope("peer", "work"), hash)
+        assertTrue(result is ApiResult.Success)
+        assertEquals(png.toList(), (result as ApiResult.Success).value.bytes.toList())
+        assertEquals(ControlAuthority("new-lead", "epoch-9"), (result as ApiResult.Success).controlAuthority)
+        val request = server.takeRequest()
+        assertEquals("GET", request.method)
+        assertEquals("/mount/api/blobs/$hash?host=peer&session=work", request.path)
+        assertEquals("Bearer image-token", request.getHeader("Authorization"))
+        assertEquals("image/png,image/jpeg,image/gif,image/webp", request.getHeader("Accept"))
+        server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", "https://outside.example/image.png"))
+        assertTrue(api.imageBlob(connection, Scope(), hash) is ApiResult.Failure)
+        assertEquals("/mount/api/blobs/$hash", server.takeRequest().path)
+        val exactLimit = ByteArray(ImageBlob.MAX_BYTES) { 0x41 }
+        // MockResponse.setChunkedBody stores HTTP/1 chunk framing in its body. Keep that fixture
+        // on HTTP/1 so HTTP/2 DATA cannot accidentally carry the framing bytes as image payload.
+        server.enqueue(MockResponse().setChunkedBody(okio.Buffer().write(byteArrayOf(1, 2, 3)), 16 * 1024))
+        boundaryHttp1Client.newCall(okhttp3.Request.Builder().url(server.url("/chunked-diagnostic")).build()).execute().use { response ->
+            assertEquals(Protocol.HTTP_1_1, response.protocol)
+            assertEquals(listOf<Byte>(1, 2, 3), response.body!!.bytes().toList())
+        }
+        server.takeRequest()
+        server.enqueue(MockResponse().setHeader("Content-Type", "image/png").setChunkedBody(okio.Buffer().write(exactLimit), 16 * 1024))
+        val atLimit = boundaryHttp1Api.imageBlob(connection, Scope(), hash)
+        assertTrue("exact 10 MiB image response should stream successfully: $atLimit", atLimit is ApiResult.Success && (atLimit as ApiResult.Success).value.bytes.size == ImageBlob.MAX_BYTES)
+        assertEquals("/mount/api/blobs/$hash", server.takeRequest().path)
+        val oversized = ByteArray(ImageBlob.MAX_BYTES + 1) { 0x41 }
+        server.enqueue(MockResponse().setChunkedBody(okio.Buffer().write(oversized), 16 * 1024))
+        val tooLarge = boundaryHttp1Api.imageBlob(connection, Scope(), hash)
+        assertTrue(tooLarge is ApiResult.Failure && (tooLarge as ApiResult.Failure).error is ApiFailure.Protocol)
+        assertEquals("/mount/api/blobs/$hash", server.takeRequest().path)
+        // HTTP/2 carries the payload in DATA frames without MockWebServer's HTTP/1 chunk bytes.
+        server.enqueue(MockResponse().setHeader("Content-Type", "image/png").setBody(okio.Buffer().write(exactLimit)))
+        val h2AtLimit = api.imageBlob(connection, Scope(), hash)
+        assertTrue("exact HTTP/2 payload should stream successfully: $h2AtLimit", h2AtLimit is ApiResult.Success && (h2AtLimit as ApiResult.Success).value.bytes.size == ImageBlob.MAX_BYTES)
+        assertEquals("/mount/api/blobs/$hash", server.takeRequest().path)
+        server.enqueue(MockResponse().setBody(okio.Buffer().write(ByteArray(ImageBlob.MAX_BYTES + 1) { 0x41 })))
+        val h2TooLarge = api.imageBlob(connection, Scope(), hash)
+        assertTrue(h2TooLarge is ApiResult.Failure && (h2TooLarge as ApiResult.Failure).error is ApiFailure.Protocol)
+        assertEquals("/mount/api/blobs/$hash", server.takeRequest().path)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun journalBlobRejectsNonSha256PathBeforeNetwork() {
+        runBlocking<Unit> {
+            api.imageBlob(Connection(origin, "phone", "token"), Scope(), "../outside")
+        }
     }
 
     @Test
@@ -238,6 +307,23 @@ class CollieApiClientTest {
             assertEquals(setOf("branch", "requestId"), body.keys)
         }
         assertEquals("/api/tab/w1%3At2/close?host=desk&session=work", server.takeRequest().path)
+    }
+
+    @Test
+    fun frozenWorkspaceWorktreePreservesCallerBodyAndTargetRoute() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setHeader("Content-Type", "application/json").setBody(createdPaneResponse()))
+        val connection = Connection(origin, "phone", "token")
+        val scope = Scope(host = "desk", session = "work")
+        val frozen = "{\"branch\":\"feature/native\",\"requestId\":\"55555555-5555-4555-8555-555555555555\"}"
+
+        api.createWorktreeFrozen(connection, scope, "w1", frozen)
+
+        server.takeRequest().also { request ->
+            assertEquals("/api/workspace/w1/worktree?host=desk&session=work", request.path)
+            assertEquals(frozen, request.body.readUtf8())
+            assertEquals("Bearer token", request.getHeader("Authorization"))
+        }
+        Unit
     }
 
     @Test
@@ -500,6 +586,134 @@ class CollieApiClientTest {
         assertTrue(defaultBody.contains("\"base\":{\"kind\":\"default\"}"))
         assertTrue(defaultBody.contains("\"folder\":{\"kind\":\"default\"}"))
         assertEquals(3, server.requestCount)
+    }
+
+    @Test
+    fun frozenLauncherAddRequiresBoundRowsForRecipeAndTextVariants(): Unit = runBlocking {
+        val connection = Connection(origin, "phone", "token")
+        val recipeId = "11111111-1111-4111-8111-111111111111"
+        val recipeBody = """{"requestId":"$recipeId","recipe":{"harness":"claude","options":[]}}"""
+        server.enqueue(jsonResponse(
+            """{"ok":true,"row":{"source":"added","id":"$recipeId","kind":"agent","harness":"claude","command":"claude","label":"Claude Code","noPrompts":false,"addedBy":"phone","addedAt":1700000000000,"addedAs":"recipe"}}""",
+        ))
+        assertTrue(api.addLauncherFrozen(connection, Scope(), recipeBody) is ApiResult.Success)
+        val recipeRequest = server.takeRequest()
+        assertEquals("/api/launchers/added", recipeRequest.path)
+        assertEquals(recipeBody, recipeRequest.body.readUtf8())
+
+        val textId = "22222222-2222-4222-8222-222222222222"
+        val textBody = """{"requestId":"$textId","text":"python app.py","kind":"command"}"""
+        server.enqueue(jsonResponse(
+            """{"ok":true,"row":{"source":"added","id":"$textId","kind":"command","command":"python app.py","label":"python","noPrompts":false,"addedBy":"phone","addedAt":1700000000001,"addedAs":"text"}}""",
+        ))
+        assertTrue(api.addLauncherFrozen(connection, Scope(), textBody) is ApiResult.Success)
+        val textRequest = server.takeRequest()
+        assertEquals("/api/launchers/added", textRequest.path)
+        assertEquals(textBody, textRequest.body.readUtf8())
+
+        val agentId = "22222222-2222-4222-8222-222222222223"
+        val agentBody = """{"requestId":"$agentId","text":"claude --continue","kind":"agent","harness":"claude"}"""
+        server.enqueue(jsonResponse(
+            """{"ok":true,"row":{"source":"added","id":"$agentId","kind":"agent","harness":"claude","command":"claude --continue","label":"claude","noPrompts":false,"addedBy":"phone","addedAt":1700000000002,"addedAs":"text"}}""",
+        ))
+        assertTrue(api.addLauncherFrozen(connection, Scope(), agentBody) is ApiResult.Success)
+        val agentRequest = server.takeRequest()
+        assertEquals("/api/launchers/added", agentRequest.path)
+        assertEquals(agentBody, agentRequest.body.readUtf8())
+
+        val recipeBinaries = linkedMapOf(
+            "claude" to "claude", "codex" to "codex", "opencode" to "opencode",
+            "pi" to "pi", "omp" to "omp", "grok" to "grok", "hermes" to "hermes",
+            "muse" to "muse", "agy" to "agy",
+        )
+        for ((index, pair) in recipeBinaries.entries.withIndex()) {
+            val (harness, executable) = pair
+            val id = "33333333-3333-4333-8333-${(index + 1).toString().padStart(12, '0')}"
+            val body = """{"requestId":"$id","recipe":{"harness":"$harness","options":[]}}"""
+            val label = when (harness) {
+                "claude" -> "Claude Code"
+                "codex" -> "Codex"
+                "grok" -> "Grok"
+                "hermes" -> "Hermes"
+                "muse" -> "Muse"
+                "agy" -> "Antigravity"
+                else -> harness
+            }
+            server.enqueue(jsonResponse(
+                """{"ok":true,"row":{"source":"added","id":"$id","kind":"agent","harness":"$harness","command":"$executable","label":"$label","noPrompts":false,"addedBy":"phone","addedAt":1700000000000,"addedAs":"recipe"}}""",
+            ))
+            val result = api.addLauncherFrozen(connection, Scope(), body)
+            assertTrue("$harness recipe row should match its rendered executable", result is ApiResult.Success)
+            server.takeRequest()
+        }
+
+        val codexId = "44444444-4444-4444-8444-444444444444"
+        val codexBody = """{"requestId":"$codexId","recipe":{"harness":"codex","options":["never"]}}"""
+        server.enqueue(jsonResponse(
+            """{"ok":true,"row":{"source":"added","id":"$codexId","kind":"agent","harness":"codex","command":"codex --ask-for-approval never","label":"Codex, Never ask","noPrompts":true,"addedBy":"phone","addedAt":1700000000000,"addedAs":"recipe"}}""",
+        ))
+        assertTrue(api.addLauncherFrozen(connection, Scope(), codexBody) is ApiResult.Success)
+        server.takeRequest()
+
+        val typedId = "77777777-7777-4777-8777-777777777777"
+        val typedBody = """{"requestId":"$typedId","text":"codex -a never","kind":"command"}"""
+        server.enqueue(jsonResponse(
+            """{"ok":true,"row":{"source":"added","id":"$typedId","kind":"command","command":"codex -a never","label":"codex","noPrompts":true,"addedBy":"phone","addedAt":1700000000000,"addedAs":"text"}}""",
+        ))
+        assertTrue(api.addLauncherFrozen(connection, Scope(), typedBody) is ApiResult.Success)
+        server.takeRequest()
+        Unit
+    }
+
+    @Test
+    fun frozenLauncherAddRejectsUnboundOrMalformedSuccessfulRows(): Unit = runBlocking {
+        val connection = Connection(origin, "phone", "token")
+        val requestId = "33333333-3333-4333-8333-333333333333"
+        val body = """{"requestId":"$requestId","recipe":{"harness":"claude","options":[]}}"""
+        val longCommand = "c".repeat(201)
+        val invalidRows = listOf(
+            """{"ok":true}""",
+            """{"ok":true,"row":{"source":"added","id":"44444444-4444-4444-8444-444444444444","kind":"agent","harness":"claude","command":"claude","label":"Claude Code","noPrompts":false,"addedBy":"phone","addedAt":1700000000000,"addedAs":"recipe"}}""",
+            """{"ok":true,"row":{"source":"added","id":"$requestId","kind":"command","command":"claude","label":"Claude Code","noPrompts":false,"addedBy":"phone","addedAt":1700000000000,"addedAs":"recipe"}}""",
+            """{"ok":true,"row":{"source":"added","id":"$requestId","kind":"agent","harness":"claude","command":"claude","label":"Claude Code","noPrompts":false,"addedBy":"phone","addedAt":1700000000000,"addedAs":"text"}}""",
+            """{"ok":true,"row":{"source":"added","id":"$requestId","kind":"agent","harness":"codex","command":"claude","label":"Claude Code","noPrompts":false,"addedBy":"phone","addedAt":1700000000000,"addedAs":"recipe"}}""",
+            """{"ok":true,"row":{"source":"added","id":"$requestId","kind":"agent","harness":"claude","command":"claude","label":"Claude Code","noPrompts":false,"addedBy":"phone","addedAs":"recipe"}}""",
+            """{"ok":true,"row":{"source":"added","id":"$requestId","kind":"agent","harness":"claude","command":"$longCommand","label":"Claude Code","noPrompts":false,"addedBy":"phone","addedAt":1700000000000,"addedAs":"recipe"}}""",
+            """{"ok":true,"row":{"source":"added","id":"$requestId","kind":"agent","harness":"claude","command":"claude","label":"Claude Code","noPrompts":"false","addedBy":"phone","addedAt":1700000000000,"addedAs":"recipe"}}""",
+            """{"ok":true,"row":{"source":"added","id":"$requestId","kind":"agent","harness":"claude","command":"claude","label":"Claude Code","noPrompts":1,"addedBy":"phone","addedAt":1700000000000,"addedAs":"recipe"}}""",
+            """{"ok":true,"row":{"source":"added","id":"$requestId","kind":"agent","harness":"claude","command":"claude","label":"Claude Code","noPrompts":false,"addedBy":"phone","addedAt":"1700000000000","addedAs":"recipe"}}""",
+            """{"ok":true,"row":{"source":"added","id":"$requestId","kind":"agent","harness":"claude","command":"claude","label":"Claude Code","noPrompts":false,"addedBy":"phone","addedAt":-1,"addedAs":"recipe"}}""",
+            """{"ok":true,"row":{"source":"added","id":"$requestId","kind":"agent","harness":"claude","command":"claude","label":"Claude Code","noPrompts":false,"addedBy":"phone","addedAt":1700000000000.5,"addedAs":"recipe"}}""",
+            """{"ok":true,"row":{"source":"added","id":"$requestId","kind":"agent","harness":"claude","command":"claude","label":"Claude Code","noPrompts":false,"addedBy":"phone","addedAt":9007199254740992,"addedAs":"recipe"}}""",
+            """{"ok":true,"row":{"source":"added","id":"$requestId","kind":"agent","harness":"claude","command":"claude --continue","label":"Claude Code","noPrompts":false,"addedBy":"phone","addedAt":1700000000000,"addedAs":"recipe"}}""",
+        )
+        for (response in invalidRows) {
+            server.enqueue(jsonResponse(response))
+            val result = api.addLauncherFrozen(connection, Scope(), body)
+            assertEquals(ApiFailure.Protocol("Malformed launcher add response"), (result as ApiResult.Failure).error)
+            server.takeRequest()
+        }
+
+        val codexId = "66666666-6666-4666-8666-666666666666"
+        val codexBody = """{"requestId":"$codexId","recipe":{"harness":"codex","options":["never"]}}"""
+        server.enqueue(jsonResponse(
+            """{"ok":true,"row":{"source":"added","id":"$codexId","kind":"agent","harness":"codex","command":"codex --ask-for-approval never","label":"Codex, Never ask","noPrompts":false,"addedBy":"phone","addedAt":1700000000000,"addedAs":"recipe"}}""",
+        ))
+        assertEquals(
+            ApiFailure.Protocol("Malformed launcher add response"),
+            (api.addLauncherFrozen(connection, Scope(), codexBody) as ApiResult.Failure).error,
+        )
+        server.takeRequest()
+
+        val textId = "55555555-5555-4555-8555-555555555555"
+        val textBody = """{"requestId":"$textId","text":"python app.py","kind":"command"}"""
+        server.enqueue(jsonResponse(
+            """{"ok":true,"row":{"source":"added","id":"$textId","kind":"command","command":"python other.py","label":"python","noPrompts":false,"addedBy":"phone","addedAt":1700000000000,"addedAs":"text"}}""",
+        ))
+        val textResult = api.addLauncherFrozen(connection, Scope(), textBody)
+        assertEquals(ApiFailure.Protocol("Malformed launcher add response"), (textResult as ApiResult.Failure).error)
+        server.takeRequest()
+        Unit
     }
 
     private fun jsonResponse(body: String): MockResponse =

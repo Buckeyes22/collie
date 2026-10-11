@@ -470,6 +470,8 @@ export interface HelloResult {
    */
   readonly mux: MuxConfig | null;
   readonly controlCapabilities?: Record<string, boolean> | null;
+  /** Optional receipt readiness; null/absence is closed for owner-bound replay. */
+  readonly receiptContextBound?: boolean | null;
 }
 
 export interface PeerClientDeps {
@@ -663,6 +665,7 @@ export class PeerClient {
         pairingCollision,
         mux,
         controlCapabilities: parseControlCapabilities(outcome.value),
+        receiptContextBound: parseReceiptContextBound(outcome.value),
       },
     };
   }
@@ -1459,4 +1462,10 @@ export function parseControlCapabilities(value: JsonValue): Record<string, boole
   if (!block || Object.keys(block).length > 128) return null;
   if (!Object.entries(block).every(([key, yes]) => /^[a-zA-Z][a-zA-Z0-9]{0,63}$/.test(key) && typeof yes === "boolean")) return null;
   return Object.fromEntries(Object.entries(block).map(([key, yes]) => [key, yes === true]));
+}
+
+/** Missing or malformed peer readiness is never borrowed from the lead. */
+export function parseReceiptContextBound(value: JsonValue): boolean | null {
+  const rec = asRecord(value);
+  return typeof rec?.receiptContextBound === "boolean" ? rec.receiptContextBound : null;
 }

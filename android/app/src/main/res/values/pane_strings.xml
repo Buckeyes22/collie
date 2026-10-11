@@ -43,6 +43,8 @@
     <string name="history_title">History</string>
     <string name="history_back">Back to pane</string>
     <string name="history_load_older">Load older</string>
+    <string name="history_refresh">Refresh history images</string>
+    <string name="history_access_changed">Reconnect to refresh protected images.</string>
     <string name="history_loading">Loading history…</string>
     <string name="history_empty">No transcript entries yet.</string>
     <string name="history_unavailable_disabled">History is disabled on this Collie server.</string>

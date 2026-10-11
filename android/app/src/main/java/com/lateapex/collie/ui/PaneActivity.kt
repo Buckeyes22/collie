@@ -3660,7 +3660,15 @@ class PaneActivity : AppCompatActivity() {
         terminalStatusline.isVisible = body == PaneBody.MIRROR &&
             renderedStatusRows.isNotEmpty() && !displayPreferences.getBoolean(PREF_RAW, false)
         if (showingTranscriptBody) {
-            transcriptBody.bind(agentName, state.transcript, state.transcriptHasMore, state.transcriptQueued)
+            val container = (application as CollieApplication).container
+            transcriptBody.bind(
+                agentName,
+                state.transcript,
+                state.transcriptHasMore,
+                state.transcriptQueued,
+                container.imageLoader,
+                state.transcriptReadContext,
+            )
             terminalScroll.updatePadding(bottom = 0)
         } else {
             // The pinned statusline overlaps the mirror's last row unless the scroller reserves

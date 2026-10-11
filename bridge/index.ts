@@ -68,7 +68,7 @@ import { pushTitle } from "./push-titles.ts";
 import { NotifyPrefsStore } from "./notify-prefs.ts";
 import { FolderStore } from "./folders.ts";
 import { WorktreeBaseStore } from "./worktree-bases.ts";
-import { WorktreeReceiptStore } from "./worktree-receipts.ts";
+import { WorktreeReceiptStore, loadOrCreateIntentReceiptKey } from "./worktree-receipts.ts";
 import { LaunchReceiptStore } from "./launch-receipts.ts";
 import { AddedLauncherStore, addedFileIo } from "./launchers-added.ts";
 import { RecentRunStore, recentRunFileIo } from "./recent-runs.ts";
@@ -699,6 +699,12 @@ await folders.load();
 // nothing: the file appears on the first create that carries an id.
 const worktreeReceipts = new WorktreeReceiptStore(cfg.stateDir);
 await worktreeReceipts.load();
+let intentReceiptKey: Uint8Array | null = null;
+try {
+  intentReceiptKey = await loadOrCreateIntentReceiptKey(cfg.stateDir);
+} catch (error) {
+  console.warn(`[receipts] owner-bound intent receipts unavailable: ${error instanceof Error ? error.message : String(error)}`);
+}
 
 // Which ref each new worktree was cut from (ADR 0089, amended, bridge/worktree-bases.ts). Nothing
 // reads it yet. Loading writes nothing: the file appears on the first create that named a start.
@@ -1980,7 +1986,7 @@ if (standbyServer !== null && standbyDoor !== null) {
   );
 }
 
-const server = startServer({
+const server = await startServer({
   cfg,
   registry,
   push,
@@ -2003,6 +2009,7 @@ const server = startServer({
   cacheWatch,
   folders,
   worktreeReceipts,
+  intentReceiptKey,
   worktreeBases,
   launchReceipts,
   worktreeChoices,

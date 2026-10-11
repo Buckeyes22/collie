@@ -154,10 +154,11 @@ describe("scoped control contracts", () => {
   }, 30_000);
   test("mounted operation handler gates before resolution, refuses wrong owner and masks internals", async () => {
     const operations = new OperationStore();
-    await operations.execute("intent", binding, null, async () => ({ state: "succeeded" }));
+    const pairedIdentity = "a".repeat(64);
+    await operations.execute("intent", { ...binding, device: pairedIdentity }, null, async () => ({ state: "succeeded" }));
     const url = new URL("https://collie/api/control/operations/intent?session=work");
     let resolutions = 0;
-    const caller = { gate: (): Response | null => null, resolve: async () => { resolutions++; return { host: "local", session: "work" }; }, pairedIdentity: () => owner };
+    const caller = { gate: (): Response | null => null, resolve: async () => { resolutions++; return { host: "local", session: "work" }; }, device: () => "phone", pairedIdentity: () => pairedIdentity };
     const response = await serveControlRoute(new Request(url), url, caller, operations);
     expect(response?.status).toBe(200);
     expect(resolutions).toBe(1);
@@ -166,8 +167,10 @@ describe("scoped control contracts", () => {
     const refused = await serveControlRoute(new Request(url), url, { ...caller, gate: () => new Response("denied", { status: 403 }) }, operations);
     expect(refused?.status).toBe(403);
     expect(resolutions).toBe(1);
+    const missingIdentity = await serveControlRoute(new Request(url), url, { ...caller, pairedIdentity: () => null }, operations);
+    expect(missingIdentity?.status).toBe(403);
+    expect(resolutions).toBe(1);
     expect((await serveControlRoute(new Request(url), url, { ...caller, pairedIdentity: () => "b".repeat(64) }, operations))?.status).toBe(404);
-    expect((await serveControlRoute(new Request(url), url, { ...caller, pairedIdentity: () => null }, operations))?.status).toBe(403);
     expect((await serveControlRoute(new Request(url), url, { ...caller, pairedIdentity: () => "same-display-label" }, operations))?.status).toBe(403);
     const remote = new Response("peer unsupported", { status: 404 });
     expect(await serveControlRoute(new Request(url), url, { ...caller, resolve: async () => remote }, operations)).toBe(remote);

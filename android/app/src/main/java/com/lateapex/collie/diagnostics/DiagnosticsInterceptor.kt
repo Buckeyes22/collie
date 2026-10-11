@@ -11,8 +11,9 @@ import okio.Buffer
  * The single place every Collie API request and response passes through. Tags each request with a
  * trace id the bridge's own access log echoes back (`bridge/server.ts`'s `accessLogRecord`), so a
  * client-side event can be matched to the bridge's `journalctl` output by id instead of by
- * timestamp guessing. Text bodies are captured in full; binary bodies (image uploads, STT audio)
- * are captured as content-type and size only. The `Authorization` header's VALUE is never
+ * timestamp guessing. Ordinary text bodies are captured in full; binary bodies (image uploads, STT audio)
+ * are captured as content-type and size only. Intent creation bodies are deliberately omitted because
+ * they can contain operator-authored command lines. The `Authorization` header's VALUE is never
  * recorded, under any circumstance — only whether one was present. Pairing bodies are never
  * captured: the request contains a short-lived code and the response contains the device token.
  *
@@ -46,9 +47,23 @@ class DiagnosticsInterceptor internal constructor(
             diagnostics.record("network", fields)
             return response
         }
+        if (isJournalBlobRequest(tagged)) {
+            // Blob admission enforces a hard streamed-body bound downstream. Diagnostics must
+            // never buffer or replace that response, even when its MIME is missing or textual.
+            fields["responseBodyBytes"] = response.body?.contentLength()?.takeIf { it >= 0L }
+            fields["responseBodyStreaming"] = true
+            diagnostics.record("network", fields)
+            return response
+        }
+        // The URL path is decoded into segments before matching, so mounted origins (and encoded
+        // segment spellings) follow the same policy. Match complete route suffixes, never substrings.
+        val intentPost = tagged.method == "POST" && isIntentCreationPath(tagged.url.pathSegments)
         val requestBody = tagged.body
         if (requestBody != null) {
-            if (isTextual(requestBody.contentType())) {
+            if (intentPost) {
+                fields["requestBodyBytes"] = requestBody.contentLength()
+                fields["requestBodyRedacted"] = true
+            } else if (isTextual(requestBody.contentType())) {
                 val buffer = Buffer()
                 requestBody.writeTo(buffer)
                 fields["requestBody"] = buffer.readUtf8()
@@ -59,19 +74,25 @@ class DiagnosticsInterceptor internal constructor(
         val responseBody = response.body
         return if (responseBody != null && isTextual(responseBody.contentType())) {
             val text = responseBody.string()
-            val kept = if (tagged.method == "GET") delta.of(tagged.url.toString(), response.code, text) else ResponseDelta.Recorded(body = text)
+            val kept = if (intentPost) {
+                fields["responseBodyBytes"] = text.toByteArray().size
+                fields["responseBodyRedacted"] = true
+                null
+            } else if (tagged.method == "GET") delta.of(tagged.url.toString(), response.code, text) else ResponseDelta.Recorded(body = text)
             if (kept != null) {
                 kept.body?.let { fields["responseBody"] = it }
                 kept.patch?.let { fields["responsePatch"] = it }
                 kept.entriesUnchanged?.let { fields["entriesUnchanged"] = it }
                 diagnostics.record("network", fields)
             }
+            if (intentPost) diagnostics.record("network", fields)
             response.newBuilder()
                 .body(text.toResponseBody(responseBody.contentType()))
                 .build()
         } else if (responseBody != null) {
             val bytes = responseBody.bytes()
             fields["responseBodyBytes"] = bytes.size
+            if (intentPost) fields["responseBodyRedacted"] = true
             diagnostics.record("network", fields)
             response.newBuilder()
                 .body(bytes.toResponseBody(responseBody.contentType()))
@@ -86,8 +107,22 @@ class DiagnosticsInterceptor internal constructor(
         type == null || type.type == "application" && type.subtype in TEXTUAL_SUBTYPES ||
             type.type == "text"
 
+    private fun isJournalBlobRequest(request: okhttp3.Request): Boolean {
+        if (request.method != "GET") return false
+        val segments = request.url.encodedPath.split('/').filter(String::isNotEmpty)
+        if (segments.size < 3 || segments.takeLast(3).take(2) != listOf("api", "blobs")) return false
+        return JOURNAL_HASH.matches(segments.last())
+    }
+    private fun isIntentCreationPath(segments: List<String>): Boolean =
+        segments.takeLast(2) == listOf("api", "launch") ||
+            segments.takeLast(2) == listOf("api", "worktree") ||
+            (segments.size >= 4 && segments[segments.size - 4] == "api" &&
+                segments[segments.size - 3] == "workspace" && segments.last() == "worktree") ||
+            segments.takeLast(3) == listOf("api", "launchers", "added")
+
     companion object {
         internal const val TRACE_HEADER = "X-Collie-Trace-Id"
+        private val JOURNAL_HASH = Regex("[0-9a-f]{64}")
         private val TEXTUAL_SUBTYPES = setOf("json", "xml")
     }
 }

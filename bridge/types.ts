@@ -1660,6 +1660,8 @@ export interface CacheWatchListResponse {
 export interface BridgeConfig {
   push: boolean;
   vapidPublicKey: string;
+  /** True only when this host can bind receipt IDs to validated pairing identities and payloads. */
+  receiptContextBound?: boolean;
   /** Build id of the bundle the bridge is currently serving (for stale-cache detection). */
   build?: string;
   /**

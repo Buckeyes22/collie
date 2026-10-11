@@ -286,6 +286,8 @@ export interface CrewSurface {
   /** This collie's own capability declaration, for `hello`. See {@link MuxSource}. */
   readonly mux?: MuxSource;
   readonly controlCapabilities?: () => Record<string, boolean>;
+  /** Whether this peer has a durable owner-bound intent receipt key; absent is unsupported. */
+  readonly receiptContextBound?: () => boolean;
 }
 
 /**
@@ -330,6 +332,8 @@ export interface CrewRouterDeps {
   /** Absent ⇒ `hello` carries no capability block, which reads as "use the lead's" (M22/03). */
   readonly mux?: MuxSource;
   readonly controlCapabilities?: () => Record<string, boolean>;
+  /** Additive optional readiness; old peers omit it and therefore fail closed for new receipts. */
+  readonly receiptContextBound?: () => boolean;
   /**
    * Whether the listener this handler is mounted on was built pin-enforcing
    * (`bridge/crew/transport.ts`). **Defaults to `false`, which admits nothing but a signed request.**
@@ -570,6 +574,7 @@ type HelloBody = {
   /** This peer's own capability declaration (§7.1's amendment of 2026-09-08). See {@link CREW_MUX_FIELD}. */
   mux?: MuxConfig;
   controlCapabilities?: Record<string, boolean>;
+  receiptContextBound?: boolean;
 };
 
 /**
@@ -953,6 +958,8 @@ export function createCrewRouter(deps: CrewRouterDeps): CrewHandler {
       // the header already renders as text alone.
       const control = deps.controlCapabilities?.();
       if (control !== undefined) hello.controlCapabilities = control;
+      const receiptContextBound = deps.receiptContextBound?.();
+      if (receiptContextBound !== undefined) hello.receiptContextBound = receiptContextBound;
       const declared = deps.mux?.() ?? null;
       if (declared !== null) hello.mux = portableMuxBlock(declared);
       return new Response(JSON.stringify(hello), {

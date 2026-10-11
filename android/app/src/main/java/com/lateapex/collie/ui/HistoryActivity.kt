@@ -36,6 +36,8 @@ import androidx.lifecycle.lifecycleScope
 import com.lateapex.collie.CollieApplication
 import com.lateapex.collie.R
 import com.lateapex.collie.databinding.ActivityHistoryBinding
+import com.lateapex.collie.data.ScopedReadContext
+import com.lateapex.collie.data.ScopedRequestKey
 import com.lateapex.collie.domain.PaneAddress
 import com.lateapex.collie.domain.Scope
 import com.lateapex.collie.network.ApiResult
@@ -45,6 +47,8 @@ import kotlinx.coroutines.launch
 import kotlin.math.max
 import kotlin.math.min
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 
 /** Read-only transcript reader. It intentionally never joins the live-pane polling loop. */
 class HistoryActivity : AppCompatActivity() {
@@ -69,14 +73,34 @@ class HistoryActivity : AppCompatActivity() {
     private val turnViews = linkedMapOf<String, View>()
     private val historyTextTargets = linkedMapOf<HistorySearchKey, HistoryTextTarget>()
     private val expandedTools = mutableSetOf<Pair<String, Int>>()
-    private val renderer by lazy {
-        HistoryTurnRenderer(
-            this,
-            intent.getStringExtra(EXTRA_AGENT).orEmpty(),
-            expandedTools,
-            ::toggleTool,
-            historyTextTargets::put,
-        )
+    @Volatile private var admittedRenderContext: ScopedReadContext? = null
+    private val admittedEntryUuids = ConcurrentHashMap.newKeySet<String>()
+    private var renderer: HistoryTurnRenderer? = null
+    private var rendererActor: Pair<ScopedRequestKey, Long>? = null
+    private val rendererAdmissionRevision = AtomicLong()
+    private var rendererBuiltAdmissionRevision = -1L
+    @Volatile private var refreshContinuation: String? = null
+    @Volatile private var refreshContinuationActor: Pair<ScopedRequestKey, Long>? = null
+
+    private fun rendererForAdmittedRead(): HistoryTurnRenderer {
+        val readContext = admittedRenderContext
+        val actor = readContext?.let { it.key to it.navigationGeneration }
+        val admissionRevision = rendererAdmissionRevision.get()
+        if (renderer == null || rendererActor != actor || rendererBuiltAdmissionRevision != admissionRevision) {
+            rendererActor = actor
+            rendererBuiltAdmissionRevision = admissionRevision
+            renderer = HistoryTurnRenderer(
+                this,
+                intent.getStringExtra(EXTRA_AGENT).orEmpty(),
+                expandedTools,
+                ::toggleTool,
+                historyTextTargets::put,
+                (application as CollieApplication).container.imageLoader,
+                readContext,
+                readContextForEntry = { uuid -> readContext?.takeIf { uuid in admittedEntryUuids } },
+            )
+        }
+        return requireNotNull(renderer)
     }
 
     private fun toggleTool(uuid: String, partIndex: Int) {
@@ -115,8 +139,15 @@ class HistoryActivity : AppCompatActivity() {
             retainedReader.findQuery = ""
         }
         repository.selectSubject(address.scope, address.paneId)
-        authorityRegistration = repository.onAuthorityInvalidated { reason ->
+        authorityRegistration = repository.onReadContextInvalidated { reason ->
             loading = false
+            admittedRenderContext = null
+            admittedEntryUuids.clear()
+            rendererAdmissionRevision.incrementAndGet()
+            refreshContinuation = null
+            refreshContinuationActor = null
+            renderer = null
+            rendererActor = null
             if (reason in setOf(com.lateapex.collie.data.AuthorityInvalidation.PAIRING_RETIRED,
                 com.lateapex.collie.data.AuthorityInvalidation.CONNECTION_CHANGED, com.lateapex.collie.data.AuthorityInvalidation.DISCONNECTED)) {
                 retired = true
@@ -132,9 +163,17 @@ class HistoryActivity : AppCompatActivity() {
                 pendingRestoreAnchor = null
                 loading = false
                 runOnUiThread {
+                    renderer = null
+                    rendererActor = null
                     binding.historyFindQuery.text?.clear()
                     binding.historyEntries.removeAllViews()
                     finish()
+                }
+            } else {
+                runOnUiThread {
+                    renderer = null
+                    rendererActor = null
+                    if (!isFinishing && entries.isNotEmpty()) renderEntries()
                 }
             }
         }
@@ -147,6 +186,7 @@ class HistoryActivity : AppCompatActivity() {
         binding.historyFindQuery.contentDescription = getString(R.string.history_find_coverage)
         binding.historyFindClose.setOnClickListener { closeFind() }
         binding.historyLoadOlder.setOnClickListener { growUpward() }
+        binding.historyRefresh.setOnClickListener { refreshRetainedHistory() }
         restoringFindState = true
         binding.historyFindQuery.setText(retainedReader.findQuery)
         restoringFindState = false
@@ -332,10 +372,21 @@ class HistoryActivity : AppCompatActivity() {
         binding.historyLoadOlder.isEnabled = false
         if (loadedOnce) binding.historyLoadOlder.setText(R.string.history_loading)
         lifecycleScope.launch {
-            val result = repository.history(address, limit = HISTORY_PAGE_SIZE, before = oldest.takeIf { older })
+            val result = repository.history(
+                address,
+                limit = HISTORY_PAGE_SIZE,
+                before = oldest.takeIf { older },
+                expectedContext = context,
+            )
             if (retired || !repository.isCurrent(context)) return@launch
             when (result) {
-                is ApiResult.Success -> applyPage(result.value, older, anchor)
+                is ApiResult.Success -> {
+                    // Only a page admitted under this exact context can authorize its image
+                    // references. Retained entries rendered before this read stay inert.
+                    admittedRenderContext = context
+                    if (admittedEntryUuids.addAll(result.value.entries.map { it.uuid })) rendererAdmissionRevision.incrementAndGet()
+                    applyPage(result.value, older, anchor)
+                }
                 is ApiResult.Failure -> renderFailure(MainViewModel.describe(resources, result.error))
                 is ApiResult.NotModified -> renderFailure(getString(R.string.history_load_failed))
             }
@@ -381,6 +432,106 @@ class HistoryActivity : AppCompatActivity() {
         }
     }
 
+    /** Re-read the retained page range under one actor so lifecycle-retained rows can recover images. */
+    private fun refreshRetainedHistory() {
+        if (loading || entries.isEmpty()) return
+        val context = repository.readContext(address.scope, address.paneId) ?: run {
+            renderFailure(getString(R.string.history_access_changed))
+            return
+        }
+        val retained = entries.toList()
+        val retainedOldest = retained.firstOrNull()?.uuid ?: return
+        // Let renderEntries consume the saved UUID/offset anchor if the user taps before its
+        // restoration post runs; otherwise preserve the currently visible scroll position.
+        val anchor = if (pendingRestoreAnchor == null) captureAnchor() else null
+        loading = true
+        binding.historyRefresh.isEnabled = false
+        binding.historyProgress.isVisible = false
+        lifecycleScope.launch {
+            val refreshed = mutableListOf<TranscriptEntry>()
+            val admitted = mutableSetOf<String>()
+            val actor = context.key to context.navigationGeneration
+            var before: String? = refreshContinuation.takeIf { refreshContinuationActor == actor }
+            var lastPage: PaneHistoryResponse? = null
+            var failure: String? = null
+            var pages = 0
+            // The user explicitly asks to restore the already-loaded range. Cap a single action
+            // at 24 bounded pages; if the retained window is larger, the next tap continues from
+            // the saved cursor under this exact actor.
+            val pageCap = min(24, max(1, (retained.size + 49) / 50 + 1))
+            while (pages < pageCap && repository.isCurrent(context)) {
+                val result = repository.history(
+                    address,
+                    limit = HISTORY_PAGE_SIZE,
+                    before = before,
+                    expectedContext = context,
+                )
+                if (!repository.isCurrent(context)) break
+                when (result) {
+                    is ApiResult.Success -> {
+                        val page = result.value
+                        if (!page.available) {
+                            failure = unavailableMessage(page.reason)
+                            break
+                        }
+                        if (page.entries.isEmpty()) {
+                            lastPage = page
+                            break
+                        }
+                        pages++
+                        refreshed += page.entries
+                        admitted += page.entries.map { it.uuid }
+                        lastPage = page
+                        if (retainedOldest in admitted || !page.hasMore) {
+                            refreshContinuation = null
+                            refreshContinuationActor = null
+                            break
+                        }
+                        val nextBefore = page.entries.first().uuid
+                        if (nextBefore == before) break
+                        before = nextBefore
+                        refreshContinuation = before
+                        refreshContinuationActor = actor
+                    }
+                    is ApiResult.Failure -> {
+                        failure = MainViewModel.describe(resources, result.error)
+                        break
+                    }
+                    is ApiResult.NotModified -> {
+                        // A fresh request has no validator; 304 cannot authorize retained rows.
+                        failure = getString(R.string.history_load_failed)
+                        break
+                    }
+                }
+            }
+            if (repository.isCurrent(context) && admitted.isNotEmpty()) {
+                admittedRenderContext = context
+                if (admittedEntryUuids.addAll(admitted)) rendererAdmissionRevision.incrementAndGet()
+                entries = HistoryPresentation.mergeNewer(entries, refreshed)
+                lastPage?.let { page ->
+                    hasMore = page.hasMore
+                    fileTruncated = page.fileTruncated
+                    total = max(max(total, page.total), entries.size)
+                }
+                renderEntries(anchor = anchor)
+                // Keep the successful page actors and rows, but do not hide why the remaining
+                // retained rows are still inert. The same-actor continuation cursor is left in
+                // place so the visible refresh action resumes exactly where this request stopped.
+                if (failure != null) renderFailure(failure)
+                updateRefreshVisibility()
+            } else if (failure != null) {
+                renderFailure(failure)
+            }
+            loading = false
+            binding.historyRefresh.isEnabled = true
+            binding.historyProgress.isVisible = false
+        }
+    }
+
+    private fun updateRefreshVisibility() {
+        binding.historyRefresh.isVisible = entries.isNotEmpty() && entries.any { it.uuid !in admittedEntryUuids }
+    }
+
     private fun captureAnchor(): ScrollAnchor = ScrollAnchor(
         height = binding.historyScroll.getChildAt(0)?.height ?: 0,
         top = binding.historyScroll.scrollY,
@@ -403,6 +554,7 @@ class HistoryActivity : AppCompatActivity() {
     private fun renderFailure(detail: String) {
         renderState(detail.ifBlank { getString(R.string.history_load_failed) })
         binding.historyLoadOlder.isVisible = hasMore || renderCount < entries.size
+        updateRefreshVisibility()
     }
 
     @Suppress("unused") // Kept as a zero-argument entry point for focused rendering tests.
@@ -417,6 +569,7 @@ class HistoryActivity : AppCompatActivity() {
         historyCount.text = if (total > 0) getString(R.string.history_shown_count, shown.size, total) else ""
         val allRendered = start == 0
         historyLoadOlder.isVisible = entries.isNotEmpty() && (!allRendered || hasMore)
+        historyRefresh.isVisible = entries.isNotEmpty() && entries.any { it.uuid !in admittedEntryUuids }
         renderState(
             when {
                 entries.isEmpty() -> getString(R.string.history_empty)
@@ -435,7 +588,7 @@ class HistoryActivity : AppCompatActivity() {
                 historyEntries.addView(dayDivider(turn.day))
                 lastDay = turn.day
             }
-            val view = renderer.turnView(turn, showHeader = newDay || turn.role != lastRole)
+            val view = rendererForAdmittedRead().turnView(turn, showHeader = newDay || turn.role != lastRole)
             turnViews[turn.uuid] = view
             historyEntries.addView(view)
             lastRole = turn.role

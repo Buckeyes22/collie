@@ -11,7 +11,7 @@ import {
   scanNoPrompts,
   type TextProblem,
 } from "./launcher-recipes.ts";
-import { MAX_ADDED, type AddedLauncher, type AddedLauncherSurface } from "./launchers-added.ts";
+import { MAX_ADDED, type AddOutcome, type AddedLauncher, type AddedLauncherSurface } from "./launchers-added.ts";
 import type { LauncherSwitches } from "./operator-launchers.ts";
 import type {
   AddedLauncherResponse,
@@ -22,7 +22,13 @@ import type {
   LaunchersAdding,
   RecipeWire,
 } from "./types.ts";
-import { isRequestId } from "./worktree-receipts.ts";
+import { isRequestId, keyedIntentFingerprint, matchReceiptBinding, type IntentReceiptBinding } from "./worktree-receipts.ts";
+import { executeBoundIntent, type IntentOwnerContext } from "./intent-operation-binding.ts";
+import type { OperationStore } from "./control/operations.ts";
+
+type BoundLauncherAddition =
+  | { readonly ok: boolean; readonly added: AddOutcome; readonly problem?: never }
+  | { readonly ok: false; readonly added?: never; readonly problem: "unknown" | "unavailable" | "mismatch" };
 
 // ── The launch allowlist, merged, and the three routes that change a phone's rows (ADR 0094) ────
 //
@@ -214,6 +220,10 @@ export interface AddContext {
   via: "local" | "crew";
   audit: AuditLog;
   session?: string;
+  /** Stable server-owned receipt key and authenticated paired-device identity, when wired. */
+  receiptContext?: IntentOwnerContext | null;
+  /** Shared per-owning-host tombstones; required for owner-bound production adds. */
+  operations?: OperationStore;
   now?: () => number;
 }
 
@@ -243,10 +253,25 @@ export async function addLauncher(body: JsonValue, ctx: AddContext): Promise<Rou
   if (fields === null) return refusal(400, apiError("launcher.bad_recipe", { reason: "bad body" }));
   const requestId = fields.requestId;
   if (!isRequestId(requestId)) return refusal(400, apiError("launcher.bad_recipe", { reason: "bad requestId" }));
+  if (ctx.receiptContext === null) return refusal(503, apiError("launch.receipts_unavailable"));
 
-  // A retry of an add that landed answers that row and runs nothing again, whatever else it says.
+  const binding: IntentReceiptBinding | undefined = ctx.receiptContext === undefined ? undefined : {
+    deviceIdentity: ctx.receiptContext.deviceIdentity,
+    operation: "launcher.add",
+    runtime: ctx.receiptContext.runtime,
+    intentFingerprint: keyedIntentFingerprint(ctx.receiptContext.key, body),
+  };
+  if (binding !== undefined && ctx.receiptContext?.owningHost !== undefined) {
+    binding.owningHost = ctx.receiptContext.owningHost;
+  }
+  const receiptConflict = () => refusal(409, apiError("launcher.bad_recipe", { reason: "request id is already bound to another intent or legacy receipt" }));
+
+  // A retry answers only when its owner, operation, runtime and keyed payload fingerprint match.
   const earlier = await ctx.sources.added.get(requestId);
-  if (earlier !== undefined) return { status: 200, body: { ok: true, row: addedWire(earlier), replayed: true } };
+  if (earlier !== undefined) {
+    if (binding !== undefined && matchReceiptBinding(earlier.binding, binding) !== "match") return receiptConflict();
+    return { status: 200, body: { ok: true, row: addedWire(earlier), replayed: true } };
+  }
 
   if (ctx.device === null || ctx.device === "") return refusal(403, apiError("launcher.no_device"));
   const switches = await ctx.sources.switches();
@@ -325,13 +350,50 @@ export async function addLauncher(body: JsonValue, ctx: AddContext): Promise<Rou
   if (operator.some((r) => r.command === row.command)) return refusal(409, apiError("launcher.duplicate"));
 
   const full: AddedLauncher = { ...row, label };
-  const outcome = await ctx.sources.added.add(full);
+  if (binding !== undefined) full.binding = binding;
+  let outcome: AddOutcome;
+  if (binding !== undefined && ctx.receiptContext?.owningHost !== undefined) {
+    const bound = await executeBoundIntent<BoundLauncherAddition>({
+      operations: ctx.operations,
+      requestId,
+      context: ctx.receiptContext,
+      operation: "launcher.add",
+      targetIdentity: "added-launcher-row",
+      body,
+      dispatch: async () => {
+        const added = await ctx.sources.added.add(full);
+        return { ok: added.ok, added };
+      },
+      classify: ({ added }) => added === undefined
+        ? { state: "unknown", code: "launcher.outcome_unknown" }
+        : added.ok
+        ? { state: "succeeded" }
+        : added.reason === "unwritable"
+          ? { state: "unknown", code: "launcher.store_unreadable" }
+          : { state: "refused", code: `launcher.${added.reason}` },
+      knownReceipt: () => undefined,
+      unknown: () => ({ ok: false, problem: "unknown" as const }),
+      unavailable: () => ({ ok: false, problem: "unavailable" as const }),
+      mismatch: () => ({ ok: false, problem: "mismatch" as const }),
+    });
+    if (!bound.added) {
+      if (bound.problem === "mismatch") return refusal(409, apiError("launch.request_mismatch"));
+      if (bound.problem === "unavailable") return refusal(503, apiError("launch.receipts_unavailable"));
+      return refusal(503, apiError("launch.outcome_unknown"));
+    }
+    outcome = bound.added;
+  } else {
+    outcome = await ctx.sources.added.add(full);
+  }
   if (!outcome.ok) {
     if (outcome.reason === "duplicate") return refusal(409, apiError("launcher.duplicate"));
     if (outcome.reason === "full") return refusal(409, apiError("launcher.added_full", { max: MAX_ADDED }));
     return refusal(503, apiError("launcher.store_unreadable"));
   }
-  if (outcome.replayed) return { status: 200, body: { ok: true, row: addedWire(outcome.row), replayed: true } };
+  if (outcome.replayed) {
+    if (binding !== undefined && matchReceiptBinding(outcome.row.binding, binding) !== "match") return receiptConflict();
+    return { status: 200, body: { ok: true, row: addedWire(outcome.row), replayed: true } };
+  }
   ctx.audit.record({
     action: "launcher.add",
     session: ctx.session,

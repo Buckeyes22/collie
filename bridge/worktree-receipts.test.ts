@@ -8,9 +8,14 @@ import type { WorktreeCreateResponse } from "./types.ts";
 import {
   MAX_RECEIPTS,
   RECEIPTS_FILE,
+  INTENT_RECEIPT_KEY_FILE,
   WorktreeReceiptStore,
+  canonicalJson,
   coerceReceipts,
   isRequestId,
+  loadOrCreateIntentReceiptKey,
+  keyedIntentFingerprint,
+  matchReceiptBinding,
   memoryWorktreeReceipts,
   type WorktreeReceipt,
 } from "./worktree-receipts.ts";
@@ -110,13 +115,13 @@ describe("WorktreeReceiptStore — the file", () => {
     expect(await Bun.file(file).text()).toBe("{not json");
   });
 
-  test("a failed write keeps the receipt in memory and warns, it never throws", async () => {
+  test("a failed durable write keeps the receipt in memory, warns, and reports uncertainty", async () => {
     const warnings: string[] = [];
     // A state dir that is a FILE: mkdir and the temp write both fail.
     const blocked = join(stateDir, "blocked");
     await writeFile(blocked, "");
     const store = new WorktreeReceiptStore(blocked, (line) => warnings.push(line));
-    await store.record(receiptOf(1));
+    await expect(store.record(receiptOf(1))).rejects.toThrow();
     expect(store.get(idOf(1))).toEqual(receiptOf(1));
     expect(warnings).toHaveLength(1);
   });
@@ -127,9 +132,33 @@ describe("coerceReceipts", () => {
     const good = receiptOf(3);
     const raw: JsonObject = {
       receipts: [
-        { ...receiptOf(1), requestId: "not-a-uuid" },
-        { ...receiptOf(2), launcherStarted: "yes" },
-        { ...good },
+        {
+          requestId: "not-a-uuid",
+          at: 1_001,
+          workspaceId: "w1",
+          paneId: "w1:p1",
+          path: "/home/op/repo/.worktrees/x1",
+          branch: "worktree/x1",
+          launcherStarted: false,
+        },
+        {
+          requestId: idOf(2),
+          at: 1_002,
+          workspaceId: "w2",
+          paneId: "w2:p1",
+          path: "/home/op/repo/.worktrees/x2",
+          branch: "worktree/x2",
+          launcherStarted: "yes",
+        },
+        {
+          requestId: idOf(3),
+          at: 1_003,
+          workspaceId: "w3",
+          paneId: "w3:p1",
+          path: "/home/op/repo/.worktrees/x3",
+          branch: "worktree/x3",
+          launcherStarted: false,
+        },
         7,
         null,
       ],
@@ -141,6 +170,66 @@ describe("coerceReceipts", () => {
     expect(coerceReceipts(null)).toEqual([]);
     expect(coerceReceipts([])).toEqual([]);
     expect(coerceReceipts({ receipts: "x" })).toEqual([]);
+  });
+});
+
+describe("intent receipt binding", () => {
+  const key = new Uint8Array(32).fill(9);
+  const binding = {
+    deviceIdentity: "device-1",
+    operation: "launch",
+    runtime: "default",
+    intentFingerprint: keyedIntentFingerprint(key, { requestId: idOf(1), body: { z: 2, a: 1 } }),
+  };
+
+  test("canonicalizes object key order and uses a keyed fingerprint", () => {
+    expect(canonicalJson({ z: 2, a: { y: true, b: null } })).toBe('{"a":{"b":null,"y":true},"z":2}');
+    expect(keyedIntentFingerprint(key, { requestId: idOf(1), body: { a: 1, z: 2 } })).toBe(binding.intentFingerprint);
+    expect(keyedIntentFingerprint(new Uint8Array(32).fill(8), { requestId: idOf(1), body: { z: 2, a: 1 } }))
+      .not.toBe(binding.intentFingerprint);
+    expect(() => keyedIntentFingerprint(new Uint8Array(31), null)).toThrow();
+  });
+
+  test("replay distinguishes exact bindings, cross-owner/context mismatches, and legacy receipts", () => {
+    expect(matchReceiptBinding(binding, { ...binding })).toBe("match");
+    expect(matchReceiptBinding(binding, { ...binding, deviceIdentity: "device-2" })).toBe("mismatch");
+    expect(matchReceiptBinding(binding, { ...binding, intentFingerprint: "0".repeat(64) })).toBe("mismatch");
+    expect(matchReceiptBinding(undefined, binding)).toBe("legacy-unbound");
+    expect(matchReceiptBinding(binding, undefined)).toBe("mismatch");
+  });
+
+  test("valid binding metadata survives durable receipt coercion; malformed metadata is dropped", () => {
+    const receipt = { ...receiptOf(1), binding };
+    expect(coerceReceipts({ receipts: [receipt] })).toEqual([receipt]);
+    expect(coerceReceipts({ receipts: [{ ...receipt, binding: { ...binding, intentFingerprint: "short" } }] })).toEqual([]);
+  });
+});
+
+describe("intent receipt fingerprint key", () => {
+  test("creates one owner-only stable key on demand", async () => {
+    expect(await readdir(stateDir)).toEqual([]);
+    const first = await loadOrCreateIntentReceiptKey(stateDir);
+    const second = await loadOrCreateIntentReceiptKey(stateDir);
+    expect(first).toHaveLength(32);
+    expect(second).toEqual(first);
+    expect(await readdir(stateDir)).toEqual([INTENT_RECEIPT_KEY_FILE]);
+    if (process.platform !== "win32") {
+      expect((await stat(join(stateDir, INTENT_RECEIPT_KEY_FILE))).mode & 0o777).toBe(0o600);
+    }
+  });
+
+  test("a malformed existing key fails closed and remains untouched", async () => {
+    const path = join(stateDir, INTENT_RECEIPT_KEY_FILE);
+    await writeFile(path, "bad-key", { mode: 0o600 });
+    await expect(loadOrCreateIntentReceiptKey(stateDir)).rejects.toThrow();
+    expect(await Bun.file(path).text()).toBe("bad-key");
+  });
+
+  test("an oversized key file is refused before reading it into memory", async () => {
+    const path = join(stateDir, INTENT_RECEIPT_KEY_FILE);
+    await writeFile(path, "x".repeat(1_000_000), { mode: 0o600 });
+    await expect(loadOrCreateIntentReceiptKey(stateDir)).rejects.toThrow();
+    expect((await stat(path)).size).toBe(1_000_000);
   });
 });
 

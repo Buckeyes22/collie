@@ -1,4 +1,4 @@
-import { mkdir, open, rename } from "node:fs/promises";
+import { mkdir, open, rename, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { HOST } from "../host.ts";
@@ -54,8 +54,20 @@ function validReceipt(value: unknown): value is OperationReceipt {
 export class OperationStore {
   private receipts = new Map<string, OperationReceipt>();
   private loaded = false;
+  private storageReady = false;
   private tail: Promise<unknown> = Promise.resolve();
   constructor(private readonly stateDir?: string, private readonly now: () => number = Date.now) {}
+  /** Validate and warm the owning host's durable registry before advertising receipt-bound writes. */
+  async prepare(): Promise<boolean> {
+    try {
+      await this.serial(async () => this.load());
+      return this.storageReady;
+    } catch {
+      this.storageReady = false;
+      return false;
+    }
+  }
+  isReady(): boolean { return this.storageReady; }
   private serial<T>(action: () => Promise<T>): Promise<T> {
     const next = this.tail.then(action);
     this.tail = next.catch(() => {});
@@ -83,6 +95,7 @@ export class OperationStore {
       catch (error) {
         if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error;
         this.loaded = true;
+        this.storageReady = true;
         return;
       }
       if (text.length > 4 * 1024 * 1024) throw new Error("operation registry too large");
@@ -96,6 +109,7 @@ export class OperationStore {
       this.receipts = restored;
     }
     this.loaded = true;
+    this.storageReady = true;
   }
   private async persist(): Promise<void> {
     if (!this.stateDir) return;
@@ -104,17 +118,24 @@ export class OperationStore {
     if (Buffer.byteLength(serialized, "utf8") > 4 * 1024 * 1024) throw new Error("operation.capacity");
     const file = join(this.stateDir, "control-operations.json");
     const temporary = `${file}.${randomUUID()}.tmp`;
-    const handle = await open(temporary, "wx", 0o600);
+    let committed = false;
     try {
-      await handle.writeFile(serialized);
-      await handle.sync();
-    } finally { await handle.close(); }
-    await rename(temporary, file);
+      const handle = await open(temporary, "wx", 0o600);
+      try {
+        await handle.writeFile(serialized);
+        await handle.sync();
+      } finally { await handle.close(); }
+      await rename(temporary, file);
+      committed = true;
+    } finally {
+      if (!committed) await unlink(temporary).catch(() => {});
+    }
     // POSIX persists the directory entry too. Windows does not expose directory fsync.
     if (HOST.platform !== "win32") {
       const directory = await open(this.stateDir, "r");
       try { await directory.sync(); } finally { await directory.close(); }
     }
+    this.storageReady = true;
   }
   async inspect(requestId: string, device: string, host: string, session: string | null): Promise<OperationView | null> {
     return this.serial(async () => {
@@ -142,6 +163,7 @@ export class OperationStore {
       this.receipts.set(requestId, receipt);
       // A failed reserve must not dispatch. Leave the process-local entry unknown as well.
       try { await this.persist(); } catch (error) {
+        this.storageReady = false;
         this.receipts.set(requestId, { ...receipt, state: "unknown", code: "operation.persistence_failed" });
         throw error;
       }
@@ -157,6 +179,7 @@ export class OperationStore {
       const receipt: OperationReceipt = { ...reservation.receipt, state: outcome.state, code: outcome.code ?? null, updatedAt };
       this.receipts.set(requestId, receipt);
       try { await this.persist(); } catch {
+        this.storageReady = false;
         const unknown: OperationReceipt = { ...receipt, state: "unknown", code: "operation.persistence_failed" };
         this.receipts.set(requestId, unknown);
         return operationView(unknown);

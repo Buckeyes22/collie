@@ -5,6 +5,7 @@ import { withAgentHints } from "./hint.ts";
 import { fakeBeaconReader, FAKE_BEACON_NOW, type FakeBeacon } from "./fake.ts";
 import { BEACON_SCHEMA_VERSION, type BeaconMarker, type BeaconStatus } from "./types.ts";
 import { declareCapabilities, type MuxCapability } from "../mux/capabilities.ts";
+import { herdrHostControl } from "../host-control/herdr.ts";
 import {
   muxAck,
   muxGone,
@@ -61,6 +62,7 @@ class StubAdapter implements MuxAdapter {
   readonly mux = "stub";
   /** The adapter's mark, when a case gives it one. Absent by default, like an adapter with none. */
   logo?: string;
+  hostControl?: MuxAdapter["hostControl"];
   /** The unwrapped pane read, when a case gives it one. Absent by default, like a multiplexer that
    *  cannot unwrap at all (tmux) — the decorators must carry it without inventing it. */
   readLogicalText?: (paneId: string, lines: number) => Promise<MuxOutcome<string>>;
@@ -255,6 +257,7 @@ describe("a decorator preserves the adapter's whole surface", () => {
     mux: true,
     capabilities: true,
     logo: true,
+    hostControl: true,
     reachable: true,
     snapshot: true,
     refresh: true,
@@ -294,6 +297,7 @@ describe("a decorator preserves the adapter's whole surface", () => {
   function fullAdapter(): MuxAdapter {
     const stub = new StubAdapter();
     stub.logo = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"></svg>`;
+    stub.hostControl = herdrHostControl;
     stub.readLogicalText = (paneId, lines) => Promise.resolve(muxOk(`${paneId}:${lines}`));
     return stub;
   }
@@ -332,6 +336,12 @@ describe("a decorator preserves the adapter's whole surface", () => {
     // answerable, and a decorator that assigned `logo: undefined` would answer it wrongly.
     expect("logo" in decorate(new StubAdapter(), [])).toBe(false);
     expect("logo" in withAgentHints(new StubAdapter(), { hooksInstalled: () => false })).toBe(false);
+  });
+
+  test("an explicitly declared host-control provider survives both decorators", () => {
+    const raw = Object.assign(new StubAdapter(), { hostControl: herdrHostControl });
+    expect(decorate(raw, []).hostControl).toBe(herdrHostControl);
+    expect(withAgentHints(raw, { hooksInstalled: () => false }).hostControl).toBe(herdrHostControl);
   });
 });
 

@@ -17,6 +17,8 @@ import android.view.Gravity
 import android.view.ViewGroup
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.RadioButton
+import android.widget.RadioGroup
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
@@ -33,6 +35,7 @@ import com.google.android.material.button.MaterialButton
 import com.lateapex.collie.CollieApplication
 import com.lateapex.collie.BuildConfig
 import com.lateapex.collie.R
+import com.lateapex.collie.data.ScopedReadContext
 import com.lateapex.collie.databinding.ActivityMainBinding
 import com.lateapex.collie.network.PaneSummary
 import com.lateapex.collie.network.ApiResult
@@ -41,8 +44,13 @@ import com.lateapex.collie.network.Launcher
 import com.lateapex.collie.network.ServerSummary
 import com.lateapex.collie.network.SessionSummary
 import com.lateapex.collie.network.WorkspaceSummary
+import com.lateapex.collie.network.StartTarget
+import com.lateapex.collie.network.LauncherItem
+import com.lateapex.collie.network.WorktreeBase
+import com.lateapex.collie.network.WorktreeFolder
 import com.lateapex.collie.domain.PaneAddress
 import com.lateapex.collie.domain.Scope
+import java.util.UUID
 import java.util.Locale
 import kotlinx.coroutines.launch
 
@@ -53,8 +61,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var viewModel: MainViewModel
     private val nativePreferences by lazy { NativePreferences(this) }
     private var spaceQuery = ""
-    private val launchingCommands = mutableSetOf<String>()
+    private val launchingCommands = mutableMapOf<String, Pair<String, ScopedReadContext>>()
+    private var retryingLaunchIntent = false
+    private var retryingLaunchActor: String? = null
+    private var retryingLaunchContext: ScopedReadContext? = null
     private var structuralBusy = false
+    private var structuralActor: String? = null
     private val shellHandler = Handler(Looper.getMainLooper())
     private val connectionHealth = DashboardConnectionHealth(System.currentTimeMillis())
     private var lastHealthStamp: Long? = null
@@ -289,12 +301,21 @@ class MainActivity : AppCompatActivity() {
                         ?.notes
                         ?.get("createSpace")
                         .orEmpty(),
-                    launchers = state.launchers?.launchers.orEmpty(),
+                    launchers = state.launchers?.items?.filter { it.available }?.map { item ->
+                        Launcher(
+                            command = item.command ?: item.harness ?: "shell",
+                            label = item.label,
+                            cwd = item.cwd,
+                            harness = item.harness,
+                            noPrompts = item.noPrompts,
+                            target = item.start,
+                        )
+                    } ?: state.launchers?.launchers.orEmpty(),
                     launcherHome = state.launchers?.home.orEmpty(),
                     writesEnabled = state.writeAuthorized,
                     launchOpen = nativePreferences.dashboardLaunchOpen
-                        ?: (state.launchers?.launchers.orEmpty().size <= COLLAPSE_THRESHOLD),
-                    launching = launchingCommands.toSet(),
+                        ?: ((state.launchers?.items?.count { it.available } ?: state.launchers?.launchers.orEmpty().size) <= COLLAPSE_THRESHOLD),
+                    launching = activeLaunchingCommands(),
                 )
             }.orEmpty(),
         )
@@ -324,9 +345,19 @@ class MainActivity : AppCompatActivity() {
         renderScopeSwitchers(state)
         errorText.text = state.error.orEmpty()
         errorText.visibility = if (state.error == null) View.GONE else View.VISIBLE
+        val unresolvedIntent = state.unknownLaunchIntents.firstOrNull()
         val dashboardNotice = state.refreshNotice ?: state.error.takeUnless { state.snapshotFailed || state.authError }
-        dashboardErrorText.text = dashboardNotice.orEmpty()
-        dashboardErrorText.visibility = if (dashboardNotice == null) View.GONE else View.VISIBLE
+        if (dashboardNotice == null && unresolvedIntent != null) {
+            dashboardErrorText.setText(R.string.launch_outcome_unknown_notice)
+            dashboardErrorText.visibility = View.VISIBLE
+            dashboardErrorText.isClickable = true
+            dashboardErrorText.setOnClickListener { showUnknownLaunchIntent(unresolvedIntent) }
+        } else {
+            dashboardErrorText.text = dashboardNotice.orEmpty()
+            dashboardErrorText.visibility = if (dashboardNotice == null) View.GONE else View.VISIBLE
+            dashboardErrorText.isClickable = false
+            dashboardErrorText.setOnClickListener(null)
+        }
         if (state.pairingRequired) {
             originInput.setText(state.origin.orEmpty())
             deviceLabelInput.setText(state.label.orEmpty())
@@ -961,6 +992,7 @@ class MainActivity : AppCompatActivity() {
 
     /** B.3: one sheet that names the repository and the base it branches from. */
     private fun showCreateWorktree(repos: List<WorkspaceSummary>, scope: Scope) {
+        val repository = (application as CollieApplication).container.repository
         val dialog = CollieBottomSheetDialog(this, getString(R.string.worktree_create))
         val body = sheetBody()
         var selected = repos.first()
@@ -1053,17 +1085,67 @@ class MainActivity : AppCompatActivity() {
             }, sheetRowParams(top = 4))
         }
         val branch = sheetTextField(R.string.worktree_branch_name).apply { id = R.id.worktree_branch_input }
+        val baseRef = if (viewModel.state.value.receiptContextBound == true) sheetTextField(R.string.worktree_base_ref).apply {
+            id = View.generateViewId()
+            inputType = InputType.TYPE_CLASS_TEXT
+        } else null
+        val folderParent = if (viewModel.state.value.receiptContextBound == true) sheetTextField(R.string.worktree_parent_folder).apply {
+            id = View.generateViewId()
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+        } else null
         body.addView(baseCaption, sheetRowParams(top = 6))
         body.addView(branch, sheetRowParams(top = 4))
+        baseRef?.let { body.addView(it, sheetRowParams(top = 4)) }
+        folderParent?.let { body.addView(it, sheetRowParams(top = 4)) }
         body.addView(sheetActionButton(getString(R.string.action_create)) {
             val name = branch.text.toString().trim()
             if (name.isEmpty()) return@sheetActionButton
             val target = revalidatedStructuralScope(scope) ?: return@sheetActionButton
+            if (viewModel.state.value.receiptContextBound == true) {
+                val cwd = selected.repoRoot?.takeIf(String::isNotBlank) ?: selected.folder?.takeIf(String::isNotBlank)
+                if (cwd == null) {
+                    viewModel.report(getString(R.string.worktree_repository_folder_missing))
+                    return@sheetActionButton
+                }
+                val base = baseRef?.valueOrNull()?.let { WorktreeBase(kind = "ref", ref = it) } ?: WorktreeBase()
+                val folder = folderParent?.valueOrNull()?.let { WorktreeFolder(kind = "parent", parent = it) } ?: WorktreeFolder()
+                val context = repository.readContext(target) ?: return@sheetActionButton
+                dialog.dismiss()
+                lifecycleScope.launch {
+                    val planned = viewModel.planWorktree(cwd, name, folder.parent, target)
+                    if (!repository.isCurrent(context)) return@launch
+                    when (planned) {
+                        is ApiResult.Success -> if (planned.value.ok && planned.value.branchValid != false) {
+                            showWorktreePlanConfirmation(selected, target, cwd, name, base, folder, context, planned.value)
+                        } else viewModel.report(planned.value.error ?: getString(R.string.worktree_plan_refused))
+                        is ApiResult.Failure -> viewModel.report(MainViewModel.describe(resources, planned.error))
+                        is ApiResult.NotModified -> viewModel.report(getString(R.string.worktree_plan_refused))
+                    }
+                }
+                return@sheetActionButton
+            }
             dialog.dismiss()
+            val repository = (application as CollieApplication).container.repository
+            val context = repository.readContext(target) ?: return@sheetActionButton
+            val requestId = UUID.randomUUID().toString()
             lifecycleScope.launch {
-                handleWorktree(structuralRequest(R.string.worktree_creating) {
-                    viewModel.createWorktree(selected.workspaceId, name, target)
-                } ?: return@launch, target)
+                if (!repository.isCurrent(context) || viewModel.currentScope != target) return@launch
+                val actor = UUID.randomUUID().toString()
+                structuralActor = actor
+                structuralBusy = true
+                structuralProgressRes = R.string.worktree_creating
+                render(viewModel.state.value)
+                try {
+                    val result = viewModel.createWorkspaceWorktreeLegacyInitial(selected.workspaceId, name, requestId, target)
+                    if (!repository.isCurrent(context) || viewModel.currentScope != target) return@launch
+                    handleWorktreeIntentOutcome(result, requestId, target, context)
+                } finally {
+                    if (structuralActor == actor) {
+                        structuralActor = null
+                        structuralBusy = false
+                        render(viewModel.state.value)
+                    }
+                }
             }
         }, sheetRowParams(top = 12))
         body.addView(existing, sheetRowParams())
@@ -1071,6 +1153,81 @@ class MainActivity : AppCompatActivity() {
         dialog.setSheetContent(body)
         dialog.show()
         branch.post { branch.requestFocus() }
+    }
+
+    private fun showWorktreePlanConfirmation(
+        repo: WorkspaceSummary,
+        scope: Scope,
+        cwd: String,
+        branch: String,
+        base: WorktreeBase,
+        folder: WorktreeFolder,
+        context: ScopedReadContext,
+        plan: com.lateapex.collie.network.WorktreePlanResponse,
+    ) {
+        val repository = (application as CollieApplication).container.repository
+        val dialog = CollieBottomSheetDialog(this, getString(R.string.worktree_plan_title))
+        val body = sheetBody()
+        body.addView(TextView(this).apply {
+            text = getString(
+                R.string.worktree_plan_preview,
+                plan.repoRoot ?: cwd,
+                plan.defaultBranch ?: getString(R.string.worktree_base_unknown),
+                plan.currentBranch ?: getString(R.string.worktree_base_unknown),
+                branch,
+                base.ref ?: getString(R.string.worktree_base_default),
+                folder.parent ?: getString(R.string.worktree_folder_default),
+            )
+            textSize = 12f
+            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.collie_foreground))
+            setPadding(0, dp(8), 0, dp(8))
+        }, sheetRowParams())
+
+        val availableLaunchers = viewModel.state.value.launchers?.items.orEmpty().filter { it.available }
+        val choices = listOf<LauncherItem?>(null) + availableLaunchers
+        var selectedChoice = 0
+        val targets = RadioGroup(this).apply { orientation = RadioGroup.VERTICAL }
+        choices.forEachIndexed { index, item ->
+            val label = item?.label ?: getString(R.string.launch_target_shell)
+            targets.addView(RadioButton(this).apply {
+                id = View.generateViewId()
+                text = label
+                minHeight = dp(48)
+                isChecked = index == selectedChoice
+                setOnClickListener { selectedChoice = index }
+            })
+        }
+        body.addView(targets, sheetRowParams(top = 4))
+        body.addView(sheetActionButton(getString(R.string.worktree_plan_create)) {
+            if (!repository.isCurrent(context) || viewModel.currentScope != scope) return@sheetActionButton
+            val chosen = choices.getOrNull(selectedChoice)
+            val start = chosen?.start ?: StartTarget(shell = true)
+            val noPrompts = chosen?.noPrompts == true
+            val launcher = chosen?.let { item ->
+                Launcher(
+                    command = item.command ?: item.start.command ?: item.label,
+                    label = item.label,
+                    cwd = cwd,
+                    harness = item.harness ?: item.start.harness,
+                    noPrompts = item.noPrompts,
+                )
+            }
+            lifecycleScope.launch {
+                if (launcher != null && !confirmLauncher(this@MainActivity, launcher, scope.host ?: context.connection.origin.value)) return@launch
+                if (!repository.isCurrent(context) || viewModel.currentScope != scope) return@launch
+                dialog.dismiss()
+                val requestId = UUID.randomUUID().toString()
+                val result = viewModel.createWorktreeIntent(
+                    cwd, branch, start, requestId, base, folder,
+                    confirmedNoPrompts = noPrompts, scope = scope,
+                )
+                if (repository.isCurrent(context) && viewModel.currentScope == scope) {
+                    handleWorktreeIntentOutcome(result, requestId, scope, context)
+                }
+            }
+        }, sheetRowParams(top = 8))
+        dialog.setSheetContent(ScrollView(this).apply { addView(body) })
+        dialog.show()
     }
 
     private fun confirmOpenWorktree(workspace: WorkspaceSummary, worktree: com.lateapex.collie.network.Worktree, scope: Scope) {
@@ -1136,26 +1293,185 @@ class MainActivity : AppCompatActivity() {
     ).apply { topMargin = dp(top) }
 
     private fun launch(launcher: Launcher) {
-        if (!launchingCommands.add(launcher.command)) return
-        render(viewModel.state.value)
         val repository = (application as CollieApplication).container.repository
-        val launchConnection = repository.connection.value
         val launchScope = viewModel.currentScope
-        val context = repository.readContext(launchScope) ?: return
+        val launchContext = repository.readContext(launchScope) ?: return
+        val currentActor = launchingCommands[launcher.command]
+        if (currentActor != null) {
+            if (repository.isCurrent(currentActor.second)) return
+            launchingCommands.remove(launcher.command)
+        }
+        val actor = UUID.randomUUID().toString()
+        launchingCommands[launcher.command] = actor to launchContext
+        render(viewModel.state.value)
         lifecycleScope.launch {
             try {
-                if (!confirmLauncher(this@MainActivity, launcher, launchScope.host ?: launchConnection?.origin?.value.orEmpty())) return@launch
-                if (repository.connection.value !== launchConnection || viewModel.currentScope != launchScope) return@launch
-                val result = viewModel.launch(launcher.command)
-                if (!repository.isCurrent(context)) return@launch
+                if (!confirmLauncher(this@MainActivity, launcher, launchScope.host ?: launchContext.connection.origin.value)) return@launch
+                if (!repository.isCurrent(launchContext) || viewModel.currentScope != launchScope) return@launch
+                val unresolved = repository.unresolvedLaunchIntents(launchScope).firstOrNull()
+                if (unresolved != null) {
+                    showUnknownLaunchIntent(unresolved)
+                    return@launch
+                }
+                val result = if (viewModel.state.value.receiptContextBound == true) {
+                    val target = launcher.target ?: if (launcher.harness != null) StartTarget(harness = launcher.harness) else StartTarget(command = launcher.command)
+                    val requestId = UUID.randomUUID().toString()
+                    val intentResult = viewModel.launchIntent(target, requestId, launcher.cwd, launcher.noPrompts, launchScope)
+                    if (!repository.isCurrent(launchContext) || viewModel.currentScope != launchScope) return@launch
+                    handleLaunchIntentOutcome(intentResult, requestId, launchScope, launchContext)
+                    return@launch
+                } else {
+                    // Old/mixed-version bridges retain their established launch path, without a
+                    // new owner-bound retry affordance.
+                    if (launcher.target?.shell == true || launcher.harness != null) {
+                        ApiResult.Failure(com.lateapex.collie.network.ApiFailure.Http(404, getString(R.string.launch_target_unavailable), "capability.unsupported"))
+                    } else viewModel.launch(launcher.command)
+                }
+                if (!repository.isCurrent(launchContext) || viewModel.currentScope != launchScope) return@launch
                 handleCreate(result, launchScope)
             } finally {
-                if (repository.isCurrent(context)) {
+                if (launchingCommands[launcher.command]?.first == actor) {
                     launchingCommands.remove(launcher.command)
-                    render(viewModel.state.value)
+                    if (repository.isCurrent(launchContext) && viewModel.currentScope == launchScope) render(viewModel.state.value)
                 }
             }
         }
+    }
+
+    private fun activeLaunchingCommands(): Set<String> {
+        val repository = (application as CollieApplication).container.repository
+        launchingCommands.entries.removeAll { !repository.isCurrent(it.value.second) }
+        return launchingCommands.keys.toSet()
+    }
+
+    private fun showUnknownLaunchIntent(record: com.lateapex.collie.data.StoredLaunchIntent) {
+        val repository = (application as CollieApplication).container.repository
+        val scope = viewModel.currentScope
+        val context = repository.readContext(scope) ?: return
+        if (!viewModel.state.value.unknownLaunchIntents.any { it.intent.requestId == record.intent.requestId }) return
+        val dialog = CollieBottomSheetDialog(this, getString(R.string.launch_outcome_unknown_title))
+        val body = sheetBody()
+        body.addView(TextView(this).apply {
+            setText(R.string.launch_outcome_unknown_body)
+            textSize = 13f
+            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.collie_foreground))
+            setPadding(0, dp(8), 0, dp(8))
+        }, sheetRowParams())
+        body.addView(TextView(this).apply {
+            text = getString(R.string.launch_request_id, record.intent.requestId)
+            textSize = 11f
+            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.collie_muted))
+        }, sheetRowParams())
+        val retry = sheetActionButton(getString(R.string.launch_retry_same_request)) {
+            if (!repository.isCurrent(context) || viewModel.currentScope != scope) return@sheetActionButton
+            if (retryingLaunchIntent && retryingLaunchContext?.let(repository::isCurrent) == true) return@sheetActionButton
+            val actor = UUID.randomUUID().toString()
+            retryingLaunchActor = actor
+            retryingLaunchContext = context
+            retryingLaunchIntent = true
+            dialog.dismiss()
+            lifecycleScope.launch {
+                try {
+                    if (record.intent.operation == "launch") {
+                        val result = viewModel.retryLaunchIntent(record.intent.requestId, scope)
+                        if (repository.isCurrent(context) && viewModel.currentScope == scope) {
+                            finishRetryingLaunchIntent(actor)
+                            handleLaunchIntentOutcome(result, record.intent.requestId, scope, context)
+                        }
+                    } else if (record.intent.operation == "worktree.createAt" || record.intent.operation == "worktree.create") {
+                        val result = viewModel.retryWorktreeIntent(record.intent.requestId, scope)
+                        if (repository.isCurrent(context) && viewModel.currentScope == scope) {
+                            finishRetryingLaunchIntent(actor)
+                            handleWorktreeIntentOutcome(result, record.intent.requestId, scope, context)
+                        }
+                    } else if (record.intent.operation == "launcher.add") {
+                        val result = viewModel.retryAddedLauncherIntent(record.intent.requestId, scope)
+                        if (repository.isCurrent(context) && viewModel.currentScope == scope) {
+                            finishRetryingLaunchIntent(actor)
+                            val unresolved = viewModel.state.value.unknownLaunchIntents.firstOrNull { it.intent.requestId == record.intent.requestId }
+                            if (unresolved != null) showUnknownLaunchIntent(unresolved) else when (result) {
+                                is ApiResult.Success -> if (result.value.ok) {
+                                    dialog.dismiss()
+                                    viewModel.report(getString(R.string.launcher_add_confirmed))
+                                } else viewModel.report(result.value.error ?: getString(R.string.launch_outcome_unknown_notice))
+                                is ApiResult.Failure -> viewModel.report(MainViewModel.describe(resources, result.error))
+                                is ApiResult.NotModified -> viewModel.report(getString(R.string.launch_outcome_unknown_notice))
+                            }
+                        }
+                    }
+                } finally {
+                    if (retryingLaunchActor == actor) {
+                        retryingLaunchActor = null
+                        retryingLaunchContext = null
+                        retryingLaunchIntent = false
+                        if (repository.isCurrent(context) && viewModel.currentScope == scope) render(viewModel.state.value)
+                    }
+                }
+            }
+        }
+        val canReplaySameId = record.intent.receiptMode == com.lateapex.collie.data.LaunchIntentReceiptMode.ownerBound
+        retry.visibility = if (canReplaySameId) View.VISIBLE else View.GONE
+        retry.isEnabled = !retryingLaunchIntent
+        if (canReplaySameId) body.addView(retry, sheetRowParams(top = 12)) else body.addView(TextView(this).apply {
+            setText(R.string.launch_legacy_unknown_inspect)
+            textSize = 13f
+            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.collie_foreground))
+            setPadding(0, dp(8), 0, 0)
+        }, sheetRowParams(top = 12))
+        body.addView(sheetActionButton(getString(R.string.launch_abandon_request)) {
+            if (!repository.isCurrent(context) || viewModel.currentScope != scope) return@sheetActionButton
+            androidx.appcompat.app.AlertDialog.Builder(this@MainActivity)
+                .setTitle(R.string.launch_abandon_title)
+                .setMessage(R.string.launch_abandon_duplicate_warning)
+                .setNegativeButton(android.R.string.cancel, null)
+                .setPositiveButton(R.string.launch_abandon_confirm) { _, _ ->
+                    if (!repository.isCurrent(context) || viewModel.currentScope != scope) return@setPositiveButton
+                    val result = viewModel.abandonLaunchIntent(record.intent.requestId, scope)
+                    if (!repository.isCurrent(context) || viewModel.currentScope != scope) return@setPositiveButton
+                    when (result) {
+                        is ApiResult.Success -> {
+                            dialog.dismiss()
+                            viewModel.report(getString(R.string.launch_abandoned_notice))
+                        }
+                        is ApiResult.Failure -> viewModel.report(MainViewModel.describe(resources, result.error))
+                        is ApiResult.NotModified -> viewModel.report(getString(R.string.launch_outcome_unknown_notice))
+                    }
+                }
+                .show()
+        }, sheetRowParams(top = 8))
+        dialog.setSheetContent(body)
+        dialog.show()
+    }
+
+    private fun finishRetryingLaunchIntent(actor: String) {
+        if (retryingLaunchActor != actor) return
+        retryingLaunchActor = null
+        retryingLaunchContext = null
+        retryingLaunchIntent = false
+    }
+
+    private fun handleLaunchIntentOutcome(
+        result: ApiResult<com.lateapex.collie.network.CreateResponse>,
+        requestId: String,
+        scope: Scope,
+        context: ScopedReadContext,
+    ) {
+        val repository = (application as CollieApplication).container.repository
+        if (!repository.isCurrent(context) || viewModel.currentScope != scope) return
+        val unresolved = viewModel.state.value.unknownLaunchIntents.firstOrNull { it.intent.requestId == requestId }
+        if (unresolved != null) showUnknownLaunchIntent(unresolved) else handleCreate(result, scope)
+    }
+
+    private fun handleWorktreeIntentOutcome(
+        result: ApiResult<com.lateapex.collie.network.WorktreeOpenResponse>,
+        requestId: String,
+        scope: Scope,
+        context: ScopedReadContext,
+    ) {
+        val repository = (application as CollieApplication).container.repository
+        if (!repository.isCurrent(context) || viewModel.currentScope != scope) return
+        val unresolved = viewModel.state.value.unknownLaunchIntents.firstOrNull { it.intent.requestId == requestId }
+        if (unresolved != null) showUnknownLaunchIntent(unresolved) else handleWorktree(result, scope)
     }
 
     private fun handleCreate(
@@ -1212,13 +1528,16 @@ class MainActivity : AppCompatActivity() {
         block: suspend () -> T,
     ): T? {
         val context = repository.readContext(viewModel.currentScope) ?: return null
+        val actor = UUID.randomUUID().toString()
+        structuralActor = actor
         structuralBusy = true
         structuralProgressRes = progressRes
         render(viewModel.state.value)
         return try {
             block().takeIf { repository.isCurrent(context) }
         } finally {
-            if (repository.isCurrent(context)) {
+            if (structuralActor == actor) {
+                structuralActor = null
                 structuralBusy = false
                 render(viewModel.state.value)
             }

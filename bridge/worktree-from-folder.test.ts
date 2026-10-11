@@ -21,6 +21,7 @@ import {
 } from "./mux/types.ts";
 import { CHOICES_FILE, WorktreeChoiceStore, coerceChoice, memoryWorktreeChoices } from "./worktree-choices.ts";
 import { memoryWorktreeReceipts } from "./worktree-receipts.ts";
+import { OperationStore } from "./control/operations.ts";
 
 // The New sheet's branch from a FOLDER (M48, ADR 0093), against a real git repo in a temporary home:
 //
@@ -84,8 +85,10 @@ function engine(): StateEngine {
 class FakeMux {
   readonly creates: MuxWorktreeCreateRequest[] = [];
   readonly texts: Array<[string, string]> = [];
+  gate: Promise<void> | null = null;
   async createWorktree(request: MuxWorktreeCreateRequest): Promise<MuxOutcome<MuxCreatedPane>> {
     this.creates.push(request);
+    if (this.gate !== null) await this.gate;
     await Promise.resolve();
     return muxOk({ paneId: "w7:p1", spaceId: "w7", spaceLabel: "app-fix", tabId: "w7:t1", cwd: request.path ?? "/x" });
   }
@@ -124,7 +127,12 @@ const clock = () => {
   };
 };
 
-async function create(mux: FakeMux, body: JsonObject, extra: { choices?: ReturnType<typeof memoryWorktreeChoices>; receipts?: ReturnType<typeof memoryWorktreeReceipts> } = {}) {
+async function create(mux: FakeMux, body: JsonObject, extra: {
+  choices?: ReturnType<typeof memoryWorktreeChoices>;
+  receipts?: ReturnType<typeof memoryWorktreeReceipts>;
+  operations?: OperationStore;
+  receiptContext?: { key: Uint8Array; deviceIdentity: string; owningHost?: string; runtime: string } | null;
+} = {}) {
   const res = await createWorktreeAt(
     asMux(mux),
     engine(),
@@ -136,6 +144,8 @@ async function create(mux: FakeMux, body: JsonObject, extra: { choices?: ReturnT
     {
       ...deps(),
       receipts: extra.receipts ?? memoryWorktreeReceipts(),
+      operations: extra.operations,
+      receiptContext: extra.receiptContext,
       choices: extra.choices,
       harnesses: { launch: harnessLaunch },
       wait: clock(),
@@ -253,6 +263,42 @@ describe("POST /api/worktree", () => {
     await create(mux, { cwd: repo, branch: "fix-tabs", requestId: ID }, { receipts });
     const again = await create(mux, { cwd: repo, branch: "fix-tabs", requestId: ID }, { receipts });
     expect(again.body).toMatchObject({ ok: true, replayed: true });
+    expect(mux.creates).toHaveLength(1);
+  });
+
+  test("the durable operation ledger blocks replay after createAt receipt eviction and restart", async () => {
+    const mux = new FakeMux();
+    const path = join(root, "operations");
+    const context = { key: new Uint8Array(32).fill(8), deviceIdentity: "a".repeat(64), owningHost: "host-a", runtime: "default" };
+    const first = new OperationStore(path);
+    expect(await first.prepare()).toBe(true);
+    const body = { cwd: repo, branch: "durable-create-at", requestId: ID };
+    expect((await create(mux, body, { operations: first, receiptContext: context })).body.ok).toBe(true);
+    const restarted = new OperationStore(path);
+    expect(await restarted.prepare()).toBe(true);
+    const retry = await create(mux, body, { operations: restarted, receiptContext: context, receipts: memoryWorktreeReceipts() });
+    expect(retry.body).toMatchObject({ ok: false, code: "launch.outcome_unknown" });
+    expect(mux.creates).toHaveLength(1);
+  });
+
+  test("a concurrent createAt intent joins the durable effect already in flight", async () => {
+    const mux = new FakeMux();
+    let open!: () => void;
+    mux.gate = new Promise<void>((resolve) => { open = resolve; });
+    const receipts = memoryWorktreeReceipts();
+    const operations = new OperationStore();
+    expect(await operations.prepare()).toBe(true);
+    const receiptContext = { key: new Uint8Array(32).fill(8), deviceIdentity: "a".repeat(64), owningHost: "host-a", runtime: "default" };
+    const body = { cwd: repo, branch: "concurrent-create-at", requestId: ID };
+    const first = create(mux, body, { receipts, operations, receiptContext });
+    for (let i = 0; mux.creates.length === 0 && i < 100; i++) await Bun.sleep(5);
+    expect(mux.creates).toHaveLength(1);
+    const second = create(mux, body, { receipts, operations, receiptContext });
+    await Bun.sleep(100);
+    open();
+    const [a, b] = await Promise.all([first, second]);
+    expect(a.body.ok).toBe(true);
+    expect(b.body).toMatchObject({ ok: true, replayed: true });
     expect(mux.creates).toHaveLength(1);
   });
 });

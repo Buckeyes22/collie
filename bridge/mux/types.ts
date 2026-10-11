@@ -28,6 +28,7 @@
 import type { AgentSessionRef } from "../journal/types.ts";
 import type { AgentStatus } from "../types.ts";
 import type { MuxCapability, MuxCapabilityDeclaration } from "./capabilities.ts";
+import type { HostControlPort } from "../host-control/types.ts";
 import type { MuxIdentity } from "./identity.ts";
 
 export type {
@@ -550,6 +551,8 @@ export interface MuxAdapter {
   readonly mux: string;
   /** What this adapter can do. Declared, never inferred from {@link mux}. */
   readonly capabilities: MuxCapabilityDeclaration;
+  /** Optional explicit declaration of this runtime's host-management provider. */
+  readonly hostControl?: HostControlPort;
 
   /**
    * This multiplexer's mark, as SVG source — the bytes served at `/api/mux/logo.svg`.
@@ -709,8 +712,13 @@ export interface MuxAdapter {
  * The field is OMITTED rather than set to `undefined` when the adapter has none, so
  * `"logo" in adapter` keeps answering the same question after wrapping as before it.
  */
-export function muxDataFields(adapter: MuxAdapter): Pick<MuxAdapter, "logo"> {
-  return adapter.logo === undefined ? {} : { logo: adapter.logo };
+type MutableMuxDataFields = { -readonly [K in keyof Pick<MuxAdapter, "logo" | "hostControl">]: Pick<MuxAdapter, "logo" | "hostControl">[K] };
+
+export function muxDataFields(adapter: MuxAdapter): Pick<MuxAdapter, "logo" | "hostControl"> {
+  const fields: MutableMuxDataFields = {};
+  if (adapter.logo !== undefined) fields.logo = adapter.logo;
+  if (adapter.hostControl !== undefined) fields.hostControl = adapter.hostControl;
+  return fields;
 }
 
 /**

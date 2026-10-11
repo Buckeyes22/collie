@@ -2,7 +2,7 @@ import { controlGate } from "../control/contracts.ts";
 import type { JsonObject } from "../json.ts";
 import { MASK_VERSION } from "../redact.ts";
 import { MAX_UPLOAD_OVERHEAD, uploadTooLarge } from "../uploads.ts";
-import { DEVICE_HEADER, encodeDeviceHeader } from "./admission.ts";
+import { DEVICE_HEADER, PAIRED_IDENTITY_HEADER, encodeDeviceHeader } from "./admission.ts";
 import { type CrewLink, type PeerFailure, type PeerOutcome, WRITE_BUDGET_MS } from "./peer-client.ts";
 import { HOST_PARAM, type PeerState } from "./registry.ts";
 
@@ -287,7 +287,7 @@ export type ForwardAuditEntry = {
  * that polls a peer's snapshot has no phone behind it. Absent when the lead's device gate is off,
  * matching how the audit field is omitted rather than nulled today.
  */
-export function forwardHeaders(req: Request, device?: string | null): Headers {
+export function forwardHeaders(req: Request, device?: string | null, pairedIdentity?: string | null): Headers {
   const headers = new Headers();
   for (const name of ["if-none-match", "x-collie-seen", "content-type"]) {
     const value = req.headers.get(name);
@@ -295,6 +295,9 @@ export function forwardHeaders(req: Request, device?: string | null): Headers {
   }
   if (device !== null && device !== undefined && device !== "") {
     headers.set(DEVICE_HEADER, encodeDeviceHeader(device));
+  }
+  if (pairedIdentity !== null && pairedIdentity !== undefined && /^[0-9a-f]{64}$/u.test(pairedIdentity)) {
+    headers.set(PAIRED_IDENTITY_HEADER, pairedIdentity);
   }
   headers.set("accept-encoding", "identity");
   return headers;
@@ -522,6 +525,8 @@ export interface ForwardDeps {
   readonly onExchange?: (receivedAt: number) => void;
   /** The operator's device, as the LEAD resolved it — forwarded as `X-Crew-Device` (§12). */
   readonly device?: string | null;
+  /** The lead-derived identity for the authenticated pairing; never read from phone headers. */
+  readonly pairedIdentity?: string | null;
   /**
    * The LEAD's own upload cap in bytes (`cfg.maxUploadBytes`), for the §13 pre-check below. Passed
    * in rather than imported because it is no longer a constant — it is this host's setting, and a
@@ -658,7 +663,7 @@ export async function forwardToPeer(req: Request, url: URL, deps: ForwardDeps): 
 
   // `duplex` is required by the Fetch spec for a stream body; the DOM lib's `RequestInit` predates
   // it, so the streaming half of this init is typed here rather than asserted at the assignment.
-  const headers = forwardHeaders(req, deps.device);
+  const headers = forwardHeaders(req, deps.device, deps.pairedIdentity);
   // Text the phone will show is masked here, whatever the member's version (§9.1). Every other answer
   // is not read at all. A masked answer's tag carries the mask's version, both ways ({@link saltTag}).
   const answer = deps.mask === undefined ? null : textAnswerOf(route);

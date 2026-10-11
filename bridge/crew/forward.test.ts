@@ -18,7 +18,7 @@ import {
   type ForwardErrorCode,
   type ForwardTransport,
 } from "./forward.ts";
-import { crewDeviceOf } from "./peer-gate.ts";
+import { crewDeviceOf, crewPairedIdentityOf } from "./peer-gate.ts";
 import { crewTimeoutBudget, WRITE_BUDGET_MS, type CrewLink, type PeerOutcome } from "./peer-client.ts";
 import type { PeerState } from "./registry.ts";
 
@@ -585,6 +585,17 @@ describe("request shaping", () => {
     const req = new Request("https://lead.example/api/pane/w1:p1");
     expect(forwardHeaders(req, null).get("x-crew-device")).toBeNull();
     expect(forwardHeaders(req).get("x-crew-device")).toBeNull();
+  });
+
+  test("only a lead-derived pairing identity crosses the crew link", () => {
+    const req = new Request("https://lead.example/api/launch", {
+      headers: { "x-crew-paired-identity": "f".repeat(64) },
+    });
+    const identity = "a".repeat(64);
+    const headers = forwardHeaders(req, "phone", identity);
+    expect(headers.get("x-crew-paired-identity")).toBe(identity);
+    expect(crewPairedIdentityOf(new Request("https://peer.example/api/launch", { headers }))).toBe(identity);
+    expect(forwardHeaders(req, "phone").get("x-crew-paired-identity")).toBeNull();
   });
 });
 

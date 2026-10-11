@@ -12,9 +12,19 @@ import androidx.core.view.ViewCompat
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.core.app.ApplicationProvider
 import com.lateapex.collie.R
+import com.lateapex.collie.CollieApplication
+import com.lateapex.collie.data.FrozenLaunchIntent
+import com.lateapex.collie.data.LaunchIntentState
+import com.lateapex.collie.data.StoredLaunchIntent
+import com.lateapex.collie.data.EncryptedConnectionStore
+import com.lateapex.collie.domain.CollieOrigin
+import com.lateapex.collie.domain.Connection
+import com.lateapex.collie.domain.Scope
 import com.lateapex.collie.network.AgentStatus
+import com.lateapex.collie.network.CreateResponse
 import com.lateapex.collie.network.PaneSummary
 import com.lateapex.collie.network.WorkspaceSummary
+import com.lateapex.collie.network.WorktreeOpenResponse
 import org.junit.Assert.assertEquals
 import com.lateapex.collie.network.ApiResult
 import android.view.ViewGroup
@@ -251,6 +261,122 @@ class DashboardShellActivityTest {
         } finally { field.set(app.container, original) }
     }
 
+    @Test
+    fun http200OutcomeUnknownOpensReachableRetryAndDuplicateRiskAbandonActions() {
+        val activity = Robolectric.buildActivity(
+            MainActivity::class.java,
+            Intent(ApplicationProvider.getApplicationContext(), MainActivity::class.java),
+        ).create().get()
+        val app = activity.application as CollieApplication
+        @Suppress("UNCHECKED_CAST")
+        val connectionFlow = EncryptedConnectionStore::class.java.getDeclaredField("mutableConnection")
+            .apply { isAccessible = true }
+            .get(app.container.connectionStore) as kotlinx.coroutines.flow.MutableStateFlow<Connection?>
+        connectionFlow.value = Connection(CollieOrigin("https://collie.example/"), "phone", "paired-token")
+        val repository = app.container.repository
+        val viewModel = MainActivity::class.java.getDeclaredField("viewModel").apply { isAccessible = true }.get(activity) as MainViewModel
+        val scope = viewModel.currentScope
+        val context = repository.readContext(scope)!!
+        val record = StoredLaunchIntent(
+            FrozenLaunchIntent(
+                requestId = "33333333-3333-4333-8333-333333333333",
+                origin = context.key.origin,
+                mount = context.key.origin,
+                connectionGeneration = context.key.connectionGeneration,
+                pairedDeviceIdentity = context.key.pairedDeviceIdentity,
+                leadEpoch = context.key.leadEpoch,
+                host = context.key.host,
+                session = context.key.session,
+                subjectIdentity = context.key.subjectIdentity,
+                operation = "launch",
+                confirmedNoPrompts = false,
+                canonicalBody = "{\"requestId\":\"33333333-3333-4333-8333-333333333333\",\"shell\":true}",
+            ),
+            LaunchIntentState.unknown,
+        )
+        MainViewModel::class.java.getDeclaredField("mutableState").apply {
+            isAccessible = true
+        }.get(viewModel).let { it as kotlinx.coroutines.flow.MutableStateFlow<MainUiState> }
+            .value = MainUiState(unknownLaunchIntents = listOf(record))
+        MainActivity::class.java.getDeclaredMethod(
+            "handleLaunchIntentOutcome",
+            ApiResult::class.java,
+            String::class.java,
+            Scope::class.java,
+            com.lateapex.collie.data.ScopedReadContext::class.java,
+        ).apply {
+            isAccessible = true
+            invoke(activity, ApiResult.Success(CreateResponse(ok = false, error = "receipt write failed", code = "launch.outcome_unknown"), 200), record.intent.requestId, scope, context)
+        }
+
+        val sheet = ShadowDialog.getLatestDialog() as CollieBottomSheetDialog
+        val labels = collectText(sheet.window!!.decorView)
+        assertTrue(labels.any { it.contains(record.intent.requestId) })
+        assertTrue(labels.any { it.contains("If the bridge lost its receipt, this may create another pane") })
+        assertTrue(labels.contains(activity.getString(R.string.launch_retry_same_request)))
+        assertTrue(labels.contains(activity.getString(R.string.launch_abandon_request)))
+        findTextView(sheet.window!!.decorView, activity.getString(R.string.launch_abandon_request))!!.performClick()
+        val confirmation = ShadowDialog.getLatestDialog()
+        assertTrue(collectText(confirmation.window!!.decorView).any { it.contains("Abandoning removes the saved request and permits a replacement") })
+    }
+
+    @Test
+    fun workspaceWorktreeUnknownOutcomeUsesTheSameBoundedRecoverySheet() {
+        val activity = Robolectric.buildActivity(
+            MainActivity::class.java,
+            Intent(ApplicationProvider.getApplicationContext(), MainActivity::class.java),
+        ).create().get()
+        val app = activity.application as CollieApplication
+        @Suppress("UNCHECKED_CAST")
+        val connectionFlow = EncryptedConnectionStore::class.java.getDeclaredField("mutableConnection")
+            .apply { isAccessible = true }
+            .get(app.container.connectionStore) as kotlinx.coroutines.flow.MutableStateFlow<Connection?>
+        connectionFlow.value = Connection(CollieOrigin("https://collie.example/"), "phone", "paired-token")
+        val repository = app.container.repository
+        val viewModel = MainActivity::class.java.getDeclaredField("viewModel").apply { isAccessible = true }.get(activity) as MainViewModel
+        val scope = viewModel.currentScope
+        val context = repository.readContext(scope)!!
+        val requestId = "77777777-7777-4777-8777-777777777777"
+        val record = StoredLaunchIntent(
+            FrozenLaunchIntent(
+                requestId = requestId,
+                origin = context.key.origin,
+                mount = context.key.origin,
+                connectionGeneration = context.key.connectionGeneration,
+                pairedDeviceIdentity = context.key.pairedDeviceIdentity,
+                leadEpoch = context.key.leadEpoch,
+                host = context.key.host,
+                session = context.key.session,
+                subjectIdentity = context.key.subjectIdentity,
+                operation = "worktree.create",
+                targetIdentity = "workspace-opaque-7",
+                confirmedNoPrompts = false,
+                canonicalBody = "{\"branch\":\"feature/native\",\"requestId\":\"$requestId\"}",
+            ),
+            LaunchIntentState.unknown,
+        )
+        MainViewModel::class.java.getDeclaredField("mutableState").apply { isAccessible = true }
+            .get(viewModel).let { it as kotlinx.coroutines.flow.MutableStateFlow<MainUiState> }
+            .value = MainUiState(unknownLaunchIntents = listOf(record))
+
+        MainActivity::class.java.getDeclaredMethod(
+            "handleWorktreeIntentOutcome",
+            ApiResult::class.java,
+            String::class.java,
+            Scope::class.java,
+            com.lateapex.collie.data.ScopedReadContext::class.java,
+        ).apply {
+            isAccessible = true
+            invoke(activity, ApiResult.Success(WorktreeOpenResponse(ok = false, code = "launch.outcome_unknown"), 200), requestId, scope, context)
+        }
+
+        val sheet = ShadowDialog.getLatestDialog() as CollieBottomSheetDialog
+        val labels = collectText(sheet.window!!.decorView)
+        assertTrue(labels.contains(activity.getString(R.string.launch_retry_same_request)))
+        assertTrue(labels.contains(activity.getString(R.string.launch_abandon_request)))
+        assertTrue(labels.any { it.contains(requestId) })
+    }
+
     private fun launchDashboardWithWorktreeRepos(repos: List<WorkspaceSummary>): MainActivity {
         val activity = Robolectric.buildActivity(
             MainActivity::class.java,
@@ -288,6 +414,20 @@ class DashboardShellActivityTest {
         repoRoot = "/repos/$label",
         isWorktree = false,
     )
+
+    private fun collectText(view: View): List<String> = when (view) {
+        is TextView -> listOf(view.text.toString())
+        is ViewGroup -> (0 until view.childCount).flatMap { collectText(view.getChildAt(it)) }
+        else -> emptyList()
+    }
+
+    private fun findTextView(view: View, text: String): TextView? {
+        if (view is TextView && view.text.toString() == text) return view
+        if (view is ViewGroup) {
+            for (index in 0 until view.childCount) findTextView(view.getChildAt(index), text)?.let { return it }
+        }
+        return null
+    }
 
     @Test
     fun unreachableServerReadsAsWaitingNotAsAnUnauthorisedDevice() {

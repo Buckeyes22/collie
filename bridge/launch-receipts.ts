@@ -2,15 +2,15 @@ import { join } from "node:path";
 
 import type { JsonObject, JsonValue } from "./json.ts";
 import type { CreateResponse } from "./types.ts";
-import { isRequestId, memoryReceipts, ReceiptFileStore, type ReceiptSurface } from "./worktree-receipts.ts";
+import { isIntentReceiptBinding, isRequestId, memoryReceipts, ReceiptFileStore, type IntentReceiptBinding, type ReceiptSurface } from "./worktree-receipts.ts";
 
 // ── One receipt per launch request, so a retried Start never opens a second pane (ADR 0091) ──────
 //
-// The worktree create's pattern (ADR 0089, `worktree-receipts.ts`), for `POST /api/launch`: the phone
-// mints a UUID per intent, the bridge keeps the outcome of every launch that SUCCEEDED under it in
-// `launch-receipts.json`, and a POST that names a known id gets the stored pane back with
-// `replayed: true` and runs nothing. A launch still in flight is joined. A launch that failed stores
-// nothing: its pane was closed again, so the same id may simply run again.
+// The worktree create's pattern (ADR 0089, `worktree-receipts.ts`), for `POST /api/launch`: this
+// bounded file keeps recent success response bodies for convenient replay. The shared durable
+// OperationStore reserves owner-bound intent tombstones before an effect and does not evict them. If
+// an old response body is gone, a matching retry answers unknown and never opens another pane.
+// A launch still in flight is joined. A known pre-effect refusal may still be corrected and retried.
 //
 // Ids, the pane and space it made and the folder. No command line. Written on a launch with an id
 // and on nothing else, so a bridge nobody launches on writes no file (solo-baseline.test.ts).
@@ -29,6 +29,8 @@ export interface LaunchReceipt {
   tabId: string;
   /** The folder the new pane opened in, as the multiplexer reported it. */
   cwd: string;
+  /** Absent on pre-binding receipts; they cannot promise owner-bound replay. */
+  binding?: IntentReceiptBinding;
 }
 
 /** What the launch route needs of the store. */
@@ -42,12 +44,15 @@ function asRecord(value: JsonValue): JsonObject | null {
 export function coerceLaunchReceipt(raw: JsonValue): LaunchReceipt | null {
   const r = asRecord(raw);
   if (r === null) return null;
-  const { requestId, at, workspaceId, workspaceLabel, paneId, tabId, cwd } = r;
+  const { requestId, at, workspaceId, workspaceLabel, paneId, tabId, cwd, binding } = r;
   if (!isRequestId(requestId)) return null;
   if (typeof at !== "number" || !Number.isFinite(at)) return null;
   if (typeof workspaceId !== "string" || typeof workspaceLabel !== "string") return null;
   if (typeof paneId !== "string" || typeof tabId !== "string" || typeof cwd !== "string") return null;
-  return { requestId, at, workspaceId, workspaceLabel, paneId, tabId, cwd };
+  if (binding !== undefined && !isIntentReceiptBinding(binding)) return null;
+  const receipt: LaunchReceipt = { requestId, at, workspaceId, workspaceLabel, paneId, tabId, cwd };
+  if (binding !== undefined) receipt.binding = binding;
+  return receipt;
 }
 
 /** The answer a replay gives: the pane the first request made. */

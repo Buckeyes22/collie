@@ -7,6 +7,7 @@ export interface ControlRouteCaller {
   /** Resolves exactly once. A peer response terminates dispatch; never fall through to the lead. */
   resolve(): Promise<{ readonly host: string; readonly session: string | null } | Response>;
   /** Stable opaque pairing incarnation, independent of the mutable display label. */
+  device(): string | null;
   pairedIdentity(): string | null;
 }
 /** Mounted by the existing browser AND admitted Crew dispatch; no new public front door. */
@@ -16,10 +17,10 @@ export async function serveControlRoute(req: Request, url: URL, caller: ControlR
   const denied = caller.gate(contract.gate);
   if (denied) return denied;
   if (!controlScope(url, contract.scope)) return refusalResponse(refusal("scope.malformed", "Malformed control scope", "scope"), 400);
-  const runtime = await caller.resolve();
-  if (runtime instanceof Response) return runtime;
   const device = caller.pairedIdentity();
   if (!device || !/^[a-f0-9]{64}$/.test(device)) return refusalResponse(refusal("device.identity_required", "Operation reads require the originating paired device", "device"), 403);
+  const runtime = await caller.resolve();
+  if (runtime instanceof Response) return runtime;
   const id = url.pathname.slice("/api/control/operations/".length); // Contract regex guarantees the opaque id.
   try {
     const operation = await operations.inspect(id, device, runtime.host, runtime.session);

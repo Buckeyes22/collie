@@ -57,6 +57,21 @@
     <string name="worktree_repository_caption">In %1$s</string>
     <string name="worktree_base_caption">In %1$s</string>
     <string name="worktree_base_unknown">Branches from the repository\'s current HEAD.</string>
+    <string name="worktree_base_ref">Optional base branch or ref</string>
+    <string name="worktree_parent_folder">Optional parent folder</string>
+    <string name="worktree_plan_title">Review worktree plan</string>
+    <string name="worktree_plan_preview">Repository: %1$s
+Default branch: %2$s
+Current branch: %3$s
+New branch: %4$s
+Base: %5$s
+Parent: %6$s</string>
+    <string name="worktree_base_default">server default</string>
+    <string name="worktree_folder_default">server default folder</string>
+    <string name="worktree_plan_create">Create worktree and pane</string>
+    <string name="worktree_plan_refused">The server could not verify this worktree plan.</string>
+    <string name="worktree_repository_folder_missing">The selected repository has no known folder.</string>
+    <string name="launch_target_shell">Shell</string>
     <string name="worktree_open_title">Open worktree?</string>
     <string name="worktree_detached">Detached · %1$s</string>
     <string name="worktree_open_existing">Or open an existing worktree</string>
@@ -158,6 +173,18 @@
     <string name="pane_semantic_suggestions">SUGGESTIONS</string>
     <string name="pane_semantic_action_description">%1$s; sends %2$s</string>
     <string name="pane_dialog_owns_input">The terminal dialog owns input. Use its reviewed actions or the Keys tray.</string>
+    <string name="history_image">Image</string>
+    <string name="history_tool_image">Image returned by %1$s</string>
+    <string name="history_image_loading">Loading image…</string>
+    <string name="history_image_unavailable">Image is unavailable.</string>
+    <string name="history_image_refused">Image could not be loaded.</string>
+    <string name="history_image_unsupported">This image format or size is not supported.</string>
+    <string name="history_image_card">%1$s</string>
+    <string name="history_image_open">Open image: %1$s</string>
+    <string name="history_image_access_changed">Image access changed. Reload the transcript.</string>
+    <string name="history_image_close">Close image</string>
+    <string name="history_image_zoom_in">Zoom in</string>
+    <string name="history_image_zoom_out">Zoom out</string>
     <string name="pane_dialog_verify_failed">Could not verify the current dialog; nothing was sent.</string>
     <string name="pane_dialog_changed">The dialog changed before the action could be sent. Review it and try again.</string>
     <string name="pane_dialog_refused">The dialog action was refused.</string>
@@ -196,4 +223,17 @@ Folder: %3$s</string>
     <string name="refresh_ordinary_reload">This server does not support Look now. Reloaded its available snapshot.</string>
     <string name="refresh_failed_fallback">Look now did not complete. Reloaded the available snapshot.</string>
     <string name="read_only_saved_copy">Saved copy from %1$s · actions unavailable</string>
+    <string name="launch_outcome_unknown_notice">A launch outcome is unknown. Tap to review its saved request.</string>
+    <string name="launch_outcome_unknown_title">Launch outcome unknown</string>
+    <string name="launch_outcome_unknown_body">The bridge may have created the pane before the reply was lost. Retry sends the exact saved request ID and body. If the bridge lost its receipt, this may create another pane.</string>
+    <string name="launch_abandon_request">Abandon this request</string>
+    <string name="launch_abandon_title">Abandon uncertain request?</string>
+    <string name="launch_abandon_duplicate_warning">The bridge may already have created the pane or worktree. Abandoning removes the saved request and permits a replacement, which can create a duplicate. Check the target first.</string>
+    <string name="launch_abandon_confirm">Abandon request</string>
+    <string name="launch_abandoned_notice">Saved request abandoned. Check for an existing pane or worktree before creating another.</string>
+    <string name="launch_request_id">Saved request: %1$s</string>
+    <string name="launch_retry_same_request">Retry the same request</string>
+    <string name="launch_legacy_unknown_inspect">Inspect this host’s worktrees before starting another request. This server cannot verify a same-ID retry.</string>
+    <string name="launcher_add_confirmed">The saved launcher add was confirmed.</string>
+    <string name="launch_target_unavailable">This launch target requires owner-bound receipt support from the current server.</string>
 </resources>

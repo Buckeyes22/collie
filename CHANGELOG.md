@@ -25,6 +25,7 @@ Running a crew? Update the lead first; members follow on their own. Details:
 
 ### Added
 
+- **Launch, worktree and launcher-add intents keep durable owner-bound tombstones.** The shared operation journal reserves each frozen effect before dispatch and never evicts those reservations; bounded success-response caches may replay a known result, while a lost or evicted body stays unknown and cannot trigger a second effect. The bridge advertises readiness only when its protected receipt key and durable journal are available.
 - **Scoped control reads preserve authority across Crew and reconnects.** Declare independent positive control capabilities, carry typed refusal provenance, forward session refresh as a read, and expose device-bound durable operation receipts without repeating uncertain dispatch.
 - **Pane reads negotiate a bounded adapter budget.** Publish verified adapter ceilings, report admitted and served rows separately, and refuse a response that exceeds the admitted limit.
 

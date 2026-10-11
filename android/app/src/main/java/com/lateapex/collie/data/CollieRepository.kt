@@ -7,6 +7,7 @@ import com.lateapex.collie.domain.PaneAddress
 import com.lateapex.collie.domain.MuxKeyGrammar
 import com.lateapex.collie.domain.Scope
 import com.lateapex.collie.network.ActionResponse
+import com.lateapex.collie.network.AddedLauncherResponse
 import com.lateapex.collie.network.AudioUpload
 import com.lateapex.collie.network.ApiFailure
 import com.lateapex.collie.network.ApiResult
@@ -17,6 +18,7 @@ import com.lateapex.collie.network.DevicesResponse
 import com.lateapex.collie.network.DeviceAuthorization
 import com.lateapex.collie.network.HealthResponse
 import com.lateapex.collie.network.ImageUpload
+import com.lateapex.collie.network.ImageBlob
 import com.lateapex.collie.network.LaunchersResponse
 import com.lateapex.collie.network.NotificationState
 import com.lateapex.collie.network.NotifyPreferences
@@ -42,6 +44,14 @@ import com.lateapex.collie.network.UpdateStartResponse
 import com.lateapex.collie.network.UploadResponse
 import com.lateapex.collie.network.WorktreeListResponse
 import com.lateapex.collie.network.WorktreeOpenResponse
+import com.lateapex.collie.network.WorktreeAtRequest
+import com.lateapex.collie.network.BranchRequest
+import com.lateapex.collie.network.StartLaunchRequest
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -93,7 +103,43 @@ class CollieRepository(
     private val connectionStore: ConnectionStore,
     private val originValidator: OriginValidator,
     private val maxPaneCacheEntries: Int = 20,
+    private val launchIntentStore: LaunchIntentStore? = null,
+    private val intentJson: Json = Json { explicitNulls = false; encodeDefaults = false },
 ) {
+    private companion object {
+        const val OUTCOME_UNKNOWN_CODE = "launch.outcome_unknown"
+        val PRE_DISPATCH_REFUSAL_CODES = setOf(
+            "launch.request_mismatch",
+            "launch.receipts_unavailable",
+            "launch.not_allowlisted",
+            "launch.unknown_harness",
+            "launch.bad_folder",
+            "launch.folder_missing",
+            "launch.no_device",
+            "launch.run_off",
+            "launch.bad_line",
+            "launch.run_no_branch",
+            "launcher.adds_off",
+            "launcher.free_text_off",
+            "launcher.bad_recipe",
+            "launcher.duplicate",
+            "launcher.added_full",
+            "launcher.store_unreadable",
+            "launcher.no_device",
+            "worktree.invalid_branch",
+            "worktree.invalid_base",
+            "worktree.not_a_repo",
+            "worktree.folder_invalid",
+            "worktree.folder_missing",
+            "worktree.folder_link",
+            "worktree.folder_outside_home",
+            "worktree.folder_hidden",
+            "worktree.folder_in_repo",
+            "worktree.target_exists",
+            "worktree.branch_required",
+        )
+    }
+
     val connection: StateFlow<Connection?> = connectionStore.connection
 
     private val mutableDeviceWriteAuthorization = MutableStateFlow(DeviceWriteAuthorization.UNVERIFIED)
@@ -133,6 +179,7 @@ class CollieRepository(
     private val refreshMutex = Mutex()
     private val refreshes = mutableMapOf<Pair<ScopedRequestKey, Long>, kotlinx.coroutines.CompletableDeferred<ApiResult<ActionResponse>>>()
     private val cacheLock = Any()
+    private val readContextInvalidations = java.util.concurrent.CopyOnWriteArrayList<(AuthorityInvalidation) -> Unit>()
     private val paneCache = object : LinkedHashMap<PaneCacheKey, CachedPane>(16, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<PaneCacheKey, CachedPane>?): Boolean =
             size > maxPaneCacheEntries
@@ -161,6 +208,12 @@ class CollieRepository(
     fun onAuthorityInvalidated(listener: (AuthorityInvalidation) -> Unit): AutoCloseable {
         authorityInvalidations.add(listener)
         return AutoCloseable { authorityInvalidations.remove(listener) }
+    }
+
+    /** Immutable authority-retirement events only; ordinary failed reads do not invalidate scope. */
+    fun onReadContextInvalidated(listener: (AuthorityInvalidation) -> Unit): AutoCloseable {
+        readContextInvalidations.add(listener)
+        return AutoCloseable { readContextInvalidations.remove(listener) }
     }
 
     @Synchronized
@@ -212,8 +265,12 @@ class CollieRepository(
         mutableDeviceWriteAuthorization.value = DeviceWriteAuthorization.UNVERIFIED
         mutableReadSource.value = ReadSourceState.Unavailable(generation.get())
         jobs.forEach { it.cancel() }
+        readContextInvalidations.forEach { listener -> runCatching { listener(reason) } }
         if (reason in setOf(AuthorityInvalidation.CONNECTION_CHANGED, AuthorityInvalidation.PAIRING_RETIRED, AuthorityInvalidation.DISCONNECTED)) {
             synchronized(cacheLock) { paneCache.clear() }
+        }
+        if (reason in setOf(AuthorityInvalidation.PAIRING_RETIRED, AuthorityInvalidation.DISCONNECTED)) {
+            runCatching { launchIntentStore?.clear() }
         }
         authorityInvalidations.forEach { listener -> runCatching { listener(reason) } }
     }
@@ -253,10 +310,14 @@ class CollieRepository(
         }
     }
 
-    suspend fun snapshot(scope: Scope = selectedScope.value, expectedContext: ScopedReadContext? = null): ApiResult<SnapshotResponse> {
+    suspend fun snapshot(
+        scope: Scope = selectedScope.value,
+        expectedContext: ScopedReadContext? = null,
+    ): ApiResult<SnapshotResponse> {
         val context = expectedContext ?: readContext(scope) ?: return notConnected()
-        if (context.key.host != scope.host || context.key.session != scope.session || !isCurrent(context)) return staleScope()
-        val result = withConnection(scope, context.key.subjectIdentity, context) { configured -> api.snapshot(configured, scope) }
+        val result = withConnectionOf(
+            context.connection, scope, context.key.subjectIdentity, expectedContext = context,
+        ) { configured -> api.snapshot(configured, scope) }
         if (result !is ApiResult.Success) return result
         if (!isCurrent(context)) return staleScope()
         val authority = result.value.controlAuthority?.let { "${it.leadId}/${it.epoch}" }
@@ -338,9 +399,15 @@ class CollieRepository(
 
     suspend fun devices(): ApiResult<DevicesResponse> = withConnection(block = api::devices)
 
-    suspend fun revokeDevice(label: String): ApiResult<DevicesResponse> = withWritableConnection {
+    suspend fun revokeDevice(label: String): ApiResult<DevicesResponse> {
         require(label.isNotBlank())
-        api.revokeDevice(it, label)
+        val configured = connection.value
+        val result = withWritableConnection { api.revokeDevice(it, label) }
+        if (result is ApiResult.Success && result.value.currentExpired && configured != null && connection.value === configured) {
+            invalidateAuthority(AuthorityInvalidation.PAIRING_RETIRED)
+            demoteToReadOnly()
+        }
+        return result
     }
 
     suspend fun crew(): ApiResult<CrewStatusResponse> = withConnection(block = api::crew)
@@ -350,11 +417,31 @@ class CollieRepository(
         limit: Int = 200,
         before: String? = null,
         etag: String? = null,
-    ): ApiResult<PaneHistoryResponse> = withConnection(address.scope, address.paneId) {
+        expectedContext: ScopedReadContext? = null,
+    ): ApiResult<PaneHistoryResponse> = withConnection(address.scope, address.paneId, expectedContext) {
         api.history(it, address, limit, before, etag)
     }
 
-    suspend fun chat(address: PaneAddress, limit: Int = 200, after: ChatAfter? = null, before: ChatBefore? = null, etag: String? = null): ApiResult<PaneChatResponse> = withConnection(address.scope, address.paneId) {
+    /** Read one same-owner journal image under the exact authority captured by its renderer. */
+    suspend fun imageBlob(context: ScopedReadContext, sha256: String): ApiResult<ImageBlob> {
+        if (!sha256.matches(Regex("[0-9a-fA-F]{64}")) || !isCurrent(context)) return staleScope()
+        val scope = Scope(context.key.host, context.key.session)
+        return withConnectionOf(
+            context.connection,
+            scope,
+            context.key.subjectIdentity,
+            expectedContext = context,
+        ) { api.imageBlob(it, scope, sha256) }
+    }
+
+    suspend fun chat(
+        address: PaneAddress,
+        limit: Int = 200,
+        after: ChatAfter? = null,
+        before: ChatBefore? = null,
+        etag: String? = null,
+        expectedContext: ScopedReadContext? = null,
+    ): ApiResult<PaneChatResponse> = withConnection(address.scope, address.paneId, expectedContext) {
         api.chat(it, address, limit, after, before, etag)
     }
 
@@ -362,12 +449,496 @@ class CollieRepository(
         api.startLaunch(it, scope, target, requestId, cwd)
     }
 
+    /** Reserve and persist an exact launch intent before making its one permitted network attempt. */
+    suspend fun startLaunchIntent(
+        scope: Scope,
+        target: StartTarget,
+        requestId: String,
+        cwd: String? = null,
+        confirmedNoPrompts: Boolean,
+    ): ApiResult<CreateResponse> {
+        val context = readContext(scope) ?: return notConnected()
+        val store = launchIntentStore ?: return intentUnavailable()
+        if (!writesAllowed(scope) || !context.connection.isPaired) return notConnected()
+        if (unresolvedLaunchIntents(scope).isNotEmpty()) {
+            return ApiResult.Failure(ApiFailure.Http(409, "Resolve the earlier uncertain launch before starting another", "launch.unresolved_intent"))
+        }
+        when (val readiness = intentReceiptReadiness(context, scope)) {
+            is ApiResult.Failure -> return readiness
+            is ApiResult.NotModified -> return intentUnavailable()
+            is ApiResult.Success -> if (!readiness.value) return intentUnavailable()
+        }
+        val body = intentJson.encodeToString(
+            StartLaunchRequest.serializer(),
+            StartLaunchRequest(requestId, cwd, target.harness, target.command, target.shell),
+        )
+        val intent = FrozenLaunchIntent(
+            requestId = requestId,
+            origin = context.key.origin,
+            mount = context.key.origin,
+            connectionGeneration = context.key.connectionGeneration,
+            pairedDeviceIdentity = context.key.pairedDeviceIdentity,
+            leadEpoch = context.key.leadEpoch,
+            host = context.key.host,
+            session = context.key.session,
+            subjectIdentity = context.key.subjectIdentity,
+            operation = "launch",
+            confirmedNoPrompts = confirmedNoPrompts,
+            canonicalBody = body,
+        )
+        val reserved = try { store.reserve(intent) } catch (_: Exception) { return intentUnavailable() }
+        if (reserved is ReserveIntentResult.Unresolved) return unresolvedIntentFailure()
+        if (reserved !is ReserveIntentResult.Reserved) {
+            return ApiResult.Failure(ApiFailure.Http(409, "This request ID is already bound to a saved intent", "launch.request_mismatch"))
+        }
+        return dispatchLaunchIntent(context, reserved.record)
+    }
+
+    fun unresolvedLaunchIntents(scope: Scope = selectedScope.value): List<StoredLaunchIntent> = try {
+        val context = readContext(scope) ?: return emptyList()
+        launchIntentStore?.all().orEmpty().filter { record ->
+            record.state == LaunchIntentState.unknown && intentMatches(record.intent, context, record.intent.operation)
+        }
+    } catch (_: Exception) { emptyList() }
+
+    /** An explicit retry replays the exact persisted body and ID; startup never calls this method. */
+    suspend fun retryLaunchIntent(scope: Scope, requestId: String): ApiResult<CreateResponse> {
+        val store = launchIntentStore ?: return intentUnavailable()
+        val record = runCatching { store.get(requestId) }.getOrNull() ?: return intentUnavailable()
+        if (record.state != LaunchIntentState.unknown || record.intent.receiptMode != LaunchIntentReceiptMode.ownerBound) {
+            return ApiResult.Failure(ApiFailure.Http(409, "Only an unresolved launch can be retried", "launch.request_mismatch"))
+        }
+        // Reconcile the owning topology before the user's deliberate same-ID replay. This is a read;
+        // it never infers success from a similar label and never dispatches the saved write.
+        val context = readContext(scope) ?: return notConnected()
+        val refreshed = snapshot(scope, context)
+        if (!isCurrent(context)) return staleScope()
+        if (refreshed !is ApiResult.Success) {
+            return (refreshed as? ApiResult.Failure)?.let { it } ?: intentUnavailable()
+        }
+        if (record.state != LaunchIntentState.unknown || !intentMatches(record.intent, context, "launch")) {
+            return ApiResult.Failure(ApiFailure.Http(409, "The saved launch is not retryable in this scope", "launch.request_mismatch"))
+        }
+        if (!writesAllowed(scope) || !context.connection.isPaired) return notConnected()
+        when (val readiness = intentReceiptReadiness(context, scope)) {
+            is ApiResult.Failure -> return readiness
+            is ApiResult.NotModified -> return intentUnavailable()
+            is ApiResult.Success -> if (!readiness.value) return intentUnavailable()
+        }
+        return dispatchLaunchIntent(context, record)
+    }
+
+    fun abandonLaunchIntent(scope: Scope, requestId: String): ApiResult<ActionResponse> {
+        val context = readContext(scope) ?: return notConnected()
+        val store = launchIntentStore ?: return intentUnavailable()
+        val record = runCatching { store.get(requestId) }.getOrNull() ?: return intentUnavailable()
+        if (!isCurrent(context) || record.state != LaunchIntentState.unknown ||
+            !intentMatches(record.intent, context, record.intent.operation)) {
+            return ApiResult.Failure(ApiFailure.Http(409, "The saved request is not abandonable in this scope", "launch.request_mismatch"))
+        }
+        return try {
+            if (!store.abandonUnknown(requestId, record.intent.bodySha256)) {
+                ApiResult.Failure(ApiFailure.Http(409, "The saved request changed before it could be abandoned", "launch.request_mismatch"))
+            } else ApiResult.Success(ActionResponse(ok = true), 200)
+        } catch (_: Exception) {
+            intentUnavailable()
+        }
+    }
+
+    private suspend fun dispatchLaunchIntent(
+        context: ScopedReadContext,
+        record: StoredLaunchIntent,
+    ): ApiResult<CreateResponse> {
+        try {
+        // Authority can change after the readiness read and before this transport call. Preserve
+        // the reserved intent as uncertain without sending it under a stale scope.
+        if (!isCurrent(context)) {
+            persistIntentState(record, LaunchIntentState.unknown)
+            return staleScope()
+        }
+        if (!writesAllowed(context.key.scope, context.key.subjectIdentity) || !context.connection.isPaired) {
+            return intentDispatchRefused(record)
+        }
+        val result = withConnectionOf(
+            context.connection,
+            context.key.scope,
+            context.key.subjectIdentity,
+            mutation = true,
+            expectedContext = context,
+        ) { api.startLaunchFrozen(it, context.key.scope, record.intent.canonicalBody) }
+        if (!isCurrent(context)) {
+            persistIntentState(record, LaunchIntentState.unknown)
+            return staleScope()
+        }
+        val state = launchDisposition(result)
+        // A refusal from a replay cannot prove that the original uncertain attempt had no effect.
+        // Keep the durable unknown row until a success receipt or explicit user abandonment.
+        if (record.state == LaunchIntentState.unknown && state == LaunchIntentState.refused) return result
+        if (!persistIntentState(record, state)) return intentUnknown()
+        return result
+    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+        // The request may already have reached the bridge. Commit uncertainty synchronously before
+        // propagating lifecycle cancellation so a recreated screen can offer the same saved intent.
+        persistIntentState(record, LaunchIntentState.unknown)
+        throw cancelled
+    } catch (_: Exception) {
+        // Transport implementations are expected to return ApiResult, but an unexpected throw after
+        // reservation is still ambiguous. Keep the durable ID/body and expose deliberate recovery.
+        persistIntentState(record, LaunchIntentState.unknown)
+        return intentUnknown()
+        }
+    }
+
+    private fun persistIntentState(record: StoredLaunchIntent, state: LaunchIntentState): Boolean = try {
+        val store = launchIntentStore ?: return false
+        val current = store.get(record.intent.requestId) ?: return false
+        current.state == state || store.transition(record.intent.requestId, record.intent.bodySha256, state) != null
+    } catch (_: Exception) { false }
+
+    private fun intentMatches(intent: FrozenLaunchIntent, context: ScopedReadContext, operation: String): Boolean =
+        intent.origin == context.key.origin && intent.mount == context.key.origin &&
+            // These counters fence live actors but reset with the process and change on same-owner
+            // lead takeover. Stable owner/scope fields below govern deliberate crash recovery.
+            intent.pairedDeviceIdentity == context.key.pairedDeviceIdentity &&
+            intent.host == context.key.host && intent.session == context.key.session &&
+            intent.subjectIdentity == context.key.subjectIdentity && intent.operation == operation
+
+    private suspend fun intentReceiptReadiness(context: ScopedReadContext, scope: Scope): ApiResult<Boolean> {
+        if (!isCurrent(context)) return staleScope()
+        val config = withConnectionOf(
+            context.connection, scope, context.key.subjectIdentity, expectedContext = context,
+        ) { api.config(it, scope) }
+        if (!isCurrent(context)) return staleScope()
+        return when (config) {
+            is ApiResult.Success -> ApiResult.Success(
+                config.value.receiptContextBound == true,
+                config.status,
+                config.etag,
+                config.buildId,
+                config.controlAuthority,
+            )
+            is ApiResult.Failure -> config
+            is ApiResult.NotModified -> config
+        }
+    }
+
+    private fun launchDisposition(result: ApiResult<*>): LaunchIntentState = when (result) {
+        is ApiResult.Success<*> -> {
+            val (ok, code) = when (val value = result.value) {
+                is CreateResponse -> value.ok to value.code
+                is WorktreeOpenResponse -> value.ok to value.code
+                is AddedLauncherResponse -> value.ok to value.code
+                else -> false to null
+            }
+            when {
+                ok -> LaunchIntentState.succeeded
+                code == OUTCOME_UNKNOWN_CODE -> LaunchIntentState.unknown
+                code in PRE_DISPATCH_REFUSAL_CODES -> LaunchIntentState.refused
+                else -> LaunchIntentState.unknown
+            }
+        }
+        is ApiResult.Failure -> {
+            val error = result.error as? ApiFailure.Http
+            if (error != null && error.status in 400..499 && error.source == com.lateapex.collie.network.FailureSource.COLLIE && error.code in PRE_DISPATCH_REFUSAL_CODES) {
+                LaunchIntentState.refused
+            } else LaunchIntentState.unknown
+        }
+        is ApiResult.NotModified -> LaunchIntentState.unknown
+    }
+
+    private fun intentUnavailable() = ApiResult.Failure(
+        ApiFailure.Http(503, "Durable owner-bound launch receipts are unavailable", "launch.receipts_unavailable"),
+    )
+
+    private fun unresolvedIntentFailure() = ApiResult.Failure(
+        ApiFailure.Http(409, "Resolve the earlier uncertain launch before starting another", "launch.unresolved_intent"),
+    )
+
+    /** A post-readiness access freeze is a proven pre-dispatch refusal, never a network attempt. */
+    private fun <T> intentDispatchRefused(record: StoredLaunchIntent): ApiResult<T> {
+        // This local refusal applies only to the current attempt. If it is a retry, the earlier
+        // request may already have taken effect, so preserve that original uncertainty.
+        if (record.state == LaunchIntentState.pending && !persistIntentState(record, LaunchIntentState.refused)) {
+            return intentUnknown()
+        }
+        val failure = accessFailure ?: ApiFailure.Http(403, "device not authorised", "device.not_authorised")
+        return ApiResult.Failure(failure)
+    }
+
+    private fun intentUnknown() = ApiResult.Failure(
+        ApiFailure.Protocol("Launch outcome is unknown; the saved request remains available for deliberate reconciliation"),
+    )
+
     suspend fun planWorktree(scope: Scope, cwd: String, branch: String? = null, parent: String? = null): ApiResult<WorktreePlanResponse> = withConnection(scope) {
         api.planWorktree(it, scope, cwd, branch, parent)
     }
 
     suspend fun createWorktreeAt(scope: Scope, cwd: String, branch: String, target: StartTarget, requestId: String, base: WorktreeBase = WorktreeBase(), folder: WorktreeFolder = WorktreeFolder()): ApiResult<WorktreeOpenResponse> = withWritableConnection(scope) {
         api.createWorktreeAt(it, scope, cwd, branch, target, requestId, base, folder)
+    }
+
+    suspend fun createWorktreeAtIntent(
+        scope: Scope,
+        cwd: String,
+        branch: String,
+        target: StartTarget,
+        requestId: String,
+        base: WorktreeBase = WorktreeBase(),
+        folder: WorktreeFolder = WorktreeFolder(),
+        confirmedNoPrompts: Boolean,
+    ): ApiResult<WorktreeOpenResponse> {
+        val context = readContext(scope) ?: return notConnected()
+        val store = launchIntentStore ?: return intentUnavailable()
+        if (!writesAllowed(scope) || !context.connection.isPaired) return notConnected()
+        if (unresolvedLaunchIntents(scope).isNotEmpty()) {
+            return ApiResult.Failure(ApiFailure.Http(409, "Resolve the earlier uncertain launch before starting another", "launch.unresolved_intent"))
+        }
+        when (val readiness = intentReceiptReadiness(context, scope)) {
+            is ApiResult.Failure -> return readiness
+            is ApiResult.NotModified -> return intentUnavailable()
+            is ApiResult.Success -> if (!readiness.value) return intentUnavailable()
+        }
+        val body = intentJson.encodeToString(
+            WorktreeAtRequest.serializer(),
+            WorktreeAtRequest(cwd, branch, base, folder, requestId, target.harness, target.command, target.shell),
+        )
+        val intent = FrozenLaunchIntent(
+            requestId = requestId, origin = context.key.origin, mount = context.key.origin,
+            connectionGeneration = context.key.connectionGeneration, pairedDeviceIdentity = context.key.pairedDeviceIdentity,
+            leadEpoch = context.key.leadEpoch, host = context.key.host, session = context.key.session,
+            subjectIdentity = context.key.subjectIdentity, operation = "worktree.createAt",
+            confirmedNoPrompts = confirmedNoPrompts, canonicalBody = body,
+        )
+        val reserved = try { store.reserve(intent) } catch (_: Exception) { return intentUnavailable() }
+        if (reserved is ReserveIntentResult.Unresolved) return unresolvedIntentFailure()
+        if (reserved !is ReserveIntentResult.Reserved) {
+            return ApiResult.Failure(ApiFailure.Http(409, "This request ID is already bound to a saved intent", "launch.request_mismatch"))
+        }
+        return dispatchWorktreeIntent(context, reserved.record)
+    }
+
+    /** Persist the existing workspace/branch POST with a caller-owned ID before its first attempt. */
+    suspend fun createWorkspaceWorktreeIntent(
+        scope: Scope,
+        workspaceId: String,
+        branch: String,
+        requestId: String,
+    ): ApiResult<WorktreeOpenResponse> {
+        val context = readContext(scope) ?: return notConnected()
+        val store = launchIntentStore ?: return intentUnavailable()
+        if (!workspaceId.isNotBlank() || !branch.isNotBlank() || !writesAllowed(scope) || !context.connection.isPaired) {
+            return notConnected()
+        }
+        if (unresolvedLaunchIntents(scope).isNotEmpty()) {
+            return ApiResult.Failure(ApiFailure.Http(409, "Resolve the earlier uncertain launch before starting another", "launch.unresolved_intent"))
+        }
+        when (val readiness = intentReceiptReadiness(context, scope)) {
+            is ApiResult.Failure -> return readiness
+            is ApiResult.NotModified -> return intentUnavailable()
+            is ApiResult.Success -> if (!readiness.value) return intentUnavailable()
+        }
+        val body = intentJson.encodeToString(BranchRequest.serializer(), BranchRequest(branch, requestId))
+        val intent = FrozenLaunchIntent(
+            requestId = requestId, origin = context.key.origin, mount = context.key.origin,
+            connectionGeneration = context.key.connectionGeneration, pairedDeviceIdentity = context.key.pairedDeviceIdentity,
+            leadEpoch = context.key.leadEpoch, host = context.key.host, session = context.key.session,
+            subjectIdentity = context.key.subjectIdentity, operation = "worktree.create", targetIdentity = workspaceId,
+            confirmedNoPrompts = false, canonicalBody = body,
+        )
+        val reserved = try { store.reserve(intent) } catch (_: Exception) { return intentUnavailable() }
+        if (reserved is ReserveIntentResult.Unresolved) return unresolvedIntentFailure()
+        if (reserved !is ReserveIntentResult.Reserved) {
+            return ApiResult.Failure(ApiFailure.Http(409, "This request ID is already bound to a saved intent", "launch.request_mismatch"))
+        }
+        return dispatchWorktreeIntent(context, reserved.record)
+    }
+
+    suspend fun retryWorktreeIntent(scope: Scope, requestId: String): ApiResult<WorktreeOpenResponse> {
+        val store = launchIntentStore ?: return intentUnavailable()
+        val record = runCatching { store.get(requestId) }.getOrNull() ?: return intentUnavailable()
+        if (record.state != LaunchIntentState.unknown || record.intent.receiptMode != LaunchIntentReceiptMode.ownerBound || record.intent.operation !in setOf("worktree.createAt", "worktree.create")) {
+            return ApiResult.Failure(ApiFailure.Http(409, "The saved worktree request is not retryable in this scope", "launch.request_mismatch"))
+        }
+        val context = readContext(scope) ?: return notConnected()
+        val refreshed = snapshot(scope, context)
+        if (!isCurrent(context)) return staleScope()
+        if (refreshed !is ApiResult.Success) return (refreshed as? ApiResult.Failure) ?: intentUnavailable()
+        if (!intentMatches(record.intent, context, record.intent.operation)) {
+            return ApiResult.Failure(ApiFailure.Http(409, "The saved worktree request belongs to a different authority", "launch.request_mismatch"))
+        }
+        if (record.intent.operation == "worktree.create" && record.intent.targetIdentity.isNullOrBlank()) {
+            return ApiResult.Failure(ApiFailure.Http(409, "The saved worktree target is incomplete", "launch.request_mismatch"))
+        }
+        if (!writesAllowed(scope) || !context.connection.isPaired) return notConnected()
+        when (val readiness = intentReceiptReadiness(context, scope)) {
+            is ApiResult.Failure -> return readiness
+            is ApiResult.NotModified -> return intentUnavailable()
+            is ApiResult.Success -> if (!readiness.value) return intentUnavailable()
+        }
+        return dispatchWorktreeIntent(context, record)
+    }
+
+    /** Existing one-shot initial create for a writable bridge without owner-bound receipt support. */
+    suspend fun createWorkspaceWorktreeLegacyInitial(
+        scope: Scope,
+        workspaceId: String,
+        branch: String,
+        requestId: String,
+    ): ApiResult<WorktreeOpenResponse> {
+        val context = readContext(scope) ?: return notConnected()
+        val store = launchIntentStore ?: return intentUnavailable()
+        if (workspaceId.isBlank() || branch.isBlank() || !writesAllowed(scope) || !context.connection.isPaired) return notConnected()
+        val body = intentJson.encodeToString(BranchRequest.serializer(), BranchRequest(branch, requestId))
+        val intent = FrozenLaunchIntent(
+            requestId = requestId, origin = context.key.origin, mount = context.key.origin,
+            connectionGeneration = context.key.connectionGeneration, pairedDeviceIdentity = context.key.pairedDeviceIdentity,
+            leadEpoch = context.key.leadEpoch, host = context.key.host, session = context.key.session,
+            subjectIdentity = context.key.subjectIdentity, operation = "worktree.create", targetIdentity = workspaceId,
+            receiptMode = LaunchIntentReceiptMode.legacyInitialOnly,
+            confirmedNoPrompts = false, canonicalBody = body,
+        )
+        val reserved = try { store.reserve(intent) } catch (_: Exception) { return intentUnavailable() }
+        if (reserved is ReserveIntentResult.Unresolved) return unresolvedIntentFailure()
+        if (reserved !is ReserveIntentResult.Reserved) {
+            return ApiResult.Failure(ApiFailure.Http(409, "This request ID is already bound to a saved intent", "launch.request_mismatch"))
+        }
+        return dispatchWorktreeIntent(context, reserved.record)
+    }
+
+    /** Owner-bound launcher.add journal seam for the launcher-management UI. The body is frozen by the caller. */
+    suspend fun addLauncherIntent(scope: Scope, requestId: String, canonicalBody: String): ApiResult<AddedLauncherResponse> {
+        if (requestId.isBlank() || canonicalBody.isBlank() || canonicalBody.length > 65_536 || bodyRequestId(canonicalBody) != requestId) {
+            return ApiResult.Failure(ApiFailure.Http(400, "Malformed frozen launcher request", "launch.request_mismatch"))
+        }
+        val context = readContext(scope) ?: return notConnected()
+        val store = launchIntentStore ?: return intentUnavailable()
+        if (!writesAllowed(scope) || !context.connection.isPaired) return notConnected()
+        if (unresolvedLaunchIntents(scope).isNotEmpty()) return unresolvedIntentFailure()
+        when (val readiness = intentReceiptReadiness(context, scope)) {
+            is ApiResult.Failure -> return readiness
+            is ApiResult.NotModified -> return intentUnavailable()
+            is ApiResult.Success -> if (!readiness.value) return intentUnavailable()
+        }
+        val intent = FrozenLaunchIntent(
+            requestId = requestId, origin = context.key.origin, mount = context.key.origin,
+            connectionGeneration = context.key.connectionGeneration, pairedDeviceIdentity = context.key.pairedDeviceIdentity,
+            leadEpoch = context.key.leadEpoch, host = context.key.host, session = context.key.session,
+            subjectIdentity = context.key.subjectIdentity, operation = "launcher.add", targetIdentity = "added-launcher-row",
+            confirmedNoPrompts = false, canonicalBody = canonicalBody,
+        )
+        val reserved = try { store.reserve(intent) } catch (_: Exception) { return intentUnavailable() }
+        if (reserved is ReserveIntentResult.Unresolved) return unresolvedIntentFailure()
+        if (reserved !is ReserveIntentResult.Reserved) {
+            return ApiResult.Failure(ApiFailure.Http(409, "This request ID is already bound to a saved intent", "launch.request_mismatch"))
+        }
+        return dispatchAddedLauncherIntent(context, reserved.record)
+    }
+
+    suspend fun retryAddedLauncherIntent(scope: Scope, requestId: String): ApiResult<AddedLauncherResponse> {
+        val store = launchIntentStore ?: return intentUnavailable()
+        val record = runCatching { store.get(requestId) }.getOrNull() ?: return intentUnavailable()
+        if (record.state != LaunchIntentState.unknown || record.intent.receiptMode != LaunchIntentReceiptMode.ownerBound || record.intent.operation != "launcher.add") {
+            return ApiResult.Failure(ApiFailure.Http(409, "The saved launcher request is not retryable in this scope", "launch.request_mismatch"))
+        }
+        val context = readContext(scope) ?: return notConnected()
+        val refreshed = snapshot(scope, context)
+        if (!isCurrent(context)) return staleScope()
+        if (refreshed !is ApiResult.Success) return (refreshed as? ApiResult.Failure) ?: intentUnavailable()
+        if (!intentMatches(record.intent, context, "launcher.add")) {
+            return ApiResult.Failure(ApiFailure.Http(409, "The saved launcher request belongs to a different authority", "launch.request_mismatch"))
+        }
+        if (!writesAllowed(scope) || !context.connection.isPaired) return notConnected()
+        when (val readiness = intentReceiptReadiness(context, scope)) {
+            is ApiResult.Failure -> return readiness
+            is ApiResult.NotModified -> return intentUnavailable()
+            is ApiResult.Success -> if (!readiness.value) return intentUnavailable()
+        }
+        return dispatchAddedLauncherIntent(context, record)
+    }
+
+    private suspend fun dispatchAddedLauncherIntent(
+        context: ScopedReadContext,
+        record: StoredLaunchIntent,
+    ): ApiResult<AddedLauncherResponse> {
+      return try {
+        if (!isCurrent(context)) {
+            persistIntentState(record, LaunchIntentState.unknown)
+            return staleScope()
+        }
+        if (!writesAllowed(context.key.scope, context.key.subjectIdentity) || !context.connection.isPaired) return intentDispatchRefused(record)
+        val result = withConnectionOf(
+            context.connection, context.key.scope, context.key.subjectIdentity,
+            mutation = true, expectedContext = context,
+        ) { api.addLauncherFrozen(it, context.key.scope, record.intent.canonicalBody) }
+        if (!isCurrent(context)) {
+            persistIntentState(record, LaunchIntentState.unknown)
+            return staleScope()
+        }
+        val state = launchDisposition(result)
+        if (record.state == LaunchIntentState.unknown && state == LaunchIntentState.refused) return result
+        if (!persistIntentState(record, state)) return intentUnknown()
+        result
+    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+        persistIntentState(record, LaunchIntentState.unknown)
+        throw cancelled
+    } catch (_: Exception) {
+        persistIntentState(record, LaunchIntentState.unknown)
+        intentUnknown()
+    }
+    }
+
+    private fun bodyRequestId(body: String): String? = runCatching {
+        intentJson.parseToJsonElement(body).jsonObject["requestId"]?.jsonPrimitive?.contentOrNull
+    }.getOrNull()
+
+    private suspend fun dispatchWorktreeIntent(context: ScopedReadContext, record: StoredLaunchIntent): ApiResult<WorktreeOpenResponse> {
+        try {
+        if (!isCurrent(context)) {
+            persistIntentState(record, LaunchIntentState.unknown)
+            return staleScope()
+        }
+        if (!writesAllowed(context.key.scope, context.key.subjectIdentity) || !context.connection.isPaired) {
+            return intentDispatchRefused(record)
+        }
+        val result = when (record.intent.operation) {
+            "worktree.createAt" -> withConnectionOf(
+                context.connection,
+                context.key.scope,
+                context.key.subjectIdentity,
+                mutation = true,
+                expectedContext = context,
+            ) { api.createWorktreeAtFrozen(it, context.key.scope, record.intent.canonicalBody) }
+            "worktree.create" -> record.intent.targetIdentity?.let {
+                val workspaceId = it
+                withConnectionOf(
+                    context.connection,
+                    context.key.scope,
+                    context.key.subjectIdentity,
+                    mutation = true,
+                    expectedContext = context,
+                ) {
+                    if (record.intent.receiptMode == LaunchIntentReceiptMode.legacyInitialOnly && record.state != LaunchIntentState.pending) {
+                        intentUnknown()
+                    } else api.createWorktreeFrozen(it, context.key.scope, workspaceId, record.intent.canonicalBody)
+                }
+            } ?: return intentUnknown()
+            else -> return intentUnavailable()
+        }
+        if (!isCurrent(context)) {
+            persistIntentState(record, LaunchIntentState.unknown)
+            return staleScope()
+        }
+        val state = launchDisposition(result)
+        if (record.state == LaunchIntentState.unknown && state == LaunchIntentState.refused) return result
+        if (!persistIntentState(record, state)) return intentUnknown()
+        return result
+    } catch (cancelled: kotlinx.coroutines.CancellationException) {
+        persistIntentState(record, LaunchIntentState.unknown)
+        throw cancelled
+    } catch (_: Exception) {
+        persistIntentState(record, LaunchIntentState.unknown)
+        return intentUnknown()
+        }
     }
 
     suspend fun closePane(address: PaneAddress): ApiResult<ActionResponse> = withWritableConnection(address.scope, address.paneId) {
@@ -584,10 +1155,29 @@ class CollieRepository(
     }
 
     /** Child jobs cancel reads; writes discard stale replies without claiming dispatch failed. */
-    private suspend fun <T> withConnectionOf(configured: Connection, scope: Scope = selectedScope.value, subjectIdentity: String? = activeSubject, mutation: Boolean = false, expectedContext: ScopedReadContext? = null, block: suspend (Connection) -> ApiResult<T>): ApiResult<T> = try { coroutineScope {
+    private suspend fun <T> withConnectionOf(
+        configured: Connection,
+        scope: Scope = selectedScope.value,
+        subjectIdentity: String? = activeSubject,
+        mutation: Boolean = false,
+        expectedContext: ScopedReadContext? = null,
+        block: suspend (Connection) -> ApiResult<T>,
+    ): ApiResult<T> = try { coroutineScope {
         val context = expectedContext ?: readContext(scope, subjectIdentity) ?: return@coroutineScope notConnected()
-        if (!isCurrent(context) || context.connection !== configured || context.key.host != scope.host || context.key.session != scope.session ||
-            (subjectIdentity != null && context.key.subjectIdentity != subjectIdentity)) return@coroutineScope staleScope()
+        // `viewAll` only widens the snapshot payload; ScopedRequestKey intentionally records the
+        // authenticated host/session dimensions and reconstructs a non-wide Scope. Keep the
+        // authority comparison on those identity dimensions while navigationGeneration fences
+        // actual scope changes.
+        if (context.connection !== configured || context.key.host != scope.host ||
+            context.key.session != scope.session || context.key.subjectIdentity != subjectIdentity
+        ) return@coroutineScope staleScope()
+        if (!isCurrent(context)) return@coroutineScope staleScope()
+        // Frozen writes spent time in readiness/consent reads before reaching this canonical
+        // mutation gate. Recheck the current access fence at the last point before transport.
+        if (mutation && expectedContext != null && !writesAllowed(scope, subjectIdentity)) {
+            return@coroutineScope accessFailure?.let { ApiResult.Failure(it) }
+                ?: ApiResult.Failure(ApiFailure.Http(403, "device not authorised", "device.not_authorised"))
+        }
         val coroutineContext = currentCoroutineContext()
         val job = coroutineContext[Job]!!
         if (!mutation) {

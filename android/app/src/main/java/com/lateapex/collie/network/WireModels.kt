@@ -27,6 +27,8 @@ data class BridgeConfigResponse(
     val redact: Boolean? = null,
     val control: ControlCapabilityResponse? = null,
     val hostControl: HostControlResponse? = null,
+    /** New durable launch retries require a positive declaration from this owning host. */
+    val receiptContextBound: Boolean? = null,
 )
 
 @Serializable
@@ -253,7 +255,7 @@ data class DevicesResponse(
 
 @Serializable
 data class TranscriptResult(
-    val text: String,
+    val text: String? = null,
     val truncated: Boolean = false,
     val isError: Boolean = false,
     val denied: Boolean = false,
@@ -284,6 +286,12 @@ data class TranscriptEntry(
     val seq: Long? = null,
     val abandoned: Boolean = false,
 )
+
+/** Bounded response body from the authenticated journal blob endpoint. */
+data class ImageBlob(val contentType: String?, val bytes: ByteArray) {
+    init { require(bytes.isNotEmpty() && bytes.size <= MAX_BYTES) }
+    companion object { const val MAX_BYTES = 10 * 1024 * 1024 }
+}
 
 @Serializable
 data class PaneHistoryResponse(
@@ -380,6 +388,8 @@ data class Launcher(
     val cwd: String? = null,
     val harness: String? = null,
     val noPrompts: Boolean = false,
+    /** Present for the richer, server-supplied target catalog; absent on legacy launcher rows. */
+    val target: StartTarget? = null,
 )
 
 @Serializable
@@ -390,6 +400,17 @@ data class LaunchersResponse(
     val items: List<LauncherItem>? = null,
     val adding: JsonObject? = null,
     val recentRuns: List<RecentRun>? = null,
+)
+
+/** POST /api/launchers/added response; the saved intent keeps this wire payload encrypted locally. */
+@Serializable
+data class AddedLauncherResponse(
+    val ok: Boolean,
+    val row: JsonObject? = null,
+    val replayed: Boolean? = null,
+    val error: String? = null,
+    val code: String? = null,
+    val detail: JsonObject? = null,
 )
 
 @Serializable

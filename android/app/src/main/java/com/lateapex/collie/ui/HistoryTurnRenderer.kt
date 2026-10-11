@@ -25,6 +25,8 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.accessibility.AccessibilityNodeInfoCompat
 import androidx.core.view.isVisible
 import com.lateapex.collie.R
+import com.lateapex.collie.data.ScopedImageLoader
+import com.lateapex.collie.data.ScopedReadContext
 import java.util.Locale
 
 /**
@@ -38,8 +40,9 @@ internal class HistoryTurnRenderer(
     private val expandedTools: MutableSet<Pair<String, Int>>,
     private val onToolToggle: (uuid: String, partIndex: Int) -> Unit,
     private val registerTextTarget: (HistorySearchKey, HistoryTextTarget) -> Unit = { _, _ -> },
-    /** B04 owns authenticated/bounded image loading and supplies its view here. */
-    private val renderToolImage: (String) -> View? = { null },
+    private val imageLoader: ScopedImageLoader? = null,
+    private val readContext: ScopedReadContext? = null,
+    private val readContextForEntry: (String) -> ScopedReadContext? = { readContext },
 ) {
     fun turnView(turn: HistoryTurn, showHeader: Boolean): View {
         val outer = FrameLayout(context).apply {
@@ -102,6 +105,13 @@ internal class HistoryTurnRenderer(
     private fun partView(uuid: String, partIndex: Int, part: HistoryPart): View = when (part) {
         is HistoryPart.Prose -> markdownView(uuid, partIndex, part)
         is HistoryPart.Tool -> toolView(uuid, partIndex, part)
+        is HistoryPart.Image -> imageView(uuid, part)
+    }
+
+    private fun imageView(uuid: String, part: HistoryPart.Image): View = AuthenticatedImageView(
+        context, imageLoader, readContextForEntry(uuid), part.reference, part.description, part.mimeType,
+    ).apply {
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) }
     }
 
     private fun markdownView(uuid: String, partIndex: Int, part: HistoryPart.Prose) = LinearLayout(context).apply {
@@ -261,7 +271,7 @@ internal class HistoryTurnRenderer(
             ellipsize = android.text.TextUtils.TruncateAt.END
         }
         val hasDetails = part.call != null || part.callId != null || part.callTruncated
-        val hasContent = hasDetails || part.result != null || part.resultImageUrl != null
+        val hasContent = hasDetails || part.result != null || part.resultTruncated || part.image != null
         val details = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
             isVisible = false
@@ -330,26 +340,14 @@ internal class HistoryTurnRenderer(
         addView(header)
         if (outcome != null) addView(outcome)
         if (hasDetails) addView(details)
-        if (part.resultImageUrl != null) {
-            if (expanded) {
-                val image = renderToolImage(part.resultImageUrl)
-                if (image != null) {
-                    addView(image)
-                } else {
-                    addView(contentText(context.getString(R.string.history_tool_image_available), 11f).apply {
-                        setTextColor(color(R.color.collie_muted))
-                        setPadding(dp(8), dp(4), dp(8), dp(4))
-                    })
-                }
-            }
-        }
+        if (expanded) part.image?.let { addView(imageView(uuid, it)) }
         if (hasResultText) addView(result)
         registerHistoryText(HistorySearchKey(uuid, partIndex, HistorySearchRegion.TOOL_HEADER), headerLabel, headerText)
         if (hasResultText) {
             registerHistoryText(
                 HistorySearchKey(uuid, partIndex, HistorySearchRegion.TOOL_RESULT),
                 result,
-                result.text,
+                part.result.orEmpty(),
             ) {
                 if (expansionKey !in expandedTools) onToolToggle(uuid, partIndex)
             }

@@ -127,6 +127,12 @@ server revocation action.
   Claude's `/cost` is not auto-detected.
 - Transcript tool cards preserve structured file, command, search, task, fetch and question details;
   historic questions are read-only, and denied calls are labeled separately from execution failures.
+- Journal images in history, expanded tool results, and the live transcript load from the
+  authenticated mounted Collie origin. A card opens a native pan/zoom viewer; missing, unsupported,
+  or retired-scope images show an explicit unavailable state. Image references are not arbitrary
+  URLs: blob paths stay within the selected Collie connection, inline raster data is bounded, and
+  decoded memory is shared across visible cards and viewers. After an access or navigation change,
+  a fresh admitted journal read is required before old entries can load images again.
 - The Keys drawer keeps primary keys and modifiers together, wrapping on narrow phones to retain
   48 dp touch targets. Its More sheet holds presets and function keys.
 - The worktree sheet lists a repository's linked worktrees that have no open space; selecting one
@@ -135,6 +141,10 @@ server revocation action.
 - The system image picker uploads bounded images without storage permission. Operator-initiated
   audio recording requests microphone permission at runtime and sends a bounded clip to `/api/stt`;
   the resulting transcript returns to the draft for review.
+- History renders only exact mounted Collie blob references and supported inline raster data. Tap a
+  card to open the accessible zoom viewer. After rotation or authority retirement, retained cards
+  remain unavailable until **Refresh history images** completes a current read for their turns;
+  text, disclosure state, search and the loaded page range stay in place while that read runs.
 - Settings covers connection/reset, theme, terminal/draft sizing, notification
   switches and snooze, paired-device revocation, connection state, Crew state, and Updates. Update start
   requires preflight and device-write authorization; `/standby/update` retains the freshest visible
@@ -292,5 +302,7 @@ New control support requires a positive declaration in `/api/config.control.capa
 Native request contexts bind the HTTPS origin including its mount, credential and leader generation, host/session and subject. Space Look now uses the owning session's read-gated POST refresh before snapshot; older 404 peers get a labeled ordinary reload. Captured media scope is checked before upload and before applying its result. Saved copies never authorize terminal or structural actions. Unknown/gateway 401/403 freezes actions while retaining pairing; only exact authoritative Collie pairing provenance retires it.
 
 Control receipts use GET `/api/control/operations/<id>` and never return secret payload/evidence. Pending after restart is unknown, with no repeat dispatch. Existing launch/worktree/add receipts still use POST replay. The bridge health adapter uses its existing health seam with exact typed Herdr ping/pong validation; source/schema fixtures do not prove a live vendor handshake.
+
+Launches, receipt-bound worktree creation and the launcher-add request seam keep an encrypted local copy of the exact request ID and body before sending. If the reply is uncertain, the app offers only a deliberate replay of that same request after refreshing the owning scope; the user may instead abandon it after a duplicate-risk warning. Workspace-branch requests also bind the workspace ID carried in the POST path. When the bridge does not positively advertise owner-bound receipts, the existing workspace-branch create remains a one-shot initial action and never gains an ambiguous retry.
 
 See [scoped control authority decision](../.adr/0096-control-authority-is-scoped-and-positive.md). Joint B02/B03 and live vendor/device acceptance are tracked in the B01 handoff.

@@ -5,6 +5,8 @@ import com.lateapex.collie.data.AndroidKeystoreCipher
 import com.lateapex.collie.data.CollieRepository
 import com.lateapex.collie.data.ConnectionStore
 import com.lateapex.collie.data.EncryptedConnectionStore
+import com.lateapex.collie.data.ScopedImageLoader
+import com.lateapex.collie.data.LaunchIntentStore
 import com.lateapex.collie.diagnostics.DiagnosticsRecorder
 import com.lateapex.collie.diagnostics.DiagnosticsWriter
 import com.lateapex.collie.network.CollieApi
@@ -41,7 +43,13 @@ class AppContainer(context: Context) {
         originValidator,
     )
     val api: CollieApi = CollieApiClient(httpClient, json)
-    val repository = CollieRepository(api, connectionStore, originValidator)
+    val launchIntentStore = LaunchIntentStore(
+        context.applicationContext,
+        AndroidKeystoreCipher(alias = "com.lateapex.collie.launch-intents.v1"),
+        json,
+    )
+    val repository = CollieRepository(api, connectionStore, originValidator, launchIntentStore = launchIntentStore, intentJson = json)
+    val imageLoader = ScopedImageLoader(repository)
     init {
         repository.onAuthorityInvalidated { reason ->
             if (reason in setOf(com.lateapex.collie.data.AuthorityInvalidation.PAIRING_RETIRED,

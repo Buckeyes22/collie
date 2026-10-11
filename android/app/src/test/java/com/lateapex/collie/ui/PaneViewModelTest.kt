@@ -4,6 +4,8 @@ import android.app.Application
 import androidx.test.core.app.ApplicationProvider
 import com.lateapex.collie.data.CollieRepository
 import com.lateapex.collie.data.ConnectionStore
+import com.lateapex.collie.data.ScopedImageLoader
+import com.lateapex.collie.data.ScopedImageResult
 import com.lateapex.collie.domain.CollieOrigin
 import com.lateapex.collie.domain.Connection
 import com.lateapex.collie.domain.PaneAddress
@@ -564,6 +566,178 @@ class PaneViewModelTest {
     }
 
     @Test
+    fun retainedTranscriptOnlyReauthorizesImagesAfterCurrentSuccessfulPage() = runTest(dispatcher) {
+        val f = fixture(ApiResult.Success(ActionResponse(ok = true), 200))
+        val imageEntry = entry("stable-image-turn").copy(parts = listOf(
+            TranscriptPart("image", url = "data:image/png;base64,AA==", mimeType = "image/png"),
+        ))
+        f.api.historyPages += PaneHistoryResponse("w1:p1", available = true, entries = listOf(imageEntry))
+        f.viewModel.refresh(); advanceUntilIdle()
+        val originalContext = requireNotNull(f.viewModel.state.value.transcriptReadContext)
+        assertTrue(f.repository.isCurrent(originalContext))
+
+        // The text stays available as a saved/stale copy, but a redraw cannot mint a fresh actor.
+        f.repository.showSavedCopy(123L)
+        assertEquals(listOf("stable-image-turn"), f.viewModel.state.value.transcript.map { it.uuid })
+        assertNull(f.viewModel.state.value.transcriptReadContext)
+        assertFalse(f.repository.isCurrent(originalContext))
+        val chatCallsBeforeStaleRead = f.api.chatCalls
+        val scope = Scope()
+        val staleChat = f.repository.chat(PaneAddress(scope, "w1:p1"), expectedContext = originalContext)
+        assertFalse("a retired transcript actor cannot dispatch", staleChat is ApiResult.Success)
+        assertEquals(chatCallsBeforeStaleRead, f.api.chatCalls)
+
+        // Even a 304 that arrives after retirement must not promote those retained entries.
+        f.api.historyAlwaysNotModified = true
+        f.viewModel.refresh(); advanceUntilIdle()
+        assertNull(f.viewModel.state.value.transcriptReadContext)
+
+        // A fresh 200 page under the new context can recreate cards for unchanged UUIDs.
+        f.api.historyAlwaysNotModified = false
+        f.api.historyPages += PaneHistoryResponse("w1:p1", available = true, entries = listOf(imageEntry))
+        f.viewModel.refresh(); advanceUntilIdle()
+        val refreshed = requireNotNull(f.viewModel.state.value.transcriptReadContext)
+        assertTrue(f.repository.isCurrent(refreshed))
+        assertEquals(originalContext.key, refreshed.key)
+        assertTrue(refreshed.navigationGeneration != originalContext.navigationGeneration)
+        assertEquals(listOf("stable-image-turn"), f.viewModel.state.value.transcript.map { it.uuid })
+    }
+
+    @Test
+    fun acceptedOlderLiveChatPageRestoresItsImageActorAndRejectsAQueuedRetiredActor() = runTest(dispatcher) {
+        val f = fixture(ApiResult.Success(ActionResponse(ok = true), 200))
+        val newest = entry("newest").copy(seq = 2)
+        f.api.chatPage = PaneChatResponse(
+            paneId = "w1:p1", available = true, page = "live", gen = 7, rev = 1,
+            head = 2, oldest = 2, hasOlder = true, upserts = listOf(newest),
+        )
+        f.viewModel.refresh(); advanceUntilIdle()
+        val original = requireNotNull(f.viewModel.state.value.transcriptReadContext)
+        assertEquals(listOf("newest"), f.viewModel.state.value.transcript.map { it.uuid })
+
+        f.repository.showSavedCopy(200L)
+        f.viewModel.loadOlderTranscript()
+        f.repository.showSavedCopy(201L) // retire the actor captured before its coroutine dispatches
+        advanceUntilIdle()
+        assertEquals("a stale queued chat actor must not reach transport", 1, f.api.chatCalls)
+        assertNull(f.viewModel.state.value.transcriptReadContext)
+
+        val imageOlder = TranscriptEntry(
+            "older-image", "2026-09-09T00:00:00Z", "assistant",
+            listOf(TranscriptPart("image", url = "data:image/png;base64,AA==", mimeType = "image/png")),
+            seq = 1,
+        )
+        f.api.chatOlderPages += PaneChatResponse(
+            paneId = "w1:p1", available = true, page = "older", gen = 7,
+            oldest = 1, hasOlder = false, upserts = listOf(imageOlder),
+        )
+        f.viewModel.loadOlderTranscript(); advanceUntilIdle()
+
+        val admitted = requireNotNull(f.viewModel.state.value.transcriptReadContext)
+        assertTrue(f.repository.isCurrent(admitted))
+        assertEquals(original.key, admitted.key)
+        assertTrue(admitted.navigationGeneration != original.navigationGeneration)
+        assertEquals(listOf("older-image", "newest"), f.viewModel.state.value.transcript.map { it.uuid })
+        assertEquals(listOf("newest"), f.api.chatBeforeRequests.drop(1).map { it?.uuid })
+    }
+
+    @Test
+    fun rejectedLivePageCannotReauthorizeRetainedImagesAfterSavedCopy() = runTest(dispatcher) {
+        val f = fixture(ApiResult.Success(ActionResponse(ok = true), 200))
+        val imageReference = "/api/blobs/${"ab".repeat(32)}"
+        val imageEntry = TranscriptEntry(
+            "stable-live-image", "2026-09-09T00:00:00Z", "assistant",
+            listOf(TranscriptPart("image", url = imageReference, mimeType = "image/png")),
+            seq = 10,
+        )
+        f.api.chatPage = PaneChatResponse(
+            paneId = "w1:p1", available = true, page = "live", gen = 7, rev = 10,
+            head = 10, oldest = 10, hasOlder = false, upserts = listOf(imageEntry),
+        )
+        f.viewModel.refresh(); advanceUntilIdle()
+        val originalActor = requireNotNull(f.viewModel.state.value.transcriptReadContext)
+        assertTrue(f.repository.isCurrent(originalActor))
+        assertEquals(listOf("stable-live-image"), f.viewModel.state.value.transcript.map { it.uuid })
+
+        // Authority retirement preserves the saved text but removes the actor that admitted it.
+        f.repository.showSavedCopy(400L)
+        assertNull(f.viewModel.state.value.transcriptReadContext)
+        assertEquals(listOf("stable-live-image"), f.viewModel.state.value.transcript.map { it.uuid })
+
+        // This is a current, successful HTTP response, but its same-generation revision is older
+        // than the retained window, so merge rejects it. It must not adopt the new read actor.
+        val rejected = entry("rejected-replacement").copy(seq = 11)
+        f.api.chatPage = PaneChatResponse(
+            paneId = "w1:p1", available = true, page = "live", gen = 7, rev = 9,
+            head = 9, oldest = 9, hasOlder = false, upserts = listOf(rejected),
+        )
+        f.viewModel.refresh(); advanceUntilIdle()
+        assertEquals(listOf("stable-live-image"), f.viewModel.state.value.transcript.map { it.uuid })
+        assertNull("a rejected merge cannot promote the retired image actor", f.viewModel.state.value.transcriptReadContext)
+
+        // The renderer passes its nullable state-owned actor to the loader. With no admitted actor,
+        // the ordinary load path refuses before scheduling transport or parsing the reference.
+        val loader = ScopedImageLoader(f.repository)
+        try {
+            var imageResult: ScopedImageResult? = null
+            loader.load(
+                context = f.viewModel.state.value.transcriptReadContext,
+                reference = imageReference,
+                viewportWidth = 320,
+                viewportHeight = 240,
+                callback = { imageResult = it },
+                expectedMimeType = "image/png",
+            )
+            assertTrue(imageResult is ScopedImageResult.Refused)
+            assertEquals(0, f.api.imageBlobCalls)
+        } finally {
+            loader.close()
+        }
+
+        // A later page that the window accepts is the event that restores image authority.
+        f.api.chatPage = PaneChatResponse(
+            paneId = "w1:p1", available = true, page = "live", gen = 7, rev = 11,
+            head = 11, oldest = 10, hasOlder = false, upserts = listOf(imageEntry.copy(seq = 10)),
+        )
+        f.viewModel.refresh(); advanceUntilIdle()
+        val recoveredActor = requireNotNull(f.viewModel.state.value.transcriptReadContext)
+        assertTrue(f.repository.isCurrent(recoveredActor))
+        assertEquals(originalActor.key, recoveredActor.key)
+        assertTrue(recoveredActor.navigationGeneration != originalActor.navigationGeneration)
+        assertEquals(listOf("stable-live-image"), f.viewModel.state.value.transcript.map { it.uuid })
+    }
+
+    @Test
+    fun acceptedOlderLegacyHistoryPageRestoresItsImageActorAndRejectsAQueuedRetiredActor() = runTest(dispatcher) {
+        val f = fixture(ApiResult.Success(ActionResponse(ok = true), 200))
+        f.api.historyPages += PaneHistoryResponse("w1:p1", available = true, entries = listOf(entry("newest")), hasMore = true)
+        f.viewModel.refresh(); advanceUntilIdle() // live chat is unavailable; legacy history is admitted
+        val original = requireNotNull(f.viewModel.state.value.transcriptReadContext)
+        assertEquals(listOf("newest"), f.viewModel.state.value.transcript.map { it.uuid })
+
+        f.repository.showSavedCopy(300L)
+        f.viewModel.loadOlderTranscript()
+        f.repository.showSavedCopy(301L)
+        advanceUntilIdle()
+        assertEquals("a stale queued history actor must not reach transport", 1, f.api.historyCalls)
+        assertNull(f.viewModel.state.value.transcriptReadContext)
+
+        val imageOlder = TranscriptEntry(
+            "older-image", "2026-09-09T00:00:00Z", "assistant",
+            listOf(TranscriptPart("image", url = "data:image/png;base64,AA==", mimeType = "image/png")),
+        )
+        f.api.historyPages += PaneHistoryResponse("w1:p1", available = true, entries = listOf(imageOlder), hasMore = false)
+        f.viewModel.loadOlderTranscript(); advanceUntilIdle()
+
+        val admitted = requireNotNull(f.viewModel.state.value.transcriptReadContext)
+        assertTrue(f.repository.isCurrent(admitted))
+        assertEquals(original.key, admitted.key)
+        assertTrue(admitted.navigationGeneration != original.navigationGeneration)
+        assertEquals(listOf("older-image", "newest"), f.viewModel.state.value.transcript.map { it.uuid })
+        assertEquals(listOf("newest"), f.api.historyBeforeRequests.drop(1))
+    }
+
+    @Test
     fun unavailableHistoryIsRetriedAfterAPauseAndPicksUpANewJournal() = runTest(dispatcher) {
         // A Claude started in an open pane has no session log until its first turn. Giving up
         // after one "no-session" left the pane on the mirror for good (S25 Ultra, 2026-09-11).
@@ -663,6 +837,7 @@ class PaneViewModelTest {
         f.api.chatPage = PaneChatResponse("w1:p1", true, page = "live", gen = 2, rev = 4, head = 10)
         f.viewModel.refresh()
         advanceUntilIdle()
+        assertNotNull("accepted live chat page owns image render authority", f.viewModel.state.value.transcriptReadContext)
         val guardRead = CompletableDeferred<Unit>()
         var holdConsumptionRead = false
         f.api.paneHook = {
@@ -809,7 +984,7 @@ class PaneViewModelTest {
             repository,
             diagnostics,
         )
-        return Fixture(viewModel, api, store)
+        return Fixture(viewModel, api, store, repository)
     }
 
     private fun text(resource: Int): String =
@@ -819,6 +994,7 @@ class PaneViewModelTest {
         val viewModel: PaneViewModel,
         val api: FakeApi,
         val store: FakeStore,
+        val repository: CollieRepository,
     )
 
     private class FakeStore(initial: Connection) : ConnectionStore {
@@ -856,16 +1032,32 @@ class PaneViewModelTest {
         val historyPages = ArrayDeque<PaneHistoryResponse>()
         var historyCalls = 0
         var chatPage: PaneChatResponse? = null
+        var chatCalls = 0
+        var imageBlobCalls = 0
+        val chatBeforeRequests = mutableListOf<ChatBefore?>()
+        val chatOlderPages = ArrayDeque<PaneChatResponse>()
         override suspend fun chat(connection: Connection, address: PaneAddress, limit: Int,
             after: ChatAfter?, before: ChatBefore?, etag: String?): ApiResult<PaneChatResponse> {
+            chatCalls++
+            chatBeforeRequests += before
+            if (before != null) {
+                val older = chatOlderPages.removeFirstOrNull()
+                if (older != null) return ApiResult.Success(older, 200)
+            }
             val page = chatPage ?: return ApiResult.Failure(ApiFailure.Protocol("Live chat is unavailable"))
             if (after?.gen == page.gen && after?.rev == page.rev) return ApiResult.NotModified(etag)
             return ApiResult.Success(page, 200)
         }
+        override suspend fun imageBlob(connection: Connection, scope: Scope, sha256: String): ApiResult<com.lateapex.collie.network.ImageBlob> {
+            imageBlobCalls++
+            return ApiResult.Failure(ApiFailure.Http(404, null, null))
+        }
         val historyLimits = mutableListOf<Int>()
+        val historyBeforeRequests = mutableListOf<String?>()
 
         val historyEtags = mutableListOf<String?>()
         var historyUnchanged = false
+        var historyAlwaysNotModified = false
 
         override suspend fun history(
             connection: Connection,
@@ -875,9 +1067,10 @@ class PaneViewModelTest {
             etag: String?,
         ): ApiResult<PaneHistoryResponse> {
             historyCalls++
+            historyBeforeRequests += before
             historyLimits += limit
             historyEtags += etag
-            if (historyUnchanged && etag != null) return ApiResult.NotModified(etag)
+            if (historyAlwaysNotModified || historyUnchanged && etag != null) return ApiResult.NotModified(etag)
             val page = historyPages.removeFirstOrNull() ?: PaneHistoryResponse(address.paneId, available = true)
             return ApiResult.Success(page, 200, etag = "\"page-$historyCalls\"")
         }

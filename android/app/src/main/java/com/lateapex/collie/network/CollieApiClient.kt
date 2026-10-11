@@ -19,6 +19,14 @@ import kotlinx.serialization.DeserializationStrategy
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.longOrNull
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.HttpUrl
@@ -95,9 +103,16 @@ interface CollieApi {
         before: ChatBefore? = null,
         etag: String? = null,
     ): ApiResult<PaneChatResponse> = unavailable("Live chat")
+    /** Authenticated bytes from Collie's content-addressed journal image route. */
+    suspend fun imageBlob(connection: Connection, scope: Scope, sha256: String): ApiResult<ImageBlob> = unavailable("Journal image")
     suspend fun startLaunch(connection: Connection, scope: Scope, target: StartTarget, requestId: String, cwd: String? = null): ApiResult<CreateResponse> = unavailable("Launch by id")
+    /** Sends the exact encrypted-journal body for a deliberate replay; never rebuilds an intent. */
+    suspend fun startLaunchFrozen(connection: Connection, scope: Scope, canonicalBody: String): ApiResult<CreateResponse> = unavailable("Frozen launch retry")
+    suspend fun addLauncherFrozen(connection: Connection, scope: Scope, canonicalBody: String): ApiResult<AddedLauncherResponse> = unavailable("Frozen launcher add")
     suspend fun planWorktree(connection: Connection, scope: Scope, cwd: String, branch: String? = null, parent: String? = null): ApiResult<WorktreePlanResponse> = unavailable("Worktree plan")
     suspend fun createWorktreeAt(connection: Connection, scope: Scope, cwd: String, branch: String, target: StartTarget, requestId: String, base: WorktreeBase = WorktreeBase(), folder: WorktreeFolder = WorktreeFolder()): ApiResult<WorktreeOpenResponse> = unavailable("Worktree from folder")
+    /** Sends the exact encrypted-journal body for a deliberate replay. */
+    suspend fun createWorktreeAtFrozen(connection: Connection, scope: Scope, canonicalBody: String): ApiResult<WorktreeOpenResponse> = unavailable("Frozen worktree retry")
     suspend fun closePane(connection: Connection, address: PaneAddress): ApiResult<ActionResponse> = unavailable("Pane close")
     suspend fun focusPane(connection: Connection, address: PaneAddress): ApiResult<ActionResponse> = unavailable("Pane focus")
     suspend fun renamePane(
@@ -143,6 +158,12 @@ interface CollieApi {
         workspaceId: String,
         branch: String,
     ): ApiResult<WorktreeOpenResponse> = unavailable("Worktree create")
+    suspend fun createWorktreeFrozen(
+        connection: Connection,
+        scope: Scope,
+        workspaceId: String,
+        canonicalBody: String,
+    ): ApiResult<WorktreeOpenResponse> = unavailable("Frozen worktree create")
     suspend fun openWorktree(
         connection: Connection,
         scope: Scope,
@@ -197,6 +218,49 @@ class CollieApiClient(
     private val client: OkHttpClient,
     private val json: Json,
 ) : CollieApi {
+    override suspend fun imageBlob(connection: Connection, scope: Scope, sha256: String): ApiResult<ImageBlob> {
+        require(sha256.matches(Regex("[0-9a-fA-F]{64}")))
+        val imageAccept = "image/png,image/jpeg,image/gif,image/webp"
+        val imageUrl = scopedUrl(connection.origin, path("blobs", sha256.lowercase()), scope)
+        val request = requestBuilder(connection, imageUrl).header("Accept", imageAccept).get().build()
+        return executeResponse(request, READ_TIMEOUT_SECONDS) { response ->
+            if (response.code in REDIRECT_CODES) return@executeResponse ApiResult.Failure(ApiFailure.Redirect(response.code))
+            if (!response.isSuccessful) {
+                val body = response.body?.source()?.let { source ->
+                    val limit = MAX_ERROR_MESSAGE_CHARS.toLong()
+                    source.request(limit + 1)
+                    source.readUtf8(minOf(source.buffer.size, limit))
+                }.orEmpty()
+                return@executeResponse failure(response, body)
+            }
+            val body = response.body ?: return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Image response was empty"))
+            val declared = body.contentLength()
+            if (declared > ImageBlob.MAX_BYTES) return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Image Content-Length exceeds the 10 MiB limit ($declared bytes)"))
+            val bytes = try {
+                body.source().use { source ->
+                    val output = java.io.ByteArrayOutputStream(minOf(if (declared >= 0) declared.toInt() else 64 * 1024, ImageBlob.MAX_BYTES))
+                    val chunk = okio.Buffer()
+                    while (true) {
+                        val read = source.read(chunk, 16 * 1024L)
+                        if (read == -1L) break
+                        val bytesRead = chunk.readByteArray()
+                        val received = output.size().toLong() + bytesRead.size
+                        if (received > ImageBlob.MAX_BYTES) return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Image stream exceeds the 10 MiB limit ($received bytes)"))
+                        output.write(bytesRead)
+                    }
+                    output.toByteArray()
+                }
+            } catch (_: IOException) {
+                return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Image response could not be read"))
+            }
+            if (bytes.isEmpty()) return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Image response was empty"))
+            ApiResult.Success(
+                ImageBlob(response.header("Content-Type")?.substringBefore(';')?.trim()?.lowercase(), bytes),
+                response.code,
+                controlAuthority = responseAuthority(response),
+            )
+        }
+    }
     override suspend fun health(connection: Connection): ApiResult<HealthResponse> =
         executeJson(request(connection, path("health")), HealthResponse.serializer(), READ_TIMEOUT_SECONDS)
 
@@ -350,6 +414,230 @@ class CollieApiClient(
         return executeCreate(post(connection, scopedUrl(connection.origin, path("launch"), scope), json.encodeToString(body)))
     }
 
+    override suspend fun startLaunchFrozen(connection: Connection, scope: Scope, canonicalBody: String): ApiResult<CreateResponse> {
+        require(canonicalBody.isNotBlank() && canonicalBody.length <= 16_384)
+        return executeCreate(post(connection, scopedUrl(connection.origin, path("launch"), scope), canonicalBody))
+    }
+
+    override suspend fun addLauncherFrozen(connection: Connection, scope: Scope, canonicalBody: String): ApiResult<AddedLauncherResponse> {
+        require(canonicalBody.isNotBlank() && canonicalBody.length <= 65_536)
+        val expected = expectedAddedLauncher(canonicalBody)
+            ?: return ApiResult.Failure(ApiFailure.Protocol("Malformed frozen launcher request"))
+        return requireContract(
+            executeJson(
+                post(connection, scopedUrl(connection.origin, path("launchers", "added"), scope), canonicalBody),
+                AddedLauncherResponse.serializer(),
+                MUTATION_TIMEOUT_SECONDS,
+            ),
+            "Malformed launcher add response",
+        ) { response ->
+            if (response.ok) validAddedLauncherRow(response, expected)
+            else !response.error.isNullOrBlank() || !response.code.isNullOrBlank()
+        }
+    }
+
+    private data class ExpectedAddedLauncher(
+        val requestId: String,
+        val addedAs: String,
+        val kind: String,
+        val harness: String?,
+        val command: String,
+        val label: String,
+        val noPrompts: Boolean,
+    )
+
+    private data class RecipeOptionContract(
+        val id: String,
+        val label: String,
+        val args: String,
+        val group: String? = null,
+        val noPrompts: Boolean = false,
+    )
+
+    private data class RecipeContract(
+        val binary: String,
+        val label: String,
+        val options: List<RecipeOptionContract> = emptyList(),
+    )
+
+    /** Mirror the versioned Collie recipe IDs and their actual executable names, never assume id == binary. */
+    private val launcherRecipes = mapOf(
+        "claude" to RecipeContract("claude", "Claude Code", listOf(
+            RecipeOptionContract("skip", "Skip permission prompts", "--dangerously-skip-permissions", "permissions", true),
+            RecipeOptionContract("plan", "Plan mode", "--permission-mode plan", "permissions"),
+            RecipeOptionContract("opus", "Model: opus", "--model opus", "model"),
+            RecipeOptionContract("sonnet", "Model: sonnet", "--model sonnet", "model"),
+            RecipeOptionContract("continue", "Continue last", "--continue"),
+        )),
+        "codex" to RecipeContract("codex", "Codex", listOf(
+            RecipeOptionContract("bypass", "Skip approvals and sandbox", "--dangerously-bypass-approvals-and-sandbox", "mode", true),
+            RecipeOptionContract("never", "Never ask", "--ask-for-approval never", "mode", true),
+            RecipeOptionContract("readonly", "Read-only sandbox", "--sandbox read-only", "mode"),
+            RecipeOptionContract("search", "Web search", "--search"),
+        )),
+        "opencode" to RecipeContract("opencode", "opencode", listOf(
+            RecipeOptionContract("auto", "Auto-approve", "--auto", noPrompts = true),
+            RecipeOptionContract("plan", "Plan agent", "--agent plan"),
+            RecipeOptionContract("continue", "Continue last", "--continue"),
+        )),
+        "pi" to RecipeContract("pi", "pi", listOf(
+            RecipeOptionContract("continue", "Continue last", "--continue"),
+            RecipeOptionContract("thinking-high", "Thinking: high", "--thinking high"),
+        )),
+        "omp" to RecipeContract("omp", "omp", listOf(
+            RecipeOptionContract("continue", "Continue last", "--continue"),
+            RecipeOptionContract("thinking-high", "Thinking: high", "--thinking=high"),
+        )),
+        "grok" to RecipeContract("grok", "Grok"),
+        "hermes" to RecipeContract("hermes", "Hermes"),
+        "muse" to RecipeContract("muse", "Muse"),
+        "agy" to RecipeContract("agy", "Antigravity"),
+    )
+    private data class AddedLauncherRowContract(
+        val requestId: String,
+        val kind: String,
+        val harness: String?,
+        val command: String,
+        val label: String,
+        val noPrompts: Boolean,
+        val addedBy: String,
+        val addedAt: Long,
+        val addedAs: String,
+    )
+
+    /** The response row is evidence for this exact frozen request, not an arbitrary `ok: true`. */
+    private fun expectedAddedLauncher(body: String): ExpectedAddedLauncher? {
+        return try {
+            val request = json.parseToJsonElement(body).jsonObject
+            val requestId = request["requestId"]?.stringValue() ?: return null
+            if (!requestId.matches(Regex("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", RegexOption.IGNORE_CASE))) return null
+            val explicitLabel = request["label"]
+            val requestedLabel = when {
+                explicitLabel == null || explicitLabel == JsonNull -> null
+                else -> {
+                    val value = explicitLabel.stringValue() ?: return null
+                    if (value == "") null else java.text.Normalizer.normalize(value.trim(), java.text.Normalizer.Form.NFC)
+                }
+            }
+            val recipe = request["recipe"] as? JsonObject
+            val typed = request["text"]?.let { it as? JsonPrimitive }?.takeIf { it.isString }
+            when {
+                recipe != null && "text" !in request -> {
+                    val harness = recipe["harness"]?.stringValue()?.takeIf { it.isNotBlank() && it.length <= 48 } ?: return null
+                    val contract = launcherRecipes[harness] ?: return null
+                    val rawOptions = recipe["options"] as? kotlinx.serialization.json.JsonArray ?: return null
+                    val optionIds = mutableListOf<String>()
+                    for (element in rawOptions) {
+                        val id = (element as? JsonPrimitive)?.takeIf { it.isString }?.content ?: return null
+                        optionIds += id
+                    }
+                    if (optionIds.size != optionIds.toSet().size) return null
+                    val chosenIds = optionIds.toSet()
+                    val chosen = contract.options.filter { it.id in chosenIds }
+                    if (chosen.size != chosenIds.size) return null
+                    val groups = chosen.mapNotNull { it.group }
+                    if (groups.size != groups.toSet().size) return null
+                    val command = (listOf(contract.binary) + chosen.map { it.args }).joinToString(" ")
+                    val label = requestedLabel ?: if (chosen.isEmpty()) contract.label else
+                        "${contract.label}, ${chosen.joinToString(", ") { it.label }}"
+                    ExpectedAddedLauncher(
+                        requestId, "recipe", "agent", harness, command, label, chosen.any { it.noPrompts },
+                    )
+                }
+                recipe == null && request["recipe"] == null && typed != null -> {
+                    val command = java.text.Normalizer.normalize(typed.content.trim(), java.text.Normalizer.Form.NFC)
+                    val defaultLabel = command.split(Regex("\\s+"), limit = 2).firstOrNull().orEmpty()
+                    val expectedLabel = requestedLabel ?: takeCodePoints(defaultLabel, 60)
+                    val noPrompts = request["noPrompts"] == JsonPrimitive(true) || scanNoPromptsForReceipt(command)
+                    when (request["kind"]?.stringValue()) {
+                        "command" -> {
+                            if ("harness" in request) return null
+                            ExpectedAddedLauncher(requestId, "text", "command", null, command, expectedLabel, noPrompts)
+                        }
+                        "agent" -> {
+                            val harness = request["harness"]?.stringValue()?.takeIf { launcherRecipes.containsKey(it) } ?: return null
+                            ExpectedAddedLauncher(requestId, "text", "agent", harness, command, expectedLabel, noPrompts)
+                        }
+                        else -> null
+                    }
+                }
+                else -> null
+            }
+        } catch (_: IllegalArgumentException) {
+            null
+        } catch (_: kotlinx.serialization.SerializationException) {
+            null
+        }
+    }
+
+    private fun scanNoPromptsForReceipt(command: String): Boolean {
+        val words = command.trim().split(Regex("\\s+")).map { word ->
+            if (word.length >= 2 && (word.first() == '\'' || word.first() == '\"') && word.last() == word.first()) {
+                word.substring(1, word.length - 1)
+            } else word
+        }
+        val flags = setOf(
+            "--dangerously-skip-permissions", "--permission-mode=bypassPermissions",
+            "--dangerously-bypass-approvals-and-sandbox", "--yolo", "--ask-for-approval=never",
+        )
+        if (words.any { it in flags }) return true
+        if (words.zipWithNext().any { (flag, value) ->
+                (flag == "--permission-mode" && value == "bypassPermissions") ||
+                    (flag == "--ask-for-approval" && value == "never")
+            }) return true
+        val executable = words.firstOrNull()?.substringAfterLast('/')?.substringAfterLast('\\')
+            ?.replace(Regex("\\.(?:exe|cmd|ps1)$", RegexOption.IGNORE_CASE), "")
+        return executable == "codex" && words.zipWithNext().any { (flag, value) -> flag == "-a" && value == "never" } ||
+            executable == "opencode" && "--auto" in words
+    }
+
+    private fun validAddedLauncherRow(response: AddedLauncherResponse, expected: ExpectedAddedLauncher): Boolean =
+        response.replayed != false && parseAddedLauncherRow(response.row, expected) != null
+
+    private fun parseAddedLauncherRow(row: JsonObject?, expected: ExpectedAddedLauncher): AddedLauncherRowContract? {
+        row ?: return null
+        val allowedFields = setOf("source", "id", "kind", "harness", "command", "label", "noPrompts", "addedBy", "addedAt", "addedAs")
+        val expectedFieldCount = if (expected.harness == null) 9 else 10
+        if (row.size != expectedFieldCount || row.keys.any { it !in allowedFields }) return null
+        fun string(key: String): String? = row[key]?.let { (it as? JsonPrimitive)?.takeIf { value -> value.isString }?.contentOrNull }
+        if (string("source") != "added") return null
+        val requestId = string("id")?.takeIf { it == expected.requestId } ?: return null
+        val kind = string("kind")?.takeIf { it == expected.kind } ?: return null
+        val addedAs = string("addedAs")?.takeIf { it == expected.addedAs } ?: return null
+        val harness = if (expected.harness == null) {
+            if ("harness" in row) return null
+            null
+        } else string("harness")?.takeIf { it == expected.harness } ?: return null
+        val command = string("command")?.takeIf { validLauncherText(it, 200) && it == expected.command } ?: return null
+        val label = string("label")?.takeIf { validLauncherText(it, 60) && it == expected.label } ?: return null
+        val addedBy = string("addedBy")?.takeIf {
+            it.isNotBlank() && it.length <= 48 && it == it.trim() && it.none { character -> character.isISOControl() }
+        } ?: return null
+        val noPromptsPrimitive = row["noPrompts"] as? JsonPrimitive ?: return null
+        if (noPromptsPrimitive.isString) return null
+        val noPrompts = noPromptsPrimitive.booleanOrNull?.takeIf { it == expected.noPrompts } ?: return null
+        val addedAtPrimitive = row["addedAt"] as? JsonPrimitive ?: return null
+        if (addedAtPrimitive.isString) return null
+        val addedAt = addedAtPrimitive.longOrNull?.takeIf { it in 0..9_007_199_254_740_991L } ?: return null
+        return AddedLauncherRowContract(requestId, kind, harness, command, label, noPrompts, addedBy, addedAt, addedAs)
+    }
+
+    private fun validLauncherText(value: String, maxCodePoints: Int): Boolean {
+        if (value.isBlank() || value != java.text.Normalizer.normalize(value.trim(), java.text.Normalizer.Form.NFC)) return false
+        if (value.codePointCount(0, value.length) > maxCodePoints) return false
+        return value.codePoints().noneMatch { code ->
+            code < 0x20 || code in 0x7f..0x9f || code == 0x2028 || code == 0x2029 ||
+                code in 0x202a..0x202e || code in 0x2066..0x2069 || code == 0x200e || code == 0x200f || code == 0x061c
+        }
+    }
+
+    private fun takeCodePoints(value: String, count: Int): String {
+        val end = value.offsetByCodePoints(0, minOf(count, value.codePointCount(0, value.length)))
+        return value.substring(0, end)
+    }
+
+    private fun JsonElement?.stringValue(): String? = (this as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
+
     override suspend fun planWorktree(connection: Connection, scope: Scope, cwd: String, branch: String?, parent: String?): ApiResult<WorktreePlanResponse> {
         require(cwd.isNotBlank())
         val query = buildList { add("cwd" to cwd); branch?.let { add("branch" to it) }; parent?.let { add("parent" to it) } }
@@ -360,6 +648,11 @@ class CollieApiClient(
         require(cwd.isNotBlank() && branch.isNotBlank() && requestId.isNotBlank())
         val body = WorktreeAtRequest(cwd, branch, base, folder, requestId, target.harness, target.command, target.shell)
         return executeWorktreeOpen(post(connection, scopedUrl(connection.origin, path("worktree"), scope), json.encodeToString(body)))
+    }
+
+    override suspend fun createWorktreeAtFrozen(connection: Connection, scope: Scope, canonicalBody: String): ApiResult<WorktreeOpenResponse> {
+        require(canonicalBody.isNotBlank() && canonicalBody.length <= 16_384)
+        return executeWorktreeOpen(post(connection, scopedUrl(connection.origin, path("worktree"), scope), canonicalBody))
     }
 
     override suspend fun closePane(connection: Connection, address: PaneAddress): ApiResult<ActionResponse> =
@@ -465,6 +758,17 @@ class CollieApiClient(
         val url = scopedUrl(connection.origin, path("workspace", workspaceId, "worktree"), scope)
         val body = json.encodeToString(BranchRequest(branch))
         return executeWorktreeOpen(post(connection, url, body))
+    }
+
+    override suspend fun createWorktreeFrozen(
+        connection: Connection,
+        scope: Scope,
+        workspaceId: String,
+        canonicalBody: String,
+    ): ApiResult<WorktreeOpenResponse> {
+        require(workspaceId.isNotBlank() && canonicalBody.isNotBlank())
+        val url = scopedUrl(connection.origin, path("workspace", workspaceId, "worktree"), scope)
+        return executeWorktreeOpen(post(connection, url, canonicalBody))
     }
 
     override suspend fun openWorktree(
@@ -705,6 +1009,8 @@ class CollieApiClient(
         read: (Response) -> ApiResult<T>,
     ): ApiResult<T> = try {
         client.newBuilder()
+            .followRedirects(false)
+            .followSslRedirects(false)
             .readTimeout(timeoutSeconds, TimeUnit.SECONDS)
             .writeTimeout(timeoutSeconds, TimeUnit.SECONDS)
             .build()

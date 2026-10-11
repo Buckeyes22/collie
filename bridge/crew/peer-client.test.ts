@@ -368,6 +368,7 @@ describe("PeerClient — the verdict matrix (§7, §10.2)", () => {
         warrantActiveGeneration: null,
         pairingDigest: null, pairingCollision: null,
         controlCapabilities: null,
+        receiptContextBound: null,
         mux: null,
       },
       status: 200,
@@ -1534,6 +1535,14 @@ describe("new capability absence on older peers", () => {
       const result = await client(replying({ protocol: CREW_PROTOCOL_VERSION, member: "laptop", controlCapabilities }).fetch).hello(laptop);
       expect(result.ok).toBe(true);
       if (result.ok) expect(result.value.controlCapabilities).toEqual(controlCapabilities?.controlOperations === true ? { controlOperations: true } : null);
+    }
+  });
+
+  test("receipt readiness is optional, boolean-only, and absence never inherits lead readiness", async () => {
+    for (const receiptContextBound of [undefined, true, false, "true"]) {
+      const result = await client(replying({ protocol: CREW_PROTOCOL_VERSION, member: "laptop", receiptContextBound }).fetch).hello(laptop);
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.value.receiptContextBound).toBe(typeof receiptContextBound === "boolean" ? receiptContextBound : null);
     }
   });
 });

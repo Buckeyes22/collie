@@ -2676,10 +2676,11 @@ describe("foundation routes on the admitted Crew dispatcher", () => {
     const seen: string[] = [];
     const handler = createCrewRouter({ store: h.store, audit: h.audit, transportPinned: true, now: () => T0,
       controlCapabilities: () => ({ controlOperations: true }),
+      receiptContextBound: () => true,
       dispatch: async (_req, url) => { seen.push(`${url.pathname}${url.search}`); return Response.json({ ok: true }); },
     });
     const hello = (await call(handler, CREW_HELLO_PATH, { headers: authed }))!;
-    expect(await hello.json()).toMatchObject({ controlCapabilities: { controlOperations: true } });
+    expect(await hello.json()).toMatchObject({ controlCapabilities: { controlOperations: true }, receiptContextBound: true });
     for (const [route, method] of [["refresh", "POST"], ["control/operations/intent", "GET"]]) {
       const result = (await call(handler, `${CREW_PREFIX}${route}?session=work`, { method, headers: authed }))!;
       expect(result.status).toBe(200);

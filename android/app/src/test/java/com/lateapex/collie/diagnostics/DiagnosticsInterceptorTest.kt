@@ -1,11 +1,25 @@
 package com.lateapex.collie.diagnostics
 
+import com.lateapex.collie.domain.CollieOrigin
+import com.lateapex.collie.domain.Connection
+import com.lateapex.collie.domain.Scope
+import com.lateapex.collie.network.ApiFailure
+import com.lateapex.collie.network.ApiResult
+import com.lateapex.collie.network.CollieApiClient
+import com.lateapex.collie.network.ImageBlob
+import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.ResponseBody
 import okhttp3.RequestBody.Companion.toRequestBody
+import okio.BufferedSource
+import okio.ForwardingSource
+import okio.buffer
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.tls.HandshakeCertificates
+import okhttp3.tls.HeldCertificate
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -13,6 +27,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.util.concurrent.atomic.AtomicLong
 
 class DiagnosticsInterceptorTest {
     private lateinit var server: MockWebServer
@@ -104,6 +119,35 @@ class DiagnosticsInterceptorTest {
     }
 
     @Test
+    fun intentCreationBodiesAreRedactedForMountedRoutesRegardlessOfMimeType() {
+        val paths = listOf(
+            "/mount/api/launch",
+            "/mount/api/worktree",
+            "/mount/api/workspace/ws-1/worktree",
+            "/mount/api/launchers/added",
+        )
+        paths.forEach { path ->
+            repeat(2) { // Initial POST and deliberate same-route replay share the same privacy rule.
+                val sentinel = "COMMAND-SECRET-SENTINEL"
+                server.enqueue(MockResponse().setResponseCode(200).setBody("{\"ok\":true,\"command\":\"$sentinel\"}"))
+                val request = Request.Builder()
+                    .url(server.url(path))
+                    .post("{\"requestId\":\"request-1\",\"command\":\"$sentinel\"}".toRequestBody("application/octet-stream".toMediaType()))
+                    .build()
+                client.newCall(request).execute().use { response ->
+                    assertTrue(response.body!!.string().contains(sentinel))
+                }
+                val (_, fields) = recorded.last()
+                assertEquals(true, fields["requestBodyRedacted"])
+                assertEquals(true, fields["responseBodyRedacted"])
+                assertFalse(fields.containsKey("requestBody"))
+                assertFalse(fields.containsKey("responseBody"))
+                assertFalse(fields.values.any { it.toString().contains(sentinel) })
+            }
+        }
+    }
+
+    @Test
     fun capturesBinaryBodiesAsSizeAndTypeOnlyNeverRawBytes() {
         val bytes = ByteArray(1024) { it.toByte() }
         server.enqueue(MockResponse().setResponseCode(200).setHeader("Content-Type", "image/png").setBody(okio.Buffer().write(bytes)))
@@ -119,6 +163,72 @@ class DiagnosticsInterceptorTest {
         assertFalse(fields.containsKey("requestBody"))
         assertEquals(1024L, (fields["responseBodyBytes"] as Number).toLong())
         assertFalse(fields.containsKey("responseBody"))
+    }
+
+    @Test
+    fun enabledDiagnosticsLeavesMountedBlobBodiesUntouchedForTheApiStreamingLimit() {
+        // CollieOrigin intentionally rejects cleartext; exercise the production HTTPS API path
+        // with a locally trusted fixture certificate rather than weakening that invariant.
+        server.shutdown()
+        val certificate = HeldCertificate.Builder()
+            .commonName("localhost")
+            .addSubjectAlternativeName("localhost")
+            .build()
+        val serverCertificates = HandshakeCertificates.Builder().heldCertificate(certificate).build()
+        val clientCertificates = HandshakeCertificates.Builder().addTrustedCertificate(certificate.certificate).build()
+        server = MockWebServer().apply {
+            useHttps(serverCertificates.sslSocketFactory(), false)
+            start()
+        }
+        val oversized = ByteArray(ImageBlob.MAX_BYTES + 384 * 1024) { (it and 0xff).toByte() }
+        val mimeHeaders = listOf(null, "image/svg+xml", "text/plain", "image/png")
+        for (mime in mimeHeaders) {
+            val sourceBytesRead = AtomicLong()
+            val recorder = RecordingDiagnosticsRecorder(recorded)
+            val diagnosticClient = CollieApiClient.defaultHttpClient().newBuilder()
+                .sslSocketFactory(clientCertificates.sslSocketFactory(), clientCertificates.trustManager)
+                .addInterceptor(DiagnosticsInterceptor(recorder))
+                .addNetworkInterceptor { chain ->
+                    val response = chain.proceed(chain.request())
+                    val originalBody = response.body ?: return@addNetworkInterceptor response
+                    val countedSource = object : ForwardingSource(originalBody.source()) {
+                        override fun read(sink: okio.Buffer, byteCount: Long): Long {
+                            val read = super.read(sink, byteCount)
+                            if (read > 0) sourceBytesRead.addAndGet(read)
+                            return read
+                        }
+                    }.buffer()
+                    response.newBuilder().body(object : ResponseBody() {
+                        override fun contentType() = originalBody.contentType()
+                        override fun contentLength() = originalBody.contentLength()
+                        override fun source(): BufferedSource = countedSource
+                    }).build()
+                }
+                .build()
+            val api = CollieApiClient(diagnosticClient, Json { ignoreUnknownKeys = true })
+            val response = MockResponse().setChunkedBody(okio.Buffer().write(oversized), 16 * 1024)
+            if (mime != null) response.setHeader("Content-Type", mime)
+            server.enqueue(response)
+
+            val result = kotlinx.coroutines.runBlocking {
+                api.imageBlob(
+                    Connection(CollieOrigin(server.url("/mounted/").toString()), "phone", "token"),
+                    Scope("peer", "work"),
+                    "ab".repeat(32),
+                )
+            }
+
+            assertTrue("over-limit response is refused for MIME $mime", result is ApiResult.Failure && (result as ApiResult.Failure).error is ApiFailure.Protocol)
+            assertTrue(
+                "enabled diagnostics must not pre-buffer MIME $mime: read ${sourceBytesRead.get()} bytes",
+                sourceBytesRead.get() <= ImageBlob.MAX_BYTES + 16 * 1024L,
+            )
+            val fields = recorded.last().second
+            assertEquals("/mounted/api/blobs/${"ab".repeat(32)}", fields["path"])
+            assertEquals(true, fields["responseBodyStreaming"])
+            assertFalse(fields.containsKey("responseBody"))
+            server.takeRequest()
+        }
     }
 
     @Test

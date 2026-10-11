@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import com.lateapex.collie.CollieApplication
 import com.lateapex.collie.R
 import com.lateapex.collie.data.CollieRepository
+import com.lateapex.collie.data.ScopedReadContext
 import com.lateapex.collie.domain.PaneAddress
 import com.lateapex.collie.domain.MuxKeyGrammar
 import com.lateapex.collie.domain.PollingBackoff
@@ -75,6 +76,8 @@ data class PaneUiState(
     val transcriptReason: String? = null,
     val transcriptHasMore: Boolean = false,
     val transcriptQueued: List<String> = emptyList(),
+    /** Authority of the last accepted live transcript page; redraws cannot mint a new actor. */
+    val transcriptReadContext: ScopedReadContext? = null,
     val codexAcceptedReplies: List<String> = emptyList(),
 )
 
@@ -161,9 +164,15 @@ class PaneViewModel(
             mutableState.value = PaneUiState(clearReplyDraft = true)
         }
     }
+    private val readContextRegistration = repository.onReadContextInvalidated {
+        chatEtag = null
+        transcriptEtag = null
+        mutableState.value = mutableState.value.copy(transcriptReadContext = null)
+    }
 
     override fun onCleared() {
         authorityRegistration.close()
+        readContextRegistration.close()
         super.onCleared()
     }
 
@@ -815,8 +824,8 @@ class PaneViewModel(
     private var transcriptSkipPolls = 0
 
     /** The last poll page's ETag: an unchanged page then costs a bodiless 304, not ~36 KB. */
-    private var transcriptEtag: String? = null
-    private var chatEtag: String? = null
+    @Volatile private var transcriptEtag: String? = null
+    @Volatile private var chatEtag: String? = null
     private var legacyChat = false
     private var transcriptConnection = repository.connection.value
     private val chatWindow = LiveChatWindow()
@@ -829,16 +838,24 @@ class PaneViewModel(
             legacyChat = false
             transcriptEtag = null
             transcriptSkipPolls = 0
-            mutableState.value = mutableState.value.copy(transcript = emptyList(), transcriptQueued = emptyList(), transcriptHasMore = false, transcriptAvailable = null)
+            mutableState.value = mutableState.value.copy(
+                transcript = emptyList(), transcriptQueued = emptyList(), transcriptHasMore = false,
+                transcriptAvailable = null, transcriptReadContext = null,
+            )
         }
         if (transcriptSkipPolls > 0) {
             transcriptSkipPolls--
             return
         }
+        // Keep one immutable read actor across transport dispatch and result acceptance. A later
+        // redraw may keep old journal text, but cannot grant those entries a new image authority.
+        val transcriptContext = repository.readContext(address.scope, address.paneId) ?: return
         if (!legacyChat) {
             val chatConnection = repository.connection.value
-            val chatResult = withCurrentActor { repository.chat(address, limit = TRANSCRIPT_PAGE, after = chatWindow.after, etag = chatEtag) }
-            if (repository.connection.value !== chatConnection) return
+            val chatResult = withCurrentActor {
+                repository.chat(address, limit = TRANSCRIPT_PAGE, after = chatWindow.after, etag = chatEtag, expectedContext = transcriptContext)
+            }
+            if (repository.connection.value !== chatConnection || !repository.isCurrent(transcriptContext)) return
             when (val result = chatResult) {
                 is ApiResult.Success -> {
                     val page = result.value
@@ -846,15 +863,27 @@ class PaneViewModel(
                         chatWindow.clear()
                         chatEtag = null
                         transcriptSkipPolls = TRANSCRIPT_RETRY_POLLS
-                        mutableState.value = mutableState.value.copy(transcriptAvailable = false, transcriptReason = page.reason, transcript = emptyList(), transcriptQueued = emptyList(), transcriptHasMore = false)
+                        mutableState.value = mutableState.value.copy(transcriptAvailable = false, transcriptReason = page.reason, transcript = emptyList(), transcriptQueued = emptyList(), transcriptHasMore = false, transcriptReadContext = transcriptContext)
                     } else if (chatWindow.merge(page)) {
                         acceptedReplies()?.reconcile(page)
                         chatEtag = result.etag
-                        mutableState.value = mutableState.value.copy(transcript = chatWindow.entries, transcriptQueued = chatWindow.queued, transcriptAvailable = true, transcriptReason = null, transcriptHasMore = chatWindow.hasOlder, codexAcceptedReplies = acceptedReplies()?.texts.orEmpty())
+                        mutableState.value = mutableState.value.copy(transcript = chatWindow.entries, transcriptQueued = chatWindow.queued, transcriptAvailable = true, transcriptReason = null, transcriptHasMore = chatWindow.hasOlder, transcriptReadContext = transcriptContext, codexAcceptedReplies = acceptedReplies()?.texts.orEmpty())
+                    } else {
+                        // A well-formed response can still be rejected by the transcript window
+                        // (for example, an older revision from the same live generation). Keep
+                        // the admitted actor unchanged: a retired/null actor must not regain
+                        // authority over retained image rows until a page is actually merged.
                     }
                     return
                 }
-                is ApiResult.NotModified -> return
+                is ApiResult.NotModified -> {
+                    val admitted = mutableState.value.transcriptReadContext
+                    if (admitted != null && repository.isCurrent(admitted) &&
+                        admitted.key == transcriptContext.key && admitted.navigationGeneration == transcriptContext.navigationGeneration) {
+                        mutableState.value = mutableState.value.copy(transcriptReadContext = admitted)
+                    }
+                    return
+                }
                 is ApiResult.Failure -> {
                     val error = result.error
                     if (error is ApiFailure.Http && error.status == 404 || error is ApiFailure.Protocol && error.message == "Live chat is unavailable") {
@@ -867,8 +896,11 @@ class PaneViewModel(
         val limit = if (firstLoad) TRANSCRIPT_PAGE else TRANSCRIPT_POLL
         // The long first page and the short poll page are different reads with different ETags.
         val etag = if (firstLoad) null else transcriptEtag
-        when (val result = withCurrentActor { repository.history(address, limit = limit, etag = etag) }) {
+        when (val result = withCurrentActor {
+            repository.history(address, limit = limit, etag = etag, expectedContext = transcriptContext)
+        }) {
             is ApiResult.Success -> {
+                if (!repository.isCurrent(transcriptContext)) return
                 val page = result.value
                 transcriptEtag = if (firstLoad || !page.available) null else result.etag
                 if (!page.available) {
@@ -877,6 +909,7 @@ class PaneViewModel(
                         transcriptAvailable = false,
                         transcriptReason = page.reason,
                         transcript = emptyList(),
+                        transcriptReadContext = transcriptContext,
                     )
                     return
                 }
@@ -884,32 +917,63 @@ class PaneViewModel(
                     transcript = HistoryPresentation.mergeNewer(mutableState.value.transcript, page.entries),
                     transcriptAvailable = true,
                     transcriptReason = null,
+                    transcriptReadContext = transcriptContext,
                     // A poll's short page cannot say what lies before the oldest entry loaded.
                     transcriptHasMore = if (firstLoad) page.hasMore else mutableState.value.transcriptHasMore,
                 )
             }
-            is ApiResult.Failure, is ApiResult.NotModified -> Unit
+            is ApiResult.Failure -> Unit
+            is ApiResult.NotModified -> {
+                val admitted = mutableState.value.transcriptReadContext
+                if (admitted != null && repository.isCurrent(admitted) &&
+                    admitted.key == transcriptContext.key && admitted.navigationGeneration == transcriptContext.navigationGeneration) {
+                    mutableState.value = mutableState.value.copy(transcriptReadContext = admitted)
+                }
+            }
         }
     }
 
     fun loadOlderTranscript() {
         val oldest = mutableState.value.transcript.firstOrNull()?.uuid ?: return
+        // Bind the request to the authority visible at the user's action. A queued coroutine
+        // cannot silently adopt replacement credentials after a navigation retirement.
+        val readContext = repository.readContext(address.scope, address.paneId) ?: return
         viewModelScope.launch {
             if (!legacyChat) {
                 val before = chatWindow.before ?: return@launch
-                val chatConnection = repository.connection.value
-                val result = withCurrentActor { repository.chat(address, limit = TRANSCRIPT_PAGE, before = before) }
-                if (repository.connection.value !== chatConnection) return@launch
-                if (result is ApiResult.Success && chatWindow.merge(result.value)) {
-                    mutableState.value = mutableState.value.copy(transcript = chatWindow.entries, transcriptQueued = chatWindow.queued, transcriptHasMore = chatWindow.hasOlder)
+                if (!repository.isCurrent(readContext)) return@launch
+                val result = repository.chat(
+                    address,
+                    limit = TRANSCRIPT_PAGE,
+                    before = before,
+                    expectedContext = readContext,
+                )
+                if (!repository.isCurrent(readContext)) return@launch
+                if (result is ApiResult.Success && result.value.available && chatWindow.merge(result.value)) {
+                    mutableState.value = mutableState.value.copy(
+                        transcript = chatWindow.entries,
+                        transcriptQueued = chatWindow.queued,
+                        transcriptHasMore = chatWindow.hasOlder,
+                        transcriptAvailable = true,
+                        transcriptReadContext = readContext,
+                    )
                 }
                 return@launch
             }
-            val result = withCurrentActor { repository.history(address, limit = TRANSCRIPT_PAGE, before = oldest) }
+            if (!repository.isCurrent(readContext)) return@launch
+            val result = repository.history(
+                address,
+                limit = TRANSCRIPT_PAGE,
+                before = oldest,
+                expectedContext = readContext,
+            )
+            if (!repository.isCurrent(readContext)) return@launch
             if (result is ApiResult.Success && result.value.available) {
                 mutableState.value = mutableState.value.copy(
                     transcript = HistoryPresentation.mergeOlder(mutableState.value.transcript, result.value.entries),
                     transcriptHasMore = result.value.hasMore,
+                    transcriptAvailable = true,
+                    transcriptReadContext = readContext,
                 )
             }
         }

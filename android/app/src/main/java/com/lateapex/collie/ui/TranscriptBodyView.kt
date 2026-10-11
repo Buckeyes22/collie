@@ -15,6 +15,9 @@ import androidx.core.view.isVisible
 import com.google.android.material.button.MaterialButton
 import com.lateapex.collie.R
 import com.lateapex.collie.network.TranscriptEntry
+import com.lateapex.collie.data.ScopedImageLoader
+import com.lateapex.collie.data.ScopedReadContext
+import com.lateapex.collie.data.ScopedRequestKey
 
 /**
  * The pane body for a journalled agent: one turn card per transcript entry, grown upwards by
@@ -98,6 +101,7 @@ class TranscriptBodyView @JvmOverloads constructor(
     private val turns = linkedMapOf<String, View>()
     private var renderer: HistoryTurnRenderer? = null
     private var boundAgent: String? = null
+    private var boundImageActor: ImageRenderActor? = null
     private var boundEntries: List<TranscriptEntry> = emptyList()
 
     init {
@@ -110,7 +114,14 @@ class TranscriptBodyView @JvmOverloads constructor(
         turnsContainer.addView(queuedContainer)
     }
 
-    fun bind(agent: String, entries: List<TranscriptEntry>, hasMore: Boolean, queued: List<String> = emptyList()) {
+    fun bind(
+        agent: String,
+        entries: List<TranscriptEntry>,
+        hasMore: Boolean,
+        queued: List<String> = emptyList(),
+        imageLoader: ScopedImageLoader? = null,
+        readContext: ScopedReadContext? = null,
+    ) {
         val atBottom = scroll.scrollY + scroll.height >= (scroll.getChildAt(0)?.height ?: 0) - dp(8)
         // The reader's place is the first turn on screen and its offset from the top. Restoring
         // that, rather than shifting by however much the list grew, keeps an append below from
@@ -119,14 +130,17 @@ class TranscriptBodyView @JvmOverloads constructor(
         val anchor = if (atBottom) null else firstVisibleTurn()
         loadOlder.isVisible = hasMore
         // A pane switch or a cleared journal starts the body over; a normal re-bind only appends.
-        val reset = turns.isNotEmpty() && turns.keys.any { key -> entries.none { it.uuid == key } }
+        val imageActor = readContext?.let { ImageRenderActor(it.key, it.navigationGeneration) }
+        val imageAuthorityChanged = boundImageActor != imageActor
+        val reset = turns.isNotEmpty() && (imageAuthorityChanged || turns.keys.any { key -> entries.none { it.uuid == key } })
         if (reset) {
             turns.clear()
             turnsContainer.removeViews(1, turnsContainer.childCount - 2)
         }
-        if (agent != boundAgent || renderer == null) {
+        if (agent != boundAgent || renderer == null || boundImageActor != imageActor) {
             boundAgent = agent
-            renderer = HistoryTurnRenderer(context, agent, expandedTools, ::toggleTool)
+            boundImageActor = imageActor
+            renderer = HistoryTurnRenderer(context, agent, expandedTools, ::toggleTool, imageLoader = imageLoader, readContext = readContext)
         }
         val oldViews = turns.toMap()
         val previous = boundEntries.associateBy { it.uuid }
@@ -194,6 +208,11 @@ class TranscriptBodyView @JvmOverloads constructor(
         // though the trace showed the bottom (S25 Ultra, 2026-09-18).
         turnsContainer.doOnPreDraw { restore() }
     }
+
+    private data class ImageRenderActor(
+        val key: ScopedRequestKey,
+        val navigationGeneration: Long,
+    )
 
     /** The first turn whose bottom is below the scroll top, with its offset from that top. */
     private fun firstVisibleTurn(): Pair<View, Int>? {

@@ -9,7 +9,10 @@ the first Android release from this fork.
 - Decode declared string agent statuses and tolerate bounded object-shaped status compatibility while showing unfamiliar states as unknown.
 
 - Render structured history calls and question choices with distinct completed, denied and failed outcomes.
+- Show supported journal images in live and historical transcripts with scoped authenticated blob loading, bounded decoding, and clear failure states.
+- Persist encrypted, owner-bound launch, worktree and launcher-add intents; keep uncertain outcomes visible and require an explicit same-request retry only where the owning host advertises durable receipt support. Preserve the one-shot legacy workspace-branch create without offering an unverifiable retry, and add native launch choices plus worktree planning with base and parent-folder selection.
 - Bind reads, terminal actions and media to the current server, Crew leader, host, session and pane; freeze unverified access without discarding a valid pairing, and retire sensitive content for authoritative pairing refusal.
+- Keep restored History images inert until a reachable fresh read admits their turns; carry the same captured authority through live and legacy older-page reads.
 - Make Space Look now refresh its owning session before reloading, with an ordinary-reload explanation for older peers.
 - Show declared mux topology freshness separately from the last successful read, negotiate bounded pane mirror growth, and label Find as search within loaded turns.
 

@@ -53,22 +53,20 @@ class HistoryTurnRendererTest {
     }
 
     @Test
-    fun imageReferenceIsHandedToB04RendererOnlyAfterDisclosureOpens() {
+    fun authenticatedImageCardIsCreatedOnlyAfterDisclosureOpens() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val entry = TranscriptEntry(
             "u2", "2026-09-10T00:00:00Z", "assistant", listOf(
                 TranscriptPart(kind = "tool", name = "view", summary = "image", result = TranscriptResult("caption", imageUrl = "https://example.test/image")),
             ),
         )
-        var loads = 0
         val turn = HistoryPresentation.turn(entry, "agent", context.resources)
-
-        HistoryTurnRenderer(context, "agent", mutableSetOf(), { _, _ -> }, renderToolImage = { loads++; null })
+        val collapsed = HistoryTurnRenderer(context, "agent", mutableSetOf(), { _, _ -> })
             .turnView(turn, showHeader = false)
-        assertEquals(0, loads)
-        HistoryTurnRenderer(context, "agent", mutableSetOf("u2" to 0), { _, _ -> }, renderToolImage = { loads++; null })
+        assertEquals(0, descendants(collapsed).filterIsInstance<AuthenticatedImageView>().size)
+        val expanded = HistoryTurnRenderer(context, "agent", mutableSetOf("u2" to 0), { _, _ -> })
             .turnView(turn, showHeader = false)
-        assertEquals(1, loads)
+        assertEquals(1, descendants(expanded).filterIsInstance<AuthenticatedImageView>().size)
     }
 
     @Test
@@ -123,7 +121,7 @@ class HistoryTurnRendererTest {
     }
 
     @Test
-    fun imageOnlyToolResultUsesImageSeamWithoutAnEmptyTextBody() {
+    fun imageOnlyToolResultUsesAuthenticatedCardWithoutAnEmptyTextBody() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val turn = HistoryTurn(
             uuid = "image-only",
@@ -135,21 +133,18 @@ class HistoryTurnRendererTest {
                 HistoryPart.Tool(
                     name = "view", summary = "Image result", callId = null, call = null, callTruncated = false,
                     result = null, resultStatus = ToolResultStatus.COMPLETED, resultTruncated = false,
-                    resultImageUrl = "content://image-reference",
+                    image = HistoryPart.Image("content://image-reference", "Image result"),
                 ),
             ),
         )
-        var loads = 0
         val root = HistoryTurnRenderer(
             context, "agent", mutableSetOf("image-only" to 0), { _, _ -> },
-            renderToolImage = { loads++; TextView(context).apply { text = "image preview"; tag = "rendered-image-preview" } },
         ).turnView(turn, showHeader = false)
         val renderedText = descendants(root).filterIsInstance<TextView>()
 
-        assertEquals(1, loads)
+        assertEquals(1, descendants(root).filterIsInstance<AuthenticatedImageView>().size)
         assertTrue(renderedText.any { it.text.toString() == "Completed" })
         assertTrue(renderedText.none { it.text.isEmpty() })
-        assertTrue(descendants(root).any { it.tag == "rendered-image-preview" })
     }
 
     @Test

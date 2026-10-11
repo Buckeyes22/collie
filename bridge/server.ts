@@ -1,5 +1,6 @@
 import { controlScope, refusal, refusalResponse } from "./control/contracts.ts";
 import { OperationStore } from "./control/operations.ts";
+import { executeBoundIntent, ownerBoundCallerReady, ownerBoundOperationReady, type IntentOwnerContext } from "./intent-operation-binding.ts";
 import { serveControlRoute } from "./control/routes.ts";
 import { hostControlForMux } from "./mux/registry.ts";
 import type { HostControlPort } from "./host-control/types.ts";
@@ -50,7 +51,7 @@ import { DEFAULT_NOTIFY_PREFS, type NotifyPrefs, type NotifyPrefsStore } from ".
 import { MAX_FAVOURITES, MAX_FOLDER_CHARS, type FolderSurface } from "./folders.ts";
 import { isValidWorktreeBranch } from "./worktree-branch.ts";
 import { createHarnessProbe, type HarnessProbe } from "./harness-launch.ts";
-import { launchReplay, memoryLaunchReceipts, type LaunchReceiptSurface } from "./launch-receipts.ts";
+import { launchReplay, memoryLaunchReceipts, type LaunchReceipt, type LaunchReceiptSurface } from "./launch-receipts.ts";
 import {
   memoryWorktreeChoices,
   type BaseKind,
@@ -69,8 +70,11 @@ import {
 import { askGit, parseBase, resolveBase, resolveDefaultBranch, type GitAsk } from "./worktree-base.ts";
 import { memoryWorktreeBases, type WorktreeBaseSurface } from "./worktree-bases.ts";
 import {
+  keyedIntentFingerprint,
+  matchReceiptBinding,
   isRequestId,
   memoryWorktreeReceipts,
+  type IntentReceiptBinding,
   type WorktreeReceipt,
   type WorktreeReceiptSurface,
 } from "./worktree-receipts.ts";
@@ -155,7 +159,7 @@ import { LOCAL_LABEL, type LocalCredential } from "./local-secret.ts";
 import { modeForWire } from "./crew/mode.ts";
 import type { CrewRuntime } from "./crew/config.ts";
 import type { CrewLead } from "./crew/lead.ts";
-import { crewDeviceOf, crewGate, type GateLevel } from "./crew/peer-gate.ts";
+import { crewDeviceOf, crewPairedIdentityOf, crewGate, type GateLevel } from "./crew/peer-gate.ts";
 import { snapshotPlan } from "./crew/merge.ts";
 import { selectHostFrom, type HostSelector } from "./crew/registry.ts";
 import type { CrewHandler, CrewSurface } from "./crew/router.ts";
@@ -594,8 +598,10 @@ interface RouteCaller {
   gate(level: GateLevel): Response | null;
   /** The device a write is attributed to. */
   device(): string | null;
-  /** New ownership-bound routes fail closed until the validated pairing projection is available. */
+  /** Stable pairing-record identity; null for local credentials, legacy peers or malformed records. */
   pairedIdentity?(): string | null;
+  /** `undefined` is a test/legacy caller, `null` is a production owner-bound receipt failure. */
+  intentReceiptKey?: Uint8Array | null;
   /** Where a write's audit line lands — the peer's is pre-stamped `via:"crew"` + originator (§12). */
   readonly audit: AuditLog;
   /**
@@ -604,6 +610,60 @@ interface RouteCaller {
    */
   readonly via?: "crew";
 }
+
+function receiptContextFor(
+  caller: RouteCaller,
+  runtime: string,
+  owningHost = "local",
+): IntentOwnerContext | null | undefined {
+  if (caller.intentReceiptKey === undefined) return undefined;
+  const deviceIdentity = caller.pairedIdentity?.() ?? null;
+  if (caller.intentReceiptKey === null || deviceIdentity === null) return null;
+  return { key: caller.intentReceiptKey, deviceIdentity, owningHost, runtime };
+}
+
+function intentBinding(
+  context: IntentOwnerContext | null | undefined,
+  operation: string,
+  body: JsonValue,
+): IntentReceiptBinding | undefined {
+  if (context == null) return undefined;
+  const binding: IntentReceiptBinding = {
+        deviceIdentity: context.deviceIdentity,
+        operation,
+        runtime: context.runtime,
+        intentFingerprint: keyedIntentFingerprint(context.key, body),
+      };
+  if (context.owningHost !== undefined) binding.owningHost = context.owningHost;
+  return binding;
+}
+
+function receiptBindingMismatch(
+  receipts: WorktreeReceiptSurface,
+  requestId: string,
+  incoming: IntentReceiptBinding | undefined,
+): boolean {
+  if (incoming === undefined) return false;
+  const stored = receipts.get(requestId);
+  if (stored !== undefined) return matchReceiptBinding(stored.binding, incoming) !== "match";
+  if (receipts.inflight(requestId) !== undefined) {
+    return matchReceiptBinding(receipts.inflightBinding(requestId), incoming) !== "match";
+  }
+  return false;
+}
+
+function intentAnswerStatus(answer: { readonly ok: boolean; readonly code?: string }): number {
+  if (answer.code === "launch.request_mismatch") return 409;
+  if (answer.code === "launch.receipts_unavailable") return 503;
+  return 200;
+}
+
+const worktreeIntentUnavailable = (): WorktreeCreateResponse => ({ ok: false, ...apiError("launch.receipts_unavailable") });
+const worktreeIntentUnknown = (): WorktreeCreateResponse => ({ ok: false, ...apiError("launch.outcome_unknown") });
+const worktreeIntentMismatch = (): WorktreeCreateResponse => ({ ok: false, ...apiError("launch.request_mismatch") });
+const launchIntentUnavailable = (): CreateResponse => ({ ok: false, ...apiError("launch.receipts_unavailable") });
+const launchIntentUnknown = (): CreateResponse => ({ ok: false, ...apiError("launch.outcome_unknown") });
+const launchIntentMismatch = (): CreateResponse => ({ ok: false, ...apiError("launch.request_mismatch") });
 
 /**
  * One adapter's declaration, as the phone reads it (M10/06).
@@ -804,6 +864,7 @@ export function bridgeConfigBody(opts: {
   push: boolean;
   vapidPublicKey: string;
   build: string;
+  receiptContextBound?: boolean;
   mode: CrewRuntime["mode"];
   /**
    * The active adapter, when there is one. Optional so the crew-mode assertions below (and any
@@ -864,6 +925,7 @@ export function bridgeConfigBody(opts: {
     vapidPublicKey: opts.vapidPublicKey,
     build: opts.build,
   };
+  if (opts.receiptContextBound !== undefined) wire.receiptContextBound = opts.receiptContextBound;
   // Assigned, never conditionally spread: a solo instance's body must carry NEITHER key, byte for
   // byte as before the crew existed (CREW_PROTOCOL.md §11).
   if (mode !== undefined) wire.mode = mode;
@@ -917,7 +979,7 @@ export interface UpdateActionDeps {
   beginCrewRun?: (a: { runId: string; to: string }) => void;
 }
 
-export function startServer(opts: {
+export async function startServer(opts: {
   cfg: Config;
   registry: SessionRegistry;
   push: Push;
@@ -1086,6 +1148,8 @@ export function startServer(opts: {
    * writes nothing until a create succeeds.
    */
   worktreeReceipts?: WorktreeReceiptSurface;
+  /** `undefined` keeps unit callers on their legacy in-memory contract; `null` is production fail-closed. */
+  intentReceiptKey?: Uint8Array | null;
   /**
    * The ref each new worktree was cut from (ADR 0089, amended, `bridge/worktree-bases.ts`). Absent
    * means an in-memory store, which is every caller that builds this server by hand in a test.
@@ -1157,6 +1221,8 @@ export function startServer(opts: {
   const launchReceipts = opts.launchReceipts ?? memoryLaunchReceipts();
   const controlOperations = opts.controlOperations ?? new OperationStore(cfg.stateDir);
   const controlHostId = opts.controlHostId ?? opts.crewStatus?.()?.self.id ?? "local";
+  await controlOperations.prepare();
+  const ownerBoundReady = () => ownerBoundOperationReady(opts.intentReceiptKey, controlOperations.isReady());
   const harnesses = opts.harnesses ?? createHarnessProbe();
   const worktreeChoices = opts.worktreeChoices ?? memoryWorktreeChoices();
   const machines = opts.machines;
@@ -1466,6 +1532,7 @@ export function startServer(opts: {
 
     const controlled = await serveControlRoute(req, url, {
       gate: (level) => caller.gate(level),
+      device: () => caller.device(),
       pairedIdentity: () => caller.pairedIdentity?.() ?? null,
       resolve: async () => {
         const runtime = await caller.resolve();
@@ -1517,6 +1584,8 @@ export function startServer(opts: {
       return launch(rt.herdr, rt.engine, req, caller.audit, caller.device(), rt.name, allowedLaunchers, {}, {
         harnesses,
         receipts: launchReceipts,
+        receiptContext: receiptContextFor(caller, rt.name, controlHostId),
+        operations: controlOperations,
         folders,
         switches: launcherSources.switches,
         recentRuns,
@@ -1537,7 +1606,7 @@ export function startServer(opts: {
     // Add, remove or rename a row a phone added (ADR 0094). Writes, on the write gate, and
     // session-scoped for `/api/launchers`' reason: `?host=` reaches THAT machine's own store through
     // the ordinary forward, and nothing is ever copied to another machine.
-    const addedAnswer = await serveAddedLauncherRoute(req, pathname, caller, launcherSources);
+    const addedAnswer = await serveAddedLauncherRoute(req, pathname, caller, launcherSources, controlOperations, controlHostId);
     if (addedAnswer !== null) return addedAnswer;
     // Remove one line from this machine's one-off history, or clear it (ADR 0095). Writes, and
     // session-scoped for the same reason: `?host=` reaches that member's own history.
@@ -1684,6 +1753,8 @@ export function startServer(opts: {
       server.timeout(req, WORKTREE_ROUTE_BUDGET_S);
       return createWorktreeAt(rt.herdr, rt.engine, req, caller.audit, caller.device(), rt.name, allowedLaunchers, {
         receipts: worktreeReceipts,
+        receiptContext: receiptContextFor(caller, rt.name, controlHostId),
+        operations: controlOperations,
         bases: worktreeBases,
         choices: worktreeChoices,
         harnesses,
@@ -1717,7 +1788,7 @@ export function startServer(opts: {
         allowedLaunchers,
         worktreeReceipts,
         {},
-        { bases: worktreeBases },
+        { bases: worktreeBases, receiptContext: receiptContextFor(caller, rt.name, controlHostId), operations: controlOperations },
       );
     }
 
@@ -1824,7 +1895,8 @@ export function startServer(opts: {
     // M22/03: this collie's own capability declaration, for `hello`. The SAME expression the
     // `/api/config` route below publishes to a browser — the primary session's adapter — so a peer
     // cannot report capabilities that differ from the ones it serves its own operator.
-    controlCapabilities: () => ({ controlOperations: false }),
+    controlCapabilities: () => ({ controlOperations: ownerBoundReady() }),
+    receiptContextBound: ownerBoundReady,
     mux: () => {
       const active = registry.get();
       return active === undefined ? null : muxConfigBody(active.herdr);
@@ -1861,6 +1933,8 @@ export function startServer(opts: {
           return response;
         },
         device: () => device,
+        pairedIdentity: () => crewPairedIdentityOf(req),
+        intentReceiptKey: opts.intentReceiptKey,
         audit: audit.scoped({ via: "crew", from }),
         via: "crew",
       });
@@ -2139,6 +2213,7 @@ export function startServer(opts: {
             const forwarded = secure(
               await crewLead!.forward(req, url, resolved, {
                 device: whois(req).device,
+                pairedIdentity: pairedIdentityOf(req, pairingGate),
                 // A member's text is masked here too, by the lead's own switch, so a member one
                 // release behind cannot send a key to the phone in clear (CREW_PROTOCOL.md §9.1).
                 mask: cfg.redact ? maskForwardedAnswer : undefined,
@@ -2232,6 +2307,8 @@ export function startServer(opts: {
         resolve: target,
         gate: browserGate,
         device: () => whois(req).device,
+        pairedIdentity: () => pairedIdentityOf(req, pairingGate),
+        intentReceiptKey: opts.intentReceiptKey,
         audit,
       });
       if (sessionRouted) return sessionRouted;
@@ -2312,7 +2389,7 @@ export function startServer(opts: {
             operatorFonts: myFonts,
             mux: activeMux?.herdr,
             // Peer support must be positively negotiated; the lead never lends its declarations.
-            control: { capabilities: scoped?.kind === "peer" ? crewLead?.controlFor(scoped.link.memberId) ?? {} : { controlOperations: false } },
+            control: { capabilities: scoped?.kind === "peer" ? crewLead?.controlFor(scoped.link.memberId) ?? {} : { controlOperations: ownerBoundCallerReady(opts.intentReceiptKey, controlOperations.isReady(), pairedIdentityOf(req, pairingGate)) } },
             hostControl: scoped?.kind === "peer" ? undefined : hostControlConfig(opts.hostControl ?? hostControlForMux(cfg.mux)),
             // Assigned through `?? undefined` rather than conditionally, so the no-`host=` request
             // builds the byte-identical body it always did (CREW_PROTOCOL.md §11).
@@ -2330,6 +2407,14 @@ export function startServer(opts: {
             // switch is on, so the lead's value is what decides what reaches this phone, and the
             // member's own is not something the lead has been told.
             redact: scoped === undefined || scoped.kind === "local" ? cfg.redact : undefined,
+            // A lead cannot infer a member's receipt-key readiness from its own key. Host-scoped
+            // configuration stays absent until that member publishes its own capability.
+            receiptContextBound:
+              scoped?.kind === "peer"
+                ? crewLead?.receiptContextBoundFor(scoped.link.memberId) ?? undefined
+                : opts.intentReceiptKey !== null &&
+                  opts.intentReceiptKey !== undefined &&
+                  ownerBoundCallerReady(opts.intentReceiptKey, controlOperations.isReady(), pairedIdentityOf(req, pairingGate)),
           }),
           req.headers.get("accept-encoding"),
         );
@@ -4664,7 +4749,12 @@ export async function createWorktree(
   wait: PaneReadyOptions = {},
   // The starting-point half (ADR 0089, amended): where the base is remembered and how git is asked.
   // Both default to the real thing, so a caller that predates `base` passes neither.
-  deps: { bases?: WorktreeBaseSurface; ask?: GitAsk } = {},
+  deps: {
+    bases?: WorktreeBaseSurface;
+    ask?: GitAsk;
+    receiptContext?: IntentOwnerContext | null;
+    operations?: OperationStore;
+  } = {},
 ): Promise<Response> {
   const ae = req.headers.get("accept-encoding");
   let body: JsonValue;
@@ -4681,10 +4771,18 @@ export async function createWorktree(
   const rawId = fields.requestId;
   if (rawId !== undefined && !isRequestId(rawId)) return text("bad requestId", 400);
   const requestId = rawId;
+  if (requestId !== undefined && deps.receiptContext === null) {
+    return json({ ok: false, ...apiError("launch.receipts_unavailable") } satisfies WorktreeCreateResponse, ae, 503);
+  }
+  // `spaceId` is part of the frozen target even though it is carried in the URL, not the JSON body.
+  // Include it in the keyed payload so a caller cannot replay one request ID against another repo.
+  const binding = intentBinding(deps.receiptContext, "worktree.create", { workspaceId: spaceId, body });
   if (requestId !== undefined) {
     const stored = receipts.get(requestId);
+    if (stored && receiptBindingMismatch(receipts, requestId, binding)) return json({ ok: false, ...apiError("launch.request_mismatch") } satisfies WorktreeCreateResponse, ae, 409);
     if (stored) return json(replayOf(stored, engine), ae);
     const running = receipts.inflight(requestId);
+    if (running && receiptBindingMismatch(receipts, requestId, binding)) return json({ ok: false, ...apiError("launch.request_mismatch") } satisfies WorktreeCreateResponse, ae, 409);
     if (running) return json(await joined(running), ae);
   }
 
@@ -4737,11 +4835,13 @@ export async function createWorktree(
   // past the check above cannot both start a create.
   if (requestId !== undefined) {
     const stored = receipts.get(requestId);
+    if (stored && receiptBindingMismatch(receipts, requestId, binding)) return json({ ok: false, ...apiError("launch.request_mismatch") } satisfies WorktreeCreateResponse, ae, 409);
     if (stored) return json(replayOf(stored, engine), ae);
     const running = receipts.inflight(requestId);
+    if (running && receiptBindingMismatch(receipts, requestId, binding)) return json({ ok: false, ...apiError("launch.request_mismatch") } satisfies WorktreeCreateResponse, ae, 409);
     if (running) return json(await joined(running), ae);
   }
-  const work = runWorktreeCreate(
+  const dispatch = () => runWorktreeCreate(
     herdr,
     engine,
     repoRoot,
@@ -4755,9 +4855,24 @@ export async function createWorktree(
     receipts,
     deps.bases ?? memoryWorktreeBases(),
     wait,
+    binding,
   );
-  if (requestId !== undefined) receipts.track(requestId, work);
-  return json(await work, ae);
+  const work = executeBoundIntent({
+    operations: deps.operations,
+    requestId,
+    context: deps.receiptContext,
+    operation: "worktree.create",
+    targetIdentity: JSON.stringify(["workspace", spaceId]),
+    body,
+    dispatch,
+    knownReceipt: () => requestId === undefined ? undefined : (receipts.get(requestId) ? replayOf(receipts.get(requestId)!, engine) : undefined),
+    unknown: worktreeIntentUnknown,
+    unavailable: worktreeIntentUnavailable,
+    mismatch: worktreeIntentMismatch,
+  });
+  if (requestId !== undefined) receipts.track(requestId, work, binding);
+  const answer = await work;
+  return json(answer, ae, intentAnswerStatus(answer));
 }
 
 /** The half of a create that touches the multiplexer, run at most once per `requestId`. */
@@ -4775,6 +4890,7 @@ async function runWorktreeCreate(
   receipts: WorktreeReceiptSurface,
   bases: WorktreeBaseSurface,
   wait: PaneReadyOptions,
+  binding?: IntentReceiptBinding,
   // The folder the checkout is made in (ADR 0093), already checked; absent is the multiplexer's own.
   path?: string,
   // Run once the multiplexer said yes, before the answer: the New sheet's memory of this repo's choices.
@@ -4828,15 +4944,21 @@ async function runWorktreeCreate(
     },
   });
   if (requestId !== undefined) {
-    await receipts.record({
-      requestId,
-      at: Date.now(),
-      workspaceId: created.spaceId,
-      paneId: created.paneId,
-      path: created.cwd,
-      branch,
-      launcherStarted,
-    });
+    try {
+      const receipt: WorktreeReceipt = {
+        requestId,
+        at: Date.now(),
+        workspaceId: created.spaceId,
+        paneId: created.paneId,
+        path: created.cwd,
+        branch,
+        launcherStarted,
+      };
+      if (binding !== undefined) receipt.binding = binding;
+      await receipts.record(receipt);
+    } catch {
+      return { ok: false, ...apiError("launch.outcome_unknown") };
+    }
   }
   await settleTopology(herdr, engine);
   const answer: WorktreeCreateResponse = {
@@ -4995,6 +5117,8 @@ export async function createWorktreeAt(
   getLaunchers: () => Promise<Launcher[]>,
   deps: FolderWorktreeDeps & {
     receipts: WorktreeReceiptSurface;
+    receiptContext?: IntentOwnerContext | null;
+    operations?: OperationStore;
     bases?: WorktreeBaseSurface;
     choices?: WorktreeChoiceSurface;
     harnesses?: Pick<HarnessProbe, "launch">;
@@ -5020,10 +5144,16 @@ export async function createWorktreeAt(
   const rawId = fields.requestId;
   if (rawId !== undefined && !isRequestId(rawId)) return text("bad requestId", 400);
   const requestId = rawId;
+  if (requestId !== undefined && deps.receiptContext === null) {
+    return json({ ok: false, ...apiError("launch.receipts_unavailable") } satisfies WorktreeCreateResponse, ae, 503);
+  }
+  const binding = intentBinding(deps.receiptContext, "worktree.createAt", body);
   if (requestId !== undefined) {
     const stored = receipts.get(requestId);
+    if (stored && receiptBindingMismatch(receipts, requestId, binding)) return json({ ok: false, ...apiError("launch.request_mismatch") } satisfies WorktreeCreateResponse, ae, 409);
     if (stored) return json(replayOf(stored, engine), ae);
     const running = receipts.inflight(requestId);
+    if (running && receiptBindingMismatch(receipts, requestId, binding)) return json({ ok: false, ...apiError("launch.request_mismatch") } satisfies WorktreeCreateResponse, ae, 409);
     if (running) return json(await joined(running), ae);
   }
 
@@ -5060,8 +5190,10 @@ export async function createWorktreeAt(
   // Checked again with no await between it and `track` (see createWorktree).
   if (requestId !== undefined) {
     const stored = receipts.get(requestId);
+    if (stored && receiptBindingMismatch(receipts, requestId, binding)) return json({ ok: false, ...apiError("launch.request_mismatch") } satisfies WorktreeCreateResponse, ae, 409);
     if (stored) return json(replayOf(stored, engine), ae);
     const running = receipts.inflight(requestId);
+    if (running && receiptBindingMismatch(receipts, requestId, binding)) return json({ ok: false, ...apiError("launch.request_mismatch") } satisfies WorktreeCreateResponse, ae, 409);
     if (running) return json(await joined(running), ae);
   }
   const baseKind: BaseKind = parsedBase.base?.kind === "ref" ? "current" : "default";
@@ -5074,7 +5206,7 @@ export async function createWorktreeAt(
           if (path !== undefined) choice.parent = dirname(path);
           return choices.record(repo.repoRoot, choice);
         };
-  const work = runWorktreeCreate(
+  const dispatch = () => runWorktreeCreate(
     herdr,
     engine,
     repo.repoRoot,
@@ -5088,11 +5220,26 @@ export async function createWorktreeAt(
     receipts,
     deps.bases ?? memoryWorktreeBases(),
     deps.wait ?? {},
+    binding,
     path,
     remember,
   );
-  if (requestId !== undefined) receipts.track(requestId, work);
-  return json(await work, ae);
+  const work = executeBoundIntent({
+    operations: deps.operations,
+    requestId,
+    context: deps.receiptContext,
+    operation: "worktree.createAt",
+    targetIdentity: JSON.stringify(["folder", repo.repoRoot, path ?? repo.repoRoot]),
+    body,
+    dispatch,
+    knownReceipt: () => requestId === undefined ? undefined : (receipts.get(requestId) ? replayOf(receipts.get(requestId)!, engine) : undefined),
+    unknown: worktreeIntentUnknown,
+    unavailable: worktreeIntentUnavailable,
+    mismatch: worktreeIntentMismatch,
+  });
+  if (requestId !== undefined) receipts.track(requestId, work, binding);
+  const answer = await work;
+  return json(answer, ae, intentAnswerStatus(answer));
 }
 
 /** A create body's `folder`: absent or `{ kind: "default" }`, or a parent string; `null` for anything else. */
@@ -5216,7 +5363,7 @@ export async function launchersRoute(
 export const FORGET_DEVICE_PATH = "/api/launchers/added/forget-device";
 
 /** What the added-launcher routes need of their caller. */
-export type AddedRouteCaller = Pick<RouteCaller, "gate" | "resolve" | "device" | "audit" | "via">;
+export type AddedRouteCaller = Pick<RouteCaller, "gate" | "resolve" | "device" | "audit" | "via" | "pairedIdentity" | "intentReceiptKey">;
 
 /** Serve one of the three added-launcher writes, or `null` when `pathname` is none of them. */
 export async function serveAddedLauncherRoute(
@@ -5224,6 +5371,8 @@ export async function serveAddedLauncherRoute(
   pathname: string,
   caller: AddedRouteCaller,
   sources: LauncherSources,
+  operations?: OperationStore,
+  owningHost = "local",
 ): Promise<Response | null> {
   const act =
     pathname === "/api/launchers/added"
@@ -5251,6 +5400,8 @@ export async function serveAddedLauncherRoute(
     via: caller.via === "crew" ? "crew" : "local",
     audit: caller.audit,
     session: rt.name,
+    receiptContext: receiptContextFor(caller, rt.name, owningHost),
+    operations,
   });
   return json(answer.body, req.headers.get("accept-encoding"), answer.status);
 }
@@ -5599,7 +5750,20 @@ export async function launch(
   const rawId = fields.requestId;
   if (rawId !== undefined && !isRequestId(rawId)) return text("bad requestId", 400);
   const requestId = rawId;
-  const replay = requestId === undefined ? null : earlierLaunch(receipts, requestId);
+  if (requestId !== undefined && deps.receiptContext === null) {
+    return json({ ok: false, ...apiError("launch.receipts_unavailable") } satisfies CreateResponse, ae, 503);
+  }
+  const binding: IntentReceiptBinding | undefined =
+    requestId === undefined || deps.receiptContext == null
+      ? undefined
+      : {
+          deviceIdentity: deps.receiptContext.deviceIdentity,
+          operation: "launch",
+          runtime: deps.receiptContext.runtime,
+          intentFingerprint: keyedIntentFingerprint(deps.receiptContext.key, body),
+        };
+  const replay = requestId === undefined ? null : earlierLaunch(receipts, requestId, binding);
+  if (replay === "mismatch") return json({ ok: false, ...apiError("launch.request_mismatch") } satisfies CreateResponse, ae, 409);
   if (replay !== null) return json(await replay, ae);
 
   const picked = await pickLaunch(fields, getLaunchers, deps.harnesses, {
@@ -5642,10 +5806,11 @@ export async function launch(
   // Checked again with no await between it and `track`, so two requests with one id that both got
   // past the check above cannot both start a launch.
   if (requestId !== undefined) {
-    const again = earlierLaunch(receipts, requestId);
+    const again = earlierLaunch(receipts, requestId, binding);
+    if (again === "mismatch") return json({ ok: false, ...apiError("launch.request_mismatch") } satisfies CreateResponse, ae, 409);
     if (again !== null) return json(await again, ae);
   }
-  const work = runLaunch(herdr, engine, {
+  const dispatch = () => runLaunch(herdr, engine, {
     row,
     kind: picked.kind,
     cwd: resolvedCwd,
@@ -5655,10 +5820,26 @@ export async function launch(
     device,
     session,
     receipts,
+    binding,
     wait,
   });
-  if (requestId !== undefined) receipts.track(requestId, work);
+  const work = executeBoundIntent({
+    operations: deps.operations,
+    requestId,
+    context: deps.receiptContext,
+    operation: "launch",
+    targetIdentity: JSON.stringify(["launch", picked.kind, resolvedCwd, besidePane?.workspaceId ?? null, besidePane?.paneId ?? null]),
+    body,
+    dispatch,
+    knownReceipt: () => requestId === undefined ? undefined : (receipts.get(requestId) ? launchReplay(receipts.get(requestId)!) : undefined),
+    unknown: launchIntentUnknown,
+    unavailable: launchIntentUnavailable,
+    mismatch: launchIntentMismatch,
+  });
+  if (requestId !== undefined) receipts.track(requestId, work, binding);
   const answer = await work;
+  if (!answer.ok && answer.code === "launch.request_mismatch") return json(answer, ae, 409);
+  if (!answer.ok && answer.code === "launch.receipts_unavailable") return json(answer, ae, 503);
   // A folder the sheet named that worked joins Recent, as a space created there does. Never a row's
   // pinned folder, which the operator already wrote down, and never on a failure.
   if (answer.ok && asked !== undefined && row?.cwd === undefined && deps.folders !== undefined) {
@@ -5687,6 +5868,9 @@ export interface LaunchDeps {
   harnesses?: Pick<HarnessProbe, "launch">;
   /** Absent: an in-memory store. */
   receipts?: LaunchReceiptSurface;
+  /** Stable per-bridge HMAC key and paired caller identity, present only when bound receipts are ready. */
+  receiptContext?: IntentOwnerContext | null;
+  operations?: OperationStore;
   /** Where a launch into a named folder is recorded as Recent. Absent: nothing is recorded. */
   folders?: Pick<FolderSurface, "recordRecent">;
   /** This machine's home, for a leading `~` in `cwd`. */
@@ -5704,11 +5888,19 @@ export interface LaunchDeps {
  * new id. SYNCHRONOUS up to that `null` on purpose: the caller's second check must not yield between
  * the look and its `track`, or two requests with one id could both start a launch.
  */
-function earlierLaunch(receipts: LaunchReceiptSurface, requestId: string): Promise<CreateResponse> | null {
+function earlierLaunch(
+  receipts: LaunchReceiptSurface,
+  requestId: string,
+  binding?: IntentReceiptBinding,
+): Promise<CreateResponse> | "mismatch" | null {
   const stored = receipts.get(requestId);
-  if (stored) return Promise.resolve(launchReplay(stored));
+  if (stored) {
+    if (binding !== undefined && matchReceiptBinding(stored.binding, binding) !== "match") return "mismatch";
+    return Promise.resolve(launchReplay(stored));
+  }
   const running = receipts.inflight(requestId);
   if (running === undefined) return null;
+  if (binding !== undefined && matchReceiptBinding(receipts.inflightBinding(requestId), binding) !== "match") return "mismatch";
   return running.then((answer) => (answer.ok ? { ...answer, replayed: true } : answer));
 }
 
@@ -5809,6 +6001,7 @@ async function runLaunch(
     device: string | null;
     session: string;
     receipts: LaunchReceiptSurface;
+    binding?: IntentReceiptBinding;
     wait: PaneReadyOptions;
   },
 ): Promise<CreateResponse> {
@@ -5865,15 +6058,21 @@ async function runLaunch(
     ? (engine.current().workspaces.find((w) => w.workspaceId === created.spaceId)?.label ?? created.spaceLabel)
     : created.spaceLabel;
   if (job.requestId !== undefined) {
-    await job.receipts.record({
-      requestId: job.requestId,
-      at: Date.now(),
-      workspaceId: created.spaceId,
-      workspaceLabel,
-      paneId: created.paneId,
-      tabId: created.tabId,
-      cwd: created.cwd,
-    });
+    try {
+      const receipt: LaunchReceipt = {
+        requestId: job.requestId,
+        at: Date.now(),
+        workspaceId: created.spaceId,
+        workspaceLabel,
+        paneId: created.paneId,
+        tabId: created.tabId,
+        cwd: created.cwd,
+      };
+      if (job.binding !== undefined) receipt.binding = job.binding;
+      await job.receipts.record(receipt);
+    } catch {
+      return { ok: false, ...apiError("launch.outcome_unknown") };
+    }
   }
   return {
     ok: true,
@@ -6256,7 +6455,7 @@ export function carriesProxyMarker(headers: Headers): boolean {
  * amendment of 2026-10-08).
  */
 export function browserPairingGate(
-  store: Pick<PairingStore, "resolve" | "expired">,
+  store: Pick<PairingStore, "resolve" | "expired"> & Partial<Pick<PairingStore, "identity">>,
   localCredential: LocalCredential | undefined,
   peerOf: (req: Request) => string | null | undefined,
   bindHost: string,
@@ -6264,6 +6463,7 @@ export function browserPairingGate(
 ): PairingGate {
   return {
     resolve: (token) => store.resolve(token),
+    identity: (token) => store.identity?.(token) ?? null,
     expired: (token) => store.expired(token),
     local: (token, req) => {
       if (localCredential === undefined || !localCredential.matches(token)) return false;
@@ -6336,6 +6536,8 @@ export interface PairingGate {
    * registry cannot be read ({@link PairingStore.resolve}); the gate answers 503, never "not paired".
    */
   resolve(token: string | null): { label: string } | null;
+  /** Stable opaque identity for the validated pairing; absent for old/test gate providers. */
+  identity?(token: string | null): string | null;
   /**
    * Whether this token belongs to a device whose expiry passed. Optional so a test may still pass a
    * two-line gate; {@link PairingStore} always answers it.
@@ -6381,6 +6583,16 @@ export function requestDevice(req: Request, cfg: Config, pairing?: PairingGate):
     // device is still read-only, and vice versa.
     authorized: header.authorized && paired !== null,
   };
+}
+
+/** Return identity only from the validated pairing projection, never from a caller-supplied header. */
+function pairedIdentityOf(req: Request, pairing: PairingGate | undefined): string | null {
+  if (pairing?.identity === undefined) return null;
+  try {
+    return pairing.identity(bearerToken(req.headers));
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -6925,7 +7137,7 @@ async function gzippedStatic(
   const size = file.size;
   if (!wantsGzip(acceptEncoding, size, STATIC_GZIP_MIN_BYTES)) return null;
 
-  return gzippedBytes(`${full} ${file.lastModified} ${size}`, new Uint8Array(await file.arrayBuffer()), ext, acceptEncoding);
+  return gzippedBytes(`${full}\u0000${file.lastModified}\u0000${size}`, new Uint8Array(await file.arrayBuffer()), ext, acceptEncoding);
 }
 
 /**

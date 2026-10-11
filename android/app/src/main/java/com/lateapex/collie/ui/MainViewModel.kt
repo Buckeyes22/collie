@@ -8,13 +8,16 @@ import com.lateapex.collie.CollieApplication
 import com.lateapex.collie.R
 import com.lateapex.collie.data.CollieRepository
 import com.lateapex.collie.data.ScopedReadContext
+import com.lateapex.collie.data.StoredLaunchIntent
 import com.lateapex.collie.domain.DeviceLabel
 import com.lateapex.collie.domain.PollingBackoff
 import com.lateapex.collie.domain.Scope
 import com.lateapex.collie.network.retiresPairing
 import com.lateapex.collie.network.ApiFailure
 import com.lateapex.collie.network.ApiResult
+import com.lateapex.collie.network.ActionResponse
 import com.lateapex.collie.network.CreateResponse
+import com.lateapex.collie.network.AddedLauncherResponse
 import com.lateapex.collie.network.LaunchersResponse
 import com.lateapex.collie.network.MuxConfigResponse
 import com.lateapex.collie.network.PairResult
@@ -22,6 +25,8 @@ import com.lateapex.collie.network.PaneSummary
 import com.lateapex.collie.network.SnapshotResponse
 import com.lateapex.collie.network.WorktreeListResponse
 import com.lateapex.collie.network.WorktreeOpenResponse
+import com.lateapex.collie.network.WorktreePlanResponse
+import com.lateapex.collie.network.StartTarget
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -51,6 +56,8 @@ data class MainUiState(
     val mux: MuxConfigResponse? = null,
     val launchers: LaunchersResponse? = null,
     val refreshNotice: String? = null,
+    val receiptContextBound: Boolean? = null,
+    val unknownLaunchIntents: List<StoredLaunchIntent> = emptyList(),
 ) {
     val panes: List<PaneSummary>
         get() = snapshot?.let { it.agents + it.shellPanes }.orEmpty()
@@ -336,8 +343,118 @@ class MainViewModel @JvmOverloads constructor(
 
     suspend fun launch(command: String): ApiResult<CreateResponse> = repository.launch(command)
 
+    suspend fun launchIntent(
+        target: StartTarget,
+        requestId: String,
+        cwd: String?,
+        confirmedNoPrompts: Boolean,
+        scope: Scope = currentScope,
+    ): ApiResult<CreateResponse> {
+        val actor = repository.readContext(scope)
+        val result = repository.startLaunchIntent(scope, target, requestId, cwd, confirmedNoPrompts)
+        if (actor != null && !repository.isCurrent(actor)) return staleScopeResult()
+        if (scope == currentScope) refreshLaunchIntentState(scope)
+        return result
+    }
+
+    suspend fun retryLaunchIntent(requestId: String, scope: Scope = currentScope): ApiResult<CreateResponse> {
+        val actor = repository.readContext(scope)
+        val result = repository.retryLaunchIntent(scope, requestId)
+        if (actor != null && !repository.isCurrent(actor)) return staleScopeResult()
+        if (scope == currentScope) refreshLaunchIntentState(scope)
+        return result
+    }
+
+    fun abandonLaunchIntent(requestId: String, scope: Scope = currentScope): ApiResult<ActionResponse> {
+        val actor = repository.readContext(scope)
+        val result = repository.abandonLaunchIntent(scope, requestId)
+        if (actor != null && !repository.isCurrent(actor)) return staleScopeResult()
+        if (scope == currentScope) refreshLaunchIntentState(scope)
+        return result
+    }
+
+    suspend fun createWorktreeIntent(
+        cwd: String,
+        branch: String,
+        target: StartTarget,
+        requestId: String,
+        base: com.lateapex.collie.network.WorktreeBase = com.lateapex.collie.network.WorktreeBase(),
+        folder: com.lateapex.collie.network.WorktreeFolder = com.lateapex.collie.network.WorktreeFolder(),
+        confirmedNoPrompts: Boolean,
+        scope: Scope = currentScope,
+    ): ApiResult<WorktreeOpenResponse> {
+        val actor = repository.readContext(scope)
+        val result = repository.createWorktreeAtIntent(scope, cwd, branch, target, requestId, base, folder, confirmedNoPrompts)
+        if (actor != null && !repository.isCurrent(actor)) return staleScopeResult()
+        if (scope == currentScope) refreshLaunchIntentState(scope)
+        return result
+    }
+
+    suspend fun retryWorktreeIntent(requestId: String, scope: Scope = currentScope): ApiResult<WorktreeOpenResponse> {
+        val actor = repository.readContext(scope)
+        val result = repository.retryWorktreeIntent(scope, requestId)
+        if (actor != null && !repository.isCurrent(actor)) return staleScopeResult()
+        if (scope == currentScope) refreshLaunchIntentState(scope)
+        return result
+    }
+
+    suspend fun addLauncherIntent(requestId: String, canonicalBody: String, scope: Scope = currentScope): ApiResult<AddedLauncherResponse> {
+        val actor = repository.readContext(scope)
+        val result = repository.addLauncherIntent(scope, requestId, canonicalBody)
+        if (actor != null && !repository.isCurrent(actor)) return staleScopeResult()
+        if (scope == currentScope) refreshLaunchIntentState(scope)
+        return result
+    }
+
+    suspend fun retryAddedLauncherIntent(requestId: String, scope: Scope = currentScope): ApiResult<AddedLauncherResponse> {
+        val actor = repository.readContext(scope)
+        val result = repository.retryAddedLauncherIntent(scope, requestId)
+        if (actor != null && !repository.isCurrent(actor)) return staleScopeResult()
+        if (scope == currentScope) refreshLaunchIntentState(scope)
+        return result
+    }
+
+    suspend fun createWorkspaceWorktreeIntent(
+        workspaceId: String,
+        branch: String,
+        requestId: String,
+        scope: Scope = currentScope,
+    ): ApiResult<WorktreeOpenResponse> {
+        val actor = repository.readContext(scope)
+        val result = repository.createWorkspaceWorktreeIntent(scope, workspaceId, branch, requestId)
+        if (actor != null && !repository.isCurrent(actor)) return staleScopeResult()
+        if (scope == currentScope) refreshLaunchIntentState(scope)
+        return result
+    }
+
+    suspend fun createWorkspaceWorktreeLegacyInitial(
+        workspaceId: String,
+        branch: String,
+        requestId: String,
+        scope: Scope = currentScope,
+    ): ApiResult<WorktreeOpenResponse> {
+        val actor = repository.readContext(scope)
+        val result = repository.createWorkspaceWorktreeLegacyInitial(scope, workspaceId, branch, requestId)
+        if (actor != null && !repository.isCurrent(actor)) return staleScopeResult()
+        if (scope == currentScope) refreshLaunchIntentState(scope)
+        return result
+    }
+
+    fun refreshLaunchIntentState(scope: Scope = currentScope) {
+        if (scope == currentScope) {
+            mutableState.value = mutableState.value.copy(unknownLaunchIntents = repository.unresolvedLaunchIntents(scope))
+        }
+    }
+
+    private fun <T> staleScopeResult(): ApiResult<T> = ApiResult.Failure(
+        ApiFailure.Protocol("Connection or scope changed; refresh before trying again"),
+    )
+
     suspend fun listWorktrees(workspaceId: String, scope: Scope = currentScope): ApiResult<WorktreeListResponse> =
         repository.listWorktrees(workspaceId, scope)
+
+    suspend fun planWorktree(cwd: String, branch: String?, parent: String?, scope: Scope = currentScope): ApiResult<WorktreePlanResponse> =
+        repository.planWorktree(scope, cwd, branch, parent)
 
     suspend fun createWorktree(
         workspaceId: String,
@@ -361,11 +478,13 @@ class MainViewModel @JvmOverloads constructor(
             mutableState.value = mutableState.value.copy(
                 muxName = result.value.mux?.name?.trim()?.takeIf(String::isNotEmpty),
                 mux = result.value.mux,
+                receiptContextBound = result.value.receiptContextBound,
             )
             val launchers = repository.launchers()
             if (launchers is ApiResult.Success) {
                 mutableState.value = mutableState.value.copy(launchers = launchers.value)
             }
+            refreshLaunchIntentState()
         }
     }
 

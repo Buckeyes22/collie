@@ -29,6 +29,7 @@ import { declareCapabilities } from "../capabilities.ts";
 import { herdrMachineCandidates } from "./machine-list.ts";
 import { herdrSessionSource } from "./sessions.ts";
 import { HERDR_LOGO_SVG } from "./logo.ts";
+import { herdrHostControl } from "../../host-control/herdr.ts";
 import type { MuxAdapterFactory, MuxTarget } from "../registry.ts";
 import {
   muxAck,
@@ -255,6 +256,7 @@ export class HerdrMux implements MuxAdapter {
   readonly mux = HERDR_MUX;
   readonly capabilities = HERDR_CAPABILITIES;
   readonly logo = HERDR_LOGO_SVG;
+  readonly hostControl = herdrHostControl;
 
   // session.snapshot is the fast path; flipped off PERMANENTLY once a server proves it predates the
   // method (see snapshot()), after which every read uses the legacy three-call path. Adapter state

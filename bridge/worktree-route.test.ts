@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import { AuditLog, type AuditEntry } from "./audit.ts";
 import { createWorktree, listWorktrees } from "./server.ts";
@@ -19,6 +22,9 @@ import { memoryWorktreeReceipts, type WorktreeReceiptSurface } from "./worktree-
 import { memoryWorktreeBases, type WorktreeBaseSurface } from "./worktree-bases.ts";
 import type { GitAsk } from "./worktree-base.ts";
 import type { JsonValue } from "./json.ts";
+import { OperationStore } from "./control/operations.ts";
+import { CONTROL_LIMITS } from "./control/contracts.ts";
+import { intentOperationBinding } from "./intent-operation-binding.ts";
 
 // `POST /api/workspace/:id/worktree` with a request id and a launcher (ADR 0089). The four claims:
 //
@@ -158,12 +164,15 @@ async function run(
     rows?: Launcher[];
     bases?: WorktreeBaseSurface;
     ask?: GitAsk;
+    spaceId?: string;
+    receiptContext?: { key: Uint8Array; deviceIdentity: string; runtime: string; owningHost?: string } | null;
+    operations?: OperationStore;
   } = {},
 ): Promise<{ status: number; answer: WorktreeCreateResponse }> {
   const res = await createWorktree(
     asMux(mux),
     opts.engine ?? engineWith([repoSpace]),
-    SPACE,
+    opts.spaceId ?? SPACE,
     post(body),
     opts.audit ?? auditTrail().audit,
     null,
@@ -171,7 +180,7 @@ async function run(
     () => Promise.resolve(opts.rows ?? [CLAUDE]),
     opts.receipts ?? memoryWorktreeReceipts(),
     fakeClock(),
-    { bases: opts.bases, ask: opts.ask },
+    { bases: opts.bases, ask: opts.ask, receiptContext: opts.receiptContext, operations: opts.operations },
   );
   // SAFETY: every JSON body this route writes is a WorktreeCreateResponse (`satisfies` at each site).
   return { status: res.status, answer: (await res.json()) as WorktreeCreateResponse };
@@ -222,6 +231,204 @@ describe("POST /api/workspace/:id/worktree — request id and receipt", () => {
     expect(mux.texts).toHaveLength(1);
   });
 
+  test("the receipt fingerprint binds the workspace path target as well as the frozen body", async () => {
+    const mux = new FakeWorktreeMux();
+    const receipts = memoryWorktreeReceipts();
+    const receiptContext = { key: new Uint8Array(32).fill(7), deviceIdentity: "pairing-incarnation-a", runtime: "host-a" };
+    const body = { branch: "worktree/x", requestId: REQUEST_ID };
+
+    const first = await run(mux, body, { receipts, receiptContext });
+    expect(first.status).toBe(200);
+    expect(first.answer.ok).toBe(true);
+
+    const movedTarget = await run(mux, body, { receipts, receiptContext, spaceId: "another-workspace" });
+    expect(movedTarget.status).toBe(409);
+    expect(movedTarget.answer).toMatchObject({ ok: false, code: "launch.request_mismatch" });
+    expect(mux.creates).toHaveLength(1);
+  });
+
+  test("the success-receipt fast path remains bound to its owning host", async () => {
+    const mux = new FakeWorktreeMux();
+    const receipts = memoryWorktreeReceipts();
+    const operations = new OperationStore();
+    expect(await operations.prepare()).toBe(true);
+    const context = { key: new Uint8Array(32).fill(6), deviceIdentity: "a".repeat(64), owningHost: "host-a", runtime: "default" };
+    const body = { branch: "worktree/host-bound", requestId: REQUEST_ID };
+    const first = await run(mux, body, { receipts, operations, receiptContext: context });
+    expect(first.answer.ok).toBe(true);
+    const moved = await run(mux, body, { receipts, operations, receiptContext: { ...context, owningHost: "host-b" } });
+    expect(moved.status).toBe(409);
+    expect(moved.answer).toMatchObject({ ok: false, code: "launch.request_mismatch" });
+    expect(mux.creates).toHaveLength(1);
+  });
+
+  test("a durable tombstone survives receipt eviction and prevents a second worktree", async () => {
+    const root = await mkdtemp(join(tmpdir(), "collie-worktree-operation-"));
+    try {
+      const mux = new FakeWorktreeMux();
+      const context = { key: new Uint8Array(32).fill(4), deviceIdentity: "a".repeat(64), owningHost: "host-a", runtime: "default" };
+      const body = { branch: "worktree/durable", requestId: REQUEST_ID };
+      const initial = new OperationStore(root);
+      expect(await initial.prepare()).toBe(true);
+      const first = await run(mux, body, { operations: initial, receiptContext: context });
+      expect(first.answer.ok).toBe(true);
+      expect(mux.creates).toHaveLength(1);
+
+      // A fresh receipt surface models bounded response eviction; the durable operation row remains.
+      const restarted = new OperationStore(root);
+      expect(await restarted.prepare()).toBe(true);
+      const retry = await run(mux, body, { operations: restarted, receipts: memoryWorktreeReceipts(), receiptContext: context });
+      expect(retry.status).toBe(200);
+      expect(retry.answer).toMatchObject({ ok: false, code: "launch.outcome_unknown" });
+      expect(mux.creates).toHaveLength(1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a durable intent cannot be rebound to another body after the response receipt is lost", async () => {
+    const root = await mkdtemp(join(tmpdir(), "collie-worktree-operation-mismatch-"));
+    try {
+      const mux = new FakeWorktreeMux();
+      const context = { key: new Uint8Array(32).fill(4), deviceIdentity: "a".repeat(64), owningHost: "host-a", runtime: "default" };
+      const operations = new OperationStore(root);
+      expect(await operations.prepare()).toBe(true);
+      const first = await run(mux, { branch: "worktree/original", requestId: REQUEST_ID }, { operations, receiptContext: context });
+      expect(first.answer.ok).toBe(true);
+      const retry = await run(mux, { branch: "worktree/changed", requestId: REQUEST_ID }, {
+        operations: new OperationStore(root), receipts: memoryWorktreeReceipts(), receiptContext: context,
+      });
+      expect(retry.status).toBe(409);
+      expect(retry.answer).toMatchObject({ ok: false, code: "launch.request_mismatch" });
+      const wrongOwner = await run(mux, { branch: "worktree/original", requestId: REQUEST_ID }, {
+        operations: new OperationStore(root), receipts: memoryWorktreeReceipts(),
+        receiptContext: { ...context, deviceIdentity: "b".repeat(64) },
+      });
+      expect(wrongOwner.status).toBe(409);
+      expect(wrongOwner.answer).toMatchObject({ ok: false, code: "launch.request_mismatch" });
+      expect(mux.creates).toHaveLength(1);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a restored pending reservation is unknown and never reaches the multiplexer", async () => {
+    const root = await mkdtemp(join(tmpdir(), "collie-worktree-operation-pending-"));
+    try {
+      const context = { key: new Uint8Array(32).fill(4), deviceIdentity: "a".repeat(64), owningHost: "host-a", runtime: "default" };
+      const body = { branch: "worktree/interrupted", requestId: REQUEST_ID };
+      const binding = intentOperationBinding(context.key, context.deviceIdentity, context.owningHost, context.runtime, "worktree.create", JSON.stringify(["workspace", SPACE]), body);
+      let markEntered!: () => void;
+      const entered = new Promise<void>((resolve) => { markEntered = resolve; });
+      const durable = new OperationStore(root);
+      expect(await durable.prepare()).toBe(true);
+      // This unresolved callback models process death after durable reservation and before effect dispatch.
+      const interrupted = durable.execute(REQUEST_ID, binding, null, async () => {
+        markEntered();
+        return new Promise(() => {});
+      });
+      let timeout!: ReturnType<typeof setTimeout>;
+      try {
+        await Promise.race([entered, new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error("durable reservation did not dispatch in time")), 3000); })]);
+      } finally { clearTimeout(timeout); }
+
+      const mux = new FakeWorktreeMux();
+      const retry = await run(mux, body, {
+        operations: new OperationStore(root), receipts: memoryWorktreeReceipts(), receiptContext: context,
+      });
+      expect(retry.answer).toMatchObject({ ok: false, code: "launch.outcome_unknown" });
+      expect(mux.creates).toHaveLength(0);
+      void interrupted;
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("corrupt durable operation state refuses before create", async () => {
+    const parent = await mkdtemp(join(tmpdir(), "collie-worktree-operation-corrupt-"));
+    const statePath = join(parent, "state-is-a-file");
+    await writeFile(statePath, "bad");
+    try {
+      const mux = new FakeWorktreeMux();
+      const operations = new OperationStore(statePath);
+      expect(await operations.prepare()).toBe(false);
+      const answer = await run(mux, { branch: "worktree/closed", requestId: REQUEST_ID }, {
+        operations,
+        receiptContext: { key: new Uint8Array(32).fill(4), deviceIdentity: "a".repeat(64), owningHost: "host-a", runtime: "default" },
+      });
+      expect(answer.status).toBe(503);
+      expect(answer.answer).toMatchObject({ ok: false, code: "launch.receipts_unavailable" });
+      expect(mux.creates).toHaveLength(0);
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  test("operation capacity refuses a new owner-bound create before Herdr", async () => {
+    const root = await mkdtemp(join(tmpdir(), "collie-worktree-operation-capacity-"));
+    try {
+      const binding = {
+        device: "a".repeat(64), host: "host-a", session: "default", capability: "worktree.create",
+        payloadHash: "0".repeat(64), targetIdentity: "workspace:old", evidence: "1".repeat(64),
+      };
+      const rows = Array.from({ length: CONTROL_LIMITS.receiptCount }, (_, i) => ({
+        requestId: `seed_${i}`, binding, planToken: null, state: "unknown", at: 1, updatedAt: 1, code: "operation.interrupted",
+      }));
+      await writeFile(join(root, "control-operations.json"), JSON.stringify(rows));
+      const operations = new OperationStore(root);
+      expect(await operations.prepare()).toBe(true);
+      const mux = new FakeWorktreeMux();
+      const result = await run(mux, { branch: "worktree/full", requestId: REQUEST_ID }, {
+        operations,
+        receiptContext: { key: new Uint8Array(32).fill(4), deviceIdentity: "a".repeat(64), owningHost: "host-a", runtime: "default" },
+      });
+      expect(result.status).toBe(503);
+      expect(result.answer).toMatchObject({ ok: false, code: "launch.receipts_unavailable" });
+      expect(mux.creates).toHaveLength(0);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("operation journal write failure refuses before Herdr", async () => {
+    const root = await mkdtemp(join(tmpdir(), "collie-worktree-operation-write-fail-"));
+    try {
+      const operations = new OperationStore(root);
+      expect(await operations.prepare()).toBe(true);
+      await chmod(root, 0o500);
+      const mux = new FakeWorktreeMux();
+      const result = await run(mux, { branch: "worktree/write-fail", requestId: REQUEST_ID }, {
+        operations,
+        receiptContext: { key: new Uint8Array(32).fill(4), deviceIdentity: "a".repeat(64), owningHost: "host-a", runtime: "default" },
+      });
+      expect(result.status).toBe(503);
+      expect(result.answer).toMatchObject({ ok: false, code: "launch.receipts_unavailable" });
+      expect(mux.creates).toHaveLength(0);
+    } finally {
+      await chmod(root, 0o700);
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("operation journal rename failure refuses before Herdr", async () => {
+    const root = await mkdtemp(join(tmpdir(), "collie-worktree-operation-rename-fail-"));
+    try {
+      const operations = new OperationStore(root);
+      expect(await operations.prepare()).toBe(true);
+      await mkdir(join(root, "control-operations.json"));
+      const mux = new FakeWorktreeMux();
+      const result = await run(mux, { branch: "worktree/rename-fail", requestId: REQUEST_ID }, {
+        operations,
+        receiptContext: { key: new Uint8Array(32).fill(4), deviceIdentity: "a".repeat(64), owningHost: "host-a", runtime: "default" },
+      });
+      expect(result.status).toBe(503);
+      expect(result.answer).toMatchObject({ ok: false, code: "launch.receipts_unavailable" });
+      expect(mux.creates).toHaveLength(0);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("a repeat while the first is still running joins it and creates nothing", async () => {
     const mux = new FakeWorktreeMux();
     let open: () => void = () => {};
@@ -229,9 +436,12 @@ describe("POST /api/workspace/:id/worktree — request id and receipt", () => {
       open = resolve;
     });
     const receipts = memoryWorktreeReceipts();
+    const operations = new OperationStore();
+    expect(await operations.prepare()).toBe(true);
+    const receiptContext = { key: new Uint8Array(32).fill(7), deviceIdentity: "pairing-incarnation-a", owningHost: "host-a", runtime: "host-a" };
     const body = { branch: "worktree/x", requestId: REQUEST_ID };
-    const first = run(mux, body, { receipts });
-    const second = run(mux, body, { receipts });
+    const first = run(mux, body, { receipts, operations, receiptContext });
+    const second = run(mux, body, { receipts, operations, receiptContext });
     // Let both requests reach their wait before the create answers.
     await new Promise((resolve) => setTimeout(resolve, 5));
     open();

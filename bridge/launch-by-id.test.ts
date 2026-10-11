@@ -4,6 +4,7 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { AuditLog } from "./audit.ts";
+import { OperationStore } from "./control/operations.ts";
 import { harnessLaunch } from "./harness-launch.ts";
 import { LAUNCH_RECEIPTS_FILE, LaunchReceiptStore, coerceLaunchReceipt, memoryLaunchReceipts } from "./launch-receipts.ts";
 import type { JsonObject } from "./json.ts";
@@ -235,13 +236,83 @@ describe("POST /api/launch — request ids", () => {
     expect(again.body?.ok && first.body?.ok && again.body.pane.paneId === first.body.pane.paneId).toBe(true);
   });
 
+  test("receipt-bound launch IDs replay only for the same owner, runtime, operation and body", async () => {
+    const mux = new FakeMux();
+    const receipts = memoryLaunchReceipts();
+    const key = new Uint8Array(32).fill(9);
+    const owner = { key, deviceIdentity: "a".repeat(64), runtime: "default" };
+    const first = await run(mux, { shell: true, requestId: ID }, { receipts, receiptContext: owner });
+    const exact = await run(mux, { shell: true, requestId: ID }, { receipts, receiptContext: owner });
+    expect(first.status).toBe(200);
+    expect(exact.body).toMatchObject({ ok: true, replayed: true });
+    expect((await run(mux, { harness: "claude", requestId: ID }, { receipts, receiptContext: owner })).status).toBe(409);
+    expect((await run(mux, { shell: true, requestId: ID }, { receipts, receiptContext: { ...owner, deviceIdentity: "b".repeat(64) } })).status).toBe(409);
+    expect((await run(mux, { shell: true, requestId: ID }, { receipts, receiptContext: { ...owner, runtime: "other" } })).status).toBe(409);
+    expect(mux.spaces).toHaveLength(1);
+  });
+
+  test("owner-bound replay refuses legacy ID-only receipts and unavailable binding", async () => {
+    const mux = new FakeMux();
+    const receipts = memoryLaunchReceipts();
+    await run(mux, { shell: true, requestId: ID }, { receipts });
+    const owner = { key: new Uint8Array(32).fill(7), deviceIdentity: "a".repeat(64), runtime: "default" };
+    expect((await run(mux, { shell: true, requestId: ID }, { receipts, receiptContext: owner })).status).toBe(409);
+    expect((await run(new FakeMux(), { shell: true, requestId: ID }, { receiptContext: null })).status).toBe(503);
+    expect(mux.spaces).toHaveLength(1);
+  });
+
+  test("a launch whose effect lands but receipt persistence fails is explicitly outcome_unknown", async () => {
+    const mux = new FakeMux();
+    const base = memoryLaunchReceipts();
+    const receipts = {
+      ...base,
+      record: async () => { throw new Error("simulated durable receipt failure"); },
+    };
+    const owner = { key: new Uint8Array(32).fill(4), deviceIdentity: "d".repeat(64), runtime: "default" };
+
+    const answer = await run(mux, { shell: true, requestId: ID }, { receipts, receiptContext: owner });
+
+    expect(answer.status).toBe(200);
+    expect(answer.body).toMatchObject({ ok: false, code: "launch.outcome_unknown" });
+    expect(mux.spaces).toHaveLength(1);
+    // A shell intent creates the space but has no command to type.
+    expect(mux.texts).toHaveLength(0);
+  });
+
+  test("a durable launch tombstone prevents a second create after receipt eviction and restart", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "collie-launch-operation-"));
+    try {
+      const mux = new FakeMux();
+      const receipts = memoryLaunchReceipts();
+      const context = { key: new Uint8Array(32).fill(6), deviceIdentity: "d".repeat(64), owningHost: "host-a", runtime: "default" };
+      const operations = new OperationStore(dir);
+      expect(await operations.prepare()).toBe(true);
+      const first = await run(mux, { shell: true, requestId: ID }, { receipts, receiptContext: context, operations });
+      expect(first.body?.ok).toBe(true);
+      expect(mux.spaces).toHaveLength(1);
+
+      const restarted = new OperationStore(dir);
+      expect(await restarted.prepare()).toBe(true);
+      const retry = await run(mux, { shell: true, requestId: ID }, {
+        receipts: memoryLaunchReceipts(), receiptContext: context, operations: restarted,
+      });
+      expect(retry.body).toMatchObject({ ok: false, code: "launch.outcome_unknown" });
+      expect(mux.spaces).toHaveLength(1);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test("a repeat while the first is still running joins it", async () => {
     const mux = new FakeMux();
     let open!: () => void;
     mux.gate = new Promise((r) => (open = r));
     const receipts = memoryLaunchReceipts();
-    const a = run(mux, { shell: true, requestId: ID }, { receipts });
-    const b = run(mux, { shell: true, requestId: ID }, { receipts });
+    const operations = new OperationStore();
+    expect(await operations.prepare()).toBe(true);
+    const receiptContext = { key: new Uint8Array(32).fill(7), deviceIdentity: "d".repeat(64), owningHost: "host-a", runtime: "default" };
+    const a = run(mux, { shell: true, requestId: ID }, { receipts, operations, receiptContext });
+    const b = run(mux, { shell: true, requestId: ID }, { receipts, operations, receiptContext });
     await Bun.sleep(0);
     open();
     const [ra, rb] = await Promise.all([a, b]);
@@ -295,6 +366,26 @@ describe("LaunchReceiptStore — the file", () => {
   test("an entry that is not a receipt is dropped", () => {
     expect(coerceLaunchReceipt({ requestId: "x", at: 1 })).toBeNull();
     expect(coerceLaunchReceipt([])).toBeNull();
+  });
+
+  test("valid binding metadata persists, while malformed metadata is rejected", () => {
+    const receipt = {
+      requestId: ID,
+      at: 1,
+      workspaceId: "w1",
+      workspaceLabel: "app",
+      paneId: "w1:p1",
+      tabId: "w1:t1",
+      cwd: "/x",
+      binding: {
+        deviceIdentity: "device-1",
+        operation: "launch",
+        runtime: "default",
+        intentFingerprint: "a".repeat(64),
+      },
+    };
+    expect(coerceLaunchReceipt(receipt)).toEqual(receipt);
+    expect(coerceLaunchReceipt({ ...receipt, binding: { ...receipt.binding, intentFingerprint: "bad" } })).toBeNull();
   });
 });
 

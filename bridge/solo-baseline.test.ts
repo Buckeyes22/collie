@@ -991,6 +991,9 @@ const STATE_DIR_ENTRIES = [
   // bridge that is only started, only read, or only ever asked for spaces in home writes none of it,
   // so the four entries asserted below hold. Driven in "the folder list appears only on use".
   "folders.json",
+  // Stable host-local HMAC key for owner-bound launch/worktree/add receipt fingerprints. Created
+  // only when bound receipt use first needs it; never derived from the pairing credential.
+  "intent-receipt-hmac-key",
   // One receipt per launch the phone tagged with a request id (ADR 0091), so a retried Start never
   // opens a second pane. Written by use and by nothing else: absent until the first launch that
   // carries an id succeeds.
