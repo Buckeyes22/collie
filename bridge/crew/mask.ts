@@ -147,7 +147,8 @@ function isObject(value: JsonValue | undefined): value is JsonObject {
 }
 
 function isPaneRead(body: JsonObject): body is JsonObject & PaneReadResponse {
-  return typeof body.text === "string" && (body.logicalText === undefined || typeof body.logicalText === "string");
+  return typeof body.text === "string" && (body.logicalText === undefined || typeof body.logicalText === "string") &&
+    (body.filesReadReady === undefined || typeof body.filesReadReady === "boolean");
 }
 
 /** A turn as `redactEntry` walks it: a `parts` list of objects, an image part with its `url` a string. */

@@ -328,6 +328,8 @@ data class PaneReadResponse(
     val servedLines: Int? = null,
     val readableLines: Int? = null,
     val limitReason: String? = null,
+    /** Absent/false leaves automatic printed paths plain without a Files request. */
+    val filesReadReady: Boolean? = null,
 )
 
 @Serializable

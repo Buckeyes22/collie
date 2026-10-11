@@ -1900,7 +1900,8 @@ export async function startServer(opts: {
 
       if (!action && req.method === "GET") {
         const pane = [...rt.engine.current().agents, ...rt.engine.current().shellPanes].find((item) => item.paneId === paneId);
-        return readPane(herdr, cfg, paneId, url, req, pane?.readableLines);
+        return readPane(herdr, cfg, paneId, url, req, pane?.readableLines,
+          () => caller.gate("device-read") === null);
       }
       if (action === "history" && req.method === "GET")
         return paneHistory(cfg, journals, transcripts, rt.engine, paneId, url, req);
@@ -1948,7 +1949,7 @@ export async function startServer(opts: {
     // M22/03: this collie's own capability declaration, for `hello`. The SAME expression the
     // `/api/config` route below publishes to a browser — the primary session's adapter — so a peer
     // cannot report capabilities that differ from the ones it serves its own operator.
-    controlCapabilities: () => ({ controlOperations: ownerBoundReady() }),
+    controlCapabilities: () => ({ controlOperations: ownerBoundReady(), filesDiscovery: true }),
     receiptContextBound: ownerBoundReady,
     mux: () => {
       const active = registry.get();
@@ -2461,7 +2462,7 @@ export async function startServer(opts: {
             operatorFonts: myFonts,
             mux: activeMux?.herdr,
             // Peer support must be positively negotiated; the lead never lends its declarations.
-            control: { capabilities: scoped?.kind === "peer" ? crewLead?.controlFor(scoped.link.memberId) ?? {} : { controlOperations: ownerBoundCallerReady(opts.intentReceiptKey, controlOperations.isReady(), pairedIdentityOf(req, pairingGate)) } },
+            control: { capabilities: scoped?.kind === "peer" ? crewLead?.controlFor(scoped.link.memberId) ?? {} : { controlOperations: ownerBoundCallerReady(opts.intentReceiptKey, controlOperations.isReady(), pairedIdentityOf(req, pairingGate)), filesDiscovery: true } },
             hostControl: scoped?.kind === "peer" ? undefined : hostControlConfig(opts.hostControl ?? hostControlForMux(cfg.mux)),
             // Assigned through `?? undefined` rather than conditionally, so the no-`host=` request
             // builds the byte-identical body it always did (CREW_PROTOCOL.md §11).
@@ -3236,6 +3237,7 @@ export async function readPane(
   url: URL,
   req: Request,
   readableLines?: number,
+  filesReadAdmission?: () => boolean,
 ): Promise<Response> {
   const linesParam = Number.parseInt(url.searchParams.get("lines") ?? "", 10);
   const desiredLines = Number.isFinite(linesParam) && linesParam > 0 ? linesParam : cfg.readLines;
@@ -3288,6 +3290,10 @@ export async function readPane(
     );
     // ETag is derived from the serialised body — if content hasn't changed the client gets a 304
     // and skips the whole transfer (the big win on a cellular link).
+    // This is the owning caller's device-read verdict after the suspended grid read. A crew
+    // peer evaluates its own policy; the lead cannot lend its authorization. Bind it into the
+    // body/ETag so a changed factor cannot preserve a previous positive through a 304.
+    if (filesReadAdmission !== undefined) data.filesReadReady = filesReadAdmission();
     const bodyStr = JSON.stringify(data);
     const etag = computeEtag(bodyStr);
     // Tag pane polls too (both the 304 and the full body), so a client that only has a pane open —

@@ -4642,6 +4642,38 @@ describe("readPane — the logical read is asked for only when it can repair som
     expect(body.text).toBe("$ echo hi\nhi");
   });
 
+  test("owning Files read admission is evaluated after the grid and changes the pane ETag", async () => {
+    let ready = true;
+    const { adapter } = paneStub("src/Main.kt:12", "unused");
+    const positive = await readPane(adapter, cfg(), "w1:p1", url, get("w1:p1"), undefined, () => ready);
+    // SAFETY: the bridge-owned response and the adapter stub above supply the exact exercised fields.
+    expect((await positive.json() as PaneReadResponse).filesReadReady).toBe(true);
+    const etag = positive.headers.get("etag")!;
+    ready = false;
+    const conditional = new Request(url, { headers: { "if-none-match": etag } });
+    const refused = await readPane(adapter, cfg(), "w1:p1", url, conditional, undefined, () => ready);
+    expect(refused.status).toBe(200);
+    // SAFETY: the bridge-owned response and the adapter stub above supply the exact exercised fields.
+    expect((await refused.json() as PaneReadResponse).filesReadReady).toBe(false);
+    expect(refused.headers.get("etag")).not.toBe(etag);
+    const legacy = await readPane(adapter, cfg(), "w1:p1", url, get("w1:p1"));
+    // SAFETY: the bridge-owned response and the adapter stub above supply the exact exercised fields.
+    expect((await legacy.json() as PaneReadResponse).filesReadReady).toBeUndefined();
+    const suspended: Partial<MuxAdapter> = {
+      ...adapter,
+      readGrid: async (...args) => {
+        const grid = await adapter.readGrid(...args);
+        ready = false;
+        return grid;
+      },
+    };
+    ready = true;
+    // SAFETY: the bridge-owned response and the adapter stub above supply the exact exercised fields.
+    const changed = await readPane(suspended as MuxAdapter, cfg(), "w1:p1", url, get("w1:p1"), undefined, () => ready);
+    // SAFETY: the bridge-owned response and the adapter stub above supply the exact exercised fields.
+    expect((await changed.json() as PaneReadResponse).filesReadReady).toBe(false);
+  });
+
   test("a split URL brings the logical text in, with its styling stripped", async () => {
     const grid = "run:\n\u001b[36mhttps://a.dev/auth?client=1&s\u001b[0m\ntate=y then";
     const logical = "\u001b[36mrun:\nhttps://a.dev/auth?client=1&state=y then\u001b[0m";

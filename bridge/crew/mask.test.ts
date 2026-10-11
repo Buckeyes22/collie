@@ -93,6 +93,15 @@ const entry: TranscriptEntry = {
 
 // What a member on 1.17 sends for each answer: the same shapes, in clear.
 const paneRead: PaneReadResponse = { paneId: "w1:p1", text: `\u001b[2m$ cat .env\u001b[0m\nKEY=${key}\n`, truncated: false, revision: 7 };
+
+test("Crew masking preserves only a typed owning Files read verdict and never lends one to an old peer", () => {
+  for (const ready of [true, false]) {
+    const body = { ...paneRead, filesReadReady: ready };
+    expect(maskForwardedAnswer("pane", JSON.stringify(body))).toBe(JSON.stringify(maskPaneRead(body)));
+  }
+  expect(JSON.parse(maskForwardedAnswer("pane", JSON.stringify(paneRead))!).filesReadReady).toBeUndefined();
+  expect(maskForwardedAnswer("pane", JSON.stringify({ ...paneRead, filesReadReady: "true" }))).toBeNull();
+});
 const history = { paneId: "w1:p1", available: true as const, entries: [entry], hasMore: false, total: 1, fileTruncated: false };
 const chatBody: ChatWindowBody = {
   page: "live",

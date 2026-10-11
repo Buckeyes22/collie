@@ -6,6 +6,15 @@ the first Android release from this fork.
 
 ## Unreleased
 
+- Preserve native text selection and tap-to-type for plain terminal output when Files links are unavailable.
+
+- Reconfirm retained transcript file links after Files access is withdrawn and restored while the transcript is hidden.
+
+- Printed file links require owning-host support and a current device-read verdict; unsupported peers retain ordinary terminal actions without automatic Files probes.
+- Remove printed links when Files access changes, and require fresh confirmations before restored access can open a path.
+
+- Keep failed Files discovery inert during authority redraws, preventing recursive reads from freezing the pane screen.
+
 - Add bounded native document and text attachments with a scoped picker, private temporary storage, and one-shot uploads.
 - Show sourced cache timing, model and Git facts with lead-owned cache watches and shared machine/cache notification preferences.
 

@@ -134,3 +134,7 @@ wipe on the main thread before its listener returns.
 Cache details also observe the real connection store: replacing a credential retires their
 private actor, catalog and copied facts without waiting for another API read. A delayed old
 connection notification cannot retire an actor already admitted for the current connection.
+
+
+Automatic printed Files links require positive owning `control.capabilities.filesDiscovery` config and `filesReadReady=true` on an accepted pane body under the same scoped actor. Missing, false or stale facts leave mirror/transcript paths plain with no automatic Files/exist reads; explicit Files navigation remains a deliberate read through existing device-read gates. Crew support comes from the owning hello, and the pane verdict comes from that peer’s own device policy, not the lead’s merged snapshot.
+Withdrawal retires mirror confirmations without reading Files. Transcript callbacks retain the admission generation that installed them, so restored same-owner access needs fresh confirmation while the existing turn-batch path quota remains unchanged.

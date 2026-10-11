@@ -935,6 +935,8 @@ export interface SnapshotResponse {
 }
 
 export interface PaneReadResponse {
+  /** Owning producer's device-read verdict, bound into the pane body and ETag. */
+  filesReadReady?: boolean;
   paneId: string;
   text: string;
   truncated: boolean;

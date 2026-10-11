@@ -109,6 +109,39 @@ class PaneActivityTest {
 
 
     @Test
+    fun plainMirrorRetainsPlatformSelectionAndTapToTypeAfterRepeatedFilesUnavailableRedraws() {
+        val controller = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("plain:tap")).create().start().resume()
+        val activity = controller.get()
+        try {
+            val writable = PaneUiState(
+                pane = PaneReadResponse("plain:tap", "Fixture terminal\n$ ", false, 1, filesReadReady = false),
+                loading = false,
+                canWrite = true,
+                panes = listOf(paneSummary("plain:tap")),
+            )
+            setViewModelState(activity, writable)
+            repeat(3) {
+                render(activity, writable.copy(pane = writable.pane!!.copy(revision = it.toLong())))
+                val mirror = activity.findViewById<TextView>(R.id.terminal_text)
+                assertTrue("Plain output retains the platform tap listener", mirror.isClickable)
+                assertTrue("Plain output retains focus and selection", mirror.isFocusable)
+                assertTrue(mirror.isLongClickable)
+                assertTrue(mirror.isTextSelectable)
+                assertTrue(mirror.movementMethod is android.text.method.ArrowKeyMovementMethod)
+                assertTrue(printedSpans(activity).isEmpty())
+            }
+            androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().setInTouchMode(true)
+            val mirror = activity.findViewById<TextView>(R.id.terminal_text)
+            mirror.clearFocus()
+            mirror.dispatchTouchEvent(MotionEvent.obtain(0, 0, MotionEvent.ACTION_DOWN, 20f, 10f, 0))
+            mirror.dispatchTouchEvent(MotionEvent.obtain(0, 60, MotionEvent.ACTION_UP, 20f, 10f, 0))
+            assertTrue(activity.findViewById<View>(R.id.reply_input).hasFocus())
+        } finally {
+            controller.destroy()
+        }
+    }
+
+    @Test
     fun printedPathRedrawCannotAcquireANewActorForRetiredMirrorOutput() {
         val app = ApplicationProvider.getApplicationContext<CollieApplication>()
         val initialConnection = com.lateapex.collie.domain.Connection(
@@ -122,14 +155,14 @@ class PaneActivityTest {
         var fileReads = 0
         val api = object : com.lateapex.collie.network.CollieApi by app.container.api {
             override suspend fun config(connection: com.lateapex.collie.domain.Connection) =
-                com.lateapex.collie.network.ApiResult.Success(com.lateapex.collie.network.BridgeConfigResponse(), 200)
+                com.lateapex.collie.network.ApiResult.Success(com.lateapex.collie.network.BridgeConfigResponse(control = com.lateapex.collie.network.ControlCapabilityResponse(mapOf("filesDiscovery" to true))), 200)
             override suspend fun pane(
                 connection: com.lateapex.collie.domain.Connection,
                 address: com.lateapex.collie.domain.PaneAddress,
                 lines: Int,
                 etag: String?,
                 markSeen: Boolean,
-            ) = com.lateapex.collie.network.ApiResult.Success(PaneReadResponse(address.paneId, "src/Main.kt:12", false, 1), 200)
+            ) = com.lateapex.collie.network.ApiResult.Success(PaneReadResponse(address.paneId, "src/Main.kt:12", false, 1, filesReadReady = true), 200)
             override suspend fun files(
                 connection: com.lateapex.collie.domain.Connection,
                 target: com.lateapex.collie.network.FilesTarget,
@@ -165,8 +198,8 @@ class PaneActivityTest {
             val accepted = requireNotNull(repository.readContext(com.lateapex.collie.domain.Scope(), "printed:pane"))
             render(activity, PaneUiState(
                 loading = false,
-                pane = PaneReadResponse("printed:pane", "src/Main.kt:12", false, 1),
-                paneReadContext = accepted,
+                pane = PaneReadResponse("printed:pane", "src/Main.kt:12", false, 1, filesReadReady = true),
+                paneReadContext = accepted, filesConfigContext = accepted,
             ))
             val update = PaneActivity::class.java.getDeclaredMethod("updatePrintedPathLinks", CharSequence::class.java)
                 .apply { isAccessible = true }
@@ -192,8 +225,8 @@ class PaneActivityTest {
             val replacement = requireNotNull(repository.readContext(com.lateapex.collie.domain.Scope(), "printed:pane"))
             render(activity, PaneUiState(
                 loading = false,
-                pane = PaneReadResponse("printed:pane", "src/Main.kt:12", false, 1),
-                paneReadContext = replacement,
+                pane = PaneReadResponse("printed:pane", "src/Main.kt:12", false, 1, filesReadReady = true),
+                paneReadContext = replacement, filesConfigContext = replacement,
             ))
             update.invoke(activity, "src/Main.kt:12")
             shadowOf(android.os.Looper.getMainLooper()).idleFor(Duration.ofMillis(50))
@@ -231,7 +264,9 @@ class PaneActivityTest {
             waitForPrintedPane { fixture.fileReads > beforeTap && fixture.nextRootWait == null }
             fixture.repository.setLeadEpoch(2)
             fixture.pane = fixture.pane.copy(revision = 2)
-            activity.findViewById<View>(R.id.refresh_button).performClick()
+            val actions = openActionsSheet(activity)
+            descendants(actions.window!!.decorView).filterIsInstance<MaterialButton>()
+                .single { it.text.toString() == activity.getString(R.string.pane_refresh) }.performClick()
             waitForPrintedPane { printedSpans(activity).isNotEmpty() }
             val newSpan = printedSpans(activity).single()
             val currentReads = fixture.fileReads
@@ -327,7 +362,7 @@ class PaneActivityTest {
         val fixture = PrintedPaneFixture()
         // This case measures one transcript batch. The ordinary fixture's src/Main.kt mirror
         // has its own independent discovery and would add an unrelated65th counter entry.
-        fixture.pane = PaneReadResponse("printed:pane", "ordinary mirror output", false, 1)
+        fixture.pane = PaneReadResponse("printed:pane", "ordinary mirror output", false, 1, filesReadReady = true)
         fixture.transcript = (1..63).map { number ->
             TranscriptEntry("bounded-$number", "2026-09-10T00:00:00Z", "assistant",
                 listOf(TranscriptPart("text", text = "docs/part-$number.kt")), seq = number.toLong())
@@ -494,6 +529,246 @@ class PaneActivityTest {
         assertTrue("an admitted visible Files path completes before timeout: ${if (condition()) "" else diagnostic()}", condition())
     }
 
+    @Test fun failedPrintedPathReadRemovesSpansWithoutStartingAnotherReadFromRetirement() {
+        val fixture = PrintedPaneFixture()
+        val controller = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("printed:pane"))
+            .create().start().resume().visible()
+        try {
+            val activity = controller.get()
+            waitForPrintedPane { printedSpans(activity).isNotEmpty() }
+            val model = PaneActivity::class.java.getDeclaredField("viewModel").apply { isAccessible = true }
+                .get(activity) as PaneViewModel
+            model.stopPolling()
+            shadowOf(android.os.Looper.getMainLooper()).idle()
+            fixture.fileFailure = com.lateapex.collie.network.ApiFailure.Http(404, "Files unavailable", null)
+            // Expire the production60-second confirmation lease in the simulated clock.
+            ShadowSystemClock.advanceBy(Duration.ofSeconds(61))
+            val update = PaneActivity::class.java.getDeclaredMethod("updatePrintedPathLinks", CharSequence::class.java)
+                .apply { isAccessible = true }
+            update.invoke(activity, "src/Main.kt:12")
+            shadowOf(android.os.Looper.getMainLooper()).idleFor(Duration.ofMillis(50))
+            assertEquals("a refusal redraw must not issue a recursive Files request", 1, fixture.failedFileReads)
+            assertTrue("retained mirror remains readable", activity.findViewById<TextView>(R.id.terminal_text).text.toString().contains("src/Main.kt"))
+            assertTrue("failed authority removes prior tappable confirmations", printedSpans(activity).isEmpty())
+            assertNull(PaneActivity::class.java.getDeclaredField("printedLinkRoot").apply { isAccessible = true }.get(activity))
+            update.invoke(activity, "src/Main.kt:12")
+            shadowOf(android.os.Looper.getMainLooper()).idleFor(Duration.ofMillis(50))
+            assertEquals("an inert failed lookup lease also bounds subsequent redraws", 1, fixture.failedFileReads)
+            fixture.fileFailure = null
+            ShadowSystemClock.advanceBy(Duration.ofSeconds(61))
+            update.invoke(activity, "src/Main.kt:12")
+            waitForPrintedPane { printedSpans(activity).isNotEmpty() }
+            assertEquals("a later deliberate refresh can confirm a current path", 1, fixture.failedFileReads)
+        } finally {
+            controller.destroy()
+            fixture.close()
+        }
+    }
+
+    @Test fun automaticMirrorAndTranscriptDiscoveryRequiresPositiveOwningSupportAndReadAdmission() {
+        for ((support, ready, refused) in listOf(
+            Triple(null, true, false), Triple(false, true, false),
+            Triple(true, null, false), Triple(true, false, false), Triple(true, true, true),
+        )) {
+            val fixture = PrintedPaneFixture()
+            fixture.filesSupport = support
+            fixture.configRefused = refused
+            fixture.pane = fixture.pane.copy(filesReadReady = ready)
+            fixture.transcript = listOf(TranscriptEntry("unsupported-files", "2026-09-10T00:00:00Z", "assistant",
+                listOf(TranscriptPart("text", text = "docs/tool.kt:7")), seq = 1))
+            val controller = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("printed:pane"))
+                .create().start().resume().visible()
+            try {
+                val activity = controller.get()
+                val model = PaneActivity::class.java.getDeclaredField("viewModel").apply { isAccessible = true }
+                    .get(activity) as PaneViewModel
+                waitForPrintedPane { fixture.configCalls > 0 && (refused || model.state.value.transcriptAvailable == true) }
+                model.stopPolling()
+                shadowOf(android.os.Looper.getMainLooper()).idleFor(Duration.ofMillis(50))
+                assertEquals("absent/false/refused admission never dispatches a Files root read", 0, fixture.fileReads)
+                assertTrue("absent/false/refused admission never dispatches Files/exist", fixture.existenceRequests.isEmpty())
+                assertTrue("mirror paths remain plain", printedSpans(activity).isEmpty())
+                assertNull("no automatic path can open Files", shadowOf(fixture.app).nextStartedActivity)
+                if (!refused) {
+                    assertNull("unsupported discovery does not freeze ordinary paired reads", fixture.repository.accessFailure)
+                    assertTrue("ordinary terminal text remains visible", activity.findViewById<TextView>(R.id.terminal_text)
+                        .text.toString().contains("src/Main.kt"))
+                    val body = activity.findViewById<ViewGroup>(R.id.transcript_body)
+                    assertTrue("transcript path is rendered without a Files span", descendants(body).filterIsInstance<TextView>()
+                        .any { it.text.toString().contains("docs/tool.kt") &&
+                            (it.text as? Spanned)?.getSpans(0, it.text.length, android.text.style.ClickableSpan::class.java).isNullOrEmpty() })
+                }
+            } finally { controller.pause().stop().destroy(); fixture.close() }
+        }
+    }
+
+    @Test fun withdrawingCurrentFilesAdmissionRetiresUnchangedMirrorAndTranscriptLinksWithoutReads() {
+        for (withdrawReadiness in listOf(true, false)) {
+            val fixture = PrintedPaneFixture()
+            fixture.transcript = listOf(TranscriptEntry("admission-loss", "2026-09-10T00:00:00Z", "assistant",
+                listOf(TranscriptPart("text", text = "docs/tool.kt:7")), seq = 1))
+            val controller = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("printed:pane"))
+                .create().start().resume().visible()
+            try {
+                val activity = controller.get()
+                val model = PaneActivity::class.java.getDeclaredField("viewModel").apply { isAccessible = true }
+                    .get(activity) as PaneViewModel
+                val terminal = activity.findViewById<TextView>(R.id.terminal_text)
+                val body = activity.findViewById<ViewGroup>(R.id.transcript_body)
+                fun transcriptText() = descendants(body).filterIsInstance<TextView>()
+                    .firstOrNull { it.isShown && it.text.toString().contains("docs/tool.kt") }
+                fun spans(view: TextView) = (view.text as? Spanned)
+                    ?.getSpans(0, view.text.length, android.text.style.ClickableSpan::class.java).orEmpty()
+                waitForPrintedPane { transcriptText()?.let { spans(it).isNotEmpty() } == true }
+                val oldTranscript = requireNotNull(transcriptText())
+                val oldTranscriptSpan = spans(oldTranscript).single()
+                activity.findViewById<View>(R.id.body_mode_switch).performClick()
+                waitForPrintedPane { terminal.isShown && printedSpans(activity).isNotEmpty() }
+                val oldMirrorSpan = printedSpans(activity).single()
+                model.stopPolling()
+                shadowOf(android.os.Looper.getMainLooper()).idleFor(Duration.ofMillis(50))
+                val bodyBefore = fixture.pane
+                val readsBefore = fixture.fileReads
+                val existenceBefore = fixture.existenceRequests.size
+                val configBefore = fixture.configCalls
+                if (withdrawReadiness) fixture.pane = fixture.pane.copy(filesReadReady = false)
+                else fixture.filesSupport = false
+                model.refresh()
+                waitForPrintedPane {
+                    fixture.configCalls > configBefore &&
+                        (if (withdrawReadiness) model.state.value.pane?.filesReadReady == false
+                        else model.state.value.filesConfigContext == null)
+                }
+                shadowOf(android.os.Looper.getMainLooper()).idleFor(Duration.ofMillis(50))
+                assertEquals("the accepted body text has not changed", bodyBefore.text, model.state.value.pane?.text)
+                assertEquals("the accepted body revision has not changed", bodyBefore.revision, model.state.value.pane?.revision)
+                assertTrue("withdrawn Files admission draws a plain visible mirror", terminal.isShown && printedSpans(activity).isEmpty())
+                for (name in listOf("printedLinkRoot", "printedLinkContext", "printedLinkText")) {
+                    assertNull("withdrawal releases $name custody", PaneActivity::class.java.getDeclaredField(name)
+                        .apply { isAccessible = true }.get(activity))
+                }
+                assertEquals("withdrawal cannot launch a new Files root lookup", readsBefore, fixture.fileReads)
+                assertEquals("withdrawal cannot launch a new Files existence lookup", existenceBefore, fixture.existenceRequests.size)
+                oldMirrorSpan.onClick(terminal)
+                oldTranscriptSpan.onClick(oldTranscript)
+                activity.findViewById<View>(R.id.body_mode_switch).performClick()
+                waitForPrintedPane { transcriptText() != null }
+                assertTrue("the retained transcript is visibly plain after admission loss", spans(requireNotNull(transcriptText())).isEmpty())
+                shadowOf(android.os.Looper.getMainLooper()).idleFor(Duration.ofMillis(50))
+                assertEquals("old callbacks and the body switch make zero root requests", readsBefore, fixture.fileReads)
+                assertEquals("old callbacks and the body switch make zero existence requests", existenceBefore, fixture.existenceRequests.size)
+                assertNull("retired visible links cannot open Files", shadowOf(fixture.app).nextStartedActivity)
+                fixture.pane = bodyBefore
+                fixture.filesSupport = true
+                model.refresh()
+                waitForPrintedPane { transcriptText()?.let { spans(it).isNotEmpty() } == true && fixture.fileReads > readsBefore }
+                activity.findViewById<View>(R.id.body_mode_switch).performClick()
+                waitForPrintedPane { terminal.isShown && printedSpans(activity).isNotEmpty() }
+                val restoredReads = fixture.fileReads
+                oldMirrorSpan.onClick(terminal)
+                oldTranscriptSpan.onClick(oldTranscript)
+                shadowOf(android.os.Looper.getMainLooper()).idleFor(Duration.ofMillis(50))
+                assertEquals("old confirmations cannot borrow restored current admission", restoredReads, fixture.fileReads)
+                assertNull(shadowOf(fixture.app).nextStartedActivity)
+                printedSpans(activity).single().onClick(terminal)
+                waitForPrintedPane { fixture.fileReads > restoredReads }
+                val opened = shadowOf(fixture.app).nextStartedActivity
+                assertNotNull("fresh same-owner positive admission still reaches Files", opened)
+                assertEquals("src/Main.kt", opened.getStringExtra("files_path"))
+                assertEquals(12, opened.getIntExtra("files_line", 0))
+            } finally { controller.pause().stop().destroy(); fixture.close() }
+        }
+    }
+
+    @Test fun hiddenTranscriptReconfirmsAfterEntireFilesAdmissionWithdrawalAndRestoration() {
+        for (withdrawReadiness in listOf(true, false)) {
+            val fixture = PrintedPaneFixture()
+            fixture.transcript = listOf(TranscriptEntry("admission-loss", "2026-09-10T00:00:00Z", "assistant",
+                listOf(TranscriptPart("text", text = "docs/tool.kt:7")), seq = 1))
+            val controller = Robolectric.buildActivity(PaneActivity::class.java, paneIntent("printed:pane"))
+                .create().start().resume().visible()
+            try {
+                val activity = controller.get()
+                val model = PaneActivity::class.java.getDeclaredField("viewModel").apply { isAccessible = true }
+                    .get(activity) as PaneViewModel
+                val terminal = activity.findViewById<TextView>(R.id.terminal_text)
+                val body = activity.findViewById<ViewGroup>(R.id.transcript_body)
+                fun transcriptText() = descendants(body).filterIsInstance<TextView>()
+                    .firstOrNull { it.isShown && it.text.toString().contains("docs/tool.kt") }
+                fun spans(view: TextView) = (view.text as? Spanned)
+                    ?.getSpans(0, view.text.length, android.text.style.ClickableSpan::class.java).orEmpty()
+                waitForPrintedPane { transcriptText()?.let { spans(it).isNotEmpty() } == true }
+                val oldTranscript = requireNotNull(transcriptText())
+                val oldTranscriptSpan = spans(oldTranscript).single()
+                activity.findViewById<View>(R.id.body_mode_switch).performClick()
+                waitForPrintedPane { terminal.isShown && printedSpans(activity).isNotEmpty() }
+                val oldMirrorSpan = printedSpans(activity).single()
+                model.stopPolling()
+                shadowOf(android.os.Looper.getMainLooper()).idleFor(Duration.ofMillis(50))
+                val bodyBefore = fixture.pane
+                val readsBefore = fixture.fileReads
+                val existenceBefore = fixture.existenceRequests.size
+                val configBefore = fixture.configCalls
+                if (withdrawReadiness) fixture.pane = fixture.pane.copy(filesReadReady = false)
+                else fixture.filesSupport = false
+                model.refresh()
+                waitForPrintedPane {
+                    fixture.configCalls > configBefore &&
+                        (if (withdrawReadiness) model.state.value.pane?.filesReadReady == false
+                        else model.state.value.filesConfigContext == null)
+                }
+                shadowOf(android.os.Looper.getMainLooper()).idleFor(Duration.ofMillis(50))
+                assertEquals("the accepted body text has not changed", bodyBefore.text, model.state.value.pane?.text)
+                assertEquals("the accepted body revision has not changed", bodyBefore.revision, model.state.value.pane?.revision)
+                assertTrue("withdrawn Files admission draws a plain visible mirror", terminal.isShown && printedSpans(activity).isEmpty())
+                for (name in listOf("printedLinkRoot", "printedLinkContext", "printedLinkText")) {
+                    assertNull("withdrawal releases $name custody", PaneActivity::class.java.getDeclaredField(name)
+                        .apply { isAccessible = true }.get(activity))
+                }
+                assertEquals("withdrawal cannot launch a new Files root lookup", readsBefore, fixture.fileReads)
+                assertEquals("withdrawal cannot launch a new Files existence lookup", existenceBefore, fixture.existenceRequests.size)
+                oldMirrorSpan.onClick(terminal)
+                oldTranscriptSpan.onClick(oldTranscript)
+                assertTrue("transcript stays hidden throughout withdrawal", terminal.isShown && transcriptText() == null)
+                shadowOf(android.os.Looper.getMainLooper()).idleFor(Duration.ofMillis(50))
+                assertEquals("old callbacks and the body switch make zero root requests", readsBefore, fixture.fileReads)
+                assertEquals("old callbacks and the body switch make zero existence requests", existenceBefore, fixture.existenceRequests.size)
+                assertNull("retired visible links cannot open Files", shadowOf(fixture.app).nextStartedActivity)
+                fixture.pane = bodyBefore
+                fixture.filesSupport = true
+                model.refresh()
+                waitForPrintedPane { terminal.isShown && printedSpans(activity).isNotEmpty() && fixture.fileReads > readsBefore }
+                assertNull("transcript is still hidden after restoring current admission", transcriptText())
+                val restoredReads = fixture.fileReads
+                oldMirrorSpan.onClick(terminal)
+                oldTranscriptSpan.onClick(oldTranscript)
+                shadowOf(android.os.Looper.getMainLooper()).idleFor(Duration.ofMillis(50))
+                assertEquals("old confirmations cannot borrow restored current admission", restoredReads, fixture.fileReads)
+                assertNull(shadowOf(fixture.app).nextStartedActivity)
+                val beforeTranscriptReads = fixture.fileReads
+                val beforeTranscriptConfirmations = fixture.existenceRequests.size
+                activity.findViewById<View>(R.id.body_mode_switch).performClick()
+                waitForPrintedPane { transcriptText()?.let { spans(it).isNotEmpty() } == true &&
+                    fixture.fileReads > beforeTranscriptReads && fixture.existenceRequests.size > beforeTranscriptConfirmations }
+                val currentTranscript = requireNotNull(transcriptText())
+                assertSame("unchanged turn retains its actual text view", oldTranscript, currentTranscript)
+                val currentTranscriptSpan = spans(currentTranscript).single()
+                assertNotSame("restoration installs fresh confirmation", oldTranscriptSpan, currentTranscriptSpan)
+                val currentReads = fixture.fileReads
+                oldTranscriptSpan.onClick(oldTranscript)
+                shadowOf(android.os.Looper.getMainLooper()).idleFor(Duration.ofMillis(50))
+                assertEquals("old hidden confirmation remains inert after reopening", currentReads, fixture.fileReads)
+                assertNull(shadowOf(fixture.app).nextStartedActivity)
+                currentTranscriptSpan.onClick(currentTranscript)
+                waitForPrintedPane { fixture.fileReads > currentReads }
+                val opened = shadowOf(fixture.app).nextStartedActivity
+                assertNotNull("fresh same-owner positive admission still reaches Files", opened)
+                assertEquals("docs/tool.kt", opened.getStringExtra("files_path"))
+                assertEquals(7, opened.getIntExtra("files_line", 0))
+            } finally { controller.pause().stop().destroy(); fixture.close() }
+        }
+    }
+
     private class PrintedPaneFixture : AutoCloseable {
         val app = ApplicationProvider.getApplicationContext<CollieApplication>()
         private val original = app.container.repository
@@ -504,19 +779,40 @@ class PaneActivityTest {
             override fun save(connection: com.lateapex.collie.domain.Connection) { this.connection.value = connection }
             override fun clear() { connection.value = null }
         }
-        var pane = PaneReadResponse("printed:pane", "src/Main.kt:12", false, 1)
+        var pane = PaneReadResponse("printed:pane", "src/Main.kt:12", false, 1, filesReadReady = true)
+        var filesSupport: Boolean? = true
+        var configRefused = false
+        var configCalls = 0
         var transcript = emptyList<TranscriptEntry>()
         var chatCalls = 0
         var chatGen = 1L
         var fileReads = 0
+        var fileFailure: com.lateapex.collie.network.ApiFailure? = null
+        var failedFileReads = 0
+        val unexpectedFailureRetry = kotlinx.coroutines.CompletableDeferred<Unit>()
         val existenceRequests = mutableListOf<List<String>>()
         // A filesystem answers existence from its inventory, not from the candidates sent by
         // the client. Confirming both Main.kt and Main.kt:12 intentionally makes that text inert.
         private val existingFiles = setOf("src/Main.kt", "docs/tool.kt", "docs/expanded.kt", "docs/distinct-65.kt") +
             (1..63).map { "docs/part-$it.kt" }
         var nextRootWait: kotlinx.coroutines.CompletableDeferred<Unit>? = null
-        private val api = object : com.lateapex.collie.network.CollieApi by app.container.api {
-            override suspend fun config(connection: com.lateapex.collie.domain.Connection) = com.lateapex.collie.network.ApiResult.Success(com.lateapex.collie.network.BridgeConfigResponse(), 200)
+        // An omitted fixture route must fail visibly, never escape to the workstation network.
+        private val unscriptedApi = java.lang.reflect.Proxy.newProxyInstance(
+            com.lateapex.collie.network.CollieApi::class.java.classLoader,
+            arrayOf(com.lateapex.collie.network.CollieApi::class.java),
+        ) { _, method, _ ->
+            com.lateapex.collie.network.ApiResult.Failure(
+                com.lateapex.collie.network.ApiFailure.Protocol("Unscripted printed fixture API: ${method.name}"))
+        } as com.lateapex.collie.network.CollieApi
+        private val api = object : com.lateapex.collie.network.CollieApi by unscriptedApi {
+            override suspend fun config(connection: com.lateapex.collie.domain.Connection, scope: com.lateapex.collie.domain.Scope) = config(connection)
+            override suspend fun config(connection: com.lateapex.collie.domain.Connection): com.lateapex.collie.network.ApiResult<com.lateapex.collie.network.BridgeConfigResponse> {
+                configCalls++
+                if (configRefused) return com.lateapex.collie.network.ApiResult.Failure(
+                    com.lateapex.collie.network.ApiFailure.Http(403, "Config refused", null))
+                return com.lateapex.collie.network.ApiResult.Success(com.lateapex.collie.network.BridgeConfigResponse(
+                    control = filesSupport?.let { com.lateapex.collie.network.ControlCapabilityResponse(mapOf("filesDiscovery" to it)) }), 200)
+            }
             override suspend fun snapshot(connection: com.lateapex.collie.domain.Connection, scope: com.lateapex.collie.domain.Scope) =
                 com.lateapex.collie.network.ApiResult.Success(com.lateapex.collie.network.SnapshotResponse("1", agents = listOf(
                     PaneSummary(paneId = "printed:pane", workspaceId = "w1", workspaceLabel = "project", workspaceNumber = 1,
@@ -528,8 +824,16 @@ class PaneActivityTest {
                 chatCalls++
                 return com.lateapex.collie.network.ApiResult.Success(com.lateapex.collie.network.PaneChatResponse(address.paneId, available = transcript.isNotEmpty(), page = "live", gen = chatGen, rev = 1, head = transcript.mapNotNull { it.seq }.maxOrNull() ?: 1, oldest = transcript.mapNotNull { it.seq }.minOrNull() ?: 1, hasOlder = false, upserts = transcript), 200)
             }
+            override suspend fun history(connection: com.lateapex.collie.domain.Connection, address: com.lateapex.collie.domain.PaneAddress, limit: Int, before: String?, etag: String?) =
+                com.lateapex.collie.network.ApiResult.Success(com.lateapex.collie.network.PaneHistoryResponse(address.paneId, available = false), 200)
             override suspend fun files(connection: com.lateapex.collie.domain.Connection, target: com.lateapex.collie.network.FilesTarget, scope: com.lateapex.collie.domain.Scope, path: com.lateapex.collie.network.RelativeFilePath?, dir: com.lateapex.collie.network.RelativeFilePath?, ignored: Boolean): com.lateapex.collie.network.ApiResult<com.lateapex.collie.network.FilesAnswer> {
                 fileReads++
+                fileFailure?.let { failure ->
+                    failedFileReads++
+                    // A regression can be observed as a second request without hanging the test.
+                    if (failedFileReads > 1) unexpectedFailureRetry.await()
+                    return com.lateapex.collie.network.ApiResult.Failure(failure)
+                }
                 val wait = nextRootWait
                 nextRootWait = null
                 if (wait != null) kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { wait.await() }

@@ -78,6 +78,8 @@ data class PaneUiState(
     val loadingOlder: Boolean = false,
     /** Actor for the exact accepted pane snapshot; redraws never create a replacement actor. */
     val paneReadContext: com.lateapex.collie.data.ScopedReadContext? = null,
+    /** Positive declaration belongs to this captured config actor, never a replacement scope. */
+    val filesConfigContext: ScopedReadContext? = null,
     val transcript: List<TranscriptEntry> = emptyList(),
     val transcriptAvailable: Boolean? = null,
     val transcriptReason: String? = null,
@@ -1309,7 +1311,11 @@ class PaneViewModel(
     }
 
     private suspend fun loadSupportingData() {
-        val config = withCurrentActor { repository.config(address.scope) }
+        val configActor = repository.readContext(address.scope, address.paneId) ?: throw DiscardedActor()
+        val config = repository.config(address.scope, configActor)
+        if (!repository.isCurrent(configActor)) throw DiscardedActor()
+        mutableState.value = mutableState.value.copy(filesConfigContext =
+            configActor.takeIf { config is ApiResult.Success && config.value.control?.supportsNew("filesDiscovery") == true })
         if (config is ApiResult.Success) {
             val isShell = agent.equals("shell", ignoreCase = true)
             mutableState.value = mutableState.value.copy(

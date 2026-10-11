@@ -615,4 +615,6 @@ Command: %2$s</string>
     <string name="agent_catalog_executable_found">found</string>
     <string name="agent_catalog_executable_missing">not found</string>
     <string name="agent_catalog_not_probed">not probed</string>
+
+    <string name="pane_refresh">Refresh pane</string>
 </resources>

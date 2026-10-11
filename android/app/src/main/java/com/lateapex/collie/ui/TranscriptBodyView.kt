@@ -117,6 +117,8 @@ class TranscriptBodyView @JvmOverloads constructor(
     private var boundAgent: String? = null
     private var boundImageActor: ImageRenderActor? = null
     private var boundEntries: List<TranscriptEntry> = emptyList()
+    private var boundFilesAdmissionReady = false
+    private var boundFilesAdmissionGeneration = 0L
 
     init {
         addView(scroll, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
@@ -136,10 +138,12 @@ class TranscriptBodyView @JvmOverloads constructor(
         queued: List<String> = emptyList(),
         imageLoader: ScopedImageLoader? = null,
         readContext: ScopedReadContext? = null,
+        filesAdmissionReady: Boolean = false,
         sendNow: QueuedSendNow? = null,
         sendNowEnabled: Boolean = false,
         sendNowPending: Boolean = false,
         sendNowAttempted: Boolean = false,
+        filesAdmissionGeneration: Long = 0L,
     ) {
         val atBottom = scroll.scrollY + scroll.height >= (scroll.getChildAt(0)?.height ?: 0) - dp(8)
         // The reader's place is the first turn on screen and its offset from the top. Restoring
@@ -167,6 +171,10 @@ class TranscriptBodyView @JvmOverloads constructor(
         val oldViews = turns.toMap()
         val previous = boundEntries.associateBy { it.uuid }
         boundEntries = entries
+        val filesAdmissionChanged = boundFilesAdmissionReady != filesAdmissionReady ||
+            boundFilesAdmissionGeneration != filesAdmissionGeneration
+        boundFilesAdmissionReady = filesAdmissionReady
+        boundFilesAdmissionGeneration = filesAdmissionGeneration
         val fileBatchChanged = reset || entries.any { turns[it.uuid] == null || previous[it.uuid] != it }
         if (fileBatchChanged) onFileReferenceBatchStarted?.invoke()
         val before = turns.size
@@ -182,7 +190,8 @@ class TranscriptBodyView @JvmOverloads constructor(
             if (existing != null) turnsContainer.removeView(existing)
             turnsContainer.addView(view, index + 1)
         }
-        if (fileBatchChanged) {
+        if (fileBatchChanged || filesAdmissionChanged) {
+            // Admission changes revisit retained cards without resetting their distinct-path quota.
             // Retained cards count in the new batch too, and keep their own accepted actor.
             // An unchanged supporting-state bind neither clears the quota nor borrows authority.
             turns.forEach { (uuid, view) -> turnFileActors[uuid]?.let { decorateFileReferences(view, it) } }

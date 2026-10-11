@@ -784,6 +784,8 @@ export interface UpdateStatus {
 
 /** GET /api/pane/:id — recent terminal output for one agent (ANSI/SGR, rendered colored). */
 export interface PaneReadResponse {
+  /** Owning producer's current device-read admission; absence never admits automatic Files. */
+  filesReadReady?: boolean;
   paneId: string;
   text: string;
   truncated: boolean;
