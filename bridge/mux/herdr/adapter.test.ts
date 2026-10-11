@@ -6,6 +6,7 @@ import type { MuxSpace } from "../types.ts";
 import { HerdrMux, REPO_LOOKUP_RETRY_MS, workspaceRepoOf } from "./adapter.ts";
 import type { WireSnapshot, WireWorkspace, WireWorktreeListing } from "./client.ts";
 import { FakeHerdr } from "./fixture.ts";
+import { buildSubscriptions } from "./events.ts";
 
 // WHICH REPO A WORKSPACE SITS IN, across the two Herdr shapes (ADR 0032).
 //
@@ -268,6 +269,126 @@ describe("herdr pane process metadata", () => {
     const result = await new HerdrMux(fake, () => []).processInfo(paneId);
     expect(result).toMatchObject({ ok: false, reason: "gone" });
     expect(fake.processInfoTargets).toEqual([paneId]);
+  });
+});
+
+describe("herdr pane layout capability and neutral adapter", () => {
+  const admitLayoutMutation = () => true;
+  test("layout invalidation subscription is added only after positive runtime support", () => {
+    expect(buildSubscriptions([]).some((entry) => entry.type === "layout.updated")).toBe(false);
+    expect(buildSubscriptions([], true).some((entry) => entry.type === "layout.updated")).toBe(true);
+  });
+  test("layout APIs stay absent until a schema-22 0.9.3 handshake and stay absent on older servers", async () => {
+    const old = new FakeHerdr();
+    old.layoutVersion = "0.9.2";
+    const oldMux = new HerdrMux(old, () => []);
+    await oldMux.reachable();
+    expect(oldMux.capabilities.supports.paneLayout).toBe(false);
+    expect(oldMux.capabilities.supports.paneMove).toBe(false);
+    expect((await oldMux.readLayout("w1:p3")).ok).toBe(false);
+
+    const current = new FakeHerdr();
+    const mux = new HerdrMux(current, () => []);
+    await mux.reachable();
+    expect(mux.capabilities.supports.paneLayout).toBe(true);
+    expect(mux.capabilities.supports.paneMove).toBe(true);
+    const snapshot = await mux.snapshot();
+    const source = snapshot.panes[0]!;
+    const layout = await mux.readLayout(source.paneId);
+    expect(layout).toMatchObject({ ok: true, value: { kind: "layout", layout: { workspaceId: source.spaceId, tabId: source.tabId } } });
+    expect(source.terminalIncarnation).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  test("runtime replacement retires pane-layout readiness and requires a new positive handshake", async () => {
+    const fake = new FakeHerdr();
+    const mux = new HerdrMux(fake, () => []);
+    await mux.reachable();
+    expect(mux.capabilities.supports.paneLayout).toBe(true);
+    fake.runtimeIdentity = "fake-herdr-runtime-2";
+    const stale = await mux.readLayout("w1:p3");
+    expect(stale.ok).toBe(false);
+    expect(mux.capabilities.supports.paneLayout).toBe(false);
+    await mux.reachable();
+    expect(mux.capabilities.supports.paneLayout).toBe(true);
+    expect(await mux.layoutRuntimeIdentity()).toBe("fake-herdr-runtime-2");
+  });
+
+  test("missing layout evidence probes ordinary health and never keeps positive layout capabilities", async () => {
+    for (const healthy of [false, true]) {
+      const fake = new FakeHerdr();
+      let probes = 0;
+      fake.ping = async () => { probes++; return healthy; };
+      const mux = new HerdrMux(fake, () => []);
+      expect(await mux.reachable()).toBe(true); // Compatible, stable sample needs no fallback probe.
+      expect(probes).toBe(0);
+      expect(mux.capabilities.supports.paneLayout).toBe(true);
+      fake.layoutHandshakeSample = async () => null;
+      expect(await mux.reachable()).toBe(healthy);
+      expect(probes).toBe(1);
+      for (const capability of ["paneLayout", "paneSplit", "paneResize", "paneZoom", "paneSwap", "paneMove", "paneDirectionalFocus"] as const)
+        expect(mux.capabilities.supports[capability]).toBe(false);
+    }
+  });
+
+  test("directional swap rechecks synchronous admission after neighbor preflight", async () => {
+    const fake = new FakeHerdr();
+    const mux = new HerdrMux(fake, () => []);
+    await mux.reachable();
+    const source = (await mux.snapshot()).panes[0]!;
+    const readNeighbor = fake.readPaneNeighbor.bind(fake);
+    let entered!: () => void;
+    let release!: () => void;
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    fake.readPaneNeighbor = async (paneId, direction) => {
+      entered();
+      await blocked;
+      return readNeighbor(paneId, direction);
+    };
+    let allowed = true;
+    let mutations = 0;
+    const swap = fake.swapPanes.bind(fake);
+    fake.swapPanes = async (params) => { mutations++; return swap(params); };
+    const pending = mux.applyLayout({ kind: "swap", paneId: source.paneId, direction: "right", sourcePaneId: source.paneId, targetPaneId: null }, () => allowed);
+    await started;
+    allowed = false;
+    release();
+    const result = await pending;
+    expect(result.ok).toBe(false);
+    expect(mutations).toBe(0);
+  });
+
+  test("a malformed mutation discriminant becomes uncertain transport and retires readiness", async () => {
+    const fake = new FakeHerdr();
+    const mux = new HerdrMux(fake, () => []);
+    await mux.reachable();
+    const pane = (await mux.snapshot()).panes[0]!;
+    fake.resizePane = async () => ({ type: "pane_zoom", zoom: {} });
+    const result = await mux.applyLayout({ kind: "resize", paneId: pane.paneId, direction: "right", amount: 0.1 }, admitLayoutMutation);
+    expect(result.ok).toBe(false);
+    expect(mux.capabilities.supports.paneLayout).toBe(false);
+  });
+
+  test("split is focus-off, swap refuses a cross-tab target, and workspace moves rebind pane identity", async () => {
+    const fake = new FakeHerdr();
+    const mux = new HerdrMux(fake, () => []);
+    await mux.reachable();
+    const before = await mux.snapshot();
+    const source = before.panes[0]!;
+    const operatorFocused = before.panes.find((pane) => pane.focused)?.paneId;
+    const split = await mux.applyLayout({ kind: "split", paneId: source.paneId, direction: "right", ratio: 0.4, targetPaneId: source.paneId, workspaceId: source.spaceId, focus: false }, admitLayoutMutation);
+    expect(split).toMatchObject({ ok: true, value: { kind: "split" } });
+    const after = await mux.snapshot();
+    expect(after.panes.find((pane) => pane.focused)?.paneId).toBe(operatorFocused);
+    expect(after.panes).toHaveLength(before.panes.length + 1);
+    const otherTab = after.panes.find((pane) => pane.tabId !== source.tabId)!;
+    expect(await mux.applyLayout({ kind: "swap", paneId: source.paneId, direction: null, sourcePaneId: source.paneId, targetPaneId: otherTab.paneId }, admitLayoutMutation)).toMatchObject({ ok: true, value: { kind: "swap", changed: false } });
+    const moved = await mux.applyLayout({ kind: "move", paneId: source.paneId, destination: { type: "new_workspace", label: "moved", tabLabel: "main" }, focus: false }, admitLayoutMutation);
+    expect(moved).toMatchObject({ ok: true, value: { kind: "move", changed: true, previousPaneId: source.paneId, previousTabId: source.tabId, previousWorkspaceId: source.spaceId } });
+    if (moved.ok && moved.value.kind === "move") {
+      expect(moved.value.paneId).not.toBe(source.paneId);
+      expect(moved.value.layout.workspaceId).not.toBe(source.spaceId);
+    }
   });
 });
 

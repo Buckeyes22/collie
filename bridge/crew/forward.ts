@@ -67,6 +67,7 @@ const FORWARDABLE: readonly RegExp[] = [
   /^refresh$/,
   /^control\/operations\/[a-zA-Z0-9_-]{1,128}$/,
   /^pane\/[^/]+(?:\/(?:reply|keys|upload|close|rename|history|chat|changes|files|focus|processes))?$/,
+  /^pane\/[^/]+\/layout(?:\/(?:neighbor|edges|plan|split|resize|zoom|swap|move|focus-direction))?$/,
   // One picture under the Files root, as bytes (ADR 0090): off the disk of the member that owns the
   // pane or the space, like the Files read it sits beside. Mirrors `PANE_FILES_IMAGE_ROUTE` and
   // `WORKSPACE_FILES_IMAGE_ROUTE` in bridge/server.ts one-for-one. Additive-optional (§7.1).
@@ -161,7 +162,9 @@ export type ForwardKind = "read" | "write";
  * READ despite being an action segment — it only ever reads a log off disk — and everything else with
  * an action segment types into or restructures a terminal.
  */
-export function forwardKind(route: string): ForwardKind {
+export function forwardKind(route: string, method = "POST"): ForwardKind {
+  const control = controlGate(`/api/${route}`, method);
+  if (control !== null) return control === "write" ? "write" : "read";
   if (route === "refresh" || route.startsWith("control/operations/")) return "read";
   // A GET that changes nothing, exactly like `pane/:id/history` — attempted even against a member
   // this lead has not heard from in a while, never refused before it is tried (§10.3's "a READ to a
@@ -676,7 +679,7 @@ export async function forwardToPeer(req: Request, url: URL, deps: ForwardDeps): 
     });
   }
 
-  const kind = forwardKind(route);
+  const kind = forwardKind(route, req.method);
   if (kind === "write") {
     const refusal = refuseWriteBeforeAttempt(deps.state);
     if (refusal !== null) return refusal;

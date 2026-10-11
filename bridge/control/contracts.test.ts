@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { controlScope, controlGate, payloadHash, supportsNew } from "./contracts.ts";
-import { OperationStore } from "./operations.ts";
+import { OPERATION_COMPLETION_HEADROOM_BYTES, OperationStore } from "./operations.ts";
 import { executePlannedOperation, PlanStore, type PlanBinding } from "./plans.ts";
 import { serveControlRoute } from "./routes.ts";
 
@@ -20,6 +20,10 @@ describe("scoped control contracts", () => {
   test("closed reads and canonical payloads, absence never authorizes a new verb", () => {
     expect(controlGate("/api/refresh", "POST")).toBe("read");
     expect(controlGate("/api/control/operations/intent1", "GET")).toBe("read");
+    expect(controlGate("/api/pane/w1:p1/layout", "GET")).toBe("read");
+    expect(controlGate("/api/pane/w1:p1/layout/plan", "POST")).toBe("read");
+    expect(controlGate("/api/pane/w1:p1/layout/move", "POST")).toBe("write");
+    expect(controlGate("/api/pane/w1:p1/layout/plan", "GET")).toBeNull();
     expect(controlGate("/api/control/arbitrary-rpc", "POST")).toBeNull();
     expect(payloadHash({ a: 1, b: 2 })).toBe(payloadHash({ b: 2, a: 1 }));
     const absent: (Record<string, boolean> | undefined)[] = [undefined, {}, { movePane: false }];
@@ -86,6 +90,62 @@ describe("scoped control contracts", () => {
       await expect(new OperationStore(dir).inspect("done", owner, "local", "work")).rejects.toThrow("unreadable");
       await writeFile(file, " ".repeat(4 * 1024 * 1024 + 1));
       await expect(new OperationStore(dir).inspect("done", owner, "local", "work")).rejects.toThrow("too large");
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+  test("reserved per-row headroom covers the largest closed pane-move result and Unicode code", () => {
+    const pending = { requestId: "move-result", binding: { ...binding, capability: "paneMove" }, planToken: "p".repeat(256), state: "pending", at: 1, updatedAt: 1, code: null };
+    const terminal = {
+      ...pending, state: "succeeded", updatedAt: 2, code: "😀".repeat(256),
+      result: { kind: "pane-move", paneId: "p".repeat(128), previousPaneId: "q".repeat(128), previousTabId: "t".repeat(128), previousWorkspaceId: "w".repeat(128) },
+    };
+    const growth = Buffer.byteLength(JSON.stringify(terminal), "utf8") - Buffer.byteLength(JSON.stringify(pending), "utf8");
+    expect(growth).toBeGreaterThan(0);
+    expect(growth).toBeLessThanOrEqual(OPERATION_COMPLETION_HEADROOM_BYTES);
+  });
+
+  test("pane-move receipts preserve only bounded aliases across restart and reject malformed stored results", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "collie-control-move-result-"));
+    try {
+      const moveBinding = { ...binding, capability: "paneMove" };
+      const alias = "w1:p" + "7".repeat(123);
+      const result = { kind: "pane-move" as const, paneId: alias, previousPaneId: "w1:p1", previousTabId: "w1:t1", previousWorkspaceId: "w1" };
+      const operation = await new OperationStore(dir).execute("move-result", moveBinding, "plan-1", async () => ({ state: "succeeded", result, code: "x".repeat(256) }));
+      expect(operation).toMatchObject({ state: "succeeded", result });
+      expect(await new OperationStore(dir).inspectIntent("move-result", owner, "local", "work", "paneMove", moveBinding.payloadHash, "plan-1")).toMatchObject({ kind: "match", operation: { result } });
+      expect((await new OperationStore(dir).inspectIntent("move-result", "b".repeat(64), "local", "work", "paneMove", moveBinding.payloadHash, "plan-1")).kind).toBe("missing");
+      const file = join(dir, "control-operations.json");
+      const rows = JSON.parse(await readFile(file, "utf8"));
+      rows[0].result.vendorPayload = "must reject";
+      await writeFile(file, JSON.stringify(rows));
+      await expect(new OperationStore(dir).inspect("move-result", owner, "local", "work")).rejects.toThrow("operation registry unreadable");
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+  test("failed move completion drops aliases, stays unknown, and leaves a readable registry", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "collie-control-move-persist-failure-"));
+    try {
+      const moveBinding = { ...binding, capability: "paneMove" };
+      let persists = 0;
+      const operations = new OperationStore(dir, Date.now, async () => {
+        persists++;
+        if (persists === 2) throw new Error("injected terminal fsync failure");
+      });
+      let effects = 0;
+      const move = await operations.execute("move-fsync", moveBinding, "plan-1", async () => {
+        effects++;
+        return { state: "succeeded", result: { kind: "pane-move", paneId: "new", previousPaneId: "old", previousTabId: "tab", previousWorkspaceId: "space" } };
+      });
+      expect(move).toMatchObject({ state: "unknown", code: "operation.persistence_failed" });
+      expect(move).not.toHaveProperty("result");
+      await operations.execute("unrelated", binding, null, async () => ({ state: "succeeded" }));
+      const restarted = new OperationStore(dir);
+      const restored = await restarted.inspectIntent("move-fsync", owner, "local", "work", "paneMove", moveBinding.payloadHash, "plan-1");
+      expect(restored).toMatchObject({ kind: "match", operation: { state: "unknown" } });
+      expect(restored.kind === "match" ? restored.operation : {}).not.toHaveProperty("result");
+      expect((await restarted.execute("move-fsync", moveBinding, "plan-1", async () => { effects++; return { state: "succeeded" }; })).state).toBe("unknown");
+      expect(effects).toBe(1);
+      const missing = await new OperationStore().execute("missing-move-result", moveBinding, null, async () => ({ state: "succeeded" }));
+      expect(missing).toMatchObject({ state: "unknown", code: "operation.invalid_outcome" });
+      expect(missing).not.toHaveProperty("result");
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
   test("persisted timestamps reject malformed chronology and completion survives clock rollback", async () => {

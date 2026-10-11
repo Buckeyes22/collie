@@ -25,12 +25,14 @@
 //     rests on, and the fake would be lying if it minted fresh ones.
 
 import type { AgentStatus } from "../../types.ts";
+import type { JsonValue } from "../../json.ts";
 import type { MuxConformanceFixture, MuxConformanceWorld, MuxWrite } from "../conformance.ts";
 import { HerdrMux } from "./adapter.ts";
 import type {
   CreatedShell,
   EventStream,
   HerdrRpc,
+  HerdrSplitPaneParams,
   PaneRead,
   SubscribeOptions,
   WirePane,
@@ -75,9 +77,15 @@ function notFound(method: string, code: string, id: string): Error {
  * the real one, unmodified.
  */
 export class FakeHerdr implements HerdrRpc {
+  layoutVersion = "0.9.3";
+  layoutProtocol = 22;
+  runtimeIdentity = "fake-herdr-runtime-1";
+  splitAfterEffectFailure = false;
+  lastSplitParameters: HerdrSplitPaneParams | null = null;
   private workspaces: WireWorkspace[] = [];
   private tabs: WireTab[] = [];
   private panes: WirePane[] = [];
+  private readonly zoomedTabs = new Set<string>();
   private readonly screens = new Map<string, FakeScreen>();
   private readonly subscribers = new Set<Subscriber>();
   private readonly recorded: MuxWrite[] = [];
@@ -296,6 +304,131 @@ export class FakeHerdr implements HerdrRpc {
     for (const pane of this.panes) pane.focused = pane.pane_id === target.pane_id;
     for (const tab of this.tabs) tab.focused = tab.tab_id === target.tab_id;
     for (const workspace of this.workspaces) workspace.focused = workspace.workspace_id === target.workspace_id;
+  }
+
+  async handshake(): Promise<{ version: string; protocol: number }> { return { version: this.layoutVersion, protocol: this.layoutProtocol }; }
+  layoutRuntimeIdentity(): string | null { return this.runtimeIdentity; }
+  async layoutHandshakeSample(): Promise<{ handshake: { version: string; protocol: number }; identity: string } | null> {
+    const first = this.runtimeIdentity;
+    const handshake = await this.handshake();
+    const second = this.runtimeIdentity;
+    return first && first === second ? { handshake, identity: first } : null;
+  }
+  retireLayoutRuntime(): void { /* no cached identity in this stateless fixture */ }
+
+  async readPaneLayout(paneId: string): Promise<JsonValue> {
+    const selected = this.pane("pane.layout", paneId);
+    return { type: "pane_layout", layout: this.layoutSnapshot(selected) };
+  }
+
+  private layoutSnapshot(selected: WirePane): JsonValue {
+    const panes = this.panes.filter((pane) => pane.tab_id === selected.tab_id);
+    return {
+      workspace_id: selected.workspace_id, tab_id: selected.tab_id, zoomed: this.zoomedTabs.has(selected.tab_id),
+      area: { x: 0, y: 0, width: 80, height: 24 }, focused_pane_id: panes.find((pane) => pane.focused)?.pane_id ?? selected.pane_id,
+      panes: panes.map((pane, index) => ({ pane_id: pane.pane_id, focused: pane.focused, rect: { x: index * 40, y: 0, width: 40, height: 24 } })),
+      splits: [],
+    };
+  }
+
+  private paneInfoWire(pane: WirePane): JsonValue {
+    return { pane_id: pane.pane_id, terminal_id: pane.terminal_id, workspace_id: pane.workspace_id, tab_id: pane.tab_id, focused: pane.focused, agent_status: pane.agent_status, revision: pane.revision };
+  }
+
+  async readPaneNeighbor(paneId: string, direction: "left" | "right" | "up" | "down"): Promise<JsonValue> {
+    const selected = this.pane("pane.neighbor", paneId);
+    const peers = this.panes.filter((pane) => pane.tab_id === selected.tab_id);
+    const index = peers.findIndex((pane) => pane.pane_id === paneId);
+    const next = direction === "left" ? peers[index - 1] : direction === "right" ? peers[index + 1] : undefined;
+    return { type: "pane_neighbor", neighbor: { pane_id: paneId, direction, neighbor_pane_id: next?.pane_id ?? null, layout: this.layoutSnapshot(selected) } };
+  }
+
+  async readPaneEdges(paneId: string): Promise<JsonValue> {
+    const selected = this.pane("pane.edges", paneId);
+    const peers = this.panes.filter((pane) => pane.tab_id === selected.tab_id);
+    const index = peers.findIndex((pane) => pane.pane_id === paneId);
+    return { type: "pane_edges", edges: { pane_id: paneId, left: index === 0, right: index === peers.length - 1, up: true, down: true, layout: this.layoutSnapshot(selected) } };
+  }
+
+  async focusPaneDirection(paneId: string, direction: "left" | "right" | "up" | "down"): Promise<JsonValue> {
+    const selected = this.pane("pane.focus_direction", paneId);
+    const peers = this.panes.filter((pane) => pane.tab_id === selected.tab_id);
+    const index = peers.findIndex((pane) => pane.pane_id === paneId);
+    const target = direction === "left" ? peers[index - 1] : direction === "right" ? peers[index + 1] : undefined;
+    if (target) await this.focusPane(target.pane_id);
+    return { type: "pane_focus_direction", focus: { changed: target !== undefined, source_pane_id: paneId, focused_pane_id: target?.pane_id ?? null, layout: this.layoutSnapshot(selected) } };
+  }
+
+  async splitPane(params: HerdrSplitPaneParams): Promise<JsonValue> {
+    this.lastSplitParameters = { ...params, env: { ...params.env } };
+    const source = this.pane("pane.split", params.target_pane_id ?? "");
+    const tab = this.tab("pane.split", source.tab_id);
+    const created = this.newPane(tab, source.cwd);
+    if (this.splitAfterEffectFailure) throw new Error("transport disconnected after split dispatch");
+    return { type: "pane_info", pane: {
+      pane_id: created.pane_id, terminal_id: created.terminal_id, workspace_id: created.workspace_id, tab_id: created.tab_id,
+      focused: created.focused, agent_status: created.agent_status, revision: created.revision,
+    } };
+  }
+
+  async resizePane(paneId: string, _direction: "left" | "right" | "up" | "down", _amount: number | null): Promise<JsonValue> {
+    const pane = this.pane("pane.resize", paneId);
+    return { type: "pane_resize", resize: { changed: true, pane_id: paneId, focused_pane_id: pane.pane_id, layout: this.layoutSnapshot(pane) } };
+  }
+
+  async zoomPane(paneId: string, mode: "toggle" | "on" | "off"): Promise<JsonValue> {
+    const pane = this.pane("pane.zoom", paneId);
+    const before = this.zoomedTabs.has(pane.tab_id);
+    const zoomed = mode === "toggle" ? !before : mode === "on";
+    if (zoomed) this.zoomedTabs.add(pane.tab_id);
+    else this.zoomedTabs.delete(pane.tab_id);
+    const changed = before !== zoomed;
+    const focused = this.panes.find((candidate) => candidate.tab_id === pane.tab_id && candidate.focused)?.pane_id ?? pane.pane_id;
+    return { type: "pane_zoom", zoom: { changed, zoomed, zoom_changed: changed, focus_changed: false, pane_id: paneId, focused_pane_id: focused, layout: this.layoutSnapshot(pane) } };
+  }
+
+  async swapPanes(params: { pane_id: string; direction: "left" | "right" | "up" | "down" | null; source_pane_id: string | null; target_pane_id: string | null }): Promise<JsonValue> {
+    const source = this.pane("pane.swap", params.source_pane_id ?? params.pane_id);
+    const targetId = params.target_pane_id;
+    const target = targetId === null ? undefined : this.panes.find((pane) => pane.pane_id === targetId);
+    const changed = target !== undefined && target.tab_id === source.tab_id;
+    return { type: "pane_swap", swap: { changed, source_pane_id: source.pane_id, target_pane_id: target?.pane_id ?? null, focused_pane_id: this.panes.find((pane) => pane.focused)?.pane_id ?? source.pane_id, layout: this.layoutSnapshot(source) } };
+  }
+
+  async movePane(params: { pane_id: string; destination: import("./client.ts").HerdrMoveDestination; focus: false }): Promise<JsonValue> {
+    const source = this.pane("pane.move", params.pane_id);
+    const previousPaneId = source.pane_id;
+    const previousTabId = source.tab_id;
+    const previousWorkspaceId = source.workspace_id;
+    let destinationTab: WireTab;
+    if (params.destination.type === "tab") {
+      destinationTab = this.tab("pane.move", params.destination.tab_id);
+      if (destinationTab.tab_id === source.tab_id) {
+        return { type: "pane_move", move_result: { changed: false, reason: "same_tab", previous_pane_id: previousPaneId, previous_tab_id: previousTabId, previous_workspace_id: previousWorkspaceId, pane: this.paneInfoWire(source), target_layout: this.layoutSnapshot(source), focused_pane_id: this.panes.find((pane) => pane.focused)?.pane_id ?? source.pane_id } };
+      }
+    } else if (params.destination.type === "new_tab") {
+      const workspace = this.workspace("pane.move", params.destination.workspace_id);
+      destinationTab = this.newTab(workspace, params.destination.label ?? String(workspace.tab_count + 1));
+    } else {
+      const workspace = this.newWorkspace(params.destination.label ?? `space-${String(this.workspaces.length + 1)}`);
+      destinationTab = this.newTab(workspace, params.destination.tab_label ?? "1");
+    }
+    this.minted += 1;
+    const nextPaneId = `${destinationTab.workspace_id}:p${String(this.minted)}`;
+    const moved: WirePane = { ...source, pane_id: nextPaneId, terminal_id: `term${String(this.minted)}`, workspace_id: destinationTab.workspace_id, tab_id: destinationTab.tab_id, focused: false };
+    this.panes = this.panes.filter((pane) => pane.pane_id !== source.pane_id);
+    const oldTab = this.tabs.find((tab) => tab.tab_id === source.tab_id);
+    if (oldTab) oldTab.pane_count = Math.max(0, oldTab.pane_count - 1);
+    const oldWorkspace = this.workspaces.find((workspace) => workspace.workspace_id === source.workspace_id);
+    if (oldWorkspace) oldWorkspace.pane_count = Math.max(0, oldWorkspace.pane_count - 1);
+    destinationTab.pane_count += 1;
+    const newWorkspace = this.workspaces.find((workspace) => workspace.workspace_id === destinationTab.workspace_id);
+    if (newWorkspace) newWorkspace.pane_count += 1;
+    this.panes.push(moved);
+    const screen = this.screens.get(source.pane_id);
+    if (screen) { this.screens.delete(source.pane_id); this.screens.set(nextPaneId, screen); }
+    const focusedPaneId = this.panes.find((pane) => pane.focused)?.pane_id ?? moved.pane_id;
+    return { type: "pane_move", move_result: { changed: true, previous_pane_id: previousPaneId, previous_tab_id: previousTabId, previous_workspace_id: previousWorkspaceId, pane: this.paneInfoWire(moved), target_layout: this.layoutSnapshot(moved), focused_pane_id: focusedPaneId } };
   }
 
   async createTab(workspaceId: string, opts: { label?: string; cwd?: string } = {}): Promise<CreatedShell> {

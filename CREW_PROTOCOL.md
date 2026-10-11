@@ -3187,3 +3187,10 @@ Typed `X-Collie-Error-Source`, `X-Collie-Error-Factor` and `X-Collie-Error-Code`
 Merged Crew snapshots add optional `controlAuthority: {leadId, epoch}`. The epoch is an opaque non-secret incarnation identifier generated when a lead instance is constructed; a takeover/restart changes it. The answering lead also stamps `X-Collie-Lead-Id` and `X-Collie-Lead-Epoch` on responses, including forwarded peer reads and 304s; it replaces any upstream values. Native increments its local lead generation and discards the first changed-incarnation result before accepting a fresh scoped snapshot. Older snapshots can only supply lead-ID change detection through their existing `servers` rows. Solo snapshots omit this field and retain their byte contract. These additive fields need no protocol-version bump.
 
 See [ADR 0096](.adr/0096-control-authority-is-scoped-and-positive.md). Live older-peer/vendor and joint acceptance remain separately evidenced.
+
+
+## Pane layout control routes
+
+The additive B12 layout family is forwarded only through the existing route allowlist: `GET /api/pane/:id/layout`, `GET …/neighbor?direction=`, `GET …/edges`, `POST …/layout/plan`, and the typed action routes `split`, `resize`, `zoom`, `swap`, `move`, and `focus-direction`. Layout inspection and plan creation are classified as reads; action POSTs remain writes. Plan creation is non-mutating and requires the positive layout/action capability plus durable owner-bound operation readiness. Old peers or peers missing the declaration fail closed.
+
+Each final action carries a caller-held request ID, exact action, and short-lived plan token. The owning peer validates current target/layout evidence and reserves the shared durable operation record before the single mux effect. A stored same-ID result is returned without dispatch; pending or unknown is never resent automatically. A successful pane move includes only the new pane ID and previous pane/tab/workspace aliases so native navigation can discard the old pane scope and refresh topology. Crew forwarding keeps these contracts within the existing protocol; no raw mux RPC is carried over the link.

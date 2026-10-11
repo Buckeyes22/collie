@@ -5,6 +5,11 @@ import { HOST } from "../host.ts";
 import { CONTROL_LIMITS } from "./contracts.ts";
 import { type PlanBinding, sameBinding } from "./plans.ts";
 
+/** Per pending row: worst-case 256-code-point UTF-8 code plus closed 4×128-byte move aliases,
+ * discriminant/key overhead and state growth stays below 2 KiB. Held once per pending row so
+ * concurrent completions cannot consume one another's terminal-result space. */
+export const OPERATION_COMPLETION_HEADROOM_BYTES = 2048;
+
 export type OperationState = "pending" | "succeeded" | "refused" | "unknown";
 export interface OperationReceipt {
   readonly requestId: string;
@@ -14,8 +19,17 @@ export interface OperationReceipt {
   readonly at: number;
   readonly updatedAt: number;
   readonly code: string | null;
+  readonly result?: OperationResult;
 }
-export interface OperationOutcome { readonly state: "succeeded" | "refused" | "unknown"; readonly code?: string }
+/** Persisted structured result is limited to the identity aliases needed after pane.move. */
+export interface OperationResult {
+  readonly kind: "pane-move";
+  readonly paneId: string;
+  readonly previousPaneId: string;
+  readonly previousTabId: string;
+  readonly previousWorkspaceId: string;
+}
+export interface OperationOutcome { readonly state: "succeeded" | "refused" | "unknown"; readonly code?: string; readonly result?: OperationResult }
 export interface OperationView {
   readonly schema: 1;
   readonly requestId: string;
@@ -25,11 +39,17 @@ export interface OperationView {
   readonly at: number;
   readonly updatedAt: number;
   readonly code: string | null;
+  readonly result?: OperationResult;
 }
+export type ExistingOperation = { readonly kind: "missing" } | { readonly kind: "conflict" } | { readonly kind: "match"; readonly operation: OperationView };
+type BeforeOperationPersist = () => Promise<void>;
 // These three parsers validate untrusted on-disk JSON and caller bindings before reservation.
 /* eslint-disable anti-slop/no-unknown-parameters, anti-slop/no-runtime-typeof, anti-slop/no-unsafe-dictionary-type */
 function bounded(value: unknown): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= CONTROL_LIMITS.identityChars && !Array.from(value).some((char) => char.charCodeAt(0) < 32);
+}
+function validOperationResultId(value: unknown): value is string {
+  return typeof value === "string" && /^[A-Za-z0-9_.:-]{1,128}$/.test(value);
 }
 export function validBinding(value: unknown): value is PlanBinding {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
@@ -42,8 +62,14 @@ function validReceipt(value: unknown): value is OperationReceipt {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   // SAFETY: non-null object checked above; no field is used without its exact validator below.
   const r = value as Record<string, unknown>;
-  if (Object.keys(r).length !== 7 || !Object.keys(r).every((key) => ["requestId", "binding", "planToken", "state", "at", "updatedAt", "code"].includes(key))) return false;
-  return typeof r.requestId === "string" && /^[a-zA-Z0-9_-]{1,128}$/.test(r.requestId) && validBinding(r.binding) && (r.planToken === null || bounded(r.planToken)) && typeof r.state === "string" && ["pending", "succeeded", "refused", "unknown"].includes(r.state) && typeof r.at === "number" && Number.isSafeInteger(r.at) && r.at >= 0 && typeof r.updatedAt === "number" && Number.isSafeInteger(r.updatedAt) && r.updatedAt >= r.at && (r.code === null || bounded(r.code));
+  if ((Object.keys(r).length !== 7 && Object.keys(r).length !== 8) || !Object.keys(r).every((key) => ["requestId", "binding", "planToken", "state", "at", "updatedAt", "code", "result"].includes(key))) return false;
+  return typeof r.requestId === "string" && /^[a-zA-Z0-9_-]{1,128}$/.test(r.requestId) && validBinding(r.binding) && (r.planToken === null || bounded(r.planToken)) && typeof r.state === "string" && ["pending", "succeeded", "refused", "unknown"].includes(r.state) && typeof r.at === "number" && Number.isSafeInteger(r.at) && r.at >= 0 && typeof r.updatedAt === "number" && Number.isSafeInteger(r.updatedAt) && r.updatedAt >= r.at && (r.code === null || bounded(r.code)) && (r.result === undefined || (r.state === "succeeded" && validOperationResult(r.result)));
+}
+function validOperationResult(value: unknown): value is OperationResult {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  // SAFETY: null and arrays are excluded; the key set and every value are checked before the guard returns true.
+  const r = value as Record<string, unknown>;
+  return Object.keys(r).length === 5 && r.kind === "pane-move" && validOperationResultId(r.paneId) && validOperationResultId(r.previousPaneId) && validOperationResultId(r.previousTabId) && validOperationResultId(r.previousWorkspaceId);
 }
 /* eslint-enable anti-slop/no-unknown-parameters, anti-slop/no-runtime-typeof, anti-slop/no-unsafe-dictionary-type */
 /**
@@ -56,7 +82,7 @@ export class OperationStore {
   private loaded = false;
   private storageReady = false;
   private tail: Promise<unknown> = Promise.resolve();
-  constructor(private readonly stateDir?: string, private readonly now: () => number = Date.now) {}
+  constructor(private readonly stateDir?: string, private readonly now: () => number = Date.now, private readonly beforePersist?: BeforeOperationPersist) {}
   /** Validate and warm the owning host's durable registry before advertising receipt-bound writes. */
   async prepare(): Promise<boolean> {
     try {
@@ -68,6 +94,8 @@ export class OperationStore {
     }
   }
   isReady(): boolean { return this.storageReady; }
+  /** New mutation APIs require the owning host durable registry. */
+  get isDurable(): boolean { return this.stateDir !== undefined; }
   private serial<T>(action: () => Promise<T>): Promise<T> {
     const next = this.tail.then(action);
     this.tail = next.catch(() => {});
@@ -113,6 +141,7 @@ export class OperationStore {
   }
   private async persist(): Promise<void> {
     if (!this.stateDir) return;
+    await this.beforePersist?.();
     await mkdir(this.stateDir, { recursive: true, mode: 0o700 });
     const serialized = JSON.stringify([...this.receipts.values()]);
     if (Buffer.byteLength(serialized, "utf8") > 4 * 1024 * 1024) throw new Error("operation.capacity");
@@ -145,6 +174,16 @@ export class OperationStore {
       return operationView(r);
     });
   }
+  /** Owner-bound same-request reconciliation, including the exact canonical action body and plan. */
+  async inspectIntent(requestId: string, device: string, host: string, session: string | null, capability: string, payloadHash: string, planToken: string): Promise<ExistingOperation> {
+    return this.serial(async () => {
+      await this.load();
+      const row = this.receipts.get(requestId);
+      if (!row || row.binding.device !== device || row.binding.host !== host || row.binding.session !== session) return { kind: "missing" };
+      if (row.binding.capability !== capability || row.binding.payloadHash !== payloadHash || row.planToken !== planToken) return { kind: "conflict" };
+      return { kind: "match", operation: operationView(row) };
+    });
+  }
   async execute(requestId: string, binding: PlanBinding, planToken: string | null, dispatch: () => Promise<OperationOutcome>): Promise<OperationView> {
     if (!/^[a-zA-Z0-9_-]{1,128}$/.test(requestId) || !validBinding(binding) || (planToken !== null && !bounded(planToken))) throw new Error("invalid operation binding");
     const reservation = await this.serial(async () => {
@@ -159,7 +198,7 @@ export class OperationStore {
       if (!Number.isSafeInteger(at) || at < 0) throw new Error("operation.invalid_clock");
       const receipt: OperationReceipt = { requestId, binding: { ...binding }, planToken, state: "pending", at, updatedAt: at, code: null };
       // Keep every file we create within the loader's byte bound, with completion headroom.
-      if (Buffer.byteLength(JSON.stringify([...this.receipts.values(), receipt]), "utf8") + (1 + [...this.receipts.values()].filter((row) => row.state === "pending").length) * 2048 > 4 * 1024 * 1024) throw new Error("operation.capacity");
+      if (Buffer.byteLength(JSON.stringify([...this.receipts.values(), receipt]), "utf8") + (1 + [...this.receipts.values()].filter((row) => row.state === "pending").length) * OPERATION_COMPLETION_HEADROOM_BYTES > 4 * 1024 * 1024) throw new Error("operation.capacity");
       this.receipts.set(requestId, receipt);
       // A failed reserve must not dispatch. Leave the process-local entry unknown as well.
       try { await this.persist(); } catch (error) {
@@ -172,15 +211,19 @@ export class OperationStore {
     if (!reservation.fresh) return operationView(reservation.receipt);
     let outcome: OperationOutcome;
     try { outcome = await dispatch(); } catch { outcome = { state: "unknown", code: "operation.outcome_unknown" }; }
-    if (!["succeeded", "refused", "unknown"].includes(outcome.state) || (outcome.code !== undefined && !bounded(outcome.code))) outcome = { state: "unknown", code: "operation.invalid_outcome" };
+    if (!["succeeded", "refused", "unknown"].includes(outcome.state) || (outcome.code !== undefined && !bounded(outcome.code)) || (outcome.result !== undefined && (outcome.state !== "succeeded" || !validOperationResult(outcome.result))) || (reservation.receipt.binding.capability === "paneMove" && outcome.state === "succeeded" && (outcome.result === undefined || !validOperationResult(outcome.result)))) outcome = { state: "unknown", code: "operation.invalid_outcome" };
     return this.serial(async () => {
       const observedAt = this.now();
       const updatedAt = Number.isSafeInteger(observedAt) ? Math.max(reservation.receipt.at, observedAt) : reservation.receipt.at;
-      const receipt: OperationReceipt = { ...reservation.receipt, state: outcome.state, code: outcome.code ?? null, updatedAt };
+      const base = { ...reservation.receipt, state: outcome.state, code: outcome.code ?? null, updatedAt };
+      const receipt: OperationReceipt = outcome.result === undefined ? base : { ...base, result: outcome.result };
       this.receipts.set(requestId, receipt);
       try { await this.persist(); } catch {
         this.storageReady = false;
-        const unknown: OperationReceipt = { ...receipt, state: "unknown", code: "operation.persistence_failed" };
+        // A terminal move may have happened, but its aliases are not durable. Do not expose them
+        // on UNKNOWN or let a later unrelated write persist an invalid unknown-with-result row.
+        const { result: _discarded, ...withoutResult } = receipt;
+        const unknown: OperationReceipt = { ...withoutResult, state: "unknown", code: "operation.persistence_failed" };
         this.receipts.set(requestId, unknown);
         return operationView(unknown);
       }
@@ -189,5 +232,6 @@ export class OperationStore {
   }
 }
 function operationView(r: OperationReceipt): OperationView {
-  return { schema: 1, requestId: r.requestId, state: r.state, capability: r.binding.capability, targetIdentity: r.binding.targetIdentity, at: r.at, updatedAt: r.updatedAt, code: r.code };
+  const view = { schema: 1 as const, requestId: r.requestId, state: r.state, capability: r.binding.capability, targetIdentity: r.binding.targetIdentity, at: r.at, updatedAt: r.updatedAt, code: r.code };
+  return r.result === undefined ? view : { ...view, result: r.result };
 }

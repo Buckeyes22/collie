@@ -12,6 +12,8 @@ import {
   muxOk,
   type MuxAdapter,
   type MuxGridRequest,
+  type MuxLayoutMutation,
+  type MuxLayoutRead,
   type MuxOutcome,
   type MuxPane,
   type MuxSession,
@@ -67,6 +69,9 @@ class StubAdapter implements MuxAdapter {
    *  cannot unwrap at all (tmux) — the decorators must carry it without inventing it. */
   readLogicalText?: (paneId: string, lines: number) => Promise<MuxOutcome<string>>;
   processInfo?: (paneId: string) => Promise<MuxOutcome<import("../mux/types.ts").MuxPaneProcessInfo>>;
+  readLayout?: MuxAdapter["readLayout"];
+  applyLayout?: MuxAdapter["applyLayout"];
+  layoutRuntimeIdentity?: MuxAdapter["layoutRuntimeIdentity"];
   capabilities = declareCapabilities({
     supports: ["paneGrid", "typeText", "sendKeys"],
     notes: { agentDetection: "the adapter's own note", closePane: "untouched" },
@@ -265,6 +270,9 @@ describe("a decorator preserves the adapter's whole surface", () => {
     readGrid: true,
     processInfo: true,
     readLogicalText: true,
+    readLayout: true,
+    applyLayout: true,
+    layoutRuntimeIdentity: true,
     typeText: true,
     sendKeys: true,
     renamePane: true,
@@ -302,6 +310,10 @@ describe("a decorator preserves the adapter's whole surface", () => {
     stub.hostControl = herdrHostControl;
     stub.readLogicalText = (paneId, lines) => Promise.resolve(muxOk(`${paneId}:${lines}`));
     stub.processInfo = (paneId) => Promise.resolve(muxOk({ paneId, processes: [], truncated: false }));
+    const layout = { workspaceId: "space", tabId: "tab", zoomed: false as const, area: { x: 0, y: 0, width: 80, height: 24 }, focusedPaneId: "%1", panes: [{ paneId: "%1", focused: true, rect: { x: 0, y: 0, width: 80, height: 24 } }], splits: [] };
+    stub.readLayout = async () => muxOk({ kind: "layout", layout } satisfies MuxLayoutRead);
+    stub.applyLayout = async () => muxOk({ kind: "focus-direction", changed: false, paneId: "%1", layout } satisfies MuxLayoutMutation);
+    stub.layoutRuntimeIdentity = () => "fixture-runtime-1";
     return stub;
   }
 

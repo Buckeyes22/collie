@@ -12,14 +12,14 @@ import okio.Buffer
  * trace id the bridge's own access log echoes back (`bridge/server.ts`'s `accessLogRecord`), so a
  * client-side event can be matched to the bridge's `journalctl` output by id instead of by
  * timestamp guessing. Ordinary text bodies are captured in full; binary bodies (image uploads, STT audio)
- * are captured as content-type and size only. Intent creation bodies are deliberately omitted because
+ * are captured as content-type and size only. Intent creation and pane-layout bodies are deliberately omitted because
  * they can contain operator-authored command lines. The `Authorization` header's VALUE is never
  * recorded, under any circumstance — only whether one was present. Pairing bodies are never
  * captured: the request contains a short-lived code and the response contains the device token.
  *
  * A GET records only what is new since the last answer from the same URL ([ResponseDelta]); a
- * poll with nothing new is not recorded. A send (anything but GET) is always recorded in full,
- * repeats included. What the app reads is untouched.
+ * poll with nothing new is not recorded. A send (anything but GET) is recorded in full unless its
+ * route has a feature-specific redaction rule, repeats included. What the app reads is untouched.
  */
 class DiagnosticsInterceptor internal constructor(
     private val diagnostics: DiagnosticsRecorder,
@@ -44,6 +44,19 @@ class DiagnosticsInterceptor internal constructor(
             "hadCredential" to (tagged.header("Authorization") != null),
         )
         if (tagged.url.pathSegments.takeLast(2) == listOf("api", "pair")) {
+            diagnostics.record("network", fields)
+            return response
+        }
+        if (isPaneLayoutRequest(tagged)) {
+            // Layout replies and plans have independent streaming bounds downstream. Keep
+            // literal environment values, folders and geometry out of diagnostic body custody.
+            tagged.body?.let { body ->
+                fields["requestBodyBytes"] = body.contentLength().takeIf { it >= 0L }
+                fields["requestBodyRedacted"] = true
+            }
+            fields["responseBodyBytes"] = response.body?.contentLength()?.takeIf { it >= 0L }
+            fields["responseBodyRedacted"] = true
+            fields["responseBodyStreaming"] = true
             diagnostics.record("network", fields)
             return response
         }
@@ -113,6 +126,17 @@ class DiagnosticsInterceptor internal constructor(
         if (segments.size < 3 || segments.takeLast(3).take(2) != listOf("api", "blobs")) return false
         return JOURNAL_HASH.matches(segments.last())
     }
+    private fun isPaneLayoutRequest(request: okhttp3.Request): Boolean {
+        val segments = request.url.pathSegments
+        if (request.method == "GET" && segments.size >= 4 &&
+            segments.takeLast(4).let { it[0] == "api" && it[1] == "pane" && it[2].isNotEmpty() && it[3] == "layout" }) return true
+        if (segments.size < 5) return false
+        val suffix = segments.takeLast(5)
+        if (suffix[0] != "api" || suffix[1] != "pane" || suffix[2].isEmpty() || suffix[3] != "layout") return false
+        return request.method == "GET" && suffix[4] in setOf("edges", "neighbor") ||
+            request.method == "POST" && suffix[4] in setOf("plan", "split", "resize", "zoom", "swap", "move", "focus-direction")
+    }
+
     private fun isIntentCreationPath(segments: List<String>): Boolean =
         segments.takeLast(2) == listOf("api", "launch") ||
             segments.takeLast(2) == listOf("api", "worktree") ||

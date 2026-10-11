@@ -264,6 +264,7 @@ function rankOf(order: ReadonlyMap<string, number>, key: string): number {
 function toView(pane: MuxPane, kind: "agent" | "shell"): AgentView {
   const view: AgentView = {
     paneId: pane.paneId,
+    terminalIncarnation: pane.terminalIncarnation,
     workspaceId: pane.spaceId,
     workspaceLabel: pane.spaceLabel,
     workspaceNumber: pane.spaceNumber,

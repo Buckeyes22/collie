@@ -15,13 +15,13 @@ import com.lateapex.collie.network.BridgeConfigResponse
 import com.lateapex.collie.network.CollieApi
 import com.lateapex.collie.network.CreateResponse
 import com.lateapex.collie.network.DevicesResponse
+import com.lateapex.collie.network.FoldersResponse
 import com.lateapex.collie.network.DeviceAuthorization
 import com.lateapex.collie.network.HealthResponse
 import com.lateapex.collie.network.ImageUpload
 import com.lateapex.collie.network.UploadSource
 import com.lateapex.collie.network.ImageBlob
 import com.lateapex.collie.network.LaunchersResponse
-import com.lateapex.collie.network.FoldersResponse
 import com.lateapex.collie.network.NotificationState
 import com.lateapex.collie.network.NotifyPreferences
 import com.lateapex.collie.network.NotifyPreferencesPatch
@@ -238,12 +238,17 @@ class CollieRepository(
     @Synchronized
     fun readContext(scope: Scope = selectedScope.value, subjectIdentity: String? = activeSubject): ScopedReadContext? {
         val configured = connection.value ?: return null
-        if (generationConnection !== configured) {
-            generationConnection = configured
-            generation.incrementAndGet()
-            observedLeadAuthority = null
-            invalidateAuthority(AuthorityInvalidation.CONNECTION_CHANGED)
+        val changed = synchronized(readAdmissionLock) {
+            if (generationConnection === configured) false else {
+                generationConnection = configured
+                generation.incrementAndGet()
+                observedLeadAuthority = null
+                true
+            }
         }
+        // Invalidation listeners may acknowledge a main-thread custody wipe. Never invoke them
+        // while holding the admission lock or a connection monitor.
+        if (changed) invalidateAuthority(AuthorityInvalidation.CONNECTION_CHANGED)
         return ScopedReadContext(ScopedRequestKey(configured.origin.value, generation.get(), credentialIdentity(configured),
             leadEpoch, scope.host, scope.session, subjectIdentity), configured, navigationGeneration.get())
     }
@@ -265,10 +270,16 @@ class CollieRepository(
         leadEpoch == context.key.leadEpoch &&
         (activeSubject == null || context.key.subjectIdentity == null || activeSubject == context.key.subjectIdentity)
 
+    /** Serialize a bounded local encrypted-custody ACK against authority retirement. No network,
+     * coroutine cancellation or invalidation listener may run inside this block. */
+    internal fun acknowledgeLocalCustody(context: ScopedReadContext, acknowledgement: () -> Boolean): Boolean =
+        synchronized(readAdmissionLock) { isCurrent(context) && acknowledgement() }
+
     fun setLeadEpoch(epoch: Long) {
-        if (leadEpoch == epoch) return
-        leadEpoch = epoch
-        invalidateAuthority(AuthorityInvalidation.LEAD_CHANGED)
+        val changed = synchronized(readAdmissionLock) {
+            if (leadEpoch == epoch) false else { leadEpoch = epoch; true }
+        }
+        if (changed) invalidateAuthority(AuthorityInvalidation.LEAD_CHANGED)
     }
 
     fun showSavedCopy(capturedAt: Long) {
@@ -374,8 +385,13 @@ class CollieRepository(
         ))
     }
 
-    suspend fun config(scope: Scope = selectedScope.value, expectedContext: ScopedReadContext? = null): ApiResult<BridgeConfigResponse> =
-        withConnection(scope, expectedContext = expectedContext) { api.config(it, scope) }
+    suspend fun config(scope: Scope = selectedScope.value, expectedContext: ScopedReadContext? = null): ApiResult<BridgeConfigResponse> = withConnection(scope, expectedContext?.key?.subjectIdentity ?: activeSubject, expectedContext) { api.config(it, scope) }
+
+    private fun <T> configFailure(result: ApiResult<BridgeConfigResponse>): ApiResult<T> = when (result) {
+        is ApiResult.Failure -> result
+        is ApiResult.NotModified -> result
+        is ApiResult.Success -> ApiResult.Failure(ApiFailure.Protocol("Unexpected config result"))
+    }
 
     suspend fun refresh(
         scope: Scope = selectedScope.value,
@@ -409,12 +425,66 @@ class CollieRepository(
         }
     }
 
-    suspend fun controlOperation(scope: Scope, requestId: String): ApiResult<ControlOperationResponse> = withConnection(scope) {
-        val config = api.config(it, scope)
-        if (config is ApiResult.Failure) return@withConnection config
-        if (config !is ApiResult.Success || config.value.control?.supportsNew("controlOperations") != true) {
-            ApiResult.Failure(ApiFailure.Http(404, "Control operations are unsupported on this server", "capability.unsupported"))
-        } else api.controlOperation(it, scope, requestId)
+    suspend fun controlOperation(scope: Scope, requestId: String, expectedContext: ScopedReadContext? = null): ApiResult<ControlOperationResponse> {
+        val subject = expectedContext?.key?.subjectIdentity ?: activeSubject
+        val context = expectedContext ?: readContext(scope, subject) ?: return notConnected()
+        if (!isCurrent(context) || context.key.host != scope.host || context.key.session != scope.session || context.key.subjectIdentity != subject) return staleScope()
+        val capability = config(scope, context)
+        if (!isCurrent(context)) return staleScope()
+        if (capability !is ApiResult.Success) return configFailure(capability)
+        if (capability.value.control?.supportsNew("controlOperations") != true) return ApiResult.Failure(ApiFailure.Http(404, "Control operations are unsupported on this server", "capability.unsupported"))
+        return withScopedLayoutRead(scope, context) { api.controlOperation(it, scope, requestId) }
+    }
+
+    suspend fun paneLayout(address: PaneAddress, expectedContext: ScopedReadContext? = null): ApiResult<com.lateapex.collie.network.PaneLayoutReadResponse> {
+        val context = expectedContext ?: readContext(address.scope) ?: return notConnected()
+        if (!isCurrent(context) || context.key.host != address.scope.host || context.key.session != address.scope.session) return staleScope()
+        val config = config(address.scope, context)
+        if (!isCurrent(context)) return staleScope()
+        if (config !is ApiResult.Success) return configFailure(config)
+        if (config.value.mux?.supportsNew("paneLayout") != true) return ApiResult.Failure(ApiFailure.Http(404, "Pane layout is unsupported on this server", "capability.unsupported"))
+        return withScopedLayoutRead(address.scope, context) { api.paneLayout(it, address) }
+    }
+
+    suspend fun paneLayoutRead(address: PaneAddress, kind: String, direction: String? = null, expectedContext: ScopedReadContext? = null): ApiResult<com.lateapex.collie.network.PaneLayoutReadResponse> {
+        val context = expectedContext ?: readContext(address.scope) ?: return notConnected()
+        if (!isCurrent(context) || context.key.host != address.scope.host || context.key.session != address.scope.session) return staleScope()
+        val config = config(address.scope, context)
+        if (!isCurrent(context)) return staleScope()
+        if (config !is ApiResult.Success) return configFailure(config)
+        if (config.value.mux?.supportsNew("paneLayout") != true) return ApiResult.Failure(ApiFailure.Http(404, "Pane layout inspection is unsupported on this server", "capability.unsupported"))
+        return withScopedLayoutRead(address.scope, context) { api.paneLayoutRead(it, address, kind, direction) }
+    }
+
+    suspend fun folders(scope: Scope = selectedScope.value, expectedContext: ScopedReadContext? = null): ApiResult<FoldersResponse> =
+        withScopedLayoutRead(scope, expectedContext) { api.folders(it, scope) }
+
+    suspend fun planPaneLayout(address: PaneAddress, action: kotlinx.serialization.json.JsonObject, expectedContext: ScopedReadContext? = null): ApiResult<com.lateapex.collie.network.PaneLayoutPlanResponse> {
+        val subject = expectedContext?.key?.subjectIdentity ?: activeSubject
+        val context = expectedContext ?: readContext(address.scope, subject) ?: return notConnected()
+        if (!isCurrent(context) || context.key.host != address.scope.host || context.key.session != address.scope.session || context.key.subjectIdentity != subject) return staleScope()
+        val config = config(address.scope, context)
+        if (!isCurrent(context)) return staleScope()
+        if (config !is ApiResult.Success) return configFailure(config)
+        val muxCapabilities = config.value.mux
+        val kind = action["kind"]?.toString()?.trim('"').orEmpty()
+        val capability = when (kind) {
+            "split" -> "paneSplit"; "resize" -> "paneResize"; "zoom" -> "paneZoom"; "swap" -> "paneSwap"; "move" -> "paneMove"; "focus-direction" -> "paneDirectionalFocus"; else -> ""
+        }
+        if (capability.isEmpty() || config.value.control?.supportsNew("controlOperations") != true || muxCapabilities?.supportsNew("paneLayout") != true || muxCapabilities?.supportsNew(capability) != true) return ApiResult.Failure(ApiFailure.Http(404, "This pane layout action is unsupported on this server", "capability.unsupported"))
+        return withScopedLayoutRead(address.scope, context) { api.planPaneLayout(it, address, action) }
+    }
+
+    suspend fun applyPaneLayout(address: PaneAddress, requestId: String, planToken: String, action: kotlinx.serialization.json.JsonObject, expectedContext: ScopedReadContext? = null): ApiResult<com.lateapex.collie.network.PaneLayoutOperationResponse> {
+        val subject = expectedContext?.key?.subjectIdentity ?: activeSubject
+        val context = expectedContext ?: readContext(address.scope, subject) ?: return notConnected()
+        if (!isCurrent(context) || context.key.host != address.scope.host || context.key.session != address.scope.session || context.key.subjectIdentity != subject) return staleScope()
+        val config = config(address.scope, context)
+        if (!isCurrent(context)) return staleScope()
+        if (config !is ApiResult.Success) return configFailure(config)
+        if (!writesAllowed(address.scope, subject)) return ApiResult.Failure(ApiFailure.Http(403, "device not authorised", "device.not_authorised"))
+        if (config.value.control?.supportsNew("controlOperations") != true || config.value.mux?.supportsNew("paneLayout") != true) return ApiResult.Failure(ApiFailure.Http(404, "Durable layout operations are unsupported on this server", "capability.unsupported"))
+        return withScopedLayoutWrite(address.scope, subject, context) { api.applyPaneLayout(it, address, requestId, planToken, action) }
     }
 
     suspend fun devices(): ApiResult<DevicesResponse> = withConnection(block = api::devices)
@@ -1223,9 +1293,6 @@ class CollieRepository(
     suspend fun launchers(scope: Scope = selectedScope.value, expectedContext: ScopedReadContext? = null): ApiResult<LaunchersResponse> =
         withConnection(scope, expectedContext = expectedContext) { api.launchers(it, scope) }
 
-    suspend fun folders(scope: Scope = selectedScope.value): ApiResult<FoldersResponse> =
-        withConnection(scope) { api.folders(it, scope) }
-
     suspend fun starFolder(scope: Scope = selectedScope.value, folder: String, starred: Boolean): ApiResult<FoldersResponse> =
         withWritableConnection(scope) { api.starFolder(it, scope, folder, starred) }
 
@@ -1460,6 +1527,30 @@ class CollieRepository(
         if (!isCurrent(context) || context.key.host != scope.host || context.key.session != scope.session ||
             (subjectIdentity != null && context.key.subjectIdentity != subjectIdentity)) return staleScope()
         return withConnectionOf(context.connection, scope, context.key.subjectIdentity, expectedContext = context, block = block)
+    }
+
+    private suspend fun <T> withScopedLayoutRead(
+        scope: Scope,
+        expectedContext: ScopedReadContext?,
+        block: suspend (Connection) -> ApiResult<T>,
+    ): ApiResult<T> {
+        val subject = expectedContext?.key?.subjectIdentity ?: activeSubject
+        val context = expectedContext ?: readContext(scope, subject) ?: return notConnected()
+        if (!isCurrent(context) || context.key.host != scope.host || context.key.session != scope.session || context.key.subjectIdentity != subject) return staleScope()
+        return withConnection(scope, subject, context, block)
+    }
+
+    private suspend fun <T> withScopedLayoutWrite(
+        scope: Scope,
+        subject: String?,
+        expectedContext: ScopedReadContext?,
+        block: suspend (Connection) -> ApiResult<T>,
+    ): ApiResult<T> {
+        val context = expectedContext ?: readContext(scope, subject) ?: return notConnected()
+        if (!isCurrent(context) || context.key.host != scope.host || context.key.session != scope.session || context.key.subjectIdentity != subject) return staleScope()
+        if (!context.connection.isPaired) return ApiResult.Failure(ApiFailure.Protocol("Pair this device before controlling a terminal"))
+        if (!writesAllowed(scope, subject)) return ApiResult.Failure(ApiFailure.Http(403, "device not authorised", "device.not_authorised"))
+        return withConnectionOf(context.connection, scope, subject, mutation = true, expectedContext = context, block = block)
     }
 
     /** Child jobs cancel reads; writes discard stale replies without claiming dispatch failed. */

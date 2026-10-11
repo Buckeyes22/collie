@@ -1,7 +1,9 @@
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { isAbsolute } from "node:path";
 import type { JsonObject, JsonValue } from "./json.ts";
+import { expandHome } from "./worktree-folder.ts";
 
 // The folders a new space was created in on THIS machine, and the ones the operator starred (#289,
 // M40/02). The new-space sheet reads them so a phone taps a folder instead of typing a path.
@@ -36,6 +38,23 @@ export const MAX_FAVOURITES = 12;
  * folder is refused, and a body the phone sends cannot grow the file without bound.
  */
 export const MAX_FOLDER_CHARS = 4096;
+
+/** Shared launch/split folder normalization. `false` means the supplied value is malformed. */
+export function askedFolder(raw: JsonValue | undefined, home: string): string | undefined | false {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw !== "string") return false;
+  const trimmed = raw.trim();
+  if (trimmed === "") return undefined;
+  if (new TextEncoder().encode(trimmed).byteLength > MAX_FOLDER_CHARS) return false;
+  for (const ch of trimmed) {
+    const code = ch.codePointAt(0) ?? 0;
+    if (code < 0x20 || code === 0x7f) return false;
+  }
+  if (trimmed.split(/[\\/]+/u).includes("..")) return false;
+  if (trimmed.startsWith("~") && trimmed !== "~" && expandHome(trimmed, home) === trimmed) return false;
+  const expanded = expandHome(trimmed, home);
+  return isAbsolute(expanded) ? expanded : join(home, expanded);
+}
 
 /** The two lists, newest first for Recent and in starred order for Favourites. Never overlapping. */
 export interface FolderLists {

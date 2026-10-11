@@ -1,6 +1,8 @@
 import { controlScope, refusal, refusalResponse } from "./control/contracts.ts";
 import { OperationStore } from "./control/operations.ts";
 import { executeBoundIntent, ownerBoundCallerReady, ownerBoundOperationReady, type IntentOwnerContext } from "./intent-operation-binding.ts";
+import { PlanStore } from "./control/plans.ts";
+import { servePaneLayoutRoute } from "./control/layout.ts";
 import { serveControlRoute } from "./control/routes.ts";
 import { servePaneProcesses } from "./control/processes.ts";
 import { hostControlForMux } from "./mux/registry.ts";
@@ -9,7 +11,7 @@ import { hostControlConfig } from "./host-control/registry.ts";
 import { mkdir } from "node:fs/promises";
 import { isIP } from "node:net";
 import { homedir, networkInterfaces } from "node:os";
-import { dirname, extname, isAbsolute, join, normalize, sep } from "node:path";
+import { dirname, extname, join, normalize, sep } from "node:path";
 import { createAccessGate, DOOR_PRESETS, FORWARDING_HEADERS } from "./access-jwt.ts";
 import type { JsonObject, JsonValue } from "./json.ts";
 import type { ActivityLedger } from "./activity.ts";
@@ -50,7 +52,7 @@ import { createCacheRulesReader } from "./operator-cache-rules.ts";
 import { computeEtag, conditionalJsonResponse, gzipJsonResponse, notModified, wantsGzip } from "./http-cache.ts";
 import { pluginRoot } from "./root.ts";
 import { DEFAULT_NOTIFY_PREFS, type NotifyPrefs, type NotifyPrefsStore } from "./notify-prefs.ts";
-import { MAX_FAVOURITES, MAX_FOLDER_CHARS, type FolderSurface } from "./folders.ts";
+import { askedFolder, MAX_FAVOURITES, MAX_FOLDER_CHARS, type FolderSurface } from "./folders.ts";
 import { isValidWorktreeBranch } from "./worktree-branch.ts";
 import { createHarnessProbe, type HarnessProbe } from "./harness-launch.ts";
 import { launchReplay, memoryLaunchReceipts, type LaunchReceipt, type LaunchReceiptSurface } from "./launch-receipts.ts";
@@ -62,7 +64,6 @@ import {
 } from "./worktree-choices.ts";
 import {
   diskFolderFs,
-  expandHome,
   herdrDefaultTarget,
   nearestWorkTree,
   resolveParentTarget,
@@ -1180,6 +1181,7 @@ export async function startServer(opts: {
    */
   launchReceipts?: LaunchReceiptSurface;
   controlOperations?: OperationStore;
+  controlPlans?: PlanStore;
   controlHostId?: string;
   hostControl?: HostControlPort;
   /**
@@ -1238,6 +1240,7 @@ export async function startServer(opts: {
   const worktreeBases = opts.worktreeBases ?? memoryWorktreeBases();
   const launchReceipts = opts.launchReceipts ?? memoryLaunchReceipts();
   const controlOperations = opts.controlOperations ?? new OperationStore(cfg.stateDir);
+  const controlPlans = opts.controlPlans ?? new PlanStore();
   const controlHostId = opts.controlHostId ?? opts.crewStatus?.()?.self.id ?? "local";
   await controlOperations.prepare();
   const ownerBoundReady = () => ownerBoundOperationReady(opts.intentReceiptKey, controlOperations.isReady());
@@ -1558,6 +1561,22 @@ export async function startServer(opts: {
       },
     }, controlOperations);
     if (controlled) return controlled;
+
+    const layoutControlled = await servePaneLayoutRoute(req, url, {
+      gate: (level) => caller.gate(level),
+      pairedIdentity: () => caller.pairedIdentity?.() ?? null,
+      audit: (action, paneId, host, session, outcome) => audit.record({
+        action, paneId, host, session: session ?? undefined, device: whois(req).device,
+        detail: { outcome },
+      }),
+      resolve: async () => {
+        const runtime = await caller.resolve();
+        if (runtime instanceof Response) return runtime;
+        const resolved = { host: controlHostId, session: runtime.name, mux: runtime.herdr };
+        return folders === undefined ? resolved : Object.assign(resolved, { folders });
+      },
+    }, { plans: controlPlans, operations: controlOperations });
+    if (layoutControlled) return layoutControlled;
 
     // ── "Look now" ────────────────────────────────────────────────────────
     // A READ, and gated as one. It changes nothing — `mux.refresh()` takes a listing and moves a
@@ -6226,22 +6245,6 @@ async function pickRun(raw: JsonValue | undefined, gate: RunGate | null): Promis
  * projects` is in a fresh shell. One rule for every client (M48): the page shows the full path
  * before Start, so nothing is rewritten silently.
  */
-function askedFolder(raw: JsonValue | undefined, home: string): string | undefined | false {
-  if (raw === undefined || raw === null) return undefined;
-  if (typeof raw !== "string") return false;
-  const trimmed = raw.trim();
-  if (trimmed === "") return undefined;
-  for (const ch of trimmed) {
-    const code = ch.codePointAt(0) ?? 0;
-    if (code < 0x20 || code === 0x7f) return false;
-  }
-  // On the string as sent: `join` below would quietly resolve a `..` away.
-  if (trimmed.split(/[\\/]+/u).includes("..")) return false;
-  if (trimmed.startsWith("~") && trimmed !== "~" && expandHome(trimmed, home) === trimmed) return false;
-  const expanded = expandHome(trimmed, home);
-  return isAbsolute(expanded) ? expanded : join(home, expanded);
-}
-
 /** The half of a launch that touches the multiplexer, run at most once per `requestId`. */
 async function runLaunch(
   herdr: MuxAdapter,

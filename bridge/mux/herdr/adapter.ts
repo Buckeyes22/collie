@@ -22,6 +22,9 @@
 // exactly why the declaration must be read off the implementation rather than assumed: the value of
 // the list is that the NEXT adapter's is shorter.
 
+import { layoutSnapshotAuthority } from "../layout-evidence.ts";
+import { createHash } from "node:crypto";
+import type { JsonObject, JsonValue } from "../../json.ts";
 import { meaningfulTabLabel, meaningfulTerminalTitle } from "../../activity.ts";
 import { isUnnamedTab } from "../../pane-name.ts";
 import type { DialMode } from "../../dial.ts";
@@ -36,6 +39,7 @@ import {
   muxGone,
   muxOk,
   muxRefused,
+  muxUnsupported,
   muxUnreachable,
   requestedCwd,
   type MuxAck,
@@ -43,6 +47,14 @@ import {
   type MuxCreatedPane,
   type MuxGrid,
   type MuxGridRequest,
+  type MuxLayoutAction,
+  type MuxLayoutFinalAdmission,
+  type MuxLayoutFinalEvidence,
+  type MuxLayoutMutation,
+  type MuxLayoutRead,
+  type MuxLayoutReadRequest,
+  type MuxLayoutSnapshot,
+  type MuxMoveDestination,
   type MuxOutcome,
   type MuxPane,
   type MuxPaneProcessInfo,
@@ -67,6 +79,8 @@ import {
   paneAgentSession,
   type CreatedShell,
   type HerdrRpc,
+  type HerdrSplitPaneParams,
+  type HerdrMoveDestination,
   type HerdrWorktreeCreate,
   type WirePane,
   type WireTab,
@@ -111,8 +125,7 @@ interface BoundedProcessInfo {
  * one `events.subscribe` stream. `unsupportedKeys` is where Herdr's actual hole is: six named keys
  * the server refuses (keys.ts).
  */
-const HERDR_CAPABILITIES = declareCapabilities({
-  supports: [
+const HERDR_BASE_CAPABILITIES = [
     "paneGrid",
     "gridScrollback",
     "agentDetection",
@@ -133,6 +146,11 @@ const HERDR_CAPABILITIES = declareCapabilities({
     "pushTopologyEvents",
     "pushPaneEvents",
     "listSessions",
+] as const;
+const HERDR_CAPABILITIES = declareCapabilities({
+  supports: [
+    ...HERDR_BASE_CAPABILITIES,
+    "paneLayout", "paneSplit", "paneResize", "paneZoom", "paneSwap", "paneMove", "paneDirectionalFocus",
   ],
   unsupportedKeys: HERDR_UNSENDABLE_KEYS,
   // Herdr announces every structure change on `events.subscribe`, so there is no census and no
@@ -146,6 +164,91 @@ const HERDR_CAPABILITIES = declareCapabilities({
   // Herdr's workspaces are Collie's spaces, and there are as many as the operator created.
   spaces: "many",
 });
+
+function supportsPaneLayoutVersion(version: string, protocol: number): boolean {
+  const match = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(version);
+  if (!match || protocol < 22) return false;
+  const parts = match.slice(1).map(Number);
+  return parts[0]! > 0 || parts[1]! > 9 || (parts[1] === 9 && parts[2]! >= 3);
+}
+
+/* eslint-disable anti-slop/no-unknown-parameters, anti-slop/no-runtime-typeof */
+function object(value: JsonValue): JsonObject {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("layout.protocol: expected object");
+  // SAFETY: JsonValue objects have string keys; the null/array cases are rejected immediately above.
+  return value as JsonObject;
+}
+function field(value: JsonObject, key: string): JsonValue {
+  const result = value[key];
+  if (result === undefined) throw new Error(`layout.protocol: missing ${key}`);
+  return result;
+}
+function stringField(value: JsonObject, key: string): string {
+  const result = field(value, key);
+  if (typeof result !== "string" || result.length < 1 || result.length > 256 || Array.from(result).some((char) => char.charCodeAt(0) < 32)) throw new Error(`layout.protocol: invalid ${key}`);
+  return result;
+}
+function paneIdField(value: JsonObject, key: string): string {
+  const result = stringField(value, key);
+  if (!/^[A-Za-z0-9_.:-]{1,128}$/.test(result)) throw new Error(`layout.protocol: invalid ${key}`);
+  return result;
+}
+function nullableStringField(value: JsonObject, key: string): string | null {
+  const result = field(value, key);
+  if (result === null) return null;
+  if (typeof result !== "string" || result.length < 1 || result.length > 256 || Array.from(result).some((char) => char.charCodeAt(0) < 32)) throw new Error(`layout.protocol: invalid ${key}`);
+  return result;
+}
+function booleanField(value: JsonObject, key: string): boolean {
+  const result = field(value, key);
+  if (typeof result !== "boolean") throw new Error(`layout.protocol: invalid ${key}`);
+  return result;
+}
+function uint16Field(value: JsonObject, key: string): number {
+  const result = field(value, key);
+  if (typeof result !== "number" || !Number.isInteger(result) || result < 0 || result > 65_535) throw new Error(`layout.protocol: invalid ${key}`);
+  return result;
+}
+function neutralRect(raw: JsonValue): MuxLayoutSnapshot["area"] {
+  const value = object(raw);
+  return { x: uint16Field(value, "x"), y: uint16Field(value, "y"), width: uint16Field(value, "width"), height: uint16Field(value, "height") };
+}
+function neutralLayout(raw: JsonValue): MuxLayoutSnapshot {
+  const value = object(raw);
+  const rawPanes = field(value, "panes");
+  const rawSplits = field(value, "splits");
+  if (!Array.isArray(rawPanes) || rawPanes.length > 64 || !Array.isArray(rawSplits) || rawSplits.length > 64) throw new Error("layout.protocol: invalid pane or split count");
+  const panes = rawPanes.map((entry) => {
+    const pane = object(entry);
+    return { paneId: paneIdField(pane, "pane_id"), focused: booleanField(pane, "focused"), rect: neutralRect(field(pane, "rect")) };
+  });
+  const splits = rawSplits.map((entry) => {
+    const split = object(entry);
+    const direction = field(split, "direction");
+    const ratio = field(split, "ratio");
+    if ((direction !== "right" && direction !== "down") || typeof ratio !== "number" || !Number.isFinite(ratio) || ratio < 0 || ratio > 1) throw new Error("layout.protocol: invalid split");
+    // SAFETY: the two-value check above excludes every other string/value.
+    const splitDirection: "right" | "down" = direction as "right" | "down";
+    return { id: paneIdField(split, "id"), direction: splitDirection, ratio, rect: neutralRect(field(split, "rect")) };
+  });
+  const workspaceId = paneIdField(value, "workspace_id");
+  const tabId = paneIdField(value, "tab_id");
+  const focusedPaneId = paneIdField(value, "focused_pane_id");
+  if (!panes.some((pane) => pane.paneId === focusedPaneId) || new Set(panes.map((pane) => pane.paneId)).size !== panes.length) throw new Error("layout.protocol: inconsistent focused pane");
+  return { workspaceId, tabId, zoomed: booleanField(value, "zoomed"), area: neutralRect(field(value, "area")), focusedPaneId, panes, splits };
+}
+function layoutRefusal(error: unknown): MuxRefusalOutcome {
+  const detail = reason(error);
+  if (GONE_CODES.some((code) => detail.includes(code)) || detail.includes("target_pane_not_found")) return muxGone(detail);
+  if (["invalid_pane_swap", "pane_layout_unavailable", "pane_move_failed", "confirmation_required", "unknown variant"].some((code) => detail.includes(code))) return muxRefused(detail);
+  return muxUnreachable(detail);
+}
+function moveDestinationWire(destination: MuxMoveDestination): HerdrMoveDestination {
+  if (destination.type === "tab") return { type: "tab", tab_id: destination.tabId, split: destination.split, target_pane_id: destination.targetPaneId, ratio: destination.ratio };
+  if (destination.type === "new_tab") return { type: "new_tab", workspace_id: destination.workspaceId, label: destination.label };
+  return { type: "new_workspace", label: destination.label, tab_label: destination.tabLabel };
+}
+/* eslint-enable anti-slop/no-unknown-parameters, anti-slop/no-runtime-typeof */
 
 /** `MuxTarget.options` key carrying which local dialer to use. Opaque to the registry, by rule. */
 export const HERDR_DIAL_MODE_OPTION = "dialMode";
@@ -278,9 +381,19 @@ function toMuxWorktree(raw: WireWorktree): MuxWorktree {
 
 export class HerdrMux implements MuxAdapter {
   readonly mux = HERDR_MUX;
-  readonly capabilities = HERDR_CAPABILITIES;
   readonly logo = HERDR_LOGO_SVG;
   readonly hostControl = herdrHostControl;
+  private paneLayoutReady = false;
+  private layoutIdentity: string | null = null;
+  private readonly legacyCapabilities = declareCapabilities({
+    supports: HERDR_BASE_CAPABILITIES,
+    unsupportedKeys: HERDR_UNSENDABLE_KEYS,
+    topologyLatency: { kind: "push" },
+    readLimits: { maxRequestedLines: 1_000 },
+  });
+  get capabilities(): typeof HERDR_CAPABILITIES | ReturnType<typeof declareCapabilities> {
+    return this.paneLayoutReady ? HERDR_CAPABILITIES : this.legacyCapabilities;
+  }
 
   // session.snapshot is the fast path; flipped off PERMANENTLY once a server proves it predates the
   // method (see snapshot()), after which every read uses the legacy three-call path. Adapter state
@@ -314,8 +427,52 @@ export class HerdrMux implements MuxAdapter {
   ) {}
 
   /** Reachability for the connected/disconnected banner — one cheap list call. */
-  reachable(): Promise<boolean> {
-    return this.client.ping();
+  async reachable(): Promise<boolean> {
+    try {
+      if (this.client.layoutHandshakeSample) {
+        this.paneLayoutReady = false;
+        this.layoutIdentity = null;
+        const sample = await this.sampleLayoutRuntime();
+        const supported = sample !== null && supportsPaneLayoutVersion(sample.handshake.version, sample.handshake.protocol);
+        const identity = supported ? sample.identity : null;
+        this.paneLayoutReady = supported && identity !== null;
+        this.layoutIdentity = this.paneLayoutReady ? identity : null;
+        // Missing layout evidence may still describe a healthy older runtime. It cannot prove
+        // ordinary reachability: the production sample also returns null on a failed ping.
+        return sample !== null || await this.client.ping();
+      }
+      this.paneLayoutReady = false;
+      this.layoutIdentity = null;
+      return await this.client.ping();
+    } catch {
+      this.paneLayoutReady = false;
+      this.layoutIdentity = null;
+      return false;
+    }
+  }
+
+  /** A positive handshake plus an unchanged local endpoint witness is required for layout control. */
+  async layoutRuntimeIdentity(): Promise<string | null> {
+    if (!this.paneLayoutReady || !this.layoutIdentity) return null;
+    try {
+      const sample = await this.sampleLayoutRuntime();
+      if (!sample || !supportsPaneLayoutVersion(sample.handshake.version, sample.handshake.protocol) || sample.identity !== this.layoutIdentity) throw new Error("layout runtime changed");
+      return sample.identity;
+    } catch {
+      this.paneLayoutReady = false;
+      this.layoutIdentity = null;
+      return null;
+    }
+  }
+
+  /** A positive handshake is bracketed by the same OS witness; protocol text alone is not identity. */
+  private async sampleLayoutRuntime(): Promise<{ handshake: { version: string; protocol: number }; identity: string | null } | null> {
+    if (!this.client.layoutHandshakeSample) return null;
+    const sample = await this.client.layoutHandshakeSample();
+    if (!sample) return null;
+    if (!supportsPaneLayoutVersion(sample.handshake.version, sample.handshake.protocol)) return { handshake: sample.handshake, identity: null };
+    if (this.client.layoutRuntimeIdentity?.() !== sample.identity) return null;
+    return sample;
   }
 
   /**
@@ -336,6 +493,263 @@ export class HerdrMux implements MuxAdapter {
       spaces: wire.workspaces.map((w) => toMuxSpace(w, this.repoByWorkspace.get(w.workspace_id)?.repo ?? null)),
       tabs: wire.tabs.map(toMuxTab),
     };
+  }
+
+  async readLayout(paneId: string, request: MuxLayoutReadRequest = { kind: "layout" }): Promise<MuxOutcome<MuxLayoutRead>> {
+    const identity = await this.layoutRuntimeIdentity();
+    if (!identity || !this.client.readPaneLayout || (request.kind === "neighbor" && !this.client.readPaneNeighbor) || (request.kind === "edges" && !this.client.readPaneEdges)) return muxUnsupported("paneLayout", "This Herdr runtime does not declare pane layout APIs.");
+    try {
+      const raw = request.kind === "neighbor" ? await this.client.readPaneNeighbor!(paneId, request.direction) : request.kind === "edges" ? await this.client.readPaneEdges!(paneId) : await this.client.readPaneLayout(paneId);
+      const response = object(raw);
+      if (request.kind === "neighbor") {
+        if (response.type !== "pane_neighbor") throw new Error("layout.protocol: invalid pane neighbor response");
+        const row = object(field(response, "neighbor"));
+        if (field(row, "direction") !== request.direction || stringField(row, "pane_id") !== paneId) throw new Error("layout.protocol: mismatched pane neighbor response");
+        const value = { kind: "neighbor" as const, paneId, direction: request.direction, neighborPaneId: nullableStringField(row, "neighbor_pane_id"), layout: neutralLayout(field(row, "layout")) };
+        if (await this.layoutRuntimeIdentity() !== identity) throw new Error("layout runtime changed during read");
+        return muxOk(value);
+      }
+      if (request.kind === "edges") {
+        if (response.type !== "pane_edges") throw new Error("layout.protocol: invalid pane edges response");
+        const row = object(field(response, "edges"));
+        if (stringField(row, "pane_id") !== paneId) throw new Error("layout.protocol: mismatched pane edges response");
+        const value = { kind: "edges" as const, paneId, left: booleanField(row, "left"), right: booleanField(row, "right"), up: booleanField(row, "up"), down: booleanField(row, "down"), layout: neutralLayout(field(row, "layout")) };
+        if (await this.layoutRuntimeIdentity() !== identity) throw new Error("layout runtime changed during read");
+        return muxOk(value);
+      }
+      if (response.type !== "pane_layout") throw new Error("layout.protocol: invalid pane layout response");
+      const value = { kind: "layout" as const, layout: neutralLayout(field(response, "layout")) };
+      if (await this.layoutRuntimeIdentity() !== identity) throw new Error("layout runtime changed during read");
+      return muxOk(value);
+    }
+    catch (err) { this.paneLayoutReady = false; this.layoutIdentity = null; return layoutRefusal(err); }
+  }
+
+  /** Read the exact mutation source/destination after async adapter preflight and before admission. */
+  private async finalLayoutEvidence(action: MuxLayoutAction, identity: string,
+    neighborLayout?: MuxLayoutRead): Promise<MuxLayoutFinalEvidence | null> {
+    const readPaneLayout = this.client.readPaneLayout;
+    if (!readPaneLayout) return null;
+    const read = async (paneId: string): Promise<MuxLayoutRead | null> => {
+      const response = object(await readPaneLayout.call(this.client, paneId));
+      if (response.type !== "pane_layout") return null;
+      const layout = neutralLayout(field(response, "layout"));
+      if (!layout.panes.some((pane) => pane.paneId === paneId)) return null;
+      return { kind: "layout", layout };
+    };
+    // Finish handshake preflight first. Every following await is part of the bounded witness,
+    // never a later capability ping that can invalidate an already-read source layout.
+    if (await this.layoutRuntimeIdentity() !== identity) return null;
+    const revision = this.layoutEvidenceRevision;
+    const before = await this.layoutSourceSnapshot(action);
+    let destinationLayout: MuxLayoutRead | undefined;
+    if (action.kind === "move" && action.destination.type === "tab") {
+      destinationLayout = await read(action.destination.targetPaneId) ?? undefined;
+      if (!destinationLayout || destinationLayout.layout.tabId !== action.destination.tabId) return null;
+    }
+    const after = await this.layoutSourceSnapshot(action);
+    if (JSON.stringify(layoutSnapshotAuthority(before, action)) !== JSON.stringify(layoutSnapshotAuthority(after, action))) return null;
+    // Source geometry is LAST, after destination, occupant/workspace metadata and handshake awaits.
+    const sourceLayout = await read(action.paneId);
+    if (!sourceLayout || (neighborLayout && JSON.stringify(neighborLayout.layout) !== JSON.stringify(sourceLayout.layout))) return null;
+    if (this.layoutEvidenceRevision !== revision || !this.paneLayoutReady) return null;
+    if (this.client.layoutRuntimeIdentity?.() !== identity) {
+      this.paneLayoutReady = false; this.layoutIdentity = null;
+      return null;
+    }
+    let evidence: MuxLayoutFinalEvidence = { sourceLayout, snapshot: after };
+    if (destinationLayout) evidence = { ...evidence, destinationLayout };
+    if (neighborLayout) evidence = { ...evidence, neighborLayout };
+    return evidence;
+  }
+
+  private layoutEvidenceRevision = 0;
+
+  /** Source facts only: no awaited repository enrichment after the vendor snapshot observation. */
+  private async layoutSourceSnapshot(action: MuxLayoutAction): Promise<MuxSnapshot> {
+    let selectedRepo: WorkspaceRepo | null = null;
+    if (action.kind === "split" && action.cwdChoice?.kind === "workspace") {
+      // Selected workspace cwd is an authority input, not the ordinary indefinitely cached UI repo.
+      selectedRepo = workspaceRepoOf(action.cwdChoice.workspaceId, await this.client.workspaceWorktrees(action.cwdChoice.workspaceId));
+    }
+    const wire = await this.fetchWire();
+    const spaces = new Map(wire.workspaces.map((space) => [space.workspace_id, space]));
+    const tabs = new Map(wire.tabs.map((tab) => [tab.tab_id, tab]));
+    return { panes: wire.panes.map((pane) => toMuxPane(pane, spaces, tabs)),
+      spaces: wire.workspaces.map((space) => toMuxSpace(space,
+        action.kind === "split" && action.cwdChoice?.kind === "workspace" && space.workspace_id === action.cwdChoice.workspaceId ? selectedRepo :
+          this.repoByWorkspace.get(space.workspace_id)?.repo ?? null)),
+      tabs: wire.tabs.map(toMuxTab) };
+  }
+
+  async applyLayout(action: MuxLayoutAction, finalAdmission: MuxLayoutFinalAdmission): Promise<MuxOutcome<MuxLayoutMutation>> {
+    const identity = await this.layoutRuntimeIdentity();
+    if (!identity) {
+      const capability = action.kind === "split" ? "paneSplit" : action.kind === "resize" ? "paneResize" : action.kind === "zoom" ? "paneZoom" : action.kind === "swap" ? "paneSwap" : action.kind === "move" ? "paneMove" : "paneDirectionalFocus";
+      return muxUnsupported(capability, "This Herdr runtime does not declare pane layout APIs.");
+    }
+    if ((action.kind === "split" && (!this.client.splitPane || !this.client.readPaneLayout)) ||
+      (action.kind === "resize" && !this.client.resizePane) || (action.kind === "zoom" && !this.client.zoomPane) ||
+      (action.kind === "swap" && !this.client.swapPanes) || (action.kind === "move" && !this.client.movePane) ||
+      (action.kind === "focus-direction" && !this.client.focusPaneDirection)) return muxUnreachable("The Herdr layout transport is unavailable.");
+    try {
+      let neighborLayoutEvidence: MuxLayoutRead | undefined;
+      if (action.kind === "split") {
+        const splitPane = this.client.splitPane;
+        const readPaneLayout = this.client.readPaneLayout;
+        const targetPaneId = action.resolvedTargetPaneId ?? action.targetPaneId;
+        const workspaceId = action.resolvedWorkspaceId ?? action.workspaceId;
+        if (!splitPane || !readPaneLayout || !workspaceId || targetPaneId !== action.paneId) return muxUnreachable("The Herdr layout transport is unavailable.");
+        const splitParams: HerdrSplitPaneParams = {
+          direction: action.direction, ratio: action.ratio, target_pane_id: targetPaneId,
+          workspace_id: workspaceId, env: { ...action.env }, focus: false, right_click: "herdr" };
+        if (action.cwd !== null) splitParams.cwd = action.cwd;
+        const dispatchIdentity = await this.layoutRuntimeIdentity();
+        if (!dispatchIdentity || dispatchIdentity !== identity) return muxUnreachable("The Herdr runtime changed before layout dispatch.");
+        const evidence = await this.finalLayoutEvidence(action, dispatchIdentity);
+        if (!evidence || !finalAdmission(action, dispatchIdentity, evidence)) return muxRefused("Layout authority or target evidence changed before dispatch.");
+        const raw = await splitPane.call(this.client, splitParams);
+        const response = object(raw);
+        if (response.type !== "pane_info") throw new Error("layout.protocol: invalid pane split response");
+        const pane = object(field(response, "pane"));
+        const paneId = paneIdField(pane, "pane_id");
+        if (paneId === action.paneId || paneIdField(pane, "workspace_id") !== workspaceId ||
+            (action.resolvedSourceTabId !== undefined && paneIdField(pane, "tab_id") !== action.resolvedSourceTabId)) throw new Error("layout.protocol: pane split target mismatch");
+        const layoutResponse = object(await readPaneLayout.call(this.client, paneId));
+        if (layoutResponse.type !== "pane_layout") throw new Error("layout.protocol: invalid pane layout response");
+        const layout = neutralLayout(field(layoutResponse, "layout"));
+        if (layout.workspaceId !== workspaceId || (action.resolvedSourceTabId !== undefined && layout.tabId !== action.resolvedSourceTabId) ||
+            !layout.panes.some((row) => row.paneId === paneId) || !layout.panes.some((row) => row.paneId === action.paneId)) throw new Error("layout.protocol: split pane absent from target layout");
+        if (await this.layoutRuntimeIdentity() !== identity) throw new Error("layout runtime changed after dispatch");
+        return muxOk({ kind: "split", paneId, layout });
+      }
+      if (action.kind === "resize") {
+        const resizePane = this.client.resizePane;
+        if (!resizePane) return muxUnreachable("The Herdr layout transport is unavailable.");
+        const dispatchIdentity = await this.layoutRuntimeIdentity();
+        if (!dispatchIdentity || dispatchIdentity !== identity) return muxUnreachable("The Herdr runtime changed before layout dispatch.");
+        const evidence = await this.finalLayoutEvidence(action, dispatchIdentity);
+        if (!evidence || !finalAdmission(action, dispatchIdentity, evidence)) return muxRefused("Layout authority or target evidence changed before dispatch.");
+        const response = object(await resizePane.call(this.client, action.paneId, action.direction, action.amount));
+        if (response.type !== "pane_resize") throw new Error("layout.protocol: invalid pane resize variant");
+        const row = object(field(response, "resize"));
+        const layout = neutralLayout(field(row, "layout"));
+        if (paneIdField(row, "pane_id") !== action.paneId || !layout.panes.some((pane) => pane.paneId === action.paneId) || paneIdField(row, "focused_pane_id") !== layout.focusedPaneId) throw new Error("layout.protocol: resize identity mismatch");
+        const value = { kind: "resize" as const, changed: booleanField(row, "changed"), layout };
+        if (await this.layoutRuntimeIdentity() !== identity) throw new Error("layout runtime changed after dispatch");
+        return muxOk(value);
+      }
+      if (action.kind === "zoom") {
+        const zoomPane = this.client.zoomPane;
+        if (!zoomPane) return muxUnreachable("The Herdr layout transport is unavailable.");
+        const dispatchIdentity = await this.layoutRuntimeIdentity();
+        if (!dispatchIdentity || dispatchIdentity !== identity) return muxUnreachable("The Herdr runtime changed before layout dispatch.");
+        const evidence = await this.finalLayoutEvidence(action, dispatchIdentity);
+        if (!evidence || !finalAdmission(action, dispatchIdentity, evidence)) return muxRefused("Layout authority or target evidence changed before dispatch.");
+        const response = object(await zoomPane.call(this.client, action.paneId, action.mode));
+        if (response.type !== "pane_zoom") throw new Error("layout.protocol: invalid pane zoom variant");
+        const row = object(field(response, "zoom"));
+        const layout = neutralLayout(field(row, "layout"));
+        if (paneIdField(row, "pane_id") !== action.paneId || paneIdField(row, "focused_pane_id") !== layout.focusedPaneId || !layout.panes.some((pane) => pane.paneId === action.paneId)) throw new Error("layout.protocol: zoom identity mismatch");
+        const changed = booleanField(row, "changed");
+        const zoomed = booleanField(row, "zoomed");
+        const zoomChanged = booleanField(row, "zoom_changed");
+        const focusChanged = booleanField(row, "focus_changed");
+        if (zoomChanged !== changed || focusChanged || zoomed !== layout.zoomed ||
+            (action.mode === "on" && !zoomed) || (action.mode === "off" && zoomed)) throw new Error("layout.protocol: zoom effect mismatch");
+        const value = { kind: "zoom" as const, changed, zoomed, layout };
+        if (await this.layoutRuntimeIdentity() !== identity) throw new Error("layout runtime changed after dispatch");
+        return muxOk(value);
+      }
+      if (action.kind === "swap") {
+        const swapPanes = this.client.swapPanes;
+        if (!swapPanes) return muxUnreachable("The Herdr layout transport is unavailable.");
+        let expectedTarget = action.resolvedTargetPaneId ?? action.targetPaneId;
+        if (action.direction !== null) {
+          const adjacent = await this.client.readPaneNeighbor?.(action.paneId, action.direction);
+          if (!adjacent) throw new Error("layout.protocol: missing directional swap evidence");
+          const neighborResponse = object(adjacent);
+          if (neighborResponse.type !== "pane_neighbor") throw new Error("layout.protocol: invalid directional swap evidence");
+          const neighbor = object(field(neighborResponse, "neighbor"));
+          const neighborLayout = neutralLayout(field(neighbor, "layout"));
+          if (stringField(neighbor, "pane_id") !== action.paneId || stringField(neighbor, "direction") !== action.direction) throw new Error("layout.protocol: stale directional swap evidence");
+          expectedTarget = nullableStringField(neighbor, "neighbor_pane_id");
+          if (!expectedTarget) return muxRefused("There is no pane in that direction.");
+          if (!neighborLayout.panes.some((pane) => pane.paneId === expectedTarget) || !neighborLayout.panes.some((pane) => pane.paneId === action.paneId)) throw new Error("layout.protocol: neighbor absent from layout evidence");
+          neighborLayoutEvidence = { kind: "layout", layout: neighborLayout };
+        }
+        const prepared = expectedTarget === null ? action : { ...action, resolvedTargetPaneId: expectedTarget };
+        const dispatchIdentity = await this.layoutRuntimeIdentity();
+        if (!dispatchIdentity || dispatchIdentity !== identity) return muxUnreachable("The Herdr runtime changed before layout dispatch.");
+        const evidence = await this.finalLayoutEvidence(prepared, dispatchIdentity, neighborLayoutEvidence);
+        if (!evidence || !finalAdmission(prepared, dispatchIdentity, evidence)) return muxRefused("Layout authority or target evidence changed before dispatch.");
+        const response = object(await swapPanes.call(this.client, { pane_id: action.paneId, direction: action.direction, source_pane_id: action.sourcePaneId, target_pane_id: action.targetPaneId }));
+        if (response.type !== "pane_swap") throw new Error("layout.protocol: invalid pane swap variant");
+        const row = object(field(response, "swap"));
+        const layout = neutralLayout(field(row, "layout"));
+        const changed = booleanField(row, "changed");
+        if (paneIdField(row, "source_pane_id") !== (action.sourcePaneId ?? action.paneId) || !layout.panes.some((pane) => pane.paneId === action.paneId) || paneIdField(row, "focused_pane_id") !== layout.focusedPaneId) throw new Error("layout.protocol: swap identity mismatch");
+        const targetWire = row.target_pane_id === undefined ? null : nullableStringField(row, "target_pane_id");
+        if ((targetWire !== null && targetWire !== expectedTarget) || (changed && expectedTarget !== null && !layout.panes.some((pane) => pane.paneId === expectedTarget)) ||
+            (changed && action.resolvedTargetPaneId !== undefined && action.resolvedTargetPaneId !== expectedTarget)) throw new Error("layout.protocol: swap target mismatch");
+        const value = { kind: "swap" as const, changed, layout };
+        if (await this.layoutRuntimeIdentity() !== identity) throw new Error("layout runtime changed after dispatch");
+        return muxOk(value);
+      }
+      if (action.kind === "move") {
+        const movePane = this.client.movePane;
+        if (!movePane) return muxUnreachable("The Herdr layout transport is unavailable.");
+        const dispatchIdentity = await this.layoutRuntimeIdentity();
+        if (!dispatchIdentity || dispatchIdentity !== identity) return muxUnreachable("The Herdr runtime changed before layout dispatch.");
+        const evidence = await this.finalLayoutEvidence(action, dispatchIdentity);
+        if (!evidence || !finalAdmission(action, dispatchIdentity, evidence)) return muxRefused("Layout authority or target evidence changed before dispatch.");
+        const response = object(await movePane.call(this.client, { pane_id: action.paneId, destination: moveDestinationWire(action.destination), focus: false }));
+        if (response.type !== "pane_move") throw new Error("layout.protocol: invalid pane move variant");
+        const row = object(field(response, "move_result"));
+        const pane = object(field(row, "pane"));
+        const paneId = paneIdField(pane, "pane_id");
+        const previousPaneId = paneIdField(row, "previous_pane_id");
+        const previousTabId = paneIdField(row, "previous_tab_id");
+        const previousWorkspaceId = paneIdField(row, "previous_workspace_id");
+        const layout = neutralLayout(field(row, "target_layout"));
+        const changed = booleanField(row, "changed");
+        if (previousPaneId !== action.paneId ||
+            (action.resolvedSourceTabId !== undefined && previousTabId !== action.resolvedSourceTabId) ||
+            (action.resolvedSourceWorkspaceId !== undefined && previousWorkspaceId !== action.resolvedSourceWorkspaceId) ||
+            (changed ? paneId === previousPaneId || !layout.panes.some((item) => item.paneId === paneId) : paneId !== previousPaneId) ||
+            paneIdField(pane, "tab_id") !== layout.tabId || paneIdField(pane, "workspace_id") !== layout.workspaceId || paneIdField(row, "focused_pane_id") !== layout.focusedPaneId) throw new Error("layout.protocol: move result does not match source or target layout");
+        const destination = action.destination;
+        if (destination.type === "tab" && (layout.tabId !== destination.tabId || !layout.panes.some((item) => item.paneId === destination.targetPaneId))) throw new Error("layout.protocol: move destination tab mismatch");
+        if (action.destination.type === "new_tab" && layout.workspaceId !== action.destination.workspaceId) throw new Error("layout.protocol: move destination workspace mismatch");
+        const value = { kind: "move" as const, changed, paneId, previousPaneId, previousTabId, previousWorkspaceId, layout };
+        if (await this.layoutRuntimeIdentity() !== identity) throw new Error("layout runtime changed after dispatch");
+        return muxOk(value);
+      }
+      const focusPaneDirection = this.client.focusPaneDirection;
+      if (!focusPaneDirection) return muxUnreachable("The Herdr layout transport is unavailable.");
+      const dispatchIdentity = await this.layoutRuntimeIdentity();
+      if (!dispatchIdentity || dispatchIdentity !== identity) return muxUnreachable("The Herdr runtime changed before layout dispatch.");
+      const evidence = await this.finalLayoutEvidence(action, dispatchIdentity);
+      if (!evidence || !finalAdmission(action, dispatchIdentity, evidence)) return muxRefused("Layout authority or target evidence changed before dispatch.");
+      const response = object(await focusPaneDirection.call(this.client, action.paneId, action.direction));
+      if (response.type !== "pane_focus_direction") throw new Error("layout.protocol: invalid pane direction variant");
+      const row = object(field(response, "focus"));
+      if (paneIdField(row, "source_pane_id") !== action.paneId) throw new Error("layout.protocol: direction source mismatch");
+      const changed = booleanField(row, "changed");
+      const paneId = nullableStringField(row, "focused_pane_id");
+      if (paneId === null) {
+        if (changed) throw new Error("layout.protocol: changed direction result has no focused pane");
+        return muxRefused("There is no pane in that direction.");
+      }
+      const layout = neutralLayout(field(row, "layout"));
+      if (!layout.panes.some((pane) => pane.paneId === action.paneId) || !layout.panes.some((pane) => pane.paneId === paneId) || layout.focusedPaneId !== paneId) throw new Error("layout.protocol: direction result mismatch");
+      if (action.resolvedTargetPaneId !== undefined && paneId !== action.resolvedTargetPaneId)
+        throw new Error("layout.protocol: direction result does not match planned neighbor");
+      if (changed && paneId === action.paneId) throw new Error("layout.protocol: direction result did not focus a neighbor");
+      const value = { kind: "focus-direction" as const, changed, paneId, layout };
+      if (await this.layoutRuntimeIdentity() !== identity) throw new Error("layout runtime changed after dispatch");
+      return muxOk(value);
+    } catch (err) { this.paneLayoutReady = false; this.layoutIdentity = null; return layoutRefusal(err); }
   }
 
   /**
@@ -659,18 +1073,27 @@ export class HerdrMux implements MuxAdapter {
 
   watch(options: MuxWatchOptions): MuxSubscription {
     return this.client.subscribeEvents({
-      subscriptions: buildSubscriptions(options.panes),
+      subscriptions: buildSubscriptions(options.panes, this.paneLayoutReady),
       onUp: () => {
         // Whatever moved while the stream was down, a repo binding included, is re-read.
         this.repoByWorkspace.clear();
+        this.paneLayoutReady = false;
+        this.layoutIdentity = null;
+        this.client.retireLayoutRuntime?.();
         options.onUp();
       },
       onEvent: (event, data) => {
+        this.layoutEvidenceRevision += 1;
         const paneId = changedPaneId(event, data);
         if (paneId === null) options.onTopologyChange();
         else options.onPaneChange(paneId);
       },
-      onDown: (why) => options.onDown(why),
+      onDown: (why) => {
+        this.paneLayoutReady = false;
+        this.layoutIdentity = null;
+        this.client.retireLayoutRuntime?.();
+        options.onDown(why);
+      },
     });
   }
 
@@ -719,6 +1142,7 @@ function toMuxPane(
   // conditionally spread, so absent stays absent and each condition reads as the one rule it is.
   const pane: MutableMuxPane = {
     paneId: raw.pane_id,
+    terminalIncarnation: createHash("sha256").update("collie/herdr-terminal/v1\0", "utf8").update(raw.terminal_id, "utf8").digest("hex"),
     spaceId: raw.workspace_id,
     spaceLabel,
     spaceNumber: space?.number ?? 0,

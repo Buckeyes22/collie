@@ -10,6 +10,7 @@ the first Android release from this fork.
 
 - Open New Space and worktree creation sheets expanded, with a bounded scrolling viewport that keeps Create reachable at large text sizes.
 
+- Add a native pane-layout screen for inspecting geometry and adjacency, then plan and confirm capability-gated split, resize, zoom, swap, focus and move actions. Unknown writes never replay automatically; same-ID recovery requires the owning peer's durable receipt support. On older peers, an explicit duplicate-risk warning lets the operator abandon only the local recovery record after inspecting the layout. Moved panes reopen from their new server-issued ID.
 - Decode declared string agent statuses and tolerate bounded object-shaped status compatibility while showing unfamiliar states as unknown.
 
 - Render structured history calls and question choices with distinct completed, denied and failed outcomes.

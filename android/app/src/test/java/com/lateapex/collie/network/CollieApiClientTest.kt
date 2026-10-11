@@ -17,6 +17,7 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okhttp3.tls.HandshakeCertificates
 import okhttp3.tls.HeldCertificate
+import okio.buffer
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -25,6 +26,7 @@ import org.junit.Assert.fail
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import kotlinx.serialization.json.put
 
 class CollieApiClientTest {
     private lateinit var server: MockWebServer
@@ -70,14 +72,14 @@ class CollieApiClientTest {
     @Test
     fun controlReceiptUsesMountedReadAdmissionAndValidatesItsBoundSchema() = runBlocking {
         val mounted = Connection(CollieOrigin(server.url("/mount/").toString()), "phone", "token")
-        server.enqueue(MockResponse().setBody("{\"ok\":true,\"operation\":{\"schema\":1,\"requestId\":\"intent\",\"state\":\"unknown\",\"capability\":\"movePane\",\"targetIdentity\":\"occupant\",\"at\":1,\"updatedAt\":2}}"))
+        server.enqueue(MockResponse().setBody("{\"ok\":true,\"operation\":{\"schema\":1,\"requestId\":\"intent\",\"state\":\"unknown\",\"capability\":\"movePane\",\"targetIdentity\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"at\":1,\"updatedAt\":2}}"))
         assertTrue(api.controlOperation(mounted, Scope(host = "peer", session = "work"), "intent") is ApiResult.Success)
         val request = server.takeRequest()
         assertEquals("GET", request.method)
         assertEquals("/mount/api/control/operations/intent?host=peer&session=work", request.path)
         assertEquals("Bearer token", request.getHeader("Authorization"))
         assertEquals(null, request.getHeader("Origin"))
-        server.enqueue(MockResponse().setBody("{\"ok\":true,\"operation\":{\"schema\":2,\"requestId\":\"intent\",\"state\":\"retry\",\"capability\":\"movePane\",\"targetIdentity\":\"occupant\",\"at\":1,\"updatedAt\":2}}"))
+        server.enqueue(MockResponse().setBody("{\"ok\":true,\"operation\":{\"schema\":2,\"requestId\":\"intent\",\"state\":\"retry\",\"capability\":\"movePane\",\"targetIdentity\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"at\":1,\"updatedAt\":2}}"))
         assertTrue(api.controlOperation(mounted, Scope(), "intent") is ApiResult.Failure)
     }
 
@@ -1234,4 +1236,141 @@ class CollieApiClientTest {
 
     private fun updateRunResponse(state: String): String =
         """{"schema":1,"state":"$state","from":"1.5.0","to":"1.6.0","startedAt":1,"updatedAt":2,"pid":7,"attempt":1}"""
+
+    @Test
+    fun layoutPlanAndMutationUseMountedScopedRoutesAndPreserveUnknownAsNonSuccess() = runBlocking {
+        val mounted = Connection(CollieOrigin(server.url("/nested/mount/").toString()), "phone", "token")
+        val address = PaneAddress(Scope(host = "peer", session = "work"), "pane:one")
+        server.enqueue(MockResponse().setBody("""{"ok":true,"result":{"kind":"layout","layout":{"workspaceId":"space","tabId":"tab","zoomed":false,"area":{"x":0,"y":0,"width":80,"height":24},"focusedPaneId":"pane:one","panes":[{"paneId":"pane:one","focused":true,"rect":{"x":0,"y":0,"width":80,"height":24}}],"splits":[]}}}"""))
+        assertTrue(api.paneLayout(mounted, address) is ApiResult.Success)
+        assertEquals("/nested/mount/api/pane/pane%3Aone/layout?host=peer&session=work", server.takeRequest().path)
+
+        val future = System.currentTimeMillis() + 30_000
+        server.enqueue(MockResponse().setBody("""{"ok":true,"planToken":"plan-token","expiresAt":$future,"action":"split","effects":{"verb":"split","targetPaneId":"pane:one","direction":"right","ratio":0.5,"focusChanges":false},"layout":{"kind":"layout","layout":{"workspaceId":"space","tabId":"tab","zoomed":false,"area":{"x":0,"y":0,"width":80,"height":24},"focusedPaneId":"pane:one","panes":[{"paneId":"pane:one","focused":true,"rect":{"x":0,"y":0,"width":80,"height":24}}],"splits":[]}}}"""))
+        val action = kotlinx.serialization.json.buildJsonObject { put("kind", "split"); put("direction", "right"); put("ratio", 0.5); put("workspaceId", "space") }
+        assertTrue(api.planPaneLayout(mounted, address, action) is ApiResult.Success)
+        val plan = server.takeRequest()
+        assertEquals("POST", plan.method)
+        assertEquals("/nested/mount/api/pane/pane%3Aone/layout/plan?host=peer&session=work", plan.path)
+        assertEquals("Bearer token", plan.getHeader("Authorization"))
+
+        server.enqueue(MockResponse().setResponseCode(202).setBody("""{"ok":false,"code":"layout.outcome_unknown","operation":{"schema":1,"requestId":"same-id","state":"unknown","capability":"paneSplit","targetIdentity":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","at":1,"updatedAt":2,"code":"layout.outcome_unknown"}}"""))
+        val unknown = api.applyPaneLayout(mounted, address, "same-id", "plan-token", action)
+        assertTrue(unknown is ApiResult.Success && !(unknown as ApiResult.Success).value.ok)
+        val write = server.takeRequest()
+        assertEquals("POST", write.method)
+        assertEquals("/nested/mount/api/pane/pane%3Aone/layout/split?host=peer&session=work", write.path)
+        assertEquals("same-id", Json.parseToJsonElement(write.body.readUtf8()).jsonObject["requestId"]?.toString()?.trim('"'))
+    }
+
+    @Test
+    fun mountedHttpsNullablePlanEffectsRejectWrongTypesBeforeAnyApply() = runBlocking {
+        val mounted = Connection(CollieOrigin(server.url("/nested/mount/").toString()), "phone", "token")
+        val address = PaneAddress(Scope(host = "peer", session = "work"), "pane:one")
+        val layout = """{"workspaceId":"space","tabId":"tab","zoomed":false,"area":{"x":0,"y":0,"width":80,"height":24},"focusedPaneId":"pane:one","panes":[{"paneId":"pane:one","focused":true,"rect":{"x":0,"y":0,"width":40,"height":24}},{"paneId":"pane:two","focused":false,"rect":{"x":40,"y":0,"width":40,"height":24}}],"splits":[]}"""
+        val families = listOf(
+            Triple("split", """{"kind":"split","direction":"right","ratio":null}""", """{"verb":"split","targetPaneId":"pane:one","direction":"right","ratio":VALUE,"focusChanges":false}"""),
+            Triple("resize", """{"kind":"resize","direction":"right","amount":null}""", """{"verb":"resize","targetPaneId":"pane:one","direction":"right","amount":VALUE}"""),
+            Triple("swap", """{"kind":"swap","direction":null,"sourcePaneId":"pane:one","targetPaneId":"pane:two"}""", """{"verb":"swap","sourcePaneId":"pane:one","targetPaneId":"pane:two","direction":VALUE}"""),
+        )
+        for ((kind, body, effect) in families) {
+            val action = Json.parseToJsonElement(body).jsonObject
+            for (value in listOf("null", "true", "{}", "[]", "\"bad\"", "\"0.5\"")) {
+                server.enqueue(MockResponse().setBody("""{"ok":true,"planToken":"plan-token","expiresAt":${System.currentTimeMillis() + 30_000},"action":"$kind","effects":${effect.replace("VALUE", value)},"layout":{"kind":"layout","layout":$layout}}"""))
+                val result = api.planPaneLayout(mounted, address, action)
+                if (value == "null") assertTrue(result is ApiResult.Success)
+                else assertTrue(result is ApiResult.Failure && result.error is ApiFailure.Protocol)
+                val request = server.takeRequest()
+                assertEquals("POST", request.method)
+                assertEquals("/nested/mount/api/pane/pane%3Aone/layout/plan", request.requestUrl!!.encodedPath)
+                assertEquals("Bearer token", request.getHeader("Authorization"))
+            }
+        }
+        assertEquals(18, server.requestCount) // All are read-classified plans, zero apply dispatch.
+    }
+
+    @Test
+    fun mountedLayoutEdgesAndEveryNeighborDirectionUseTheNestedLayoutRoutes() = runBlocking {
+        val mounted = Connection(CollieOrigin(server.url("/nested/mount/").toString()), "phone", "token")
+        val address = PaneAddress(Scope(host = "peer", session = "work"), "pane:one")
+        val layout = """{"workspaceId":"space","tabId":"tab","zoomed":false,"area":{"x":0,"y":0,"width":80,"height":24},"focusedPaneId":"pane:one","panes":[{"paneId":"pane:one","focused":true,"rect":{"x":0,"y":0,"width":80,"height":24}}],"splits":[]}"""
+        server.enqueue(MockResponse().setBody("""{"ok":true,"result":{"kind":"edges","paneId":"pane:one","left":true,"right":false,"up":true,"down":false,"layout":$layout}}"""))
+        assertTrue(api.paneLayoutRead(mounted, address, "edges") is ApiResult.Success)
+        assertEquals("/nested/mount/api/pane/pane%3Aone/layout/edges?host=peer&session=work", server.takeRequest().path)
+        for (direction in listOf("left", "right", "up", "down")) {
+            server.enqueue(MockResponse().setBody("""{"ok":true,"result":{"kind":"neighbor","paneId":"pane:one","direction":"$direction","neighborPaneId":null,"layout":$layout}}"""))
+            assertTrue(api.paneLayoutRead(mounted, address, "neighbor", direction) is ApiResult.Success)
+            val read = server.takeRequest()
+            assertEquals("/nested/mount/api/pane/pane%3Aone/layout/neighbor", read.requestUrl!!.encodedPath)
+            assertEquals("peer", read.requestUrl!!.queryParameter("host"))
+            assertEquals("work", read.requestUrl!!.queryParameter("session"))
+            assertEquals(direction, read.requestUrl!!.queryParameter("direction"))
+        }
+    }
+
+    @Test
+    fun enabledDiagnosticsCannotConsumeMountedLayoutRepliesBeforeTheirWireLimit() = runBlocking<Unit> {
+        val recorded = mutableListOf<Pair<String, Map<String, Any?>>>()
+        val readBytes = java.util.concurrent.atomic.AtomicLong()
+        val client = boundaryHttp1Client.newBuilder()
+            .addInterceptor(com.lateapex.collie.diagnostics.DiagnosticsInterceptor(
+                com.lateapex.collie.diagnostics.RecordingDiagnosticsRecorder(recorded)))
+            .addNetworkInterceptor { chain ->
+                val response = chain.proceed(chain.request())
+                val original = response.body!!
+                val counted = object : okio.ForwardingSource(original.source()) {
+                    override fun read(sink: okio.Buffer, byteCount: Long): Long {
+                        val count = super.read(sink, byteCount)
+                        if (count > 0) readBytes.addAndGet(count)
+                        return count
+                    }
+                }.buffer()
+                response.newBuilder().body(object : okhttp3.ResponseBody() {
+                    override fun contentType() = original.contentType()
+                    override fun contentLength() = original.contentLength()
+                    override fun source() = counted
+                }).build()
+            }.build()
+        val diagnosticApi = CollieApiClient(client, Json { ignoreUnknownKeys = true })
+        val mounted = Connection(CollieOrigin(server.url("/nested/mount/").toString()), "phone", "token")
+        val address = PaneAddress(Scope("peer", "work"), "pane:one")
+        val sentinel = "PRIVATE-LAYOUT-ENV-FOLDER-SENTINEL"
+        val huge = "{\"private\":\"$sentinel" + "x".repeat(CollieApiClient.MAX_LAYOUT_RESPONSE_BYTES + 65536) + "\"}"
+        val action = Json.parseToJsonElement("""{"kind":"split","direction":"right","ratio":0.5,"env":{"PRIVATE":"$sentinel"}}""").jsonObject
+        for (mime in listOf(null, "application/json", "text/plain", "application/octet-stream")) {
+          for (kind in listOf("layout", "edges", "neighbor", "plan", "apply")) {
+            readBytes.set(0)
+            val reply = MockResponse().setChunkedBody(huge, 4096)
+            if (mime != null) reply.setHeader("Content-Type", mime)
+            server.enqueue(reply)
+            val result = when (kind) {
+                "layout" -> diagnosticApi.paneLayout(mounted, address)
+                "edges" -> diagnosticApi.paneLayoutRead(mounted, address, "edges")
+                "neighbor" -> diagnosticApi.paneLayoutRead(mounted, address, "neighbor", "left")
+                "plan" -> diagnosticApi.planPaneLayout(mounted, address, action)
+                else -> diagnosticApi.applyPaneLayout(mounted, address, "request-1", "plan-token", action)
+            }
+            assertTrue(result is ApiResult.Failure && result.error is ApiFailure.Protocol)
+            assertTrue("response is actually read", readBytes.get() > 0)
+            assertTrue("diagnostics cannot preconsume MIME $mime: ${readBytes.get()}",
+                readBytes.get() <= CollieApiClient.MAX_LAYOUT_RESPONSE_BYTES + 8192L)
+            val fields = recorded.last().second
+            assertEquals(true, fields["responseBodyRedacted"])
+            assertEquals(true, fields["responseBodyStreaming"])
+            assertFalse(fields.containsKey("responseBody"))
+            assertFalse(fields.containsKey("responsePatch"))
+            assertFalse(fields.values.any { it.toString().contains(sentinel) })
+            if (kind in listOf("plan", "apply")) {
+                assertEquals(true, fields["requestBodyRedacted"])
+                assertFalse(fields.containsKey("requestBody"))
+            }
+            val suffix = when (kind) { "layout" -> ""; "apply" -> "/split"; else -> "/$kind" }
+            assertEquals("/nested/mount/api/pane/pane%3Aone/layout$suffix", server.takeRequest().requestUrl!!.encodedPath)
+          }
+        }
+        // The metadata-only branch also preserves a valid body for the real typed consumer.
+        server.enqueue(MockResponse().setChunkedBody("""{"ok":true,"result":{"kind":"layout","layout":{"workspaceId":"space","tabId":"tab","zoomed":false,"area":{"x":0,"y":0,"width":80,"height":24},"focusedPaneId":"pane:one","panes":[{"paneId":"pane:one","focused":true,"rect":{"x":0,"y":0,"width":80,"height":24}}],"splits":[]}}}""", 64))
+        assertTrue(diagnosticApi.paneLayout(mounted, address) is ApiResult.Success)
+        server.takeRequest()
+    }
 }

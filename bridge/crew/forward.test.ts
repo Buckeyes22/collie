@@ -9,8 +9,8 @@ import {
   forwardAuditAction,
   forwardHeaders,
   forwardKind,
-  forwardPaneId,
   forwardGate,
+  forwardPaneId,
   forwardParams,
   forwardToPeer,
   crewRouteFor,
@@ -1060,5 +1060,26 @@ describe("scoped foundation Crew reads", () => {
       expect(forwardAuditAction(path!)).toBeNull();
     }
     expect(calls).toEqual([{ route: "refresh", params: { session: "work" } }, { route: "control/operations/intent", params: { session: "work" } }]);
+  });
+
+  test("pane layout contracts are additive across Crew with read plans and write-only execution", () => {
+    const routes = [
+      ["pane/w1:p1/layout", "GET", "read"],
+      ["pane/w1:p1/layout/neighbor", "GET", "read"],
+      ["pane/w1:p1/layout/edges", "GET", "read"],
+      ["pane/w1:p1/layout/plan", "POST", "read"],
+      ["pane/w1:p1/layout/split", "POST", "write"],
+      ["pane/w1:p1/layout/resize", "POST", "write"],
+      ["pane/w1:p1/layout/zoom", "POST", "write"],
+      ["pane/w1:p1/layout/swap", "POST", "write"],
+      ["pane/w1:p1/layout/move", "POST", "write"],
+      ["pane/w1:p1/layout/focus-direction", "POST", "write"],
+    ] as const;
+    for (const [route, method, gate] of routes) {
+      expect(crewRouteFor(`/api/${route}`)).toBe(route);
+      expect(forwardKind(route, method)).toBe(gate);
+      expect(forwardGate(route, method)).toBe(gate);
+    }
+    expect(crewRouteFor("/api/pane/w1:p1/layout/arbitrary")).toBeNull();
   });
 });

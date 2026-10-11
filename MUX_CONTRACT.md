@@ -76,6 +76,12 @@ ceiling: attention is something the bridge observes, never something a caller ca
 
 ## Capabilities
 
+## Pane layout control (B12)
+
+The neutral `readLayout` port exposes bounded geometry, directional neighbor and edge reads. `applyLayout` carries a closed action union for split, resize, zoom, swap, move and directional focus. New `paneLayout`, `paneSplit`, `paneResize`, `paneZoom`, `paneSwap`, `paneMove` and `paneDirectionalFocus` declarations are positive-only; missing or false means unavailable. Herdr advertises these only after a compatible runtime handshake bracketed by the same positive local runtime-incarnation witness. Unix sockets use a filesystem socket identity; Windows named pipes use a bounded host-only OS probe of the actual canonical pipe, server PID and process creation time. A failed probe, endpoint replacement or event-stream loss retires cached readiness. The witness is hashed and stays local. It detects process replacement but cannot make a separate witness check and the vendor mutation RPC atomic. Split and move preserve operator focus by default.
+
+The HTTP layer plans each exact action against current pane/terminal incarnation, layout fingerprint and destination identities. Mutations reserve the shared owner-bound durable operation before dispatch. Move results retain the new pane ID and previous pane/tab/workspace aliases so the client can discard stale pane state and refresh topology. Tern, tmux, zellij and tuios remain explicitly unsupported until their own verified methods exist.
+
 | Capability | Consumed by | Herdr | tern | tmux | zellij | tuios |
 | --- | --- | --- | --- | --- | --- | --- |
 | `paneGrid` | `GET /api/pane/:id` | `pane.read` with `format:"ansi"` (**API**) | `tern capture <id> --ansi` — SGR intact (**TN**) | `capture-pane -p -e` — SGR intact (**T**) | `dump-screen --ansi --pane-id <id>` — SGR intact, no padding (**Z**) | `capture-pane {styled:true}`, SGR intact and nothing else (**TU**: a red `printf` came back as `ESC[31;1m … ESC[m`, no other escape). A styled capture pads each row to the pane's width with spaces, and the adapter trims the padding. `revision` is the capture's own, read under the same lock as the content (probed: 56 → 146 across a typed command). It counts from 0 again when the daemon restarts, so the adapter moves its base past the last number it reported |

@@ -35,18 +35,19 @@ interface SecretCipher {
 /** AES/GCM whose non-exportable key lives in Android Keystore. */
 class AndroidKeystoreCipher(
     private val alias: String = KEY_ALIAS,
+    private val associatedData: ByteArray = alias.encodeToByteArray(),
 ) : SecretCipher {
     override fun encrypt(plaintext: ByteArray): CipherEnvelope {
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.ENCRYPT_MODE, key())
-        cipher.updateAAD(ASSOCIATED_DATA)
+        cipher.updateAAD(associatedData)
         return CipherEnvelope(cipher.iv, cipher.doFinal(plaintext))
     }
 
     override fun decrypt(envelope: CipherEnvelope): ByteArray {
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(TAG_BITS, envelope.iv))
-        cipher.updateAAD(ASSOCIATED_DATA)
+        cipher.updateAAD(associatedData)
         return cipher.doFinal(envelope.ciphertext)
     }
 
@@ -74,7 +75,6 @@ class AndroidKeystoreCipher(
         private const val KEY_ALIAS = "com.lateapex.collie.connection.v1"
         private const val TRANSFORMATION = "AES/GCM/NoPadding"
         private const val TAG_BITS = 128
-        private val ASSOCIATED_DATA = "com.lateapex.collie.connection.v1".encodeToByteArray()
     }
 }
 

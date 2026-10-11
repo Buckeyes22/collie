@@ -1,4 +1,8 @@
 import type { JsonObject, JsonValue } from "../../json.ts";
+import { HOST } from "../../host.ts";
+import { statSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { readWindowsPipeWitness } from "./windows-pipe-witness.ts";
 import type { AgentStatus } from "../../types.ts";
 import { dialHerdr, type DialMode, type SockHandle } from "../../dial.ts";
 import { decodeReplyLine, decodeStreamLine, type EventData } from "../../wire.ts";
@@ -17,6 +21,10 @@ import { redactText } from "../../redact.ts";
 
 /** Identity reported by the vendor ping; this alone grants no feature authority. */
 export interface HerdrHandshake { readonly version: string; readonly protocol: number }
+export type HerdrMoveDestination =
+  | { readonly type: "tab"; readonly tab_id: string; readonly split: "right" | "down"; readonly target_pane_id: string; readonly ratio: number | null }
+  | { readonly type: "new_tab"; readonly workspace_id: string; readonly label: string | null }
+  | { readonly type: "new_workspace"; readonly label: string | null; readonly tab_label: string | null };
 
 /** Raw wire shape of a workspace from `workspace.list`. */
 /** The repo a workspace sits in, as Herdr reports it on the workspace record itself. */
@@ -356,7 +364,21 @@ export type HerdrRpc = Pick<
   | "createWorktree"
   | "openWorktree"
   | "subscribeEvents"
->;
+> & Partial<Pick<HerdrClient,
+  | "handshake"
+  | "layoutHandshakeSample"
+  | "layoutRuntimeIdentity"
+  | "retireLayoutRuntime"
+  | "readPaneLayout"
+  | "readPaneNeighbor"
+  | "readPaneEdges"
+  | "focusPaneDirection"
+  | "splitPane"
+  | "resizePane"
+  | "zoomPane"
+  | "swapPanes"
+  | "movePane"
+>>;
 
 let idCounter = 0;
 
@@ -379,6 +401,18 @@ export interface HerdrWorktreeCreate {
   path?: string;
 }
 
+/** Closed parameters for the one-shot, focus-off pane.split mapping. */
+export interface HerdrSplitPaneParams {
+  readonly direction: "right" | "down";
+  readonly ratio: number | null;
+  readonly target_pane_id: string;
+  readonly workspace_id: string;
+  cwd?: string;
+  readonly env: JsonObject;
+  readonly focus: false;
+  readonly right_click: "herdr";
+}
+
 export class HerdrClient {
   constructor(
     private readonly socketPath: string,
@@ -386,6 +420,67 @@ export class HerdrClient {
     /** Which dialer to use; see {@link DialMode}. `auto` picks by platform. */
     private readonly dialMode: DialMode = "auto",
   ) {}
+
+  /** Stable local endpoint plus process-incarnation witness for the currently handshaken runtime. */
+  layoutRuntimeIdentity(): string | null {
+    if (!this.verifiedHandshake || !this.verifiedEndpointWitness) return null;
+    const witness = this.observeEndpointWitness();
+    if (!witness || witness !== this.verifiedEndpointWitness) { this.retireHandshake(); return null; }
+    return this.runtimeIdentity(witness);
+  }
+
+  /** A compatible ping bracketed by the OS witness of the actual local endpoint. */
+  async layoutHandshakeSample(): Promise<{ handshake: HerdrHandshake; identity: string } | null> {
+    const before = this.observeEndpointWitness();
+    if (!before) return null;
+    try {
+      const handshake = await this.handshake();
+      const after = this.observeEndpointWitness();
+      if (!after || before !== after) { this.retireHandshake(); return null; }
+      this.verifiedEndpointWitness = after;
+      return { handshake, identity: this.runtimeIdentity(after) };
+    } catch {
+      this.retireHandshake();
+      return null;
+    }
+  }
+
+  /** Event-stream loss or replacement immediately retires cached layout readiness. */
+  retireLayoutRuntime(): void { this.retireHandshake(); }
+
+  private runtimeIdentity(witness: string): string {
+    return createHash("sha256").update(`herdr-layout-runtime\0${witness}\0${this.handshakeGeneration}\0${this.verifiedHandshake}`).digest("hex");
+  }
+  private observeEndpointWitness(): string | null {
+    try {
+      const witness = HOST.platform === "win32"
+        ? readWindowsPipeWitness(this.socketPath)
+        : this.unixEndpointWitness();
+      if (!witness) { this.retireHandshake(); return null; }
+      if (this.lastEndpointWitness !== null && this.lastEndpointWitness !== witness) {
+        this.retireHandshake();
+        return null;
+      }
+      if (this.lastEndpointWitness === null) this.handshakeGeneration += 1;
+      this.lastEndpointWitness = witness;
+      return witness;
+    } catch { this.retireHandshake(); return null; }
+  }
+  private unixEndpointWitness(): string | null {
+    const stat = statSync(this.socketPath, { bigint: true });
+    if (!stat.isSocket()) return null;
+    return createHash("sha256").update(`${stat.dev}:${stat.ino}:${stat.ctimeNs}`).digest("hex");
+  }
+  private retireHandshake(): void {
+    this.verifiedHandshake = null;
+    this.verifiedEndpointWitness = null;
+    this.lastEndpointWitness = null;
+    this.handshakeGeneration += 1;
+  }
+  private verifiedHandshake: string | null = null;
+  private verifiedEndpointWitness: string | null = null;
+  private lastEndpointWitness: string | null = null;
+  private handshakeGeneration = 0;
 
   /**
    * One request, one reply, one connection. Rejects on error reply, timeout, or early close.
@@ -828,6 +923,43 @@ export class HerdrClient {
     return this.request<void>("pane.focus", { pane_id: paneId });
   }
 
+  /** Read the current pane layout; the caller validates the closed success DTO. */
+  readPaneLayout(paneId: string): Promise<JsonValue> {
+    return this.request<JsonValue>("pane.layout", { pane_id: paneId });
+  }
+
+  readPaneNeighbor(paneId: string, direction: "left" | "right" | "up" | "down"): Promise<JsonValue> {
+    return this.request<JsonValue>("pane.neighbor", { pane_id: paneId, direction });
+  }
+
+  readPaneEdges(paneId: string): Promise<JsonValue> {
+    return this.request<JsonValue>("pane.edges", { pane_id: paneId });
+  }
+
+  focusPaneDirection(paneId: string, direction: "left" | "right" | "up" | "down"): Promise<JsonValue> {
+    return this.request<JsonValue>("pane.focus_direction", { pane_id: paneId, direction });
+  }
+
+  splitPane(params: HerdrSplitPaneParams): Promise<JsonValue> {
+    return this.request<JsonValue>("pane.split", { ...params });
+  }
+
+  resizePane(paneId: string, direction: "left" | "right" | "up" | "down", amount: number | null): Promise<JsonValue> {
+    return this.request<JsonValue>("pane.resize", { pane_id: paneId, direction, amount });
+  }
+
+  zoomPane(paneId: string, mode: "toggle" | "on" | "off"): Promise<JsonValue> {
+    return this.request<JsonValue>("pane.zoom", { pane_id: paneId, mode });
+  }
+
+  swapPanes(params: { pane_id: string; direction: "left" | "right" | "up" | "down" | null; source_pane_id: string | null; target_pane_id: string | null }): Promise<JsonValue> {
+    return this.request<JsonValue>("pane.swap", params);
+  }
+
+  movePane(params: { pane_id: string; destination: HerdrMoveDestination; focus: false }): Promise<JsonValue> {
+    return this.request<JsonValue>("pane.move", params);
+  }
+
   /**
    * Set or clear a pane's label. `label: null` clears it (the key then disappears from pane
    * records). Resolves on Herdr's `pane_info` reply — the returned pane isn't consumed here, the
@@ -860,11 +992,15 @@ export class HerdrClient {
 
   /** Validate the schema-22 pong variant rather than treating an arbitrary successful RPC as health. */
   async handshake(): Promise<HerdrHandshake> {
-    const result = await this.request<JsonObject>("ping");
+    let result: JsonObject;
+    try { result = await this.request<JsonObject>("ping"); }
+    catch (error) { this.retireHandshake(); throw error; }
     if (result.type !== "pong" || typeof result.version !== "string" || !result.version || result.version.length > 256 ||
         typeof result.protocol !== "number" || !Number.isInteger(result.protocol) || result.protocol < 0 || result.protocol > 0xffffffff) {
+      this.retireHandshake();
       throw new Error("herdr ping: malformed pong");
     }
+    this.verifiedHandshake = `${result.version}:${result.protocol}`;
     return { version: result.version, protocol: result.protocol };
   }
 

@@ -28,6 +28,10 @@
             android:parentActivityName=".ui.MainActivity"
             android:windowSoftInputMode="adjustResize" />
         <activity
+            android:name=".ui.LayoutActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.PaneActivity" />
+        <activity
             android:name=".ui.HistoryActivity"
             android:exported="false"
             android:parentActivityName=".ui.PaneActivity" />

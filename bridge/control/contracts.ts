@@ -7,6 +7,16 @@ export const CONTROL_ROUTES = [
   { name: "paneProcesses", method: "GET", pattern: /^\/api\/pane\/[^/]+\/processes$/, gate: "device-read", scope: "session", capability: "paneProcesses", maxBodyBytes: 0 },
   { name: "refresh", method: "POST", pattern: /^\/api\/refresh$/, gate: "read", scope: "session", capability: null, maxBodyBytes: 0 },
   { name: "operation", method: "GET", pattern: /^\/api\/control\/operations\/([a-zA-Z0-9_-]{1,128})$/, gate: "read", scope: "session", capability: "controlOperations", maxBodyBytes: 0 },
+  { name: "pane-layout", method: "GET", pattern: /^\/api\/pane\/([^/]{1,256})\/layout$/, gate: "read", scope: "session", capability: "paneLayout", maxBodyBytes: 0 },
+  { name: "pane-neighbor", method: "GET", pattern: /^\/api\/pane\/([^/]{1,256})\/layout\/neighbor$/, gate: "read", scope: "session", capability: "paneLayout", maxBodyBytes: 0 },
+  { name: "pane-edges", method: "GET", pattern: /^\/api\/pane\/([^/]{1,256})\/layout\/edges$/, gate: "read", scope: "session", capability: "paneLayout", maxBodyBytes: 0 },
+  { name: "pane-layout-plan", method: "POST", pattern: /^\/api\/pane\/([^/]{1,256})\/layout\/plan$/, gate: "read", scope: "session", capability: "paneLayout", maxBodyBytes: 16 * 1024 },
+  { name: "pane-layout-split", method: "POST", pattern: /^\/api\/pane\/([^/]{1,256})\/layout\/split$/, gate: "write", scope: "session", capability: "paneSplit", maxBodyBytes: 16 * 1024 },
+  { name: "pane-layout-resize", method: "POST", pattern: /^\/api\/pane\/([^/]{1,256})\/layout\/resize$/, gate: "write", scope: "session", capability: "paneResize", maxBodyBytes: 16 * 1024 },
+  { name: "pane-layout-zoom", method: "POST", pattern: /^\/api\/pane\/([^/]{1,256})\/layout\/zoom$/, gate: "write", scope: "session", capability: "paneZoom", maxBodyBytes: 16 * 1024 },
+  { name: "pane-layout-swap", method: "POST", pattern: /^\/api\/pane\/([^/]{1,256})\/layout\/swap$/, gate: "write", scope: "session", capability: "paneSwap", maxBodyBytes: 16 * 1024 },
+  { name: "pane-layout-move", method: "POST", pattern: /^\/api\/pane\/([^/]{1,256})\/layout\/move$/, gate: "write", scope: "session", capability: "paneMove", maxBodyBytes: 16 * 1024 },
+  { name: "pane-layout-focus-direction", method: "POST", pattern: /^\/api\/pane\/([^/]{1,256})\/layout\/focus-direction$/, gate: "write", scope: "session", capability: "paneDirectionalFocus", maxBodyBytes: 16 * 1024 },
 ] as const;
 export type ControlRoute = (typeof CONTROL_ROUTES)[number];
 export type ControlScope = { readonly host: string | null; readonly session: string | null };

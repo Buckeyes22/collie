@@ -98,6 +98,52 @@ import kotlinx.coroutines.job
 import kotlinx.coroutines.withContext
 
 class PaneActivity : AppCompatActivity() {
+    private var layoutLaunchContext: com.lateapex.collie.data.ScopedReadContext? = null
+    private val layoutLauncher = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()) { result ->
+        val moved = result.data?.getStringExtra(LayoutActivity.EXTRA_MOVED_PANE_ID)
+        val captured = layoutLaunchContext
+        layoutLaunchContext = null
+        if (result.resultCode == RESULT_OK && !moved.isNullOrBlank() && moved != address.paneId && captured != null && repository.isCurrent(captured)) {
+            lifecycleScope.launch {
+                if (!repository.isCurrent(captured)) return@launch
+                val fresh = repository.snapshot(address.scope, captured)
+                if (!repository.isCurrent(captured)) return@launch
+                val matches = (fresh as? ApiResult.Success)?.value?.let { snapshot ->
+                    (snapshot.agents + snapshot.shellPanes).filter { it.paneId == moved && it.host == address.scope.host && it.session == address.scope.session }
+                }.orEmpty()
+                if (matches.size != 1) {
+                    Toast.makeText(this@PaneActivity, getString(R.string.pane_layout_moved_refresh), Toast.LENGTH_LONG).show()
+                    finish()
+                    return@launch
+                }
+                val pane = matches.single()
+                // The new pane ID has a different owner-bound draft and key target. Drop old
+                // composition state before opening it so no old-pane input follows the move.
+                nativePreferences.savePaneDraft(paneDraftKey, "")
+                binding.replyInput.text?.clear()
+                paneKeyQueue.clear()
+                stableTerminalDraft = null
+                takenOverTerminalDraft = null
+                analyzedTerminalDraft = null
+                noEchoPrompt = null
+                analyzedNoEchoPrompt = null
+                semanticSurface = null
+                analyzedSemanticSurface = null
+                val next = Intent(this@PaneActivity, PaneActivity::class.java).apply {
+                    putExtra(EXTRA_PANE_ID, pane.paneId)
+                    putExtra(EXTRA_HOST, address.scope.host)
+                    putExtra(EXTRA_SESSION, address.scope.session)
+                    putExtra(EXTRA_TITLE, pane.paneLabel ?: pane.workspaceLabel)
+                    putExtra(EXTRA_AGENT, pane.agent)
+                    putExtra(EXTRA_CWD, pane.cwd)
+                    putExtra(EXTRA_TAB_LABEL, pane.tabLabel ?: pane.tabId)
+                    putExtra(EXTRA_STATUS, pane.status.name.lowercase(Locale.ROOT))
+                }
+                startActivity(next)
+                finish()
+            }
+        }
+    }
     private var authorityRegistration: AutoCloseable? = null
     private lateinit var binding: ActivityPaneBinding
     private lateinit var viewModel: PaneViewModel
@@ -3640,6 +3686,21 @@ class PaneActivity : AppCompatActivity() {
                     getString(R.string.pane_action_zen)
                 }
                 closingRow(zenLabel) { setZenMode(!zenMode) }
+            }
+            if (currentState.mux?.supportsNew("paneLayout") == true) {
+                closingRow(getString(R.string.pane_layout_controls), action = {
+                    val captured = repository.readContext(address.scope, address.paneId)
+                    if (captured == null || !repository.isCurrent(captured)) {
+                        Toast.makeText(this, getString(R.string.pane_layout_stale), Toast.LENGTH_LONG).show()
+                        return@closingRow
+                    }
+                    layoutLaunchContext = captured
+                    layoutLauncher.launch(Intent(this, LayoutActivity::class.java).apply {
+                        putExtra(LayoutActivity.EXTRA_PANE_ID, address.paneId)
+                        putExtra(LayoutActivity.EXTRA_HOST, address.scope.host)
+                        putExtra(LayoutActivity.EXTRA_SESSION, address.scope.session)
+                    })
+                })
             }
             if (currentState.canWrite) {
                 val focus = PaneStructuralGate.action(

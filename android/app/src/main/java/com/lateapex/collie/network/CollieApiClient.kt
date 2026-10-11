@@ -28,6 +28,7 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.longOrNull
+import kotlinx.serialization.json.put
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.HttpUrl
@@ -87,6 +88,10 @@ interface CollieApi {
     suspend fun refresh(connection: Connection, scope: Scope = Scope()): ApiResult<ActionResponse>
     suspend fun pair(origin: CollieOrigin, code: String, label: String): ApiResult<PairResult>
     suspend fun controlOperation(connection: Connection, scope: Scope, requestId: String): ApiResult<ControlOperationResponse> = unavailable("Control operations")
+    suspend fun paneLayout(connection: Connection, address: PaneAddress): ApiResult<PaneLayoutReadResponse> = unavailable("Pane layout")
+    suspend fun paneLayoutRead(connection: Connection, address: PaneAddress, kind: String, direction: String? = null): ApiResult<PaneLayoutReadResponse> = unavailable("Pane layout inspection")
+    suspend fun planPaneLayout(connection: Connection, address: PaneAddress, action: kotlinx.serialization.json.JsonObject): ApiResult<PaneLayoutPlanResponse> = unavailable("Pane layout plan")
+    suspend fun applyPaneLayout(connection: Connection, address: PaneAddress, requestId: String, planToken: String, action: kotlinx.serialization.json.JsonObject): ApiResult<PaneLayoutOperationResponse> = unavailable("Pane layout action")
     suspend fun devices(connection: Connection): ApiResult<DevicesResponse>
     suspend fun revokeDevice(connection: Connection, label: String): ApiResult<DevicesResponse> = unavailable("Device revoke")
     suspend fun crew(connection: Connection): ApiResult<CrewStatusResponse> = unavailable("Crew status")
@@ -1302,6 +1307,49 @@ class CollieApiClient(
         return requireContract(result, "Unknown or mismatched control operation") { it.ok && it.operation.validFor(requestId) }
     }
 
+    override suspend fun paneLayout(connection: Connection, address: PaneAddress): ApiResult<PaneLayoutReadResponse> {
+        val result = executeJson(request(connection, scopedUrl(connection.origin, path("pane", address.paneId, "layout"), address.scope)), PaneLayoutReadResponse.serializer(), READ_TIMEOUT_SECONDS, maxResponseBytes = MAX_LAYOUT_RESPONSE_BYTES)
+        return requireContract(result, "Malformed pane layout") { it.ok && it.result.validForPane(address.paneId, "layout") }
+    }
+
+    override suspend fun paneLayoutRead(connection: Connection, address: PaneAddress, kind: String, direction: String?): ApiResult<PaneLayoutReadResponse> {
+        require(kind == "edges" || (kind == "neighbor" && direction in setOf("left", "right", "up", "down")))
+        val suffix = if (kind == "edges") "edges" else "neighbor"
+        val query = if (direction == null) emptyList() else listOf("direction" to direction)
+        val result = executeJson(request(connection, scopedUrl(connection.origin, path("pane", address.paneId, "layout", suffix), address.scope, query)), PaneLayoutReadResponse.serializer(), READ_TIMEOUT_SECONDS, maxResponseBytes = MAX_LAYOUT_RESPONSE_BYTES)
+        return requireContract(result, "Malformed pane layout inspection") { response ->
+            val row = response.result
+                response.ok && row.validForPane(address.paneId, kind) && (kind != "neighbor" || row.direction == direction)
+        }
+    }
+
+    override suspend fun planPaneLayout(connection: Connection, address: PaneAddress, action: kotlinx.serialization.json.JsonObject): ApiResult<PaneLayoutPlanResponse> {
+        val body = json.encodeToString(kotlinx.serialization.json.JsonObject.serializer(), kotlinx.serialization.json.buildJsonObject { put("action", action) })
+        val result = executeJson(post(connection, scopedUrl(connection.origin, path("pane", address.paneId, "layout", "plan"), address.scope), body), PaneLayoutPlanResponse.serializer(), READ_TIMEOUT_SECONDS, maxResponseBytes = MAX_LAYOUT_RESPONSE_BYTES)
+        val expectedKind = action["kind"]?.toString()?.trim('"')
+        return requireContract(result, "Malformed pane layout plan") { it.action == expectedKind && it.validForPane(address.paneId, action) }
+    }
+
+    override suspend fun applyPaneLayout(connection: Connection, address: PaneAddress, requestId: String, planToken: String, action: kotlinx.serialization.json.JsonObject): ApiResult<PaneLayoutOperationResponse> {
+        require(requestId.matches(Regex("[A-Za-z0-9_-]{1,128}")))
+        require(planToken.matches(Regex("[A-Za-z0-9_.:-]{1,128}")))
+        val body = json.encodeToString(kotlinx.serialization.json.buildJsonObject {
+            put("requestId", JsonPrimitive(requestId)); put("planToken", JsonPrimitive(planToken)); put("action", action)
+        })
+        val result = executeJson(post(connection, scopedUrl(connection.origin, path("pane", address.paneId, "layout", action["kind"]?.toString()?.trim('"') ?: "unknown"), address.scope), body), PaneLayoutOperationResponse.serializer(), MUTATION_TIMEOUT_SECONDS, maxResponseBytes = MAX_LAYOUT_RESPONSE_BYTES)
+        return requireContract(result, "Malformed pane layout operation") { response ->
+            val kind = action["kind"]?.toString()?.trim('"')
+            val capability = when (kind) { "split" -> "paneSplit"; "resize" -> "paneResize"; "zoom" -> "paneZoom"; "swap" -> "paneSwap"; "move" -> "paneMove"; "focus-direction" -> "paneDirectionalFocus"; else -> "" }
+            val operation = response.operation
+            if (operation == null || !operation.validFor(requestId) || operation.capability != capability) false
+            else if (response.ok) operation.state == "succeeded" && if (kind == "move") {
+                val move = response.move
+                move != null && move.kind == "pane-move" && move == operation.result && move.previousPaneId == address.paneId && move.paneId != move.previousPaneId
+            } else response.move == null && operation.result == null
+            else operation.state in setOf("unknown", "pending") && response.code == "layout.outcome_unknown" && response.move == null && operation.result == null
+        }
+    }
+
     private suspend fun executeAction(request: Request): ApiResult<ActionResponse> =
         executeResponse(request, MUTATION_TIMEOUT_SECONDS) {
             if (it.code in REDIRECT_CODES) return@executeResponse ApiResult.Failure(ApiFailure.Redirect(it.code))
@@ -1324,14 +1372,14 @@ class CollieApiClient(
         if (allowNotModified && it.code == 304) return@executeResponse ApiResult.NotModified(it.header("ETag"), responseAuthority(it))
         if (it.code in REDIRECT_CODES) return@executeResponse ApiResult.Failure(ApiFailure.Redirect(it.code))
         val body = (if (maxResponseBytes == null) it.body?.string().orEmpty() else readBoundedBody(it, maxResponseBytes))
-            ?: return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Process details response exceeded its size limit"))
+            ?: return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Response exceeded its size limit"))
         if (!it.isSuccessful) return@executeResponse failure(it, body)
         val value = decode(serializer, body)
             ?: return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Malformed successful response"))
         ApiResult.Success(value, it.code, it.header("ETag"), it.header(BUILD_HEADER), responseAuthority(it))
     }
 
-    /** Process details are sensitive and bounded at the wire before a JSON String is materialized. */
+    /** Sensitive structured replies are bounded at the wire before a JSON String is materialized. */
     private fun readBoundedBody(response: Response, maxBytes: Int): String? {
         val body = response.body ?: return ""
         if (body.contentLength() > maxBytes) return null
@@ -1515,6 +1563,7 @@ class CollieApiClient(
         private const val MAX_HISTORY_LIMIT = 5_000
         private const val MAX_PROCESS_INFO_TEXT_CHARS = 220 * 1024
         private const val MAX_PROCESS_INFO_BODY_BYTES = 1_000_000
+        internal const val MAX_LAYOUT_RESPONSE_BYTES = 1_000_000
         private const val MAX_CHANGES_ID_CHARS = 8_192
         private const val MAX_CHANGES_RESPONSE_BYTES = 5L * 1024L * 1024L
         private const val MAX_ERROR_MESSAGE_CHARS = 512

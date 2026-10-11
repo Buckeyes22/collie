@@ -5,6 +5,8 @@ import com.lateapex.collie.network.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.test.*
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.put
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -18,6 +20,7 @@ class ScopedFeatureAdmissionTest {
         override fun clear() { state.value = null }
     }
     private class Api : CollieApi {
+        var authorized = true
         var snapshotBlock: (suspend () -> Unit)? = null
         var authority = ControlAuthority("lead", "one")
         var protectedFailure: ApiFailure? = null
@@ -25,17 +28,38 @@ class ScopedFeatureAdmissionTest {
         var uploads = 0
         var documentUploads = 0
         var configReads = 0
-        override suspend fun config(connection: Connection, scope: Scope): ApiResult<BridgeConfigResponse> {
-            configReads++; return ApiResult.Success(BridgeConfigResponse(), 200)
-        }
         var readAuthority: ControlAuthority? = null
         var beforeRefresh: (suspend () -> Unit)? = null
         var refreshCalls = 0
+        var configResult: ApiResult<BridgeConfigResponse>? = null
+        var configAuthority: ControlAuthority? = null
+        var layoutCalls = 0
+        var layoutPlanCalls = 0
+        var layoutApplyCalls = 0
+        var layoutPlan: PaneLayoutPlanResponse? = null
         override suspend fun snapshot(connection: Connection, scope: Scope): ApiResult<SnapshotResponse> {
             snapshotBlock?.invoke()
             return ApiResult.Success(SnapshotResponse("connected", controlAuthority = authority,
                 agents = emptyList(), shellPanes = emptyList(), workspaces = emptyList(), tabs = emptyList(),
-                device = DeviceAuthorization(false, null, true), ts = 1), 200)
+                device = DeviceAuthorization(true, "fixture", authorized), ts = 1), 200)
+        }
+        override suspend fun config(connection: Connection, scope: Scope): ApiResult<BridgeConfigResponse> {
+            configReads++
+            return configResult ?: ApiResult.Success(BridgeConfigResponse(
+                mux = MuxConfigResponse(capabilities = mapOf("paneLayout" to true, "paneSplit" to true)),
+                control = ControlCapabilityResponse(mapOf("controlOperations" to true))), 200, controlAuthority = configAuthority)
+        }
+        override suspend fun paneLayout(connection: Connection, address: PaneAddress): ApiResult<PaneLayoutReadResponse> {
+            layoutCalls++
+            return ApiResult.Failure(ApiFailure.Protocol("unexpected layout read"))
+        }
+        override suspend fun planPaneLayout(connection: Connection, address: PaneAddress, action: kotlinx.serialization.json.JsonObject): ApiResult<PaneLayoutPlanResponse> {
+            layoutPlanCalls++
+            return layoutPlan?.let { ApiResult.Success(it, 200) } ?: ApiResult.Failure(ApiFailure.Protocol("unexpected layout plan"))
+        }
+        override suspend fun applyPaneLayout(connection: Connection, address: PaneAddress, requestId: String, planToken: String, action: kotlinx.serialization.json.JsonObject): ApiResult<PaneLayoutOperationResponse> {
+            layoutApplyCalls++
+            return ApiResult.Failure(ApiFailure.Protocol("unexpected layout operation"))
         }
         override suspend fun pane(connection: Connection, address: PaneAddress, lines: Int, etag: String?, markSeen: Boolean): ApiResult<PaneReadResponse> =
             protectedFailure?.let { ApiResult.Failure(it) } ?: ApiResult.Success(PaneReadResponse(address.paneId, "screen", false, 1), 200, controlAuthority = readAuthority)
@@ -132,6 +156,74 @@ class ScopedFeatureAdmissionTest {
         api.readAuthority = ControlAuthority("replacement", "two")
         assertTrue(repository.readPane(PaneAddress(scope, "pane")) is ApiResult.Failure)
         assertFalse(repository.isCurrent(before)); assertFalse(repository.writesAllowed(scope, "pane"))
+    }
+
+    @Test fun layoutPrerequisiteConfigUsesCanonicalPairingRetirementAndNeverMakesTheNextRequest() = runTest {
+        val api = Api(); val store = Store(initial); val repository = CollieRepository(api, store, OriginValidator())
+        val address = PaneAddress(Scope(), "pane")
+        repository.selectSubject(address.scope, address.paneId)
+        repository.snapshot(address.scope)
+        api.configResult = ApiResult.Failure(ApiFailure.Http(403, "pairing expired", "pairing.expired",
+            source = FailureSource.COLLIE, factor = FailureFactor.PAIRING))
+
+        assertTrue(repository.paneLayout(address) is ApiResult.Failure)
+        assertEquals(null, store.connection.value?.token)
+        assertFalse(repository.writesAllowed(address.scope, address.paneId))
+        assertEquals(0, api.layoutCalls)
+        assertEquals(0, api.layoutPlanCalls)
+    }
+
+    @Test fun genericGatewayAuthorizationFailureFreezesLayoutWritesWithoutRetiringThePairing() = runTest {
+        val api = Api(); val store = Store(initial); val repository = CollieRepository(api, store, OriginValidator())
+        val address = PaneAddress(Scope(), "pane")
+        repository.selectSubject(address.scope, address.paneId)
+        repository.snapshot(address.scope)
+        api.configResult = ApiResult.Failure(ApiFailure.Http(403, "proxy denied", "forbidden",
+            source = FailureSource.GATEWAY, factor = FailureFactor.UNKNOWN))
+
+        assertTrue(repository.paneLayout(address) is ApiResult.Failure)
+        assertEquals("secret", store.connection.value?.token)
+        assertFalse(repository.writesAllowed(address.scope, address.paneId))
+        assertEquals(0, api.layoutCalls)
+        assertEquals(0, api.layoutPlanCalls)
+    }
+
+    @Test fun layoutConfigLeadChangeRetiresTheCapturedActorBeforePlanOrMutation() = runTest {
+        val api = Api(); val repository = CollieRepository(api, Store(initial), OriginValidator())
+        val address = PaneAddress(Scope(), "pane")
+        repository.selectSubject(address.scope, address.paneId)
+        repository.snapshot(address.scope)
+        api.configAuthority = ControlAuthority("lead", "two")
+        val action = kotlinx.serialization.json.buildJsonObject { put("kind", "split"); put("direction", "right") }
+
+        assertTrue(repository.planPaneLayout(address, action) is ApiResult.Failure)
+        assertFalse(repository.writesAllowed(address.scope, address.paneId))
+        assertEquals(0, api.layoutPlanCalls)
+    }
+
+    @Test fun layoutPlanUsesReadAdmissionWhileApplyStillRequiresTheWriteFactor() = runTest {
+        val api = Api().apply { authorized = false }; val repository = CollieRepository(api, Store(initial), OriginValidator())
+        val address = PaneAddress(Scope(), "pane")
+        repository.selectSubject(address.scope, address.paneId)
+        repository.snapshot(address.scope)
+        assertFalse(repository.writesAllowed(address.scope, address.paneId))
+        api.layoutPlan = PaneLayoutPlanResponse(
+            ok = true,
+            planToken = "plan-one",
+            expiresAt = System.currentTimeMillis() + 10_000,
+            action = "split",
+            effects = kotlinx.serialization.json.Json.parseToJsonElement(
+                """{"verb":"split","targetPaneId":"pane","direction":"right","ratio":null,"focusChanges":false}""",
+            ).jsonObject,
+            layout = PaneLayoutRead("layout", LayoutSnapshot("space", "tab", false,
+                LayoutRect(0, 0, 80, 24), "pane", listOf(LayoutPane("pane", true, LayoutRect(0, 0, 80, 24))), emptyList())),
+        )
+        val action = kotlinx.serialization.json.buildJsonObject { put("kind", "split"); put("direction", "right"); put("ratio", null as Double?) }
+        val captured = repository.readContext(address.scope, address.paneId)!!
+        assertTrue(repository.planPaneLayout(address, action, captured) is ApiResult.Success)
+        assertEquals(1, api.layoutPlanCalls)
+        assertTrue(repository.applyPaneLayout(address, "request-one", "plan-one", action, captured) is ApiResult.Failure)
+        assertEquals(0, api.layoutApplyCalls)
     }
 
     @Test fun delayedMediaPreparationCannotUploadToAReplacementConnection() = runTest {

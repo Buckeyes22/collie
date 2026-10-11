@@ -417,7 +417,7 @@ class PaneActivityTest {
             PaneUiState(
                 loading = false,
                 panes = listOf(paneSummary("actions:pane").copy(hasSession = true)),
-                mux = MuxConfigResponse(capabilities = mapOf("agentSessionRef" to true)),
+                mux = MuxConfigResponse(capabilities = mapOf("agentSessionRef" to true, "paneLayout" to true)),
             ),
         )
 
@@ -434,6 +434,7 @@ class PaneActivityTest {
             .associateBy { it.text.toString() }
         assertTrue(rows.getValue(activity.getString(R.string.pane_action_find)).isEnabled)
         assertTrue(rows.getValue(activity.getString(R.string.pane_action_history)).isEnabled)
+        assertTrue(rows.getValue(activity.getString(R.string.pane_layout_controls)).isEnabled)
         assertTrue(rows.containsKey("topology timing: not declared · snapshot: not read"))
         val processAction = rows.getValue(activity.getString(R.string.pane_action_processes))
         assertTrue(processAction.isEnabled)

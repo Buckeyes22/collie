@@ -129,6 +129,8 @@ export function isUnsupported<T>(outcome: MuxOutcome<T>): boolean {
  */
 export interface MuxPane extends MuxIdentity {
   readonly paneId: string;
+  /** Opaque, server-only terminal-process incarnation; never a phone-visible identifier. */
+  readonly terminalIncarnation?: string;
   readonly spaceId: string;
   readonly spaceLabel: string;
   /** The space's position, as the multiplexer orders them. 1-based; 0 when it has no ordering. */
@@ -312,6 +314,59 @@ export interface MuxSnapshot {
   readonly spaces: readonly MuxSpace[];
   readonly tabs: readonly MuxTab[];
 }
+
+/** Neutral, bounded pane geometry. Coordinates are terminal cells, as supplied by the mux. */
+export interface MuxLayoutRect {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+export interface MuxLayoutSnapshot {
+  readonly workspaceId: string;
+  readonly tabId: string;
+  readonly zoomed: boolean;
+  readonly area: MuxLayoutRect;
+  readonly focusedPaneId: string;
+  readonly panes: readonly { readonly paneId: string; readonly focused: boolean; readonly rect: MuxLayoutRect }[];
+  readonly splits: readonly { readonly id: string; readonly direction: "right" | "down"; readonly ratio: number; readonly rect: MuxLayoutRect }[];
+}
+export type MuxPaneDirection = "left" | "right" | "up" | "down";
+export type MuxSplitDirection = "right" | "down";
+export type MuxSplitCwdChoice = null | { readonly kind: "source-pane" } | { readonly kind: "workspace"; readonly workspaceId: string } | { readonly kind: "advertised-folder"; readonly path: string };
+export type MuxLayoutRead =
+  | { readonly kind: "layout"; readonly layout: MuxLayoutSnapshot }
+  | { readonly kind: "neighbor"; readonly paneId: string; readonly direction: MuxPaneDirection; readonly neighborPaneId: string | null; readonly layout: MuxLayoutSnapshot }
+  | { readonly kind: "edges"; readonly paneId: string; readonly left: boolean; readonly right: boolean; readonly up: boolean; readonly down: boolean; readonly layout: MuxLayoutSnapshot };
+export type MuxLayoutReadRequest = { readonly kind: "layout" } | { readonly kind: "neighbor"; readonly direction: MuxPaneDirection } | { readonly kind: "edges" };
+/** Internal evidence read after adapter preflight and checked synchronously before one mutation. */
+export interface MuxLayoutFinalEvidence {
+  readonly sourceLayout: MuxLayoutRead;
+  /** Fresh same-window opaque occupant and owner-selected cwd evidence, never serialized. */
+  readonly snapshot: MuxSnapshot;
+  readonly destinationLayout?: MuxLayoutRead;
+  readonly neighborLayout?: MuxLayoutRead;
+}
+/** Internal synchronous admission fence. It is never serialized or accepted from a phone request. */
+export type MuxLayoutFinalAdmission = (prepared: MuxLayoutAction, runtimeIdentity: string, evidence: MuxLayoutFinalEvidence) => boolean;
+export type MuxLayoutAction =
+  | { readonly kind: "split"; readonly paneId: string; readonly direction: MuxSplitDirection; readonly ratio: number | null; readonly targetPaneId: string | null; readonly workspaceId: string | null; readonly resolvedTargetPaneId?: string; readonly resolvedWorkspaceId?: string; readonly resolvedSourceTabId?: string; readonly resolvedSourceWorkspaceId?: string; readonly resolvedSourceCwd?: string | null; readonly cwdDevice?: string | null; readonly cwdInode?: string | null; readonly cwdCatalogPath?: string | null; readonly cwdSelectedPath?: string | null; readonly cwdChoice?: MuxSplitCwdChoice; readonly cwd?: string | null; readonly env?: Readonly<Record<string, string>>; readonly focus: false }
+  | { readonly kind: "resize"; readonly paneId: string; readonly direction: MuxPaneDirection; readonly amount: number | null }
+  | { readonly kind: "zoom"; readonly paneId: string; readonly mode: "toggle" | "on" | "off" }
+  | { readonly kind: "swap"; readonly paneId: string; readonly direction: MuxPaneDirection | null; readonly sourcePaneId: string | null; readonly targetPaneId: string | null; readonly resolvedTargetPaneId?: string }
+  | { readonly kind: "move"; readonly paneId: string; readonly destination: MuxMoveDestination; readonly focus: false; readonly resolvedSourceTabId?: string; readonly resolvedSourceWorkspaceId?: string; readonly resolvedTargetPaneId?: string; readonly resolvedTargetTabId?: string; readonly resolvedTargetWorkspaceId?: string }
+  | { readonly kind: "focus-direction"; readonly paneId: string; readonly direction: MuxPaneDirection; readonly resolvedTargetPaneId?: string };
+export type MuxMoveDestination =
+  | { readonly type: "tab"; readonly tabId: string; readonly split: MuxSplitDirection; readonly targetPaneId: string; readonly ratio: number | null }
+  | { readonly type: "new_tab"; readonly workspaceId: string; readonly label: string | null }
+  | { readonly type: "new_workspace"; readonly label: string | null; readonly tabLabel: string | null };
+export type MuxLayoutMutation =
+  | { readonly kind: "split"; readonly layout: MuxLayoutSnapshot; readonly paneId: string }
+  | { readonly kind: "resize"; readonly changed: boolean; readonly layout: MuxLayoutSnapshot }
+  | { readonly kind: "zoom"; readonly changed: boolean; readonly zoomed: boolean; readonly layout: MuxLayoutSnapshot }
+  | { readonly kind: "swap"; readonly changed: boolean; readonly layout: MuxLayoutSnapshot }
+  | { readonly kind: "move"; readonly changed: boolean; readonly paneId: string; readonly previousPaneId: string; readonly previousTabId: string; readonly previousWorkspaceId: string; readonly layout: MuxLayoutSnapshot }
+  | { readonly kind: "focus-direction"; readonly changed: boolean; readonly paneId: string; readonly layout: MuxLayoutSnapshot };
 
 // ── Reading a pane ────────────────────────────────────────────────────────────
 
@@ -642,6 +697,12 @@ export interface MuxAdapter {
    */
   readLogicalText?(paneId: string, lines: number): Promise<MuxOutcome<string>>;
 
+  /** Optional layout facts and operations; each is backed by its own fail-closed capability. */
+  readLayout?(paneId: string, request?: MuxLayoutReadRequest): Promise<MuxOutcome<MuxLayoutRead>>;
+  applyLayout?(action: MuxLayoutAction, finalAdmission: MuxLayoutFinalAdmission): Promise<MuxOutcome<MuxLayoutMutation>>;
+  /** Opaque current mux process incarnation; absent means planned mutations fail closed. */
+  layoutRuntimeIdentity?(): Promise<string | null> | string | null;
+
   /** Type literal text into a pane, submitting nothing. Needs `typeText`. */
   typeText(paneId: string, text: string): Promise<MuxAck>;
 
@@ -757,11 +818,18 @@ export function muxDataFields(adapter: MuxAdapter): Pick<MuxAdapter, "logo" | "h
  * A decorator spreads this rather than conditionally spreading inline, so a multiplexer that cannot
  * unwrap (tmux) never comes out of a decorator appearing to offer the read: absent stays absent.
  */
-export function muxOptionalMethods(adapter: MuxAdapter): Pick<MuxAdapter, "readLogicalText" | "processInfo"> {
+type MuxOptionalMethodFields = Pick<MuxAdapter, "readLogicalText" | "processInfo" | "readLayout" | "applyLayout" | "layoutRuntimeIdentity">;
+export function muxOptionalMethods(adapter: MuxAdapter): MuxOptionalMethodFields {
   const readLogicalText = adapter.readLogicalText?.bind(adapter);
   const processInfo = adapter.processInfo?.bind(adapter);
-  const methods: Pick<MuxAdapter, "readLogicalText" | "processInfo"> = {};
+  const readLayout = adapter.readLayout?.bind(adapter);
+  const applyLayout = adapter.applyLayout?.bind(adapter);
+  const layoutRuntimeIdentity = adapter.layoutRuntimeIdentity?.bind(adapter);
+  const methods: MuxOptionalMethodFields = {};
   if (readLogicalText !== undefined) methods.readLogicalText = readLogicalText;
   if (processInfo !== undefined) methods.processInfo = processInfo;
+  if (readLayout !== undefined) methods.readLayout = readLayout;
+  if (applyLayout !== undefined) methods.applyLayout = applyLayout;
+  if (layoutRuntimeIdentity !== undefined) methods.layoutRuntimeIdentity = layoutRuntimeIdentity;
   return methods;
 }

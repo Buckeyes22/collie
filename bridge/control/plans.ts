@@ -33,6 +33,16 @@ export class PlanStore {
     if (!plan || plan.expiresAt <= this.now()) return "expired";
     return sameBinding(plan.binding, current) ? "valid" : "changed";
   }
+  lookup(token: string): ControlPlan | null {
+    const plan = this.plans.get(token);
+    if (!plan || plan.expiresAt <= this.now()) {
+      if (plan) this.plans.delete(token);
+      return null;
+    }
+    return { ...plan, binding: { ...plan.binding } };
+  }
+  /** Consuming a token prevents competitors; its captured lifetime still gates final dispatch. */
+  isUnexpired(expiresAt: number): boolean { return Number.isSafeInteger(expiresAt) && expiresAt > this.now(); }
   consume(token: string): void { this.plans.delete(token); }
 }
 

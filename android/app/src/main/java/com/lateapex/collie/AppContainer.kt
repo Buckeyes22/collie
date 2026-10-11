@@ -8,6 +8,7 @@ import com.lateapex.collie.data.EncryptedConnectionStore
 import com.lateapex.collie.data.ScopedImageLoader
 import com.lateapex.collie.data.LaunchIntentStore
 import com.lateapex.collie.data.EncryptedQueuedSendAttemptStore
+import com.lateapex.collie.data.PaneLayoutIntentStore
 import com.lateapex.collie.diagnostics.DiagnosticsRecorder
 import com.lateapex.collie.diagnostics.DiagnosticsWriter
 import com.lateapex.collie.network.CollieApi
@@ -46,6 +47,11 @@ class AppContainer(context: Context) {
     val queuedSendAttemptStore = EncryptedQueuedSendAttemptStore(
         context.applicationContext,
         AndroidKeystoreCipher(alias = "com.lateapex.collie.queued-send.v1"),
+        json,
+    )
+    val paneLayoutIntentStore = PaneLayoutIntentStore(
+        context.applicationContext,
+        AndroidKeystoreCipher(alias = "com.lateapex.collie.layout-intents.v1", associatedData = "com.lateapex.collie.layout-intents.v1".encodeToByteArray()),
         json,
     )
     val api: CollieApi = CollieApiClient(httpClient, json)

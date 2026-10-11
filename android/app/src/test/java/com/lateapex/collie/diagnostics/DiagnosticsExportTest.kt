@@ -19,6 +19,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import org.junit.Assert.assertFalse
 
 @RunWith(RobolectricTestRunner::class)
 class DiagnosticsExportTest {
@@ -123,5 +124,39 @@ class DiagnosticsExportTest {
             CipherEnvelope(byteArrayOf(7), plaintext.map { (it.toInt() xor 0x5a).toByte() }.toByteArray())
         override fun decrypt(envelope: CipherEnvelope): ByteArray =
             envelope.ciphertext.map { (it.toInt() xor 0x5a).toByte() }.toByteArray()
+    }
+
+    @Test
+    fun paneLayoutSecretNeverEntersActiveDiagnosticsOrExportedTrace() {
+        val writer = DiagnosticsWriter(traceDir, cipher, json, maxActiveBytes = 1_000_000L)
+        val executor = Executors.newSingleThreadExecutor()
+        val server = MockWebServer()
+        server.start()
+        try {
+            server.enqueue(MockResponse().setResponseCode(200).setBody("{\"ok\":true}"))
+            val recorder = DiagnosticsRecorder(writer, { true }, executor = executor)
+            val client = OkHttpClient.Builder().addInterceptor(DiagnosticsInterceptor(recorder)).build()
+            val sentinel = "B12_LAYOUT_SECRET_SENTINEL"
+            val request = Request.Builder()
+                .url(server.url("/proxy/api/pane/pane-1/layout/split"))
+                .post("""{"requestId":"intent-1","planToken":"plan-1","action":{"kind":"split","env":{"TOKEN":"$sentinel"}}}""".toRequestBody("application/json".toMediaType()))
+                .build()
+            client.newCall(request).execute().use { it.body?.string() }
+            recorder.recordNow("test-barrier")
+
+            val active = writer.activeFile().readText()
+            assertTrue(active.contains("requestBodyRedacted"))
+            assertFalse(active.contains(sentinel))
+            ZipFile(DiagnosticsExport(writer, exportDir).buildZip()).use { file ->
+                val exported = file.entries().asSequence().joinToString("\n") { entry ->
+                    file.getInputStream(entry).bufferedReader().readText()
+                }
+                assertTrue(exported.contains("requestBodyRedacted"))
+                assertFalse(exported.contains(sentinel))
+            }
+        } finally {
+            server.shutdown()
+            executor.shutdownNow()
+        }
     }
 }

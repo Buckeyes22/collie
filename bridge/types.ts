@@ -28,6 +28,8 @@ export type AgentStatus = "idle" | "working" | "blocked" | "done" | "unknown";
  */
 export interface AgentView {
   paneId: string;
+  /** Opaque server-only terminal incarnation used to reject stale layout plans. */
+  terminalIncarnation?: string;
   workspaceId: string;
   workspaceLabel: string;
   workspaceNumber: number;
@@ -180,7 +182,7 @@ export interface AgentView {
  * NOTE the `Omit` is opt-OUT: a future server-only field on AgentView goes on the wire unless it is
  * added to the omit list here. If you add one, strip it here in the same change.
  */
-export type PaneWire = Omit<AgentView, "agentSession" | "sessionAgent" | "foregroundCwd" | "restoreError"> & {
+export type PaneWire = Omit<AgentView, "agentSession" | "sessionAgent" | "foregroundCwd" | "restoreError" | "terminalIncarnation"> & {
   /** True when this pane's history is actually offerable: the agent named a session AND its harness
    *  has a journal adapter. Says nothing about whether the log is readable — a named session whose
    *  file is missing still answers `available:false` with reason `no-log`. */
@@ -245,7 +247,7 @@ export function toPaneWire(
   hasJournal: (agent: string) => boolean,
   discoversSessions: (agent: string) => boolean = () => false,
 ): PaneWire {
-  const { agentSession, sessionAgent: _sessionAgent, foregroundCwd: _foregroundCwd, restoreError: _restoreError, ...rest } = pane;
+  const { agentSession, sessionAgent: _sessionAgent, foregroundCwd: _foregroundCwd, restoreError: _restoreError, terminalIncarnation: _terminalIncarnation, ...rest } = pane;
   const addressable = agentSession !== undefined || discoversSessions(pane.agent);
   return addressable && hasJournal(pane.agent) ? { ...rest, hasSession: true } : rest;
 }
