@@ -3472,6 +3472,14 @@ class PaneActivity : AppCompatActivity() {
             closingRow(getString(R.string.pane_action_processes)) {
                 startActivity(PaneProcessesActivity.intent(this, address))
             }
+            closingRow(getString(R.string.pane_action_changes)) {
+                startActivity(ChangesActivity.intentForPane(
+                    this,
+                    address.paneId,
+                    address.scope,
+                    binding.paneTitle.text?.toString(),
+                ))
+            }
             run {
                 val zenLabel = if (zenMode) {
                     "✓ ${getString(R.string.pane_action_zen)}"

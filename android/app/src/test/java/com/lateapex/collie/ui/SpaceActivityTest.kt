@@ -56,6 +56,14 @@ class SpaceActivityTest {
     }
 
     @Test
+    fun spaceHeaderExposesAccessibleChangesEntry() {
+        val activity = launchSpace(workspaces = 1, tabs = 1, currentTab = 0)
+        val changes = activity.findViewById<View>(R.id.changes_button)
+        assertTrue(changes.hasOnClickListeners())
+        assertEquals(activity.getString(R.string.changes_open_space_accessibility), changes.contentDescription)
+    }
+
+    @Test
     fun intentCarriesTheCompleteScopedWorkspaceIdentity() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val workspace = WorkspaceSummary(

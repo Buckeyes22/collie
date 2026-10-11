@@ -23,6 +23,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.isVisible
@@ -136,6 +137,7 @@ class MainActivity : AppCompatActivity() {
         binding.settingsButton.setOnClickListener {
             startActivity(Intent(this, SettingsActivity::class.java))
         }
+        binding.dashboardChangesButton.setOnClickListener { showChangesWorkspacePicker() }
         binding.hostSwitcher.setOnClickListener { showHostSwitcher() }
         binding.sessionSwitcher.setOnClickListener { showSessionSwitcher() }
         binding.setupSettingsButton.setOnClickListener {
@@ -767,6 +769,24 @@ class MainActivity : AppCompatActivity() {
                 DashboardNavigationModel.spaceSession(viewModel.currentScope),
             ),
         )
+    }
+
+    private fun showChangesWorkspacePicker() {
+        val snapshot = viewModel.state.value.snapshot ?: return
+        val workspaces = snapshot.workspaces.sortedWith(compareBy<WorkspaceSummary>({ it.host.orEmpty() }, { it.number }))
+        if (workspaces.isEmpty()) {
+            android.widget.Toast.makeText(this, R.string.changes_no_workspaces_dashboard, android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle(R.string.changes_choose_workspace)
+            .setItems(workspaces.map { it.label }.toTypedArray()) { _, index ->
+                val workspace = workspaces.getOrNull(index) ?: return@setItems
+                val selectedScope = viewModel.currentScope.copy(host = workspace.host ?: viewModel.currentScope.host)
+                startActivity(ChangesActivity.intentForWorkspace(this, workspace.workspaceId, selectedScope, workspace.label))
+            }
+            .setNegativeButton(R.string.pane_action_cancel, null)
+            .show()
     }
 
     private fun showNewSpace() {

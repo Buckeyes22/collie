@@ -18,6 +18,10 @@ import com.lateapex.collie.network.AudioUpload
 import com.lateapex.collie.network.ApiFailure
 import com.lateapex.collie.network.ApiResult
 import com.lateapex.collie.network.CollieApi
+import com.lateapex.collie.network.ChangesListAnswer
+import com.lateapex.collie.network.ChangesListState
+import com.lateapex.collie.network.ChangesLookup
+import com.lateapex.collie.network.ChangesTarget
 import com.lateapex.collie.network.DevicesResponse
 import com.lateapex.collie.network.MuxConfigResponse
 import com.lateapex.collie.network.DeviceAuthorization
@@ -1133,6 +1137,36 @@ class CollieRepositoryTest {
         assertNull(intentRepository.connection.value?.token)
     }
 
+    @Test
+    fun changesReadsUseOrdinaryScopedAdmissionRatherThanDeviceOwnedOrWriteGate(): Unit = runBlocking {
+        val target = ChangesTarget.Workspace("w1")
+        val scope = Scope(host = "peer", session = "work")
+
+        val result = repository.changes(target, scope, ChangesLookup())
+
+        assertTrue(result is ApiResult.Success)
+        assertEquals(target, api.lastChangesTarget)
+        assertEquals(scope, api.lastChangesScope)
+        assertEquals(1, api.changesCalls)
+        assertFalse(repository.writesAllowed(scope, target.id))
+    }
+
+    @Test
+    fun changesUnauthorizedReadFreezesWritesWithoutRetiringThePairing(): Unit = runBlocking {
+        val scope = Scope(host = "peer", session = "work")
+        api.snapshotDevice = DeviceAuthorization(enforced = true, device = "phone", authorized = true)
+        repository.snapshot(scope)
+        assertTrue(repository.writesAllowed(scope))
+        api.changesFailure = ApiFailure.Http(403, "device denied", "device.denied")
+
+        val result = repository.changes(ChangesTarget.Pane("p1"), scope, ChangesLookup())
+
+        assertTrue(result is ApiResult.Failure)
+        assertTrue(repository.connection.value!!.isPaired)
+        assertFalse(repository.writesAllowed(scope, "p1"))
+        assertEquals(1, api.changesCalls)
+    }
+
     private suspend fun authorizeWrites() {
         api.snapshotDevice = DeviceAuthorization(enforced = true, device = "phone", authorized = true)
         repository.snapshot()
@@ -1296,6 +1330,24 @@ class CollieRepositoryTest {
             processCalls++
             processAddress = address
             return ApiResult.Success(PaneProcessesResponse(true, address.paneId), 200)
+        }
+
+        var changesCalls = 0
+        var lastChangesTarget: ChangesTarget? = null
+        var lastChangesScope: Scope? = null
+        var changesFailure: ApiFailure? = null
+
+        override suspend fun changes(
+            connection: Connection,
+            target: ChangesTarget,
+            scope: Scope,
+            lookup: ChangesLookup,
+        ): ApiResult<ChangesListAnswer> {
+            changesCalls++
+            lastChangesTarget = target
+            lastChangesScope = scope
+            changesFailure?.let { return ApiResult.Failure(it) }
+            return ApiResult.Success(ChangesListAnswer(target, null, null, ChangesListState.Unavailable("no-git")), 200)
         }
 
         override suspend fun pane(

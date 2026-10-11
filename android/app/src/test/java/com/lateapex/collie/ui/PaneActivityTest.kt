@@ -437,6 +437,7 @@ class PaneActivityTest {
         assertTrue(rows.containsKey("topology timing: not declared · snapshot: not read"))
         val processAction = rows.getValue(activity.getString(R.string.pane_action_processes))
         assertTrue(processAction.isEnabled)
+        assertTrue(rows.getValue(activity.getString(R.string.pane_action_changes)).isEnabled)
         assertFalse(rows.containsKey("Refresh"))
         assertFalse(rows.getValue(activity.getString(R.string.pane_action_read_only)).isEnabled)
 

@@ -13,6 +13,7 @@ the first Android release from this fork.
 - Persist encrypted, owner-bound launch, worktree and launcher-add intents; keep uncertain outcomes visible and require an explicit same-request retry only where the owning host advertises durable receipt support. Preserve the one-shot legacy workspace-branch create without offering an unverifiable retry, and add native launch choices plus worktree planning with base and parent-folder selection.
 - Add a scoped, device-authorized pane process details screen for foreground processes, runtime directory and restore diagnostics, with explicit unsupported and unavailable states.
 
+- Add a read-only Changes browser from pane actions and Space headers, with bounded nested-repository listings, file diffs and latest-commit views.
 - Bind reads, terminal actions and media to the current server, Crew leader, host, session and pane; freeze unverified access without discarding a valid pairing, and retire sensitive content for authoritative pairing refusal.
 - Keep restored History images inert until a reachable fresh read admits their turns; carry the same captured authority through live and legacy older-page reads.
 - Make Space Look now refresh its owning session before reloading, with an ordinary-reload explanation for older peers.

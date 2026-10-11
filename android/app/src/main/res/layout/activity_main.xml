@@ -277,6 +277,20 @@
                 android:drawableStart="@drawable/ic_collie_layers"
                 android:contentDescription="@string/dashboard_session_switcher"
                 android:visibility="gone" />
+            <TextView
+                android:id="@+id/dashboard_changes_button"
+                android:layout_width="wrap_content"
+                android:layout_height="@dimen/collie_touch_target"
+                android:background="?attr/selectableItemBackgroundBorderless"
+                android:clickable="true"
+                android:contentDescription="@string/changes_open_dashboard_accessibility"
+                android:focusable="true"
+                android:gravity="center"
+                android:minWidth="64dp"
+                android:paddingHorizontal="8dp"
+                android:text="@string/pane_action_changes"
+                android:textColor="@color/collie_on_background"
+                android:textSize="13sp" />
             <ImageButton
                 android:id="@+id/settings_button"
                 style="@style/Widget.Collie.Header.IconButton"

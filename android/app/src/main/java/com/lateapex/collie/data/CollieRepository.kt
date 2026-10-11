@@ -60,6 +60,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import com.lateapex.collie.network.retiresPairing
 import com.lateapex.collie.network.ControlOperationResponse
+import com.lateapex.collie.network.ChangeCommitAnswer
+import com.lateapex.collie.network.ChangeCommitDiffAnswer
+import com.lateapex.collie.network.ChangeDiffAnswer
+import com.lateapex.collie.network.ChangesListAnswer
+import com.lateapex.collie.network.ChangesLookup
+import com.lateapex.collie.network.ChangesTarget
 import com.lateapex.collie.ui.ReadSourceState
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
@@ -457,6 +463,18 @@ class CollieRepository(
             } else api.paneProcesses(configured, address)
         }
     }
+    /** Ordinary paired reads. Change paths remain opaque; the bridge validates repository membership. */
+    suspend fun changes(target: ChangesTarget, scope: Scope, lookup: ChangesLookup): ApiResult<ChangesListAnswer> =
+        withConnection(scope, target.id) { api.changes(it, target, scope, lookup) }
+
+    suspend fun changeDiff(target: ChangesTarget, scope: Scope, lookup: ChangesLookup, repo: String, path: String): ApiResult<ChangeDiffAnswer> =
+        withConnection(scope, target.id) { api.changeDiff(it, target, scope, lookup, repo, path) }
+
+    suspend fun changeCommit(target: ChangesTarget, scope: Scope, lookup: ChangesLookup, repo: String): ApiResult<ChangeCommitAnswer> =
+        withConnection(scope, target.id) { api.changeCommit(it, target, scope, lookup, repo) }
+
+    suspend fun changeCommitDiff(target: ChangesTarget, scope: Scope, lookup: ChangesLookup, repo: String, path: String): ApiResult<ChangeCommitDiffAnswer> =
+        withConnection(scope, target.id) { api.changeCommitDiff(it, target, scope, lookup, repo, path) }
 
     suspend fun startLaunch(scope: Scope, target: StartTarget, requestId: String, cwd: String? = null): ApiResult<CreateResponse> = withWritableConnection(scope) {
         api.startLaunch(it, scope, target, requestId, cwd)

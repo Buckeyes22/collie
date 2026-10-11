@@ -95,6 +95,9 @@ class SpaceActivity : AppCompatActivity() {
         )
         selectedTabId = savedInstanceState?.getString(STATE_SELECTED_TAB)
         binding.backButton.setOnClickListener { returnToDashboard() }
+        binding.changesButton.setOnClickListener {
+            startActivity(ChangesActivity.intentForWorkspace(this, workspaceId, scope, intent.getStringExtra(EXTRA_TITLE)))
+        }
         binding.settingsButton.setOnClickListener { startActivity(Intent(this, SettingsActivity::class.java)) }
         binding.spaceList.layoutManager = LinearLayoutManager(this)
         binding.spaceList.adapter = adapter

@@ -40,6 +40,7 @@ import okhttp3.Request
 import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
+import okio.Buffer
 
 sealed interface ApiResult<out T> {
     data class Success<T>(
@@ -107,6 +108,10 @@ interface CollieApi {
     ): ApiResult<PaneChatResponse> = unavailable("Live chat")
     /** Authenticated bytes from Collie's content-addressed journal image route. */
     suspend fun imageBlob(connection: Connection, scope: Scope, sha256: String): ApiResult<ImageBlob> = unavailable("Journal image")
+    suspend fun changes(connection: Connection, target: ChangesTarget, scope: Scope, lookup: ChangesLookup): ApiResult<ChangesListAnswer> = unavailable("Changes")
+    suspend fun changeDiff(connection: Connection, target: ChangesTarget, scope: Scope, lookup: ChangesLookup, repo: String, path: String): ApiResult<ChangeDiffAnswer> = unavailable("Changes diff")
+    suspend fun changeCommit(connection: Connection, target: ChangesTarget, scope: Scope, lookup: ChangesLookup, repo: String): ApiResult<ChangeCommitAnswer> = unavailable("Changes commit")
+    suspend fun changeCommitDiff(connection: Connection, target: ChangesTarget, scope: Scope, lookup: ChangesLookup, repo: String, path: String): ApiResult<ChangeCommitDiffAnswer> = unavailable("Changes commit diff")
     suspend fun startLaunch(connection: Connection, scope: Scope, target: StartTarget, requestId: String, cwd: String? = null): ApiResult<CreateResponse> = unavailable("Launch by id")
     /** Sends the exact encrypted-journal body for a deliberate replay; never rebuilds an intent. */
     suspend fun startLaunchFrozen(connection: Connection, scope: Scope, canonicalBody: String): ApiResult<CreateResponse> = unavailable("Frozen launch retry")
@@ -449,6 +454,93 @@ class CollieApiClient(
                     (page.rev == null || page.rev >= 0L) && page.head != null && page.head >= 0L &&
                     page.oldest != null && page.oldest >= 0L
         }
+    }
+
+    override suspend fun changes(
+        connection: Connection,
+        target: ChangesTarget,
+        scope: Scope,
+        lookup: ChangesLookup,
+    ): ApiResult<ChangesListAnswer> {
+        validateChangesTarget(target)
+        val query = listOf("depth" to lookup.depth.toString(), "nested" to if (lookup.nested) "1" else "0")
+        val url = scopedUrl(connection.origin, changesPath(target), scope, query)
+        return executeChanges(request(connection, url), "Malformed Changes response") { ChangesWire.list(it, target) }
+    }
+
+    override suspend fun changeDiff(
+        connection: Connection,
+        target: ChangesTarget,
+        scope: Scope,
+        lookup: ChangesLookup,
+        repo: String,
+        path: String,
+    ): ApiResult<ChangeDiffAnswer> {
+        validateChangesTarget(target)
+        validateChangesReference(repo, path)
+        val query = listOf(
+            "depth" to lookup.depth.toString(), "nested" to if (lookup.nested) "1" else "0",
+            "repo" to repo, "path" to path,
+        )
+        val url = scopedUrl(connection.origin, changesPath(target), scope, query)
+        return executeChanges(request(connection, url), "Malformed Changes diff response") {
+            ChangesWire.diff(it, target, repo, path, commit = false)
+        }
+    }
+
+    override suspend fun changeCommit(
+        connection: Connection,
+        target: ChangesTarget,
+        scope: Scope,
+        lookup: ChangesLookup,
+        repo: String,
+    ): ApiResult<ChangeCommitAnswer> {
+        validateChangesTarget(target)
+        validateChangesReference(repo)
+        val query = listOf(
+            "depth" to lookup.depth.toString(), "nested" to if (lookup.nested) "1" else "0",
+            "view" to "commit", "repo" to repo,
+        )
+        val url = scopedUrl(connection.origin, changesPath(target), scope, query)
+        return executeChanges(request(connection, url), "Malformed Changes commit response") {
+            ChangesWire.commit(it, target, repo)
+        }
+    }
+
+    override suspend fun changeCommitDiff(
+        connection: Connection,
+        target: ChangesTarget,
+        scope: Scope,
+        lookup: ChangesLookup,
+        repo: String,
+        path: String,
+    ): ApiResult<ChangeCommitDiffAnswer> {
+        validateChangesTarget(target)
+        validateChangesReference(repo, path)
+        val query = listOf(
+            "depth" to lookup.depth.toString(), "nested" to if (lookup.nested) "1" else "0",
+            "repo" to repo, "path" to path, "view" to "commit",
+        )
+        val url = scopedUrl(connection.origin, changesPath(target), scope, query)
+        return executeChanges(request(connection, url), "Malformed Changes commit diff response") { element ->
+            ChangesWire.diff(element, target, repo, path, commit = true)?.let {
+                ChangeCommitDiffAnswer(it.target, it.workspaceLabel, it.state)
+            }
+        }
+    }
+
+    private fun changesPath(target: ChangesTarget): List<String> = when (target) {
+        is ChangesTarget.Pane -> path("pane", target.id, "changes")
+        is ChangesTarget.Workspace -> path("workspace", target.id, "changes")
+    }
+
+    private fun validateChangesTarget(target: ChangesTarget) {
+        require(target.id.isNotBlank() && target.id.length <= MAX_CHANGES_ID_CHARS && '\u0000' !in target.id)
+    }
+
+    private fun validateChangesReference(repo: String, path: String? = null) {
+        require(repo.isNotBlank() && repo.length <= MAX_CHANGES_ID_CHARS && '\u0000' !in repo)
+        require(path == null || (path.isNotBlank() && path.length <= MAX_CHANGES_ID_CHARS && '\u0000' !in path))
     }
 
     override suspend fun startLaunch(connection: Connection, scope: Scope, target: StartTarget, requestId: String, cwd: String?): ApiResult<CreateResponse> {
@@ -1082,6 +1174,42 @@ class CollieApiClient(
         return output.toString(StandardCharsets.UTF_8.name())
     }
 
+    private suspend fun <T> executeChanges(
+        request: Request,
+        malformedMessage: String,
+        parse: (JsonElement) -> T?,
+    ): ApiResult<T> = executeResponse(request, READ_TIMEOUT_SECONDS) { response ->
+        if (response.code in REDIRECT_CODES) return@executeResponse ApiResult.Failure(ApiFailure.Redirect(response.code))
+        val body = response.body
+        if ((body?.contentLength() ?: 0L) > MAX_CHANGES_RESPONSE_BYTES) {
+            return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Changes response exceeds the size limit"))
+        }
+        val buffer = Buffer()
+        val source = body?.source()
+        if (source != null) {
+            while (buffer.size < MAX_CHANGES_RESPONSE_BYTES) {
+                val remaining = MAX_CHANGES_RESPONSE_BYTES - buffer.size
+                val read = source.read(buffer, minOf(remaining, 8_192L))
+                if (read == -1L) break
+            }
+            if (buffer.size == MAX_CHANGES_RESPONSE_BYTES && source.read(Buffer(), 1L) != -1L) {
+                return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Changes response exceeds the size limit"))
+            }
+        }
+        val text = buffer.readUtf8()
+        if (!response.isSuccessful) return@executeResponse failure(response, text)
+        val element = try {
+            json.parseToJsonElement(text)
+        } catch (_: SerializationException) {
+            null
+        } catch (_: IllegalArgumentException) {
+            null
+        }
+        val value = element?.let(parse)
+            ?: return@executeResponse ApiResult.Failure(ApiFailure.Protocol(malformedMessage))
+        ApiResult.Success(value, response.code, response.header("ETag"), response.header(BUILD_HEADER), responseAuthority(response))
+    }
+
     /** Consume and close the body on OkHttp's worker, before handing a value to the caller. */
     private suspend fun <T> executeResponse(
         request: Request,
@@ -1211,6 +1339,8 @@ class CollieApiClient(
         private const val MAX_HISTORY_LIMIT = 5_000
         private const val MAX_PROCESS_INFO_TEXT_CHARS = 220 * 1024
         private const val MAX_PROCESS_INFO_BODY_BYTES = 1_000_000
+        private const val MAX_CHANGES_ID_CHARS = 8_192
+        private const val MAX_CHANGES_RESPONSE_BYTES = 5L * 1024L * 1024L
         private const val MAX_ERROR_MESSAGE_CHARS = 512
         private val REDIRECT_CODES = setOf(301, 302, 303, 307, 308)
         internal fun sttTimeoutSeconds(bytes: Int): Long =

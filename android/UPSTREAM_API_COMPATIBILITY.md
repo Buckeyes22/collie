@@ -29,6 +29,7 @@ is refused. A mutation is attempted once; transport redirects and automatic writ
 | `/api/pane/:id/reply`, `/keys` | Accept the current 32 KiB prompt-binding limit. Codex typing and submission remain separate, verified operations. The guarded queued-send form requires the additive `guardedQueuedSend` mux declaration and carries only the declared keys, prompt expectation, generation/revision and opaque queue/occupant digests—never queued text. An ambiguous delivery stays latched and is never automatically retried. |
 | `/api/pane/:id/chat` | Live polls use `after=gen:rev` and ETag; older reads use `before=seq:uuid` without ETag. Generation changes replace the thread. Whole-turn upserts replace partial text/results, abandoned turns are hidden, queued messages are displayed separately, and the optional Send now recipe is shown only when the owner supplies a current guarded action. Stale older pages are discarded. A legacy 404 falls back to history. |
 | `/api/pane/:id/history` | Existing full history/search remains supported with UUID pagination. History merging replaces updated turns. The fork's conditional JSON response remains available for legacy polls. |
+| `/api/pane/:id/changes`, `/api/workspace/:id/changes` | Native Changes uses the bridge-listed repository/file paths for status, file diff, latest-commit summary and commit-file diff. Depth and nested-repository scans use the existing bounded query controls; response variants and unsupported reasons are decoded explicitly. This is a paired ordinary read and does not use Files' device-read capability. |
 | Pane/tab close, focus and rename; tab/workspace create | Existing route/body contracts remain compatible, with scoped identities and write authorization retained. |
 | `/api/crew` | Use the renamed endpoint and `crew` field. A legacy 404 permits one `/api/pack` read fallback; a current `crew.not_lead` refusal does not. Legacy response aliases remain decodable. Native labels say Crew. |
 | `/api/devices`, `/api/devices/revoke` | Decode expiry fields and retain the existing confirmed revocation flow. |
@@ -41,8 +42,8 @@ is refused. A mutation is attempted once; transport redirects and automatic writ
 
 ## Additive upstream features
 
-This sync imports all upstream bridge, CLI and PWA features. It does not claim new native screen
-parity for Changes/Files browsers, machine resource charts and alerts, launcher recipe editing,
+This sync imports all upstream bridge, CLI and PWA features. Native parity now includes the read-only
+Changes browser; it does not claim new native screen parity for Files browsers, machine resource charts and alerts, launcher recipe editing,
 free-text runs, folder pickers or PWA push. These APIs do not replace existing native calls.
 Native launch and worktree flows use frozen, owner-bound intents when the owning host advertises
 `receiptContextBound: true`; the receipt mode is saved with each intent and cannot be upgraded by a

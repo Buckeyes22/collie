@@ -5,7 +5,7 @@ operator-configured Collie HTTPS origin through the existing bridge API. It does
 application in a WebView, Custom Tab, Trusted Web Activity, or Capacitor container.
 
 The Android package is `com.lateapex.collie`. The native client implements Collie's dashboard,
-Space/tab/pane navigation, semantic and raw pane views, safe terminal controls, history, launchers,
+Space/tab/pane navigation, semantic and raw pane views, safe terminal controls, history and read-only Changes browsing, launchers,
 worktrees, media/STT, Settings, devices, Crew, and Updates routes. See the
 [native implementation plan](../ANDROID_NATIVE_IMPLEMENTATION_PLAN.md)
 for the complete contract and [ADR 0036](../.adr/0036-the-android-app-is-a-native-rest-client.md)

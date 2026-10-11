@@ -201,6 +201,108 @@ class CollieApiClientTest {
         val result = api.paneProcesses(Connection(origin, "phone", "token"), address)
         assertTrue(result is ApiResult.Failure)
         assertTrue((result as ApiResult.Failure).error is ApiFailure.Protocol)
+    }
+
+    @Test
+    fun paneChangesListingUsesOrdinaryScopedReadAndParsesOpaqueNestedPaths(): Unit = runBlocking {
+        server.enqueue(MockResponse().setBody(
+            """{"paneId":"w1:p1","workspaceId":"w1","workspaceLabel":"Project","paneRepo":"repo","available":true,"root":"/work/project","repos":[{"relPath":".","name":"repo","files":[{"path":"src/a b.kt","status":"M","added":2,"removed":1,"binary":false,"oldPath":null}]}],"truncated":false,"depthLimited":false,"clean":[]}""",
+        ))
+        val target = ChangesTarget.Pane("w1:p1")
+        val result = api.changes(Connection(origin, "phone", "token"), target, Scope(host = "peer", session = "work"), ChangesLookup(4, false))
+        val value = (result as ApiResult.Success).value
+        val listing = value.state as ChangesListState.Available
+        assertEquals("w1:p1", (value.target as ChangesTarget.Pane).id)
+        assertEquals("Project", value.workspaceLabel)
+        assertEquals("repo", value.paneRepo)
+        assertEquals("src/a b.kt", listing.repos.single().files.single().path)
+        val request = server.takeRequest()
+        assertEquals("GET", request.method)
+        assertEquals("/api/pane/w1%3Ap1/changes?depth=4&nested=0&host=peer&session=work", request.path)
+        assertEquals("Bearer token", request.getHeader("Authorization"))
+        assertNull(request.getHeader("Origin"))
+        assertNull(request.getHeader("X-Collie-Seen"))
+    }
+
+    @Test
+    fun chunkedOversizedChangesResponseIsRejectedBeforeJsonParsing(): Unit = runBlocking {
+        val limit = 5 * 1024 * 1024
+        val payload = "x".repeat(limit + 1)
+        server.enqueue(MockResponse().setChunkedBody(payload, 16 * 1024))
+        val http1Client = trustedHttpClient.newBuilder()
+            .protocols(listOf(Protocol.HTTP_1_1))
+            .connectionPool(ConnectionPool())
+            .build()
+        val boundedApi = CollieApiClient(http1Client, Json { ignoreUnknownKeys = true; encodeDefaults = false })
+
+        val result = boundedApi.changes(
+            Connection(origin, "phone", "token"),
+            ChangesTarget.Workspace("w"),
+            Scope(),
+            ChangesLookup(),
+        )
+
+        assertEquals(
+            ApiFailure.Protocol("Changes response exceeds the size limit"),
+            (result as ApiResult.Failure).error,
+        )
+        val request = server.takeRequest()
+        assertEquals("/api/workspace/w/changes?depth=2&nested=1", request.path)
+        assertEquals("Bearer token", request.getHeader("Authorization"))
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test
+    fun changesDiffAndCommitRoutesEncodeRepoAndPathWithoutChangingTheirIdentity(): Unit = runBlocking {
+        server.enqueue(MockResponse().setBody(
+            """{"workspaceId":"work/1","workspaceLabel":"Work","available":true,"repo":"nested/repo","path":"dir/a b.kt","oldPath":"dir/old.kt","status":"R","binary":false,"directory":false,"truncated":false,"diff":"-old\n+new\n"}""",
+        ))
+        val target = ChangesTarget.Workspace("work/1")
+        val connection = Connection(origin, "phone", "token")
+        val diff = api.changeDiff(connection, target, Scope(), ChangesLookup(), "nested/repo", "dir/a b.kt")
+        val diffValue = ((diff as ApiResult.Success).value.state as ChangeDiffState.Available)
+        assertEquals("nested/repo", diffValue.repo)
+        assertEquals("dir/a b.kt", diffValue.path)
+        assertEquals("dir/old.kt", diffValue.oldPath)
+        assertEquals(ChangeStatus.RENAMED, diffValue.status)
+        val diffRequest = server.takeRequest()
+        assertEquals("/api/workspace/work%2F1/changes?depth=2&nested=1&repo=nested%2Frepo&path=dir%2Fa%20b.kt", diffRequest.path)
+
+        server.enqueue(MockResponse().setBody(
+            """{"workspaceId":"work/1","workspaceLabel":"Work","available":true,"repo":"nested/repo","path":"dir/a b.kt","oldPath":null,"status":"M","binary":false,"directory":false,"truncated":false,"hash":"0123456789abcdef0123456789abcdef01234567","diff":"+line\n"}""",
+        ))
+        val commit = api.changeCommitDiff(connection, target, Scope(), ChangesLookup(3, true), "nested/repo", "dir/a b.kt")
+        val commitValue = ((commit as ApiResult.Success).value.state as ChangeDiffState.Available)
+        assertEquals("0123456789abcdef0123456789abcdef01234567", commitValue.commitHash)
+        val commitRequest = server.takeRequest()
+        assertEquals("/api/workspace/work%2F1/changes?depth=3&nested=1&repo=nested%2Frepo&path=dir%2Fa%20b.kt&view=commit", commitRequest.path)
+    }
+
+    @Test
+    fun changesCommitAndUnavailableShapesAreTypedAndMalformedSuccessFailsClosed(): Unit = runBlocking {
+        server.enqueue(MockResponse().setBody(
+            """{"workspaceId":"w","available":true,"repo":".","name":"root","commit":{"hash":"0123456789abcdef0123456789abcdef01234567","shortHash":"0123456","subject":"update","author":"A","time":1700000000},"files":[{"path":"a.txt","status":"A","added":3,"removed":0,"binary":false}],"truncated":false}""",
+        ))
+        val connection = Connection(origin, "phone", "token")
+        val target = ChangesTarget.Workspace("w")
+        val result = api.changeCommit(connection, target, Scope(), ChangesLookup(), ".")
+        val commit = ((result as ApiResult.Success).value.state as ChangeCommitState.Available)
+        assertEquals("0123456", commit.commit.shortHash)
+        assertEquals(3L, commit.files.single().added)
+        server.takeRequest()
+
+        server.enqueue(MockResponse().setBody("""{"workspaceId":"w","available":false,"reason":"no-git"}"""))
+        assertEquals("no-git", ((api.changes(connection, target, Scope(), ChangesLookup()) as ApiResult.Success).value.state as ChangesListState.Unavailable).reason)
+        assertEquals("/api/workspace/w/changes?depth=2&nested=1", server.takeRequest().path)
+
+        server.enqueue(MockResponse().setResponseCode(404).setBody("not found"))
+        val legacy = api.changes(connection, target, Scope(), ChangesLookup()) as ApiResult.Failure
+        assertEquals(404, (legacy.error as ApiFailure.Http).status)
+        server.takeRequest()
+
+        server.enqueue(MockResponse().setBody("""{"workspaceId":"w","available":true,"repo":"wrong","path":"a.txt","status":"M","binary":false,"directory":false,"truncated":false,"diff":"+bad"}"""))
+        val malformed = api.changeDiff(connection, target, Scope(), ChangesLookup(), ".", "a.txt")
+        assertEquals(ApiFailure.Protocol("Malformed Changes diff response"), (malformed as ApiResult.Failure).error)
         server.takeRequest()
         Unit
     }
@@ -228,6 +330,27 @@ class CollieApiClientTest {
         assertTrue(body.contains("\"occupant\":\"${"b".repeat(64)}\""))
         assertTrue(body.contains("\"keys\":[\"ctrl+Enter\"]"))
         assertFalse(body.contains("queued message"))
+    }
+
+    @Test
+    fun changesDiffPreservesBinaryAndTruncatedAvailabilityFlags(): Unit = runBlocking {
+        server.enqueue(MockResponse().setBody(
+            """{"paneId":"p","available":true,"repo":".","path":"archive.bin","oldPath":null,"status":"M","binary":true,"directory":false,"truncated":true,"diff":""}""",
+        ))
+        val result = api.changeDiff(
+            Connection(origin, "phone", "token"),
+            ChangesTarget.Pane("p"),
+            Scope(),
+            ChangesLookup(),
+            ".",
+            "archive.bin",
+        )
+        val state = ((result as ApiResult.Success).value.state as ChangeDiffState.Available)
+        assertTrue(state.binary)
+        assertTrue(state.truncated)
+        assertEquals("archive.bin", state.path)
+        server.takeRequest()
+        Unit
     }
 
     @Test

@@ -49,6 +49,21 @@ class NativePreferencesTest {
     }
 
     @Test
+    fun changesLookupPreferencesPersistAndClampToBridgeDepth() {
+        val preferences = NativePreferences(context)
+        assertEquals(2, preferences.changesDepth)
+        assertTrue(preferences.changesNested)
+
+        preferences.changesDepth = 4
+        preferences.changesNested = false
+        val restored = NativePreferences(context)
+        assertEquals(4, restored.changesDepth)
+        assertFalse(restored.changesNested)
+        restored.changesDepth = 9
+        assertEquals(4, NativePreferences(context).changesDepth)
+    }
+
+    @Test
     fun diagnosticsCaptureDefaultsToOffAndPersists() {
         val preferences = NativePreferences(context)
         assertFalse(preferences.diagnosticsEnabled)

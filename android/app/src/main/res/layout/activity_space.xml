@@ -55,6 +55,21 @@
                 android:textSize="12sp" />
         </LinearLayout>
 
+        <TextView
+            android:id="@+id/changes_button"
+            android:layout_width="wrap_content"
+            android:layout_height="@dimen/collie_touch_target"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:clickable="true"
+            android:contentDescription="@string/changes_open_space_accessibility"
+            android:focusable="true"
+            android:gravity="center"
+            android:minWidth="64dp"
+            android:paddingHorizontal="8dp"
+            android:text="@string/pane_action_changes"
+            android:textColor="@color/collie_on_background"
+            android:textSize="13sp" />
+
         <ImageButton
             android:id="@+id/settings_button"
             android:layout_width="@dimen/collie_touch_target"

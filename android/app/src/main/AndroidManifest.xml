@@ -36,6 +36,10 @@
             android:exported="false"
             android:parentActivityName=".ui.PaneActivity" />
         <activity
+            android:name=".ui.ChangesActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.PaneActivity" />
+        <activity
             android:name=".ui.SettingsActivity"
             android:exported="false"
             android:parentActivityName=".ui.MainActivity" />

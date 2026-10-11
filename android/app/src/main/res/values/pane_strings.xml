@@ -19,6 +19,7 @@
     <string name="pane_processes_pid">PID %1$d</string>
     <string name="pane_processes_arguments">Arguments: %1$s</string>
     <string name="pane_processes_directory">Directory: %1$s</string>
+    <string name="pane_action_changes">Changes</string>
     <string name="pane_action_zen">Zen mode</string>
     <string name="pane_action_focus">Focus in terminal</string>
     <string name="pane_action_rename">Rename pane</string>

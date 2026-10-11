@@ -15,6 +15,7 @@ The app follows the agents already running on your server.
 - Find agents waiting for input from the dashboard.
 - Browse spaces, tabs and panes across your configured hosts and sessions.
 - Read transcript history or the terminal mirror, and search older turns.
+- Browse listed Git changes, inspect bounded file diffs, and read the latest commit from panes or spaces.
 - Answer supported agent prompts, send replies, attach images, and use terminal keys.
 - Pair the phone for read and write access and revoke devices through Settings.
 - Use voice input when your server has speech-to-text configured.

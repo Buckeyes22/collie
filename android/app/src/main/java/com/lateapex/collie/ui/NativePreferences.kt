@@ -90,6 +90,16 @@ class NativePreferences(
             editor.apply()
         }
 
+    /** Bounded Changes discovery depth; the bridge supports values 1 through 4. */
+    var changesDepth: Int
+        get() = preferences.getInt(CHANGES_DEPTH, 2).coerceIn(1, 4)
+        set(value) { preferences.edit().putInt(CHANGES_DEPTH, value.coerceIn(1, 4)).apply() }
+
+    /** Include nested repositories in Changes discovery. */
+    var changesNested: Boolean
+        get() = preferences.getBoolean(CHANGES_NESTED, true)
+        set(value) { preferences.edit().putBoolean(CHANGES_NESTED, value).apply() }
+
     var dashboardLaunchOpen: Boolean?
         get() = if (preferences.contains(DASHBOARD_LAUNCH_OPEN)) {
             preferences.getBoolean(DASHBOARD_LAUNCH_OPEN, true)
@@ -207,6 +217,8 @@ class NativePreferences(
         internal const val DASHBOARD_RECENT_OPEN = "dashboard_recent_open"
         internal const val DASHBOARD_RECENT_SORT = "dashboard_recent_sort"
         internal const val DASHBOARD_SPACES_OPEN = "dashboard_spaces_open"
+        internal const val CHANGES_DEPTH = "changes_depth"
+        internal const val CHANGES_NESTED = "changes_nested"
         internal const val DASHBOARD_LAUNCH_OPEN = "dashboard_launch_open"
         internal const val DASHBOARD_SHELLS_OPEN = "dashboard_shells_open"
         internal const val PANE_STRIPS_VISIBLE = "pane_strips_visible"
