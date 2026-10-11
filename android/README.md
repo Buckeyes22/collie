@@ -36,6 +36,12 @@ the owning runtime positively declares process inspection. These fields can cont
 the route requires `device-read`, the bridge and Crew lead redact before clipping, and Android caps
 the streamed JSON body before decoding. Unsupported runtimes explain that the data is unavailable.
 
+The native New flow also opens launch recipe management and one-off Run on the selected machine and
+session. The phone uses only the existing launcher, validation, run and recent-history routes. It
+requires the host to declare each action, labels syntax checks as non-PATH checks, confirms
+no-prompts commands, and stores run/add requests in the encrypted owner-bound intent journal before
+dispatch. Recent commands fill the editor for review and never run automatically.
+
 Browser Web Push belongs to the PWA and is not available to native code. The native client provides
 foreground polling and server notification preference/snooze controls, but not native background
 delivery. Background notifications remain pending an independently reviewed provider, delivery,

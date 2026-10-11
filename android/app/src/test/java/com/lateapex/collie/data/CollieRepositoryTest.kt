@@ -14,6 +14,11 @@ import com.lateapex.collie.domain.PaneAddress
 import com.lateapex.collie.domain.Scope
 import com.lateapex.collie.network.ActionResponse
 import com.lateapex.collie.network.AddedLauncherResponse
+import com.lateapex.collie.network.LaunchersResponse
+import com.lateapex.collie.network.LaunchersAdding
+import com.lateapex.collie.network.RecipeWire
+import com.lateapex.collie.network.RecipeOptionWire
+import com.lateapex.collie.network.LaunchCheckResponse
 import com.lateapex.collie.network.AudioUpload
 import com.lateapex.collie.network.ApiFailure
 import com.lateapex.collie.network.ApiResult
@@ -387,6 +392,138 @@ class CollieRepositoryTest {
         assertEquals(2, intentApi.launchCalls)
         assertEquals(1, intentApi.simulatedEffects)
         assertEquals(intentApi.launchBodies[0], intentApi.launchBodies[1])
+    }
+
+    @Test
+    fun oneOffRunFreezesExactLineFolderAndSameIdAcrossUnknownRecovery() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        context.getSharedPreferences("collie_launch_intents", Context.MODE_PRIVATE).edit().clear().commit()
+        val intentApi = FakeApi().apply {
+            snapshotDevice = DeviceAuthorization(enforced = true, device = "phone", authorized = true)
+            firstLaunchResponse = ApiResult.Failure(ApiFailure.Network("connection lost after dispatch"))
+            replayLaunchResponse = ApiResult.Success(
+                CreateResponse(ok = true, pane = CreatedPane("w1:p1", "w1", "repo", "w1:t1", "/work tree")),
+                200,
+            )
+        }
+        val store = LaunchIntentStore(context, TestCipher(), Json)
+        val intentRepository = CollieRepository(intentApi, FakeStore(connection), OriginValidator(), launchIntentStore = store)
+        val scope = Scope(host = "builder", session = "review")
+        intentRepository.selectScope(scope)
+        assertTrue(intentRepository.snapshot(scope) is ApiResult.Success)
+        val captured = intentRepository.readContext(scope)!!
+        val requestId = "9d5ed678-9e2a-4c4b-8f6a-8a1a65c867e2"
+        val exactLine = "printf '%s' \"${'$'}HOME/a b\""
+
+        val first = intentRepository.startRunIntent(scope, exactLine, requestId, "/work tree", false, captured)
+
+        assertTrue(first is ApiResult.Failure)
+        val saved = store.get(requestId)!!
+        assertEquals("launch.run", saved.intent.operation)
+        assertEquals(scope.host, saved.intent.host)
+        assertEquals(scope.session, saved.intent.session)
+        assertEquals(LaunchIntentState.unknown, saved.state)
+        assertEquals(exactLine, Json.parseToJsonElement(saved.intent.canonicalBody).jsonObject.getValue("run").jsonPrimitive.content)
+        assertEquals("/work tree", Json.parseToJsonElement(saved.intent.canonicalBody).jsonObject.getValue("cwd").jsonPrimitive.content)
+        assertEquals(1, intentApi.launchCalls)
+
+        val restartedStore = LaunchIntentStore(context, TestCipher(), Json)
+        val restartedRepository = CollieRepository(intentApi, FakeStore(connection), OriginValidator(), launchIntentStore = restartedStore)
+        restartedRepository.selectScope(scope)
+        assertTrue(restartedRepository.snapshot(scope) is ApiResult.Success)
+        val replay = restartedRepository.retryLaunchIntent(scope, requestId)
+
+        assertTrue(replay is ApiResult.Success && replay.value.ok)
+        assertEquals(2, intentApi.launchCalls)
+        assertEquals(intentApi.launchBodies[0], intentApi.launchBodies[1])
+        assertEquals(1, intentApi.simulatedEffects)
+        assertEquals(LaunchIntentState.succeeded, restartedStore.get(requestId)?.state)
+    }
+
+    @Test
+    fun noPromptsRecipeCannotBeReservedUntilExplicitConfirmationIsFrozen() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        context.getSharedPreferences("collie_launch_intents", Context.MODE_PRIVATE).edit().clear().commit()
+        val intentApi = FakeApi().apply {
+            snapshotDevice = DeviceAuthorization(enforced = true, device = "phone", authorized = true)
+            val noPromptRecipe = RecipeWire("claude", "Claude", "claude", listOf(RecipeOptionWire("skip", "Skip prompts", "--dangerously-skip-permissions", noPrompts = true)))
+            launchersResult = ApiResult.Success(
+                LaunchersResponse(
+                    emptyList(), "/home/operator",
+                    adding = LaunchersAdding(
+                        adds = true, freeText = true, run = true, file = "launchers.toml", count = 0, max = 20,
+                        recipes = listOf(noPromptRecipe),
+                    ),
+                ), 200,
+            )
+            reviewedRecipe = noPromptRecipe
+        }
+        val store = LaunchIntentStore(context, TestCipher(), Json)
+        val intentRepository = CollieRepository(intentApi, FakeStore(connection), OriginValidator(), launchIntentStore = store)
+        assertTrue(intentRepository.snapshot() is ApiResult.Success)
+        val id = "d2cb0f41-bf51-419e-8df2-7f85d9e25a4b"
+        val body = """{"requestId":"$id","recipe":{"harness":"claude","options":["skip"]}}"""
+
+        val unconfirmed = intentRepository.addLauncherIntent(Scope(), id, body, expectedRecipe = intentApi.reviewedRecipe)
+
+        assertTrue(unconfirmed is ApiResult.Failure)
+        assertNull(store.get(id))
+        assertEquals(0, intentApi.launcherAddCalls)
+
+        intentApi.launchersResult = ApiResult.Success(
+            LaunchersResponse(
+                emptyList(), "/home/operator",
+                adding = LaunchersAdding(
+                    adds = true, freeText = true, run = true, file = "launchers.toml", count = 0, max = 20,
+                    recipes = listOf(intentApi.reviewedRecipe!!.copy(binary = "claude-next")),
+                ),
+            ), 200,
+        )
+        val changedRecipe = intentRepository.addLauncherIntent(Scope(), id, body, confirmedNoPrompts = true, expectedRecipe = intentApi.reviewedRecipe)
+        assertTrue(changedRecipe is ApiResult.Failure)
+        assertNull(store.get(id))
+
+        intentApi.launchersResult = ApiResult.Success(
+            LaunchersResponse(emptyList(), "/home/operator", adding = LaunchersAdding(
+                true, true, true, "launchers.toml", 0, 20, listOf(intentApi.reviewedRecipe!!),
+            )), 200,
+        )
+        val confirmed = intentRepository.addLauncherIntent(Scope(), id, body, confirmedNoPrompts = true, expectedRecipe = intentApi.reviewedRecipe)
+
+        assertTrue(confirmed is ApiResult.Success && confirmed.value.ok)
+        assertTrue(store.get(id)?.intent?.confirmedNoPrompts == true)
+        assertEquals("launcher.add", store.get(id)?.intent?.operation)
+        assertEquals(1, intentApi.launcherAddCalls)
+    }
+
+    @Test
+    fun noPromptsRunRequiresFreshCheckAndStoresExplicitConsent() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        context.getSharedPreferences("collie_launch_intents", Context.MODE_PRIVATE).edit().clear().commit()
+        val intentApi = FakeApi().apply {
+            snapshotDevice = DeviceAuthorization(enforced = true, device = "phone", authorized = true)
+            launchCheckResult = ApiResult.Success(LaunchCheckResponse(ok = true, noPrompts = true), 200)
+            firstLaunchResponse = ApiResult.Success(
+                CreateResponse(ok = true, pane = CreatedPane("w1:p1", "w1", "repo", "w1:t1", "/repo")), 200,
+            )
+        }
+        val store = LaunchIntentStore(context, TestCipher(), Json)
+        val intentRepository = CollieRepository(intentApi, FakeStore(connection), OriginValidator(), launchIntentStore = store)
+        assertTrue(intentRepository.snapshot() is ApiResult.Success)
+        val id = "b45a2b12-8a76-4a14-9e1e-9903da62da0e"
+        val run = "agent --dangerously-skip-permissions"
+
+        val unconfirmed = intentRepository.startRunIntent(Scope(), run, id, confirmedNoPrompts = false)
+
+        assertTrue(unconfirmed is ApiResult.Failure)
+        assertNull(store.get(id))
+        assertEquals(0, intentApi.launchCalls)
+
+        val confirmed = intentRepository.startRunIntent(Scope(), run, id, confirmedNoPrompts = true)
+
+        assertTrue(confirmed is ApiResult.Success && confirmed.value.ok)
+        assertTrue(store.get(id)?.intent?.confirmedNoPrompts == true)
+        assertEquals(1, intentApi.launchCalls)
     }
 
     @Test
@@ -1263,6 +1400,17 @@ class CollieRepositoryTest {
         var paneFailure: ApiFailure? = null
         var paneValue: PaneReadResponse? = null
         var configResult: ApiResult<BridgeConfigResponse> = ApiResult.Success(BridgeConfigResponse(receiptContextBound = true), 200)
+        var launchersResult: ApiResult<LaunchersResponse> = ApiResult.Success(
+            LaunchersResponse(
+                launchers = emptyList(), home = "/home/operator",
+                adding = LaunchersAdding(
+                    adds = true, freeText = true, run = true, file = "launchers.toml", count = 0, max = 20,
+                    recipes = listOf(RecipeWire("claude", "Claude", "claude", emptyList())),
+                ),
+            ), 200,
+        )
+        var launchCheckResult: ApiResult<LaunchCheckResponse> = ApiResult.Success(LaunchCheckResponse(ok = true, noPrompts = false), 200)
+        var reviewedRecipe: RecipeWire? = null
         var firstLaunchResponse: ApiResult<CreateResponse> = ApiResult.Success(CreateResponse(ok = true), 200)
         var replayLaunchResponse: ApiResult<CreateResponse> = ApiResult.Success(CreateResponse(ok = true), 200)
         var firstWorktreeResponse: ApiResult<WorktreeOpenResponse> = ApiResult.Success(WorktreeOpenResponse(ok = true), 200)
@@ -1305,6 +1453,8 @@ class CollieRepositoryTest {
             configGate?.await()
             return configResult
         }
+        override suspend fun launchers(connection: Connection, scope: Scope): ApiResult<LaunchersResponse> = launchersResult
+        override suspend fun checkRun(connection: Connection, scope: Scope, run: String): ApiResult<LaunchCheckResponse> = launchCheckResult
         override suspend fun startLaunchFrozen(connection: Connection, scope: Scope, canonicalBody: String): ApiResult<CreateResponse> {
             launchCalls++
             launchTokens += connection.token
@@ -1315,6 +1465,8 @@ class CollieRepositoryTest {
             launchGate?.await()
             return if (launchCalls == 1) firstLaunchResponse else replayLaunchResponse
         }
+        override suspend fun startRunFrozen(connection: Connection, scope: Scope, canonicalBody: String): ApiResult<CreateResponse> =
+            startLaunchFrozen(connection, scope, canonicalBody)
         override suspend fun launch(connection: Connection, scope: Scope, command: String, besidePaneId: String?): ApiResult<CreateResponse> {
             legacyLaunchCalls++
             legacyLaunchCommands += command

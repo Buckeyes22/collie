@@ -14,6 +14,7 @@ the first Android release from this fork.
 - Show supported journal images in live and historical transcripts with scoped authenticated blob loading, bounded decoding, and clear failure states.
 - Add a native New workflow for declared agent, shell and launcher choices, with host-owned recent and favourite folders in New, workspace and worktree forms.
 - Persist encrypted, owner-bound launch, worktree and launcher-add intents; keep uncertain outcomes visible and require an explicit same-request retry only where the owning host advertises durable receipt support. Preserve the one-shot legacy workspace-branch create without offering an unverifiable retry, and add native launch choices plus worktree planning with base and parent-folder selection.
+- Add reachable native recipe management and one-off Run workflows with host-declared policy gates, exact checked command text, explicit no-prompts consent, scoped recent history, and same-request recovery for uncertain runs.
 - Add a scoped, device-authorized pane process details screen for foreground processes, runtime directory and restore diagnostics, with explicit unsupported and unavailable states.
 
 - Add a read-only Changes browser from pane actions and Space headers, with bounded nested-repository listings, file diffs and latest-commit views.

@@ -55,6 +55,70 @@ data class RecentRun(
     val reason: String? = null,
 )
 
+@Serializable
+data class LaunchCheckResponse(
+    val ok: Boolean,
+    val noPrompts: Boolean,
+    val problem: String? = null,
+)
+
+@Serializable
+data class LaunchersAdding(
+    val adds: Boolean,
+    val freeText: Boolean,
+    val run: Boolean,
+    val file: String,
+    val count: Int,
+    val max: Int,
+    val recipes: List<RecipeWire>,
+    val off: List<AddedOffWire> = emptyList(),
+)
+
+@Serializable
+data class RecipeWire(
+    val harness: String,
+    val label: String,
+    val binary: String,
+    val options: List<RecipeOptionWire>,
+)
+
+@Serializable
+data class RecipeOptionWire(
+    val id: String,
+    val label: String,
+    val args: String,
+    val group: String? = null,
+    val noPrompts: Boolean = false,
+)
+
+@Serializable
+data class AddedOffWire(
+    val id: String,
+    val label: String,
+    val command: String,
+    val kind: String,
+    val harness: String? = null,
+    val reason: String,
+)
+
+@Serializable
+data class RecentRunsResponse(
+    val ok: Boolean,
+    val removed: Int? = null,
+    val error: String? = null,
+    val code: String? = null,
+    val detail: kotlinx.serialization.json.JsonObject? = null,
+)
+
+@Serializable
+data class AddedLauncherMutationResponse(
+    val ok: Boolean,
+    val removed: Int? = null,
+    val error: String? = null,
+    val code: String? = null,
+    val detail: kotlinx.serialization.json.JsonObject? = null,
+)
+
 /** Folder strings reported by the selected host's bridge; they are labels/launch inputs, not local paths. */
 @Serializable
 data class FoldersResponse(
@@ -74,6 +138,21 @@ internal data class StartLaunchRequest(
     val command: String? = null,
     val shell: Boolean? = null,
 )
+
+@Serializable
+internal data class StartRunRequest(val requestId: String, val cwd: String? = null, val run: String)
+
+@Serializable
+internal data class RunCheckRequest(val run: String)
+
+@Serializable
+internal data class RecentRunRemoveRequest(val line: String)
+
+@Serializable
+internal data class AddedLauncherRenameRequest(val id: String, val label: String)
+
+@Serializable
+internal data class AddedLauncherRemoveRequest(val id: String)
 
 @Serializable
 data class WorktreeBase(@EncodeDefault val kind: String = "default", val ref: String? = null) {

@@ -77,6 +77,20 @@ class SettingsActivity : AppCompatActivity() {
             focusDevices = entry.focusDevices,
             onRevealDevices = ::revealDevices,
         ).also { it.bind(binding.settingsServerControls, binding.settingsPairingHost) }
+        binding.settingsServerControls.addView(
+            com.google.android.material.button.MaterialButton(this).apply {
+                setText(R.string.settings_manage_launchers)
+                isAllCaps = false
+                minHeight = (48 * resources.displayMetrics.density).toInt()
+                setOnClickListener {
+                    startActivity(LaunchRecipeActivity.intent(this@SettingsActivity, repository.selectedScope.value, LaunchRecipeActivity.MODE_RECIPES))
+                }
+            },
+            android.widget.LinearLayout.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+            ),
+        )
         binding.root.applyAppTypeface()
         @Suppress("DEPRECATION")
         val vibrator = getSystemService(VIBRATOR_SERVICE) as? Vibrator

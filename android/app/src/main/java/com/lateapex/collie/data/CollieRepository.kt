@@ -52,11 +52,17 @@ import com.lateapex.collie.network.WorktreeOpenResponse
 import com.lateapex.collie.network.WorktreeAtRequest
 import com.lateapex.collie.network.BranchRequest
 import com.lateapex.collie.network.StartLaunchRequest
+import com.lateapex.collie.network.StartRunRequest
+import com.lateapex.collie.network.LaunchCheckResponse
+import com.lateapex.collie.network.RecentRunsResponse
+import com.lateapex.collie.network.AddedLauncherMutationResponse
+import com.lateapex.collie.network.RecipeWire
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -527,6 +533,76 @@ class CollieRepository(
         return dispatchLaunchIntent(context, reserved.record)
     }
 
+    /** A one-off run is the same owner-bound launch receipt contract with a distinct frozen body. */
+    suspend fun startRunIntent(
+        scope: Scope,
+        run: String,
+        requestId: String,
+        cwd: String? = null,
+        confirmedNoPrompts: Boolean,
+        expectedContext: ScopedReadContext? = null,
+    ): ApiResult<CreateResponse> {
+        val context = expectedContext ?: readContext(scope) ?: return notConnected()
+        if (!isCurrent(context) || context.key.scope != scope) return staleScope()
+        val store = launchIntentStore ?: return intentUnavailable()
+        if (run.isBlank() || run.length > 200 || (cwd?.length ?: 0) > 4096 || requestId.isBlank() ||
+            !writesAllowed(scope, context.key.subjectIdentity) || !context.connection.isPaired) return notConnected()
+        if (unresolvedLaunchIntents(scope).isNotEmpty()) return unresolvedIntentFailure()
+        when (val readiness = intentReceiptReadiness(context, scope)) {
+            is ApiResult.Failure -> return readiness
+            is ApiResult.NotModified -> return intentUnavailable()
+            is ApiResult.Success -> if (!readiness.value) return intentUnavailable()
+        }
+        when (val check = withConnection(scope, context.key.subjectIdentity, context) { api.checkRun(it, scope, run) }) {
+            is ApiResult.Success -> {
+                if (check.value.problem != null) {
+                    return ApiResult.Failure(ApiFailure.Http(400, "The command does not pass the host's syntax check", "launch.bad_line"))
+                }
+                if (check.value.noPrompts && !confirmedNoPrompts) {
+                    return ApiResult.Failure(ApiFailure.Http(403, "Explicit confirmation is required for no-prompts commands", "launch.no_prompts_confirmation_required"))
+                }
+            }
+            is ApiResult.Failure -> return check
+            is ApiResult.NotModified -> return intentUnavailable()
+        }
+        when (val discovery = withConnection(scope, context.key.subjectIdentity, context) { api.launchers(it, scope) }) {
+            is ApiResult.Success -> if (discovery.value.adding?.run != true) {
+                return ApiResult.Failure(ApiFailure.Http(403, "This host does not declare one-off runs", "launch.run_off"))
+            }
+            is ApiResult.Failure -> return discovery
+            is ApiResult.NotModified -> return intentUnavailable()
+        }
+        val body = intentJson.encodeToString(StartRunRequest.serializer(), StartRunRequest(requestId, cwd, run))
+        val intent = FrozenLaunchIntent(
+            requestId = requestId, origin = context.key.origin, mount = context.key.origin,
+            connectionGeneration = context.key.connectionGeneration, pairedDeviceIdentity = context.key.pairedDeviceIdentity,
+            leadEpoch = context.key.leadEpoch, host = context.key.host, session = context.key.session,
+            subjectIdentity = context.key.subjectIdentity, operation = "launch.run",
+            confirmedNoPrompts = confirmedNoPrompts, canonicalBody = body,
+        )
+        val reserved = try { store.reserve(intent) } catch (_: Exception) { return intentUnavailable() }
+        if (reserved is ReserveIntentResult.Unresolved) return unresolvedIntentFailure()
+        if (reserved !is ReserveIntentResult.Reserved) {
+            return ApiResult.Failure(ApiFailure.Http(409, "This request ID is already bound to a saved intent", "launch.request_mismatch"))
+        }
+        return dispatchLaunchIntent(context, reserved.record)
+    }
+
+    suspend fun checkRun(scope: Scope, run: String, expectedContext: ScopedReadContext? = null): ApiResult<LaunchCheckResponse> =
+        withConnection(scope, expectedContext = expectedContext) { api.checkRun(it, scope, run) }
+
+    suspend fun renameAddedLauncher(scope: Scope, id: String, label: String, expectedContext: ScopedReadContext? = null): ApiResult<AddedLauncherResponse> =
+        withWritableConnection(scope, expectedContext = expectedContext) { api.renameAddedLauncher(it, scope, id, label) }
+
+    suspend fun removeAddedLauncher(scope: Scope, id: String, expectedContext: ScopedReadContext? = null): ApiResult<AddedLauncherMutationResponse> =
+        withWritableConnection(scope, expectedContext = expectedContext) { api.removeAddedLauncher(it, scope, id) }
+
+    suspend fun removeRecentRun(scope: Scope, line: String, expectedContext: ScopedReadContext? = null): ApiResult<RecentRunsResponse> =
+        withWritableConnection(scope, expectedContext = expectedContext) { api.removeRecentRun(it, scope, line) }
+
+    suspend fun clearRecentRuns(scope: Scope, expectedContext: ScopedReadContext? = null): ApiResult<RecentRunsResponse> =
+        withWritableConnection(scope, expectedContext = expectedContext) { api.clearRecentRuns(it, scope) }
+
     /** One local durable attempt for an older declared launcher endpoint without owner receipts. */
     suspend fun startLegacyLaunchInitial(
         scope: Scope,
@@ -567,21 +643,23 @@ class CollieRepository(
     } catch (_: Exception) { emptyList() }
 
     /** An explicit retry replays the exact persisted body and ID; startup never calls this method. */
-    suspend fun retryLaunchIntent(scope: Scope, requestId: String): ApiResult<CreateResponse> {
+    suspend fun retryLaunchIntent(scope: Scope, requestId: String, expectedContext: ScopedReadContext? = null): ApiResult<CreateResponse> {
         val store = launchIntentStore ?: return intentUnavailable()
         val record = runCatching { store.get(requestId) }.getOrNull() ?: return intentUnavailable()
-        if (record.state != LaunchIntentState.unknown || record.intent.receiptMode != LaunchIntentReceiptMode.ownerBound) {
+        if (record.state != LaunchIntentState.unknown || record.intent.receiptMode != LaunchIntentReceiptMode.ownerBound ||
+            record.intent.operation !in setOf("launch", "launch.run")) {
             return ApiResult.Failure(ApiFailure.Http(409, "Only an unresolved launch can be retried", "launch.request_mismatch"))
         }
         // Reconcile the owning topology before the user's deliberate same-ID replay. This is a read;
         // it never infers success from a similar label and never dispatches the saved write.
-        val context = readContext(scope) ?: return notConnected()
+        val context = expectedContext ?: readContext(scope) ?: return notConnected()
+        if (!isCurrent(context) || context.key.scope != scope) return staleScope()
         val refreshed = snapshot(scope, context)
         if (!isCurrent(context)) return staleScope()
         if (refreshed !is ApiResult.Success) {
             return (refreshed as? ApiResult.Failure)?.let { it } ?: intentUnavailable()
         }
-        if (record.state != LaunchIntentState.unknown || !intentMatches(record.intent, context, "launch")) {
+        if (record.state != LaunchIntentState.unknown || !intentMatches(record.intent, context, record.intent.operation)) {
             return ApiResult.Failure(ApiFailure.Http(409, "The saved launch is not retryable in this scope", "launch.request_mismatch"))
         }
         if (!writesAllowed(scope) || !context.connection.isPaired) return notConnected()
@@ -631,7 +709,10 @@ class CollieRepository(
             mutation = true,
             expectedContext = context,
         ) {
-            if (record.intent.receiptMode == LaunchIntentReceiptMode.legacyInitialOnly) {
+            if (record.intent.operation == "launch.run") {
+                if (record.intent.receiptMode != LaunchIntentReceiptMode.ownerBound) return@withConnectionOf intentUnknown()
+                api.startRunFrozen(it, context.key.scope, record.intent.canonicalBody)
+            } else if (record.intent.receiptMode == LaunchIntentReceiptMode.legacyInitialOnly) {
                 if (record.state != LaunchIntentState.pending) return@withConnectionOf intentUnknown()
                 val frozen = intentJson.decodeFromString(StartLaunchRequest.serializer(), record.intent.canonicalBody)
                 if (frozen.requestId != record.intent.requestId || frozen.command.isNullOrBlank()) return@withConnectionOf intentUnknown()
@@ -882,11 +963,19 @@ class CollieRepository(
     }
 
     /** Owner-bound launcher.add journal seam for the launcher-management UI. The body is frozen by the caller. */
-    suspend fun addLauncherIntent(scope: Scope, requestId: String, canonicalBody: String): ApiResult<AddedLauncherResponse> {
+    suspend fun addLauncherIntent(
+        scope: Scope,
+        requestId: String,
+        canonicalBody: String,
+        expectedContext: ScopedReadContext? = null,
+        confirmedNoPrompts: Boolean = false,
+        expectedRecipe: RecipeWire? = null,
+    ): ApiResult<AddedLauncherResponse> {
         if (requestId.isBlank() || canonicalBody.isBlank() || canonicalBody.length > 65_536 || bodyRequestId(canonicalBody) != requestId) {
             return ApiResult.Failure(ApiFailure.Http(400, "Malformed frozen launcher request", "launch.request_mismatch"))
         }
-        val context = readContext(scope) ?: return notConnected()
+        val context = expectedContext ?: readContext(scope) ?: return notConnected()
+        if (!isCurrent(context) || context.key.scope != scope) return staleScope()
         val store = launchIntentStore ?: return intentUnavailable()
         if (!writesAllowed(scope) || !context.connection.isPaired) return notConnected()
         if (unresolvedLaunchIntents(scope).isNotEmpty()) return unresolvedIntentFailure()
@@ -895,12 +984,79 @@ class CollieRepository(
             is ApiResult.NotModified -> return intentUnavailable()
             is ApiResult.Success -> if (!readiness.value) return intentUnavailable()
         }
+        val request = runCatching { intentJson.parseToJsonElement(canonicalBody).jsonObject }.getOrNull()
+            ?: return ApiResult.Failure(ApiFailure.Http(400, "Malformed launcher request", "launcher.bad_request"))
+        val isRecipe = request["recipe"] is kotlinx.serialization.json.JsonObject
+        val hasText = request.containsKey("text")
+        if (isRecipe == hasText || request.containsKey("recipe") && !isRecipe) {
+            return ApiResult.Failure(ApiFailure.Http(400, "Launcher request must select exactly one recipe or text target", "launcher.bad_request"))
+        }
+        val text = (request["text"] as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { it.isString }?.content
+        val kind = (request["kind"] as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { it.isString }?.content
+        val requestedHarness = (request["harness"] as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { it.isString }?.content
+        if (!isRecipe && (text.isNullOrBlank() || text.length > 4096 || kind !in setOf("agent", "command"))) {
+            return ApiResult.Failure(ApiFailure.Http(400, "Malformed launcher request", "launcher.bad_request"))
+        }
+        val currentCatalog = when (val discovery = withConnection(scope, context.key.subjectIdentity, context) { api.launchers(it, scope) }) {
+            is ApiResult.Success -> discovery.value
+            is ApiResult.Failure -> return discovery
+            is ApiResult.NotModified -> return intentUnavailable()
+        }
+        val adding = currentCatalog.adding ?: return ApiResult.Failure(ApiFailure.Http(409, "This host does not declare launcher additions", "launcher.adds_off"))
+        if (!adding.adds || adding.max !in 1..20 || adding.count !in 0 until adding.max) {
+            return ApiResult.Failure(ApiFailure.Http(409, "The host has disabled launcher additions or reached its limit", "launcher.adds_off"))
+        }
+        val noPromptsField = request["noPrompts"]
+        val noPromptsPrimitive = noPromptsField as? kotlinx.serialization.json.JsonPrimitive
+        if (noPromptsField != null && noPromptsPrimitive?.booleanOrNull == null) {
+            return ApiResult.Failure(ApiFailure.Http(400, "Malformed no-prompts choice", "launcher.bad_request"))
+        }
+        var policyNoPrompts = noPromptsPrimitive?.booleanOrNull == true
+        if (isRecipe) {
+            val picked = request["recipe"]!!.jsonObject
+            val harness = (picked["harness"] as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { it.isString }?.content
+            val optionIds = picked["options"]?.let { value ->
+                runCatching { (value as kotlinx.serialization.json.JsonArray).map { it.jsonPrimitive.content } }.getOrNull()
+            } ?: return ApiResult.Failure(ApiFailure.Http(400, "Malformed recipe selection", "launcher.bad_recipe"))
+            val recipe = adding.recipes.firstOrNull { it.harness == harness }
+                ?: return ApiResult.Failure(ApiFailure.Http(409, "The selected recipe is no longer available", "launcher.bad_recipe"))
+            if (expectedRecipe != null && recipe != expectedRecipe) {
+                return ApiResult.Failure(ApiFailure.Protocol("The recipe changed after it was reviewed; reload and confirm the current recipe"))
+            }
+            if (optionIds.size != optionIds.toSet().size || optionIds.any { id -> recipe.options.none { it.id == id } } ||
+                recipe.options.filter { it.id in optionIds }.mapNotNull { it.group }.let { it.size != it.toSet().size }) {
+                return ApiResult.Failure(ApiFailure.Http(400, "The recipe options are invalid or mutually exclusive", "launcher.bad_recipe"))
+            }
+            policyNoPrompts = recipe.options.any { it.id in optionIds && it.noPrompts }
+        } else if (!adding.freeText) {
+            return ApiResult.Failure(ApiFailure.Http(409, "This host has disabled free-text launchers", "launcher.free_text_off"))
+        } else if (kind == "agent" && (requestedHarness.isNullOrBlank() || adding.recipes.none { it.harness == requestedHarness })) {
+            return ApiResult.Failure(ApiFailure.Http(409, "The selected agent harness is no longer declared", "launcher.unknown_harness"))
+        }
+        if (!isRecipe) {
+            when (val check = withConnection(scope, context.key.subjectIdentity, context) { api.checkRun(it, scope, text!!) }) {
+                is ApiResult.Success -> {
+                    if (check.value.problem != null) {
+                        return ApiResult.Failure(ApiFailure.Http(400, "The launcher text does not pass the host's syntax check", "launch.bad_line"))
+                    }
+                    policyNoPrompts = policyNoPrompts || check.value.noPrompts
+                }
+                is ApiResult.Failure -> return check
+                is ApiResult.NotModified -> return intentUnavailable()
+            }
+        }
+        if (policyNoPrompts && !confirmedNoPrompts) {
+            return ApiResult.Failure(ApiFailure.Http(403, "Explicit confirmation is required for no-prompts launchers", "launcher.no_prompts_confirmation_required"))
+        }
+        if (policyNoPrompts && isRecipe && expectedRecipe == null) {
+            return ApiResult.Failure(ApiFailure.Protocol("The no-prompts recipe must be compared with the reviewed catalog before dispatch"))
+        }
         val intent = FrozenLaunchIntent(
             requestId = requestId, origin = context.key.origin, mount = context.key.origin,
             connectionGeneration = context.key.connectionGeneration, pairedDeviceIdentity = context.key.pairedDeviceIdentity,
             leadEpoch = context.key.leadEpoch, host = context.key.host, session = context.key.session,
             subjectIdentity = context.key.subjectIdentity, operation = "launcher.add", targetIdentity = "added-launcher-row",
-            confirmedNoPrompts = false, canonicalBody = canonicalBody,
+            confirmedNoPrompts = policyNoPrompts && confirmedNoPrompts, canonicalBody = canonicalBody,
         )
         val reserved = try { store.reserve(intent) } catch (_: Exception) { return intentUnavailable() }
         if (reserved is ReserveIntentResult.Unresolved) return unresolvedIntentFailure()
@@ -910,13 +1066,14 @@ class CollieRepository(
         return dispatchAddedLauncherIntent(context, reserved.record)
     }
 
-    suspend fun retryAddedLauncherIntent(scope: Scope, requestId: String): ApiResult<AddedLauncherResponse> {
+    suspend fun retryAddedLauncherIntent(scope: Scope, requestId: String, expectedContext: ScopedReadContext? = null): ApiResult<AddedLauncherResponse> {
         val store = launchIntentStore ?: return intentUnavailable()
         val record = runCatching { store.get(requestId) }.getOrNull() ?: return intentUnavailable()
         if (record.state != LaunchIntentState.unknown || record.intent.receiptMode != LaunchIntentReceiptMode.ownerBound || record.intent.operation != "launcher.add") {
             return ApiResult.Failure(ApiFailure.Http(409, "The saved launcher request is not retryable in this scope", "launch.request_mismatch"))
         }
-        val context = readContext(scope) ?: return notConnected()
+        val context = expectedContext ?: readContext(scope) ?: return notConnected()
+        if (!isCurrent(context) || context.key.scope != scope) return staleScope()
         val refreshed = snapshot(scope, context)
         if (!isCurrent(context)) return staleScope()
         if (refreshed !is ApiResult.Success) return (refreshed as? ApiResult.Failure) ?: intentUnavailable()
@@ -1057,8 +1214,8 @@ class CollieRepository(
         api.createWorkspace(it, scope, label, cwd)
     }
 
-    suspend fun launchers(scope: Scope = selectedScope.value): ApiResult<LaunchersResponse> =
-        withConnection(scope) { api.launchers(it, scope) }
+    suspend fun launchers(scope: Scope = selectedScope.value, expectedContext: ScopedReadContext? = null): ApiResult<LaunchersResponse> =
+        withConnection(scope, expectedContext = expectedContext) { api.launchers(it, scope) }
 
     suspend fun folders(scope: Scope = selectedScope.value): ApiResult<FoldersResponse> =
         withConnection(scope) { api.folders(it, scope) }
@@ -1392,16 +1549,20 @@ class CollieRepository(
     private suspend fun <T> withWritableConnection(
         scope: Scope = selectedScope.value,
         subjectIdentity: String? = activeSubject,
+        expectedContext: ScopedReadContext? = null,
         block: suspend (Connection) -> ApiResult<T>,
     ): ApiResult<T> {
+        val context = expectedContext ?: readContext(scope, subjectIdentity) ?: return notConnected()
+        if (!isCurrent(context) || context.key.scope != scope || context.key.subjectIdentity != subjectIdentity) return staleScope()
         val configured = connection.value ?: return notConnected()
+        if (configured !== context.connection) return staleScope()
         if (!configured.isPaired) {
             return ApiResult.Failure(ApiFailure.Protocol("Pair this device before controlling a terminal"))
         }
         if (!writesAllowed(scope, subjectIdentity)) {
             return ApiResult.Failure(ApiFailure.Http(403, "device not authorised", "device.not_authorised"))
         }
-        return withConnectionOf(configured, scope, subjectIdentity, mutation = true, block = block)
+        return withConnectionOf(configured, scope, subjectIdentity, mutation = true, expectedContext = context, block = block)
     }
 
     private fun <T> notConnected(): ApiResult<T> =

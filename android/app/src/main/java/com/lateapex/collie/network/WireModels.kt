@@ -411,6 +411,12 @@ data class Launcher(
     val cwd: String? = null,
     val harness: String? = null,
     val noPrompts: Boolean = false,
+    val source: String? = null,
+    val id: String? = null,
+    val kind: String? = null,
+    val addedBy: String? = null,
+    val addedAt: Long? = null,
+    val addedAs: String? = null,
     /** Present for the richer, server-supplied target catalog; absent on legacy launcher rows. */
     val target: StartTarget? = null,
 )
@@ -421,7 +427,7 @@ data class LaunchersResponse(
     val home: String,
     val harnesses: List<HarnessInfo>? = null,
     val items: List<LauncherItem>? = null,
-    val adding: JsonObject? = null,
+    val adding: LaunchersAdding? = null,
     val recentRuns: List<RecentRun>? = null,
 )
 

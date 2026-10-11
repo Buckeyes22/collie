@@ -80,6 +80,8 @@ class NewActivity : AppCompatActivity() {
     private lateinit var pickerSlot: LinearLayout
     private lateinit var recoverySlot: LinearLayout
     private lateinit var launchButton: MaterialButton
+    private lateinit var runButton: MaterialButton
+    private lateinit var recipesButton: MaterialButton
     private lateinit var folderPicker: FolderPickerView
     private var contextKey: ScopedReadContext? = null
     private var catalog: List<NewLaunchChoice> = emptyList()
@@ -228,6 +230,20 @@ class NewActivity : AppCompatActivity() {
         }, onStar = ::toggleStar)
         pickerSlot.addView(folderPicker, rowParams())
         root.addView(pickerSlot, rowParams(4))
+        runButton = MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+            text = getString(R.string.new_run_one_off)
+            isAllCaps = false
+            minHeight = dp(48)
+            setOnClickListener { startActivity(LaunchRecipeActivity.intent(this@NewActivity, scope, LaunchRecipeActivity.MODE_RUN)) }
+        }
+        recipesButton = MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+            text = getString(R.string.new_manage_recipes)
+            isAllCaps = false
+            minHeight = dp(48)
+            setOnClickListener { startActivity(LaunchRecipeActivity.intent(this@NewActivity, scope, LaunchRecipeActivity.MODE_RECIPES)) }
+        }
+        root.addView(runButton, rowParams(6))
+        root.addView(recipesButton, rowParams(4))
         launchButton = MaterialButton(this).apply {
             text = getString(R.string.new_start)
             isAllCaps = false

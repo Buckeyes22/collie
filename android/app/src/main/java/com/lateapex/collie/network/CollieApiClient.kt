@@ -116,6 +116,12 @@ interface CollieApi {
     /** Sends the exact encrypted-journal body for a deliberate replay; never rebuilds an intent. */
     suspend fun startLaunchFrozen(connection: Connection, scope: Scope, canonicalBody: String): ApiResult<CreateResponse> = unavailable("Frozen launch retry")
     suspend fun addLauncherFrozen(connection: Connection, scope: Scope, canonicalBody: String): ApiResult<AddedLauncherResponse> = unavailable("Frozen launcher add")
+    suspend fun renameAddedLauncher(connection: Connection, scope: Scope, id: String, label: String): ApiResult<AddedLauncherResponse> = unavailable("Launcher rename")
+    suspend fun removeAddedLauncher(connection: Connection, scope: Scope, id: String): ApiResult<AddedLauncherMutationResponse> = unavailable("Launcher remove")
+    suspend fun checkRun(connection: Connection, scope: Scope, run: String): ApiResult<LaunchCheckResponse> = unavailable("Run validation")
+    suspend fun startRunFrozen(connection: Connection, scope: Scope, canonicalBody: String): ApiResult<CreateResponse> = unavailable("Frozen one-off run")
+    suspend fun removeRecentRun(connection: Connection, scope: Scope, line: String): ApiResult<RecentRunsResponse> = unavailable("Recent run removal")
+    suspend fun clearRecentRuns(connection: Connection, scope: Scope): ApiResult<RecentRunsResponse> = unavailable("Recent run clear")
     suspend fun planWorktree(connection: Connection, scope: Scope, cwd: String, branch: String? = null, parent: String? = null): ApiResult<WorktreePlanResponse> = unavailable("Worktree plan")
     suspend fun createWorktreeAt(connection: Connection, scope: Scope, cwd: String, branch: String, target: StartTarget, requestId: String, base: WorktreeBase = WorktreeBase(), folder: WorktreeFolder = WorktreeFolder()): ApiResult<WorktreeOpenResponse> = unavailable("Worktree from folder")
     /** Sends the exact encrypted-journal body for a deliberate replay. */
@@ -578,6 +584,61 @@ class CollieApiClient(
         }
     }
 
+    override suspend fun renameAddedLauncher(connection: Connection, scope: Scope, id: String, label: String): ApiResult<AddedLauncherResponse> {
+        require(id.isNotBlank() && id.length <= 128 && label.isNotBlank() && label.length <= 120)
+        val body = json.encodeToString(AddedLauncherRenameRequest.serializer(), AddedLauncherRenameRequest(id, label))
+        return requireContract(
+            executeJson(post(connection, scopedUrl(connection.origin, path("launchers", "added", "rename"), scope), body), AddedLauncherResponse.serializer(), MUTATION_TIMEOUT_SECONDS),
+            "Malformed launcher rename response",
+        ) { response -> if (response.ok) response.row != null else !response.error.isNullOrBlank() || !response.code.isNullOrBlank() }
+    }
+
+    override suspend fun removeAddedLauncher(connection: Connection, scope: Scope, id: String): ApiResult<AddedLauncherMutationResponse> {
+        require(id.isNotBlank() && id.length <= 128)
+        val body = json.encodeToString(AddedLauncherRemoveRequest.serializer(), AddedLauncherRemoveRequest(id))
+        return requireContract(
+            executeJson(post(connection, scopedUrl(connection.origin, path("launchers", "added", "remove"), scope), body), AddedLauncherMutationResponse.serializer(), MUTATION_TIMEOUT_SECONDS),
+            "Malformed launcher removal response",
+        ) { response -> if (response.ok) response.removed != null && response.removed >= 0 else !response.error.isNullOrBlank() || !response.code.isNullOrBlank() }
+    }
+
+    /** Paired read only: this endpoint validates a line and never checks run permission or probes PATH. */
+    override suspend fun checkRun(connection: Connection, scope: Scope, run: String): ApiResult<LaunchCheckResponse> {
+        require(run.length <= 4096)
+        val body = json.encodeToString(RunCheckRequest.serializer(), RunCheckRequest(run))
+        return requireContract(
+            executeJson(post(connection, scopedUrl(connection.origin, path("launch", "check"), scope), body), LaunchCheckResponse.serializer(), READ_TIMEOUT_SECONDS),
+            "Malformed run validation response",
+        ) { answer -> answer.ok && answer.problem in setOf(null, "empty", "too_long", "forbidden_character") }
+    }
+
+    override suspend fun startRunFrozen(connection: Connection, scope: Scope, canonicalBody: String): ApiResult<CreateResponse> {
+        require(canonicalBody.isNotBlank() && canonicalBody.length <= 16_384)
+        val request = runCatching { json.parseToJsonElement(canonicalBody).jsonObject }.getOrNull()
+            ?: return ApiResult.Failure(ApiFailure.Protocol("Malformed frozen run request"))
+        val requestId = request["requestId"]?.let { (it as? JsonPrimitive)?.contentOrNull }
+        val line = request["run"]?.let { (it as? JsonPrimitive)?.takeIf(JsonPrimitive::isString)?.content }
+        if (requestId.isNullOrBlank() || line.isNullOrBlank() || line.length > 200) {
+            return ApiResult.Failure(ApiFailure.Protocol("Malformed frozen run request"))
+        }
+        return executeCreate(post(connection, scopedUrl(connection.origin, path("launch"), scope), canonicalBody))
+    }
+
+    override suspend fun removeRecentRun(connection: Connection, scope: Scope, line: String): ApiResult<RecentRunsResponse> {
+        require(line.isNotBlank() && line.length <= 200)
+        val body = json.encodeToString(RecentRunRemoveRequest.serializer(), RecentRunRemoveRequest(line))
+        return requireContract(
+            executeJson(post(connection, scopedUrl(connection.origin, path("launch", "recent", "remove"), scope), body), RecentRunsResponse.serializer(), MUTATION_TIMEOUT_SECONDS),
+            "Malformed recent run removal response",
+        ) { response -> if (response.ok) response.removed != null && response.removed >= 0 else !response.error.isNullOrBlank() || !response.code.isNullOrBlank() }
+    }
+
+    override suspend fun clearRecentRuns(connection: Connection, scope: Scope): ApiResult<RecentRunsResponse> =
+        requireContract(
+            executeJson(post(connection, scopedUrl(connection.origin, path("launch", "recent", "clear"), scope), "{}"), RecentRunsResponse.serializer(), MUTATION_TIMEOUT_SECONDS),
+            "Malformed recent run clear response",
+        ) { response -> if (response.ok) response.removed != null && response.removed >= 0 else !response.error.isNullOrBlank() || !response.code.isNullOrBlank() }
+
     private data class ExpectedAddedLauncher(
         val requestId: String,
         val addedAs: String,
@@ -858,11 +919,35 @@ class CollieApiClient(
     }
 
     override suspend fun launchers(connection: Connection, scope: Scope): ApiResult<LaunchersResponse> =
-        executeJson(
-            request(connection, scopedUrl(connection.origin, path("launchers"), scope)),
-            LaunchersResponse.serializer(),
-            READ_TIMEOUT_SECONDS,
-        )
+        requireContract(
+            executeJson(
+                request(connection, scopedUrl(connection.origin, path("launchers"), scope)),
+                LaunchersResponse.serializer(),
+                READ_TIMEOUT_SECONDS,
+            ),
+            "Malformed launcher catalog",
+        ) { response ->
+            response.home.isNotBlank() && response.home.length <= 4096 && response.launchers.size <= 128 &&
+                response.launchers.all { it.label.isNotBlank() && it.label.length <= 120 && it.command.length <= 4096 &&
+                    (it.id == null || it.id.length <= 128) && (it.addedBy == null || it.addedBy.length <= 120) } &&
+                (response.adding == null || response.adding.let { adding ->
+                    adding.max in 1..20 && adding.count in 0..adding.max && adding.file.isNotBlank() && adding.file.length <= 4096 &&
+                        adding.recipes.size <= 64 && adding.off.size <= 20 &&
+                        adding.recipes.all { recipe -> recipe.harness.isNotBlank() && recipe.harness.length <= 80 &&
+                            recipe.label.isNotBlank() && recipe.label.length <= 120 && recipe.binary.isNotBlank() &&
+                            recipe.binary.length <= 256 && recipe.options.size <= 32 &&
+                            recipe.options.map { it.id }.toSet().size == recipe.options.size &&
+                            recipe.options.all { option -> option.id.isNotBlank() && option.id.length <= 80 &&
+                                option.label.isNotBlank() && option.label.length <= 120 && option.args.length <= 512 &&
+                                (option.group == null || option.group.length <= 80) } } &&
+                        adding.off.all { it.id.isNotBlank() && it.id.length <= 128 && it.label.length <= 120 &&
+                            it.command.length <= 4096 && it.kind.length <= 32 && it.reason.length <= 80 }
+                }) &&
+                (response.recentRuns == null || response.recentRuns.size <= 12 && response.recentRuns.all { recent ->
+                    recent.line.isNotBlank() && recent.line.length <= 200 && (recent.cwd == null || recent.cwd.length <= 4096) &&
+                        (recent.reason == null || recent.reason.length <= 80)
+                })
+        }
 
     override suspend fun folders(connection: Connection, scope: Scope): ApiResult<FoldersResponse> =
         requireContract(

@@ -78,6 +78,66 @@ class CollieApiClientTest {
     }
 
     @Test
+    fun recipeAndOneOffRoutesKeepTheirExactScopedHttpContracts() = runBlocking {
+        val connection = Connection(origin, "phone", "token")
+        val scope = Scope(host = "builder", session = "review")
+        server.enqueue(MockResponse().setBody("""{"ok":true,"noPrompts":false}"""))
+        assertTrue(api.checkRun(connection, scope, "printf '%s' \"${'$'}HOME/a b\"") is ApiResult.Success)
+        val check = server.takeRequest()
+        assertEquals("POST", check.method)
+        assertEquals("/api/launch/check?host=builder&session=review", check.path)
+        assertEquals("""{"run":"printf '%s' \"${'$'}HOME/a b\""}""", check.body.readUtf8())
+
+        val frozenRun = """{"requestId":"run-id","cwd":"/work tree","run":"printf '%s' \"${'$'}HOME/a b\""}"""
+        server.enqueue(MockResponse().setBody("""{"ok":false,"error":"run disabled","code":"launch.run_off"}"""))
+        val refusedRun = api.startRunFrozen(connection, scope, frozenRun)
+        assertTrue(refusedRun is ApiResult.Success)
+        assertFalse((refusedRun as ApiResult.Success).value.ok)
+        assertEquals("run disabled", refusedRun.value.error)
+        assertEquals("launch.run_off", refusedRun.value.code)
+        assertNull(refusedRun.value.pane)
+        val run = server.takeRequest()
+        assertEquals("POST", run.method)
+        assertEquals("/api/launch?host=builder&session=review", run.path)
+        assertEquals(frozenRun, run.body.readUtf8())
+
+        server.enqueue(MockResponse().setBody("""{"ok":false,"error":"not owned","code":"launcher.not_owned"}"""))
+        api.renameAddedLauncher(connection, scope, "row-1", "New label")
+        val rename = server.takeRequest()
+        assertEquals("/api/launchers/added/rename?host=builder&session=review", rename.path)
+        assertEquals("""{"id":"row-1","label":"New label"}""", rename.body.readUtf8())
+
+        server.enqueue(MockResponse().setBody("""{"ok":true,"removed":1}"""))
+        assertTrue(api.removeAddedLauncher(connection, scope, "row-1") is ApiResult.Success)
+        val remove = server.takeRequest()
+        assertEquals("/api/launchers/added/remove?host=builder&session=review", remove.path)
+        assertEquals("""{"id":"row-1"}""", remove.body.readUtf8())
+
+        server.enqueue(MockResponse().setBody("""{"ok":true,"removed":1}"""))
+        assertTrue(api.removeRecentRun(connection, scope, "printf ok") is ApiResult.Success)
+        val recentRemove = server.takeRequest()
+        assertEquals("/api/launch/recent/remove?host=builder&session=review", recentRemove.path)
+        assertEquals("""{"line":"printf ok"}""", recentRemove.body.readUtf8())
+        server.enqueue(MockResponse().setBody("""{"ok":true,"removed":3}"""))
+        assertTrue(api.clearRecentRuns(connection, scope) is ApiResult.Success)
+        val recentClear = server.takeRequest()
+        assertEquals("/api/launch/recent/clear?host=builder&session=review", recentClear.path)
+        assertEquals("{}", recentClear.body.readUtf8())
+    }
+
+    @Test
+    fun launcherDiscoveryKeepsOldPeerCompatibilityButRejectsMalformedPolicyCaps() = runBlocking {
+        val connection = Connection(origin, "phone", "token")
+        server.enqueue(MockResponse().setBody("""{"launchers":[],"home":"/home/operator"}"""))
+        val legacy = api.launchers(connection, Scope())
+        assertTrue(legacy is ApiResult.Success)
+        assertNull((legacy as ApiResult.Success).value.adding)
+
+        server.enqueue(MockResponse().setBody("""{"launchers":[],"home":"/home/operator","adding":{"adds":true,"freeText":true,"run":true,"file":"launchers.toml","count":21,"max":20,"recipes":[],"off":[]}}"""))
+        assertTrue(api.launchers(connection, Scope()) is ApiResult.Failure)
+    }
+
+    @Test
     fun paneRequestUsesScopedIdentityHeadersAndEtag() = runBlocking {
         server.enqueue(
             MockResponse()

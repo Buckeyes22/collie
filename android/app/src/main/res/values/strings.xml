@@ -326,4 +326,84 @@ Folder: %3$s</string>
     <string name="launch_legacy_unknown_inspect">Inspect this host’s worktrees before starting another request. This server cannot verify a same-ID retry.</string>
     <string name="launcher_add_confirmed">The saved launcher add was confirmed.</string>
     <string name="launch_target_unavailable">This launch target requires owner-bound receipt support from the current server.</string>
+    <string name="new_run_one_off">Run one-off command</string>
+    <string name="new_manage_recipes">Manage launch recipes</string>
+    <string name="recipes_title">Launch recipes and one-off runs</string>
+    <string name="recipes_tab">Recipes</string>
+    <string name="run_tab">Run</string>
+    <string name="recipes_loading">Loading this machine’s launch choices…</string>
+    <string name="recipes_unavailable">Launch choices are unavailable for this machine.</string>
+    <string name="recipes_old_server">This server does not declare recipe or one-off run support. These actions are disabled.</string>
+    <string name="recipes_not_authorized">This connection cannot change launch recipes or run commands.</string>
+    <string name="recipes_add">Add launch recipe</string>
+    <string name="recipes_add_text">Add a typed launcher</string>
+    <string name="recipes_rows_title">Phone-added launchers</string>
+    <string name="recipes_operator_row">Operator-owned launcher · editing is unavailable</string>
+    <string name="recipes_row_attribution">Added by %1$s · %2$s</string>
+    <string name="recipes_switch_off">The operator has disabled this action: %1$s</string>
+    <string name="recipes_limit">The machine has reached its %1$d added-launcher limit.</string>
+    <string name="recipes_add_label">Launcher label</string>
+    <string name="recipes_command">Command text</string>
+    <string name="recipes_kind_agent">Agent command</string>
+    <string name="recipes_kind_command">Plain command</string>
+    <string name="recipes_harness">Agent harness</string>
+    <string name="recipes_no_prompts">This command skips permission prompts</string>
+    <string name="recipes_no_prompts_confirm_title">Add a no-prompts launcher?</string>
+    <string name="recipes_no_prompts_confirm_body">This launcher may act without asking for permission. Review the command and machine before adding it.
+
+Machine: %1$s
+Command: %2$s</string>
+    <string name="recipes_add_confirm">Add launcher</string>
+    <string name="recipes_exclusive_options">Choose only one option from each exclusive group.</string>
+    <string name="recipes_add_confirmed">The launcher was added.</string>
+    <string name="recipes_add_failed">Could not add the launcher: %1$s</string>
+    <string name="recipes_add_unknown">The add may have reached the machine. Retry only with the saved request ID.</string>
+    <string name="recipes_retry_same_add">Retry saved add</string>
+    <string name="recipes_rename">Rename</string>
+    <string name="recipes_remove">Remove</string>
+    <string name="recipes_rename_title">Rename launcher</string>
+    <string name="recipes_remove_title">Remove this phone-added launcher?</string>
+    <string name="recipes_remove_body">This removes the phone-owned launcher from this machine. It does not edit the operator’s launchers file.</string>
+    <string name="recipes_remove_confirm">Remove launcher</string>
+    <string name="recipes_mutation_unknown">The server did not confirm this change. Reload the machine’s list before trying again.</string>
+    <string name="recipes_run_input">One-off command</string>
+    <string name="recipes_run_cwd">Working folder (optional)</string>
+    <string name="recipes_check">Check command</string>
+    <string name="recipes_checking">Checking command syntax…</string>
+    <string name="recipes_check_ok">Syntax accepted. This does not prove the executable exists or that the operator allows runs.</string>
+    <string name="recipes_check_problem_empty">Enter a command before checking.</string>
+    <string name="recipes_check_problem_too_long">This command exceeds the server’s 200-character limit.</string>
+    <string name="recipes_check_problem_forbidden_character">This command contains a forbidden separator, control, or bidirectional character.</string>
+    <string name="recipes_check_failed">Command check failed: %1$s</string>
+    <string name="recipes_run_disabled">The operator has disabled one-off runs on this machine.</string>
+    <string name="recipes_run">Run command</string>
+    <string name="recipes_run_confirm_title">Run this command on %1$s?</string>
+    <string name="recipes_run_confirm_body">The bridge starts a fresh shell on %1$s with this exact command. A syntax check does not prove it is harmless or that the executable is available.
+
+Command: %2$s
+Folder: %3$s</string>
+    <string name="recipes_run_no_prompts_warning">This command can bypass permission prompts.</string>
+    <string name="recipes_run_failed">The run was refused: %1$s</string>
+    <string name="recipes_run_unknown">The run outcome is unknown. Do not start a new request until you inspect or retry this saved request.</string>
+    <string name="recipes_retry_run">Retry the same saved run</string>
+    <string name="recipes_retry_run_confirm">Retry sends the exact saved command, folder and request ID. The owner’s receipt determines whether it runs again.</string>
+    <string name="recipes_recent_title">Recent one-off commands</string>
+    <string name="recipes_recent_empty">No recent one-off commands are available on this machine.</string>
+    <string name="recipes_recent_unavailable">Recent commands are unavailable on this older server.</string>
+    <string name="recipes_recent_remove">Remove from history</string>
+    <string name="recipes_recent_clear">Clear history</string>
+    <string name="recipes_recent_clear_title">Clear this machine’s run history?</string>
+    <string name="recipes_recent_clear_body">This removes command history from this machine. It does not stop or undo any command.</string>
+    <string name="recipes_recent_mutation_failed">History change was not confirmed: %1$s</string>
+    <string name="recipes_recent_remove_title">Remove this command from history?</string>
+    <string name="recipes_recent_remove_body">This removes the selected command from this machine’s recent-run history. It does not stop or undo a command.
+
+Machine: %1$s
+Command: %2$s</string>
+    <string name="recipes_replay_fill">Review command</string>
+    <string name="recipes_no_prompt_ack">Run without prompts</string>
+    <string name="settings_manage_launchers">Manage launch recipes and one-off runs</string>
+    <string name="recipes_unknown_device">Unknown device</string>
+    <string name="launch_recipe_agent">One-off command</string>
+    <string name="recipes_reload">Reload recipes and run status</string>
 </resources>
