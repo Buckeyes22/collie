@@ -35,6 +35,10 @@ export interface AgentView {
   agent: string;
   status: AgentStatus;
   cwd: string;
+  /** Current PTY foreground directory; separate from pane/workspace `cwd`. */
+  foregroundCwd?: string;
+  /** Host restore diagnostic, displayed as untrusted text. */
+  restoreError?: string;
   focused: boolean;
   /** "agent" for an agent-bearing pane, "shell" for a bare shell. Defaults to "agent" when absent. */
   kind?: "agent" | "shell";
@@ -176,7 +180,7 @@ export interface AgentView {
  * NOTE the `Omit` is opt-OUT: a future server-only field on AgentView goes on the wire unless it is
  * added to the omit list here. If you add one, strip it here in the same change.
  */
-export type PaneWire = Omit<AgentView, "agentSession" | "sessionAgent"> & {
+export type PaneWire = Omit<AgentView, "agentSession" | "sessionAgent" | "foregroundCwd" | "restoreError"> & {
   /** True when this pane's history is actually offerable: the agent named a session AND its harness
    *  has a journal adapter. Says nothing about whether the log is readable — a named session whose
    *  file is missing still answers `available:false` with reason `no-log`. */
@@ -241,7 +245,7 @@ export function toPaneWire(
   hasJournal: (agent: string) => boolean,
   discoversSessions: (agent: string) => boolean = () => false,
 ): PaneWire {
-  const { agentSession, sessionAgent: _sessionAgent, ...rest } = pane;
+  const { agentSession, sessionAgent: _sessionAgent, foregroundCwd: _foregroundCwd, restoreError: _restoreError, ...rest } = pane;
   const addressable = agentSession !== undefined || discoversSessions(pane.agent);
   return addressable && hasJournal(pane.agent) ? { ...rest, hasSession: true } : rest;
 }

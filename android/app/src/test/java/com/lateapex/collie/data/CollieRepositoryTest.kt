@@ -19,6 +19,7 @@ import com.lateapex.collie.network.ApiFailure
 import com.lateapex.collie.network.ApiResult
 import com.lateapex.collie.network.CollieApi
 import com.lateapex.collie.network.DevicesResponse
+import com.lateapex.collie.network.MuxConfigResponse
 import com.lateapex.collie.network.DeviceAuthorization
 import com.lateapex.collie.network.HealthResponse
 import com.lateapex.collie.network.NotificationState
@@ -28,6 +29,7 @@ import com.lateapex.collie.network.PaneSummary
 import com.lateapex.collie.network.AgentStatus
 import com.lateapex.collie.network.ServerSummary
 import com.lateapex.collie.network.PaneReadResponse
+import com.lateapex.collie.network.PaneProcessesResponse
 import com.lateapex.collie.network.SnapshotResponse
 import com.lateapex.collie.network.SttResponse
 import com.lateapex.collie.network.UpdateStartResponse
@@ -55,6 +57,20 @@ class CollieRepositoryTest {
     private val store = FakeStore(connection)
     private val api = FakeApi()
     private val repository = CollieRepository(api, store, OriginValidator())
+
+    @Test
+    fun processInspectionRequiresPositiveScopedMuxCapability() = runBlocking {
+        val address = PaneAddress(Scope(host = "desk", session = "work"), "w1:p1")
+        api.configResult = ApiResult.Success(BridgeConfigResponse(mux = MuxConfigResponse(capabilities = emptyMap())), 200)
+        val unsupported = repository.paneProcesses(address)
+        assertTrue(unsupported is ApiResult.Failure)
+        assertEquals(0, api.processCalls)
+
+        api.configResult = ApiResult.Success(BridgeConfigResponse(mux = MuxConfigResponse(capabilities = mapOf("paneProcesses" to true))), 200)
+        assertTrue(repository.paneProcesses(address) is ApiResult.Success)
+        assertEquals(1, api.processCalls)
+        assertEquals(address, api.processAddress)
+    }
 
     @Test
     fun writeAuthorityCannotCarryOverToAnotherPairingOnTheSameServer() = runBlocking {
@@ -1273,6 +1289,13 @@ class CollieRepositoryTest {
             worktreeEntered?.complete(Unit)
             worktreeGate?.await()
             return if (worktreeCalls == 1) firstWorktreeResponse else replayWorktreeResponse
+        }
+        var processCalls = 0
+        var processAddress: PaneAddress? = null
+        override suspend fun paneProcesses(connection: Connection, address: PaneAddress): ApiResult<PaneProcessesResponse> {
+            processCalls++
+            processAddress = address
+            return ApiResult.Success(PaneProcessesResponse(true, address.paneId), 200)
         }
 
         override suspend fun pane(

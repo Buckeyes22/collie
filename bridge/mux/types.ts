@@ -144,6 +144,10 @@ export interface MuxPane extends MuxIdentity {
   readonly tabNamed?: true;
   /** The pane's working directory. Empty when the multiplexer does not report one. */
   readonly cwd: string;
+  /** Herdr's optional PTY foreground cwd. This never replaces the stable pane/workspace `cwd`. */
+  readonly foregroundCwd?: string;
+  /** Restore diagnostic reported by the owning multiplexer, when present. */
+  readonly restoreError?: string;
   /**
    * **The pane the operator's own terminal is showing.** Not "the pane Collie is showing", and not a
    * pane Collie chose — it is a FACT about the multiplexer, read every snapshot.
@@ -351,6 +355,29 @@ export interface MuxGrid {
    * constant here would disable the guard silently.
    */
   readonly revision: number;
+}
+
+/** One foreground process as reported by the owning runtime. Missing OS fields stay absent. */
+export interface MuxPaneProcess {
+  readonly pid: number;
+  readonly name: string;
+  readonly argv?: readonly string[];
+  readonly argv0?: string;
+  readonly cmdline?: string;
+  readonly cwd?: string;
+}
+
+/** Process census for an explicitly resolved pane; missing individual OS fields stay absent. */
+export interface MuxPaneProcessInfo {
+  readonly paneId: string;
+  /** Same occupant snapshot taken after the process RPC, never copied from an earlier census. */
+  readonly foregroundCwd?: string;
+  readonly restoreError?: string;
+  readonly shellPid?: number;
+  readonly foregroundProcessGroupId?: number;
+  readonly processes: readonly MuxPaneProcess[];
+  readonly truncated: boolean;
+  readonly tty?: string;
 }
 
 /** A freshly-created shell pane — enough to navigate into it before the next snapshot. */
@@ -597,6 +624,9 @@ export interface MuxAdapter {
   /** One pane's rendered screen. Needs `paneGrid`; `recent` past the viewport needs `gridScrollback`. */
   readGrid(paneId: string, request: MuxGridRequest): Promise<MuxOutcome<MuxGrid>>;
 
+  /** Read foreground process metadata from the owning runtime. Needs `paneProcesses`; optional for older adapters. */
+  processInfo?(paneId: string): Promise<MuxOutcome<MuxPaneProcessInfo>>;
+
   /**
    * The same rows with soft wraps undone, when the multiplexer can produce them.
    *
@@ -727,7 +757,11 @@ export function muxDataFields(adapter: MuxAdapter): Pick<MuxAdapter, "logo" | "h
  * A decorator spreads this rather than conditionally spreading inline, so a multiplexer that cannot
  * unwrap (tmux) never comes out of a decorator appearing to offer the read: absent stays absent.
  */
-export function muxOptionalMethods(adapter: MuxAdapter): Pick<MuxAdapter, "readLogicalText"> {
+export function muxOptionalMethods(adapter: MuxAdapter): Pick<MuxAdapter, "readLogicalText" | "processInfo"> {
   const readLogicalText = adapter.readLogicalText?.bind(adapter);
-  return readLogicalText === undefined ? {} : { readLogicalText };
+  const processInfo = adapter.processInfo?.bind(adapter);
+  const methods: Pick<MuxAdapter, "readLogicalText" | "processInfo"> = {};
+  if (readLogicalText !== undefined) methods.readLogicalText = readLogicalText;
+  if (processInfo !== undefined) methods.processInfo = processInfo;
+  return methods;
 }

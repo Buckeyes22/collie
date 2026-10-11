@@ -136,6 +136,29 @@ data class PaneSummary(
 )
 
 @Serializable
+data class PaneProcess(
+    val pid: Long,
+    val name: String,
+    val argv: List<String>? = null,
+    val argv0: String? = null,
+    val cmdline: String? = null,
+    val cwd: String? = null,
+)
+
+@Serializable
+data class PaneProcessesResponse(
+    val ok: Boolean,
+    val paneId: String,
+    val shellPid: Long? = null,
+    val foregroundProcessGroupId: Long? = null,
+    val tty: String? = null,
+    val foregroundCwd: String? = null,
+    val restoreError: String? = null,
+    val processes: List<PaneProcess> = emptyList(),
+    val truncated: Boolean = false,
+)
+
+@Serializable
 data class WorkspaceSummary(
     val workspaceId: String,
     val number: Int,

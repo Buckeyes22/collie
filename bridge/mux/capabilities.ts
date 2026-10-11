@@ -30,6 +30,7 @@ export const MUX_CAPABILITIES = [
   "gridScrollback",
   "agentDetection",
   "agentSessionRef",
+  "paneProcesses",
   "typeText",
   "sendKeys",
   "renamePane",
@@ -91,6 +92,7 @@ export const MUX_CAPABILITY_ROUTES = {
     "GET /api/snapshot — the split into `agents` and `shellPanes` and every status mark (needs you, working) both need the mux to say which agent a pane holds and how it is doing.",
   agentSessionRef:
     "GET /api/pane/:id/history — the journal keys an on-disk log off the session an agent named. Without this, history is absent, not empty (bridge/journal/registry.ts).",
+  paneProcesses: "GET /api/pane/:id/processes — sensitive process and foreground-directory diagnostics from the owning runtime; requires device-read.",
   typeText: "POST /api/pane/:id/reply — step one, the literal text.",
   sendKeys: "POST /api/pane/:id/reply (step two, the submit key) and POST /api/pane/:id/keys (the Keys tray).",
   renamePane: "POST /api/pane/:id/rename — set or clear a pane's operator-chosen label.",
@@ -212,6 +214,7 @@ export function declareCapabilities(input: MuxCapabilityInput): MuxCapabilityDec
     gridScrollback: claimed.has("gridScrollback"),
     agentDetection: claimed.has("agentDetection"),
     agentSessionRef: claimed.has("agentSessionRef"),
+    paneProcesses: claimed.has("paneProcesses"),
     typeText: claimed.has("typeText"),
     sendKeys: claimed.has("sendKeys"),
     renamePane: claimed.has("renamePane"),

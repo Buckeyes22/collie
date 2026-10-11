@@ -1,7 +1,8 @@
-import type { JsonObject } from "../../json.ts";
+import type { JsonObject, JsonValue } from "../../json.ts";
 import type { AgentStatus } from "../../types.ts";
 import { dialHerdr, type DialMode, type SockHandle } from "../../dial.ts";
 import { decodeReplyLine, decodeStreamLine, type EventData } from "../../wire.ts";
+import { redactText } from "../../redact.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The Herdr socket TRANSPORT. THIS IS THE ONLY FILE that knows Herdr's method
@@ -104,6 +105,7 @@ export interface WirePane {
   focused: boolean;
   cwd: string;
   foreground_cwd?: string;
+  restore_error?: string | null;
   agent?: string | null;
   agent_status: AgentStatus;
   /** User-set pane label (herdr `pane.rename`). Present only once set — the key disappears when
@@ -187,6 +189,98 @@ export interface PaneRead {
   revision: number;
 }
 
+/** `pane.process_info` result from the pinned protocol schema (protocol 22/schema 1). */
+export interface WirePaneProcessInfo {
+  pane_id: string;
+  shell_pid?: number | null;
+  foreground_process_group_id?: number | null;
+  foreground_processes: Array<{
+    pid: number;
+    name: string;
+    argv?: string[] | null;
+    argv0?: string | null;
+    cmdline?: string | null;
+    cwd?: string | null;
+  }>;
+  tty?: string | null;
+  /** Parser metadata, not a Herdr field. True when the wire list exceeded Collie's output bound. */
+  truncated?: boolean;
+}
+
+const MAX_PROCESS_INFO_REPLY_CHARS = 1_000_000;
+const MAX_PROCESSES = 64;
+const MAX_PROCESS_ARGS = 64;
+
+function wireObject(value: JsonValue | undefined, field: string): JsonObject {
+  if (value === null || value === undefined || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`herdr pane.process_info: malformed ${field}`);
+  }
+  return value;
+}
+
+function wireText(row: JsonObject, field: string): string;
+function wireText(row: JsonObject, field: string, optional: true): string | undefined;
+function wireText(row: JsonObject, field: string, optional = false): string | undefined {
+  const value = row[field];
+  if (value === undefined || value === null) {
+    if (optional) return undefined;
+    throw new Error(`herdr pane.process_info: missing ${field}`);
+  }
+  if (typeof value !== "string") throw new Error(`herdr pane.process_info: malformed ${field}`);
+  return value;
+}
+
+function wirePid(row: JsonObject, field: string): number | undefined {
+  const value = row[field];
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`herdr pane.process_info: malformed ${field}`);
+  }
+  return value;
+}
+
+/** Parse the pinned vendor result once; omitted rows/args are signalled to the adapter as truncated. */
+function parsePaneProcessInfo(value: JsonValue): WirePaneProcessInfo {
+  const result = wireObject(value, "result");
+  const paneId = wireText(result, "pane_id");
+  const rows = result.foreground_processes;
+  if (!Array.isArray(rows)) throw new Error("herdr pane.process_info: malformed foreground_processes");
+  let truncated = rows.length > MAX_PROCESSES;
+  const foregroundProcesses: WirePaneProcessInfo["foreground_processes"] = [];
+  for (const entry of rows.slice(0, MAX_PROCESSES)) {
+    const process = wireObject(entry, "foreground process");
+    const pid = wirePid(process, "pid");
+    const name = wireText(process, "name");
+    if (pid === undefined) throw new Error("herdr pane.process_info: missing pid");
+    const argvValue = process.argv;
+    let argv: string[] | undefined;
+    if (argvValue !== undefined && argvValue !== null) {
+      if (!Array.isArray(argvValue) || !argvValue.every((arg) => typeof arg === "string")) {
+        throw new Error("herdr pane.process_info: malformed argv");
+      }
+      if (argvValue.length > MAX_PROCESS_ARGS) truncated = true;
+      argv = argvValue.slice(0, MAX_PROCESS_ARGS).map(redactText);
+    }
+    const parsed: WirePaneProcessInfo["foreground_processes"][number] = { pid, name: redactText(name) };
+    if (argv !== undefined) parsed.argv = argv;
+    const argv0 = wireText(process, "argv0", true);
+    if (argv0 !== undefined) parsed.argv0 = redactText(argv0);
+    const cmdline = wireText(process, "cmdline", true);
+    if (cmdline !== undefined) parsed.cmdline = redactText(cmdline);
+    const cwd = wireText(process, "cwd", true);
+    if (cwd !== undefined) parsed.cwd = redactText(cwd);
+    foregroundProcesses.push(parsed);
+  }
+  const parsed: WirePaneProcessInfo = { pane_id: paneId, foreground_processes: foregroundProcesses, truncated };
+  const shellPid = wirePid(result, "shell_pid");
+  if (shellPid !== undefined) parsed.shell_pid = shellPid;
+  const processGroupId = wirePid(result, "foreground_process_group_id");
+  if (processGroupId !== undefined) parsed.foreground_process_group_id = processGroupId;
+  const tty = wireText(result, "tty", true);
+  if (tty !== undefined) parsed.tty = redactText(tty);
+  return parsed;
+}
+
 // Wire names are snake_case: `recent-unwrapped` is REJECTED by the server (`unknown variant`,
 // live-probed 2026-08-03, herdr 0.7.5). Nothing called it before that probe, so the kebab spelling
 // this type carried since day one was never caught. `detection` also exists (listed by the server's
@@ -247,6 +341,7 @@ export type HerdrRpc = Pick<
   | "listPanes"
   | "listTabs"
   | "readPane"
+  | "processInfo"
   | "sendPaneText"
   | "sendPaneKeys"
   | "renamePane"
@@ -297,7 +392,7 @@ export class HerdrClient {
    *
    * `timeoutMs` overrides the client's budget for this one call; absent, the constructor's applies.
    */
-  private request<T>(method: string, params: JsonObject = {}, timeoutMs = this.timeoutMs): Promise<T> {
+  private request<T>(method: string, params: JsonObject = {}, timeoutMs = this.timeoutMs, maxReplyChars?: number): Promise<T> {
     const id = `b${++idCounter}`;
     return new Promise<T>((resolve, reject) => {
       let buf = "";
@@ -350,6 +445,10 @@ export class HerdrClient {
         data(s, chunk) {
           socket = s;
           buf += decoder.decode(chunk, { stream: true });
+          if (maxReplyChars !== undefined && buf.length > maxReplyChars) {
+            finish(() => reject(new Error(`herdr ${method}: reply exceeded ${maxReplyChars} characters`)));
+            return;
+          }
           const nl = buf.indexOf("\n");
           if (nl < 0) return;
           const line = buf.slice(0, nl);
@@ -407,6 +506,14 @@ export class HerdrClient {
   async listPanes(): Promise<WirePane[]> {
     const r = await this.request<{ panes: WirePane[] }>("pane.list");
     return r.panes;
+  }
+
+  /** Fetch sensitive process metadata for the explicit target; never asks Herdr to infer focus. */
+  async processInfo(paneId: string): Promise<WirePaneProcessInfo> {
+    const r = await this.request<JsonValue>("pane.process_info", { pane_id: paneId }, this.timeoutMs, MAX_PROCESS_INFO_REPLY_CHARS);
+    const result = wireObject(r, "result wrapper");
+    if (result.type !== "pane_process_info") throw new Error("herdr pane.process_info: unexpected result type");
+    return parsePaneProcessInfo(result.process_info ?? null);
   }
 
   /** All tabs across every workspace (`tab.list` with no filter returns the full set). */

@@ -435,8 +435,15 @@ class PaneActivityTest {
         assertTrue(rows.getValue(activity.getString(R.string.pane_action_find)).isEnabled)
         assertTrue(rows.getValue(activity.getString(R.string.pane_action_history)).isEnabled)
         assertTrue(rows.containsKey("topology timing: not declared · snapshot: not read"))
+        val processAction = rows.getValue(activity.getString(R.string.pane_action_processes))
+        assertTrue(processAction.isEnabled)
         assertFalse(rows.containsKey("Refresh"))
         assertFalse(rows.getValue(activity.getString(R.string.pane_action_read_only)).isEnabled)
+
+        processAction.performClick()
+        val processIntent = shadowOf(activity).nextStartedActivity
+        assertEquals(PaneProcessesActivity::class.java.name, processIntent.component?.className)
+        assertEquals("actions:pane", processIntent.getStringExtra(PaneActivity.EXTRA_PANE_ID))
     }
 
     @Test

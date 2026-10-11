@@ -274,6 +274,8 @@ function toView(pane: MuxPane, kind: "agent" | "shell"): AgentView {
     focused: pane.focused,
     kind,
   };
+  if (pane.foregroundCwd !== undefined) view.foregroundCwd = pane.foregroundCwd;
+  if (pane.restoreError !== undefined) view.restoreError = pane.restoreError;
   // Optional fields are ASSIGNED, never conditionally spread: absent stays absent, and each
   // condition below stays readable as the one rule it encodes.
   if (pane.paneLabel) view.paneLabel = pane.paneLabel;

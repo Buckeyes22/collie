@@ -93,7 +93,7 @@ function routeRegexSources(): string[] {
  * checked against the regex itself in the test, so a shape this expander gets wrong fails loudly.
  */
 function samplesOf(source: string): string[] {
-  let variants = [source.replace(/^\^/, "").replace(/\$$/, "").replaceAll("([^/]+)", "id1")];
+  let variants = [source.replace(/^\^/, "").replace(/\$$/, "").replaceAll("([^/]+)", "id1").replaceAll("[^/]+", "id1")];
   const expand = (re: RegExp, alts: (inner: string) => string[]): void => {
     let changed = true;
     while (changed) {
@@ -132,6 +132,7 @@ describe("the route table read off server.ts", () => {
       "/api/snapshot",
       "/api/devices/revoke",
       "/api/pane/id1/reply",
+      "/api/pane/id1/processes",
       "/api/workspace/id1/worktrees",
       // The Files existence check (ADR 0088): a POST read, refused without a token like every route.
       "/api/pane/id1/files/exist",
@@ -531,15 +532,15 @@ describe("the local credential: reads only, from this host through nothing", () 
     }
   });
 
-  test("the Files read, files/image and files/exist routes ask device-read, never read (by source)", () => {
+  test("Files and process inspection routes ask device-read, never read (by source)", () => {
     for (const route of ["WORKSPACE_FILES_ROUTE", "PANE_FILES_EXIST_ROUTE", "PANE_FILES_IMAGE_ROUTE"]) {
       const at = SERVER_CODE.indexOf(`pathname.match(${route})`);
       expect({ route, found: at > 0 }).toEqual({ route, found: true });
       const nextGate = SERVER_CODE.slice(at).match(/caller\.gate\("([a-z-]+)"\)/);
       expect({ route, level: nextGate?.[1] }).toEqual({ route, level: "device-read" });
     }
-    // The pane Files read takes its level from the action table.
-    expect(SERVER_CODE).toContain('if (action === "files") return "device-read";');
+    // Both pane Files and process inspection reads take their level from the action table.
+    expect(SERVER_CODE).toContain('if (action === "files" || action === "processes") return "device-read";');
   });
 
   test("the host's addresses are asked only once the secret matched, on a concrete bind, and read fresh each time", async () => {

@@ -164,6 +164,48 @@ class CollieApiClientTest {
     }
 
     @Test
+    fun paneProcessDetailsAreScopedAndUseTheExplicitDeviceReadRoute() = runBlocking {
+        server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody(
+            """{"ok":true,"paneId":"w1:p1","shellPid":10,"foregroundProcessGroupId":12,"processes":[{"pid":12,"name":"node","argv":["node","app.js"],"cwd":"/repo"}]}""",
+        ))
+        val connection = Connection(origin, "phone", "bearer-secret")
+        val result = api.paneProcesses(connection, PaneAddress(Scope(host = "desk", session = "work"), "w1:p1"))
+        assertTrue(result is ApiResult.Success)
+        assertEquals("node", (result as ApiResult.Success).value.processes.single().name)
+        val request = server.takeRequest()
+        assertEquals("GET", request.method)
+        assertEquals("/api/pane/w1%3Ap1/processes?host=desk&session=work", request.path)
+        assertEquals("Bearer bearer-secret", request.getHeader("Authorization"))
+        assertEquals("1", request.getHeader("X-Collie-Seen"))
+    }
+
+    @Test
+    fun paneProcessDetailsRejectAnotherPaneAndUnboundedRows() = runBlocking {
+        val address = PaneAddress(Scope(), "w1:p1")
+        server.enqueue(MockResponse().setBody("""{"ok":true,"paneId":"w1:p2","processes":[]}"""))
+        assertTrue(api.paneProcesses(Connection(origin, "phone", "token"), address) is ApiResult.Failure)
+        server.takeRequest()
+        val tooMany = (0..64).joinToString(",") { "{\"pid\":$it,\"name\":\"proc\"}" }
+        server.enqueue(MockResponse().setBody("""{"ok":true,"paneId":"w1:p1","processes":[$tooMany]}"""))
+        assertTrue(api.paneProcesses(Connection(origin, "phone", "token"), address) is ApiResult.Failure)
+        val tooLarge = "x".repeat(231 * 1024)
+        server.enqueue(MockResponse().setBody("""{"ok":true,"paneId":"w1:p1","processes":[{"pid":1,"name":"node","cmdline":"$tooLarge"}]}"""))
+        assertTrue(api.paneProcesses(Connection(origin, "phone", "token"), address) is ApiResult.Failure)
+    }
+
+    @Test
+    fun paneProcessDetailsRejectsAnOversizedChunkedWireBodyBeforeJsonDecoding(): Unit = runBlocking {
+        val address = PaneAddress(Scope(), "w1:p1")
+        val oversized = """{"ok":true,"paneId":"w1:p1","processes":[],"padding":"${"x".repeat(1_000_100)}"}"""
+        server.enqueue(MockResponse().setChunkedBody(oversized, 4096))
+        val result = api.paneProcesses(Connection(origin, "phone", "token"), address)
+        assertTrue(result is ApiResult.Failure)
+        assertTrue((result as ApiResult.Failure).error is ApiFailure.Protocol)
+        server.takeRequest()
+        Unit
+    }
+
+    @Test
     fun configReadsMuxDisplayNameForTheSharedHeader() = runBlocking {
         server.enqueue(
             MockResponse()

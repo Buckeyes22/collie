@@ -8,6 +8,7 @@ import com.lateapex.collie.domain.MuxKeyGrammar
 import com.lateapex.collie.domain.Scope
 import java.io.IOException
 import java.io.InterruptedIOException
+import java.io.ByteArrayOutputStream
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.TimeUnit
@@ -81,6 +82,7 @@ interface CollieApi {
         etag: String? = null,
         markSeen: Boolean = true,
     ): ApiResult<PaneReadResponse>
+    suspend fun paneProcesses(connection: Connection, address: PaneAddress): ApiResult<PaneProcessesResponse> = unavailable("Pane process details")
     suspend fun refresh(connection: Connection, scope: Scope = Scope()): ApiResult<ActionResponse>
     suspend fun pair(origin: CollieOrigin, code: String, label: String): ApiResult<PairResult>
     suspend fun controlOperation(connection: Connection, scope: Scope, requestId: String): ApiResult<ControlOperationResponse> = unavailable("Control operations")
@@ -298,6 +300,38 @@ class CollieApiClient(
         if (etag != null) builder.header("If-None-Match", etag)
         if (markSeen) builder.header("X-Collie-Seen", "1")
         return executeJson(builder.build(), PaneReadResponse.serializer(), READ_TIMEOUT_SECONDS, allowNotModified = true)
+    }
+
+    override suspend fun paneProcesses(connection: Connection, address: PaneAddress): ApiResult<PaneProcessesResponse> {
+        val url = scopedUrl(connection.origin, path("pane", address.paneId, "processes"), address.scope)
+        val builder = requestBuilder(connection, url).header("X-Collie-Seen", "1")
+        return requireContract(
+            executeJson(
+                builder.get().build(),
+                PaneProcessesResponse.serializer(),
+                READ_TIMEOUT_SECONDS,
+                maxResponseBytes = MAX_PROCESS_INFO_BODY_BYTES,
+            ),
+            "Malformed process details response",
+        ) { response ->
+            response.ok && response.paneId == address.paneId && response.processes.size <= 64 &&
+                (response.shellPid == null || response.shellPid >= 0) &&
+                (response.foregroundProcessGroupId == null || response.foregroundProcessGroupId >= 0) &&
+                (response.foregroundCwd == null || response.foregroundCwd.length <= 4096) &&
+                (response.restoreError == null || response.restoreError.length <= 4096) &&
+                response.processes.all { process ->
+                    process.pid >= 0 && process.name.length <= 256 &&
+                        (process.argv == null || process.argv.size <= 64 && process.argv.all { it.length <= 2048 }) &&
+                        (process.argv0 == null || process.argv0.length <= 2048) &&
+                        (process.cmdline == null || process.cmdline.length <= 8192) &&
+                        (process.cwd == null || process.cwd.length <= 4096)
+                } &&
+                ((response.tty?.length ?: 0) + (response.foregroundCwd?.length ?: 0) + (response.restoreError?.length ?: 0) +
+                    response.processes.sumOf { process ->
+                        process.name.length + (process.argv?.sumOf { it.length } ?: 0) + (process.argv0?.length ?: 0) +
+                            (process.cmdline?.length ?: 0) + (process.cwd?.length ?: 0)
+                    } <= MAX_PROCESS_INFO_TEXT_CHARS)
+        }
     }
 
     override suspend fun refresh(connection: Connection, scope: Scope): ApiResult<ActionResponse> {
@@ -992,14 +1026,35 @@ class CollieApiClient(
         serializer: DeserializationStrategy<T>,
         timeoutSeconds: Long,
         allowNotModified: Boolean = false,
+        maxResponseBytes: Int? = null,
     ): ApiResult<T> = executeResponse(request, timeoutSeconds) {
         if (allowNotModified && it.code == 304) return@executeResponse ApiResult.NotModified(it.header("ETag"), responseAuthority(it))
         if (it.code in REDIRECT_CODES) return@executeResponse ApiResult.Failure(ApiFailure.Redirect(it.code))
-        val body = it.body?.string().orEmpty()
+        val body = (if (maxResponseBytes == null) it.body?.string().orEmpty() else readBoundedBody(it, maxResponseBytes))
+            ?: return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Process details response exceeded its size limit"))
         if (!it.isSuccessful) return@executeResponse failure(it, body)
         val value = decode(serializer, body)
             ?: return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Malformed successful response"))
         ApiResult.Success(value, it.code, it.header("ETag"), it.header(BUILD_HEADER), responseAuthority(it))
+    }
+
+    /** Process details are sensitive and bounded at the wire before a JSON String is materialized. */
+    private fun readBoundedBody(response: Response, maxBytes: Int): String? {
+        val body = response.body ?: return ""
+        if (body.contentLength() > maxBytes) return null
+        val output = ByteArrayOutputStream(minOf(maxBytes, 16 * 1024))
+        body.byteStream().use { input ->
+            val buffer = ByteArray(8 * 1024)
+            var total = 0
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                total += count
+                if (total > maxBytes) return null
+                output.write(buffer, 0, count)
+            }
+        }
+        return output.toString(StandardCharsets.UTF_8.name())
     }
 
     /** Consume and close the body on OkHttp's worker, before handing a value to the caller. */
@@ -1128,6 +1183,8 @@ class CollieApiClient(
         private const val STT_PROVIDER_AND_OVERHEAD_SECONDS = 80L
         private const val STT_UPLINK_BITS_PER_SECOND = 256_000L
         private const val MAX_HISTORY_LIMIT = 5_000
+        private const val MAX_PROCESS_INFO_TEXT_CHARS = 220 * 1024
+        private const val MAX_PROCESS_INFO_BODY_BYTES = 1_000_000
         private const val MAX_ERROR_MESSAGE_CHARS = 512
         private val REDIRECT_CODES = setOf(301, 302, 303, 307, 308)
         internal fun sttTimeoutSeconds(bytes: Int): Long =

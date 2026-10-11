@@ -34,6 +34,7 @@ import type {
   PaneRead,
   SubscribeOptions,
   WirePane,
+  WirePaneProcessInfo,
   WireSnapshot,
   WireTab,
   WireWorkspace,
@@ -86,6 +87,7 @@ export class FakeHerdr implements HerdrRpc {
   private minted = 0;
   /** False while the adapter's connection is down: every RPC rejects, as a closed socket does. */
   private connected = true;
+  readonly processInfoTargets: string[] = [];
 
   constructor() {
     this.seed();
@@ -216,6 +218,26 @@ export class FakeHerdr implements HerdrRpc {
   async listPanes(): Promise<WirePane[]> {
     this.assertConnected("pane.list");
     return this.panes;
+  }
+
+  async processInfo(paneId: string): Promise<WirePaneProcessInfo> {
+    const pane = this.pane("pane.process_info", paneId);
+    this.processInfoTargets.push(paneId);
+    return {
+      pane_id: paneId,
+      shell_pid: 100,
+      foreground_process_group_id: 100,
+      foreground_processes: [{ pid: 100, name: "zsh", argv: ["zsh"], cwd: pane.foreground_cwd ?? pane.cwd }],
+      tty: "/dev/pts/1",
+    };
+  }
+
+  changeTerminalOccupant(paneId: string, terminalId: string): void {
+    this.pane("pane.list", paneId).terminal_id = terminalId;
+  }
+
+  changePaneMetadata(paneId: string, fields: Partial<WirePane>): void {
+    Object.assign(this.pane("pane.list", paneId), fields);
   }
 
   async listTabs(): Promise<WireTab[]> {

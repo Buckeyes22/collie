@@ -235,6 +235,42 @@ describe("herdr 0.9.3: the repo comes from worktree.list", () => {
   });
 });
 
+describe("herdr pane process metadata", () => {
+  test("maps foreground cwd and restore error without changing pane cwd", async () => {
+    const fake = new FakeHerdr();
+    const wire = (await fake.listPanes())[0]!;
+    wire.foreground_cwd = "/tmp/foreground";
+    wire.restore_error = "snapshot restore failed";
+    const pane = (await new HerdrMux(fake, () => []).snapshot()).panes.find((candidate) => candidate.paneId === wire.pane_id)!;
+    expect(pane.cwd).toBe(wire.cwd);
+    expect(pane.foregroundCwd).toBe("/tmp/foreground");
+    expect(pane.restoreError).toBe("snapshot restore failed");
+  });
+
+  test("asks for the explicit pane and returns OS-unavailable fields as absent", async () => {
+    const fake = new FakeHerdr();
+    const paneId = (await fake.listPanes())[0]!.pane_id;
+    const result = await new HerdrMux(fake, () => []).processInfo(paneId);
+    expect(fake.processInfoTargets).toEqual([paneId]);
+    expect(result).toMatchObject({ ok: true, value: { paneId, processes: [{ pid: 100, name: "zsh" }] } });
+  });
+
+  test("discards a process result when the terminal occupant changed, regardless of PID", async () => {
+    class ReplacedOccupant extends FakeHerdr {
+      override async processInfo(paneId: string) {
+        const value = await super.processInfo(paneId);
+        this.changeTerminalOccupant(paneId, "different-terminal");
+        return value;
+      }
+    }
+    const fake = new ReplacedOccupant();
+    const paneId = (await fake.listPanes())[0]!.pane_id;
+    const result = await new HerdrMux(fake, () => []).processInfo(paneId);
+    expect(result).toMatchObject({ ok: false, reason: "gone" });
+    expect(fake.processInfoTargets).toEqual([paneId]);
+  });
+});
+
 describe("herdr 0.8.2: the repo is on the workspace record", () => {
   // The record shape probed 2026-08-28 on herdr 0.8.2, as 0.9.3's schema still describes it
   // (WorkspaceWorktreeInfo). Read straight off the record; no worktree.list call is made.

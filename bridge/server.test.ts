@@ -23,6 +23,8 @@ import {
   serveFolderRoute,
   type FolderRouteCaller,
   marksPaneSeen,
+  paneGateLevel,
+  shouldMaskForwardedAnswer,
   SEEN_HEADER,
   deviceAuth,
   guard,
@@ -2186,6 +2188,15 @@ describe("marksPaneSeen — CSRF guard on marking a pane seen", () => {
 
   test("changes is a read too — a git view of the folder does not mark the pane seen on its own", () => {
     expect(marksPaneSeen(withHeader(), "changes")).toBe(false);
+  });
+
+  test("process inspection is a read but requires the authorised-device gate", () => {
+    expect(marksPaneSeen(withHeader(), "processes")).toBe(false);
+    expect(paneGateLevel("processes")).toBe("device-read");
+    expect(paneGateLevel("history")).toBe("read");
+    expect(shouldMaskForwardedAnswer("/api/pane/w1:p1/processes", false)).toBe(true);
+    expect(shouldMaskForwardedAnswer("/api/pane/w1:p1/history", false)).toBe(false);
+    expect(shouldMaskForwardedAnswer("/api/pane/w1:p1/history", true)).toBe(true);
   });
 
   test("write actions count without it — they already cleared the Origin-requiring write gate", () => {

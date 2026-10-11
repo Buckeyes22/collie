@@ -122,6 +122,7 @@ describe("which answers the lead masks", () => {
     expect(textAnswerOf("pane/w1%3Ap1")).toBe("pane");
     expect(textAnswerOf("pane/w1%3Ap1/history")).toBe("history");
     expect(textAnswerOf("pane/w1%3Ap1/chat")).toBe("chat");
+    expect(textAnswerOf("pane/w1%3Ap1/processes")).toBe("processes");
     expect(textAnswerOf("pane/w1%3Ap1/changes")).toBe("changes");
     expect(textAnswerOf("workspace/w1/changes")).toBe("changes");
     expect(textAnswerOf("pane/w1%3Ap1/files")).toBe("files");
@@ -142,6 +143,7 @@ describe("a member's key reaches the phone masked through the lead", () => {
     ["a Changes diff asked by space", "/api/workspace/w1/changes", JSON.stringify({ workspaceId: "w1", ...diff })],
     ["a Files body", "/api/pane/w1:p1/files", JSON.stringify({ paneId: "w1:p1", ...fileText })],
     ["a Files body asked by space", "/api/workspace/w1/files", JSON.stringify({ workspaceId: "w1", ...fileText })],
+    ["process arguments and directories", "/api/pane/w1:p1/processes", JSON.stringify({ ok: true, paneId: "w1:p1", truncated: false, foregroundCwd: `/home/${key}`, restoreError: `restore failed ${key}`, processes: [{ pid: 5, name: "node", argv: ["node", `--key=${key}`], cwd: "/home/a" }] })],
   ];
   for (const [name, path, body] of cases) {
     test(name, async () => {
@@ -274,6 +276,9 @@ describe("fail closed: a body that should be masked and cannot be is never passe
     ["a History answer with no availability", "/api/pane/w1:p1/history", JSON.stringify({ entries: [entry] })],
     ["a diff that is not a string", "/api/pane/w1:p1/changes", JSON.stringify({ ...diff, diff: [key] })],
     ["a file text that is not a string", "/api/pane/w1:p1/files", JSON.stringify({ ...fileText, text: { t: key } })],
+    ["process metadata with an unbounded argument list", "/api/pane/w1:p1/processes", JSON.stringify({ ok: true, paneId: "w1:p1", truncated: false, processes: [{ pid: 5, name: "node", argv: Array(65).fill(key) }] })],
+    ["process metadata with a malformed cwd", "/api/pane/w1:p1/processes", JSON.stringify({ ok: true, paneId: "w1:p1", truncated: false, processes: [{ pid: 5, name: "node", cwd: { secret: key } }] })],
+    ["process metadata for another pane", "/api/pane/w1:p1/processes", JSON.stringify({ ok: true, paneId: "w1:p2", truncated: false, processes: [{ pid: 5, name: "node" }] })],
   ];
   for (const [name, path, body] of broken) {
     test(name, async () => {
@@ -287,6 +292,19 @@ describe("fail closed: a body that should be masked and cannot be is never passe
       expect(refusal.host).toBe("laptop");
     });
   }
+});
+
+describe("process details aggregate envelope", () => {
+  test("refuses a schema-valid process payload over the shared aggregate text budget", () => {
+    const processes = Array.from({ length: 64 }, (_, pid) => ({
+      pid,
+      name: "node",
+      argv: Array.from({ length: 64 }, () => "x".repeat(61)),
+    }));
+    const raw = JSON.stringify({ ok: true, paneId: "w1:p1", truncated: false, processes });
+    expect(raw.length).toBeLessThan(1_000_000);
+    expect(maskForwardedAnswer("processes", raw, "w1:p1")).toBeNull();
+  });
 });
 
 describe("the merged snapshot's titles", () => {

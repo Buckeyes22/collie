@@ -66,6 +66,7 @@ class StubAdapter implements MuxAdapter {
   /** The unwrapped pane read, when a case gives it one. Absent by default, like a multiplexer that
    *  cannot unwrap at all (tmux) — the decorators must carry it without inventing it. */
   readLogicalText?: (paneId: string, lines: number) => Promise<MuxOutcome<string>>;
+  processInfo?: (paneId: string) => Promise<MuxOutcome<import("../mux/types.ts").MuxPaneProcessInfo>>;
   capabilities = declareCapabilities({
     supports: ["paneGrid", "typeText", "sendKeys"],
     notes: { agentDetection: "the adapter's own note", closePane: "untouched" },
@@ -262,6 +263,7 @@ describe("a decorator preserves the adapter's whole surface", () => {
     snapshot: true,
     refresh: true,
     readGrid: true,
+    processInfo: true,
     readLogicalText: true,
     typeText: true,
     sendKeys: true,
@@ -299,6 +301,7 @@ describe("a decorator preserves the adapter's whole surface", () => {
     stub.logo = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"></svg>`;
     stub.hostControl = herdrHostControl;
     stub.readLogicalText = (paneId, lines) => Promise.resolve(muxOk(`${paneId}:${lines}`));
+    stub.processInfo = (paneId) => Promise.resolve(muxOk({ paneId, processes: [], truncated: false }));
     return stub;
   }
 

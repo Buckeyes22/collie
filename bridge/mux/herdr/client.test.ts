@@ -135,3 +135,48 @@ describe("HerdrClient exact ping mapping", () => {
     });
   }
 });
+
+describe("HerdrClient pane.process_info", () => {
+  test("sends an explicit pane id and decodes the named success result", async () => {
+    const result = {
+      type: "pane_process_info",
+      process_info: { pane_id: "w9:p1", foreground_processes: [{ pid: 17, name: "node", argv: ["node", "server.js"] }] },
+    };
+    const client = new HerdrClient(await lateHerdr(result), 1_000);
+    await expect(client.processInfo("w9:p1")).resolves.toMatchObject({ ...result.process_info, truncated: false });
+    expect(lastRequest).toEqual({ method: "pane.process_info", params: { pane_id: "w9:p1" } });
+  });
+
+  test("redacts a credential before process strings leave the Herdr wire parser", async () => {
+    const secret = "KnownCredentialBeforeAnyAdapterClipping123";
+    const client = new HerdrClient(await lateHerdr({
+      type: "pane_process_info",
+      process_info: { pane_id: "w9:p1", foreground_processes: [{ pid: 17, name: "node", cmdline: `node --token=${secret}` }] },
+    }), 1_000);
+    const result = await client.processInfo("w9:p1");
+    expect(result.foreground_processes[0]!.cmdline).not.toContain(secret);
+    expect(result.foreground_processes[0]!.cmdline).toContain("--token=••");
+  });
+
+  test("bounds excessive process and argv arrays and marks the omitted rows", async () => {
+    const rows = Array.from({ length: 70 }, (_, pid) => ({ pid, name: "node", argv: Array(70).fill("node") }));
+    const client = new HerdrClient(await lateHerdr({ type: "pane_process_info", process_info: { pane_id: "w9:p1", foreground_processes: rows } }), 1_000);
+    const result = await client.processInfo("w9:p1");
+    expect(result.foreground_processes).toHaveLength(64);
+    expect(result.foreground_processes[0]!.argv).toHaveLength(64);
+    expect(result.truncated).toBe(true);
+  });
+
+  test("rejects malformed process rows at the socket boundary", async () => {
+    const client = new HerdrClient(await lateHerdr({ type: "pane_process_info", process_info: { pane_id: "w9:p1", foreground_processes: [{ pid: -1, name: "node" }] } }), 1_000);
+    await expect(client.processInfo("w9:p1")).rejects.toThrow("malformed pid");
+  });
+
+  test("refuses an oversized process-info socket reply before parsing an unbounded buffer", async () => {
+    const client = new HerdrClient(await lateHerdr({
+      type: "pane_process_info",
+      process_info: { pane_id: "w9:p1", foreground_processes: [{ pid: 1, name: "x".repeat(1_000_001) }] },
+    }), 1_000);
+    await expect(client.processInfo("w9:p1")).rejects.toThrow("reply exceeded 1000000 characters");
+  });
+});

@@ -1,6 +1,7 @@
 import { controlGate } from "../control/contracts.ts";
 import type { JsonObject } from "../json.ts";
 import { MASK_VERSION } from "../redact.ts";
+import { MAX_PROCESS_INFO_BODY_BYTES } from "../process-info-limits.ts";
 import { MAX_UPLOAD_OVERHEAD, uploadTooLarge } from "../uploads.ts";
 import { DEVICE_HEADER, PAIRED_IDENTITY_HEADER, encodeDeviceHeader } from "./admission.ts";
 import { type CrewLink, type PeerFailure, type PeerOutcome, WRITE_BUDGET_MS } from "./peer-client.ts";
@@ -25,7 +26,7 @@ import { HOST_PARAM, type PeerState } from "./registry.ts";
 // ── THE ONE BODY IT READS: TEXT THE PHONE WILL SHOW ──────────────────────────
 // A member masks secrets in its own text before it answers (bridge/redact.ts), but a member one
 // release behind does not, and the phone must not get a key in clear because of a member's version.
-// So five answers are masked again on the lead, with the injected {@link AnswerMask} (the same
+// So six answers are masked again on the lead, with the injected {@link AnswerMask} (the same
 // functions the local routes use, through `bridge/crew/mask.ts`): the mirror, History, Chat, a
 // Changes diff and a Files body ({@link textAnswerOf}). The mask is idempotent, so an answer a member
 // already masked comes back byte for byte. Every other route, a picture and a blob included, still
@@ -65,7 +66,7 @@ export function crewRouteFor(pathname: string): string | null {
 const FORWARDABLE: readonly RegExp[] = [
   /^refresh$/,
   /^control\/operations\/[a-zA-Z0-9_-]{1,128}$/,
-  /^pane\/[^/]+(?:\/(?:reply|keys|upload|close|rename|history|chat|changes|files|focus))?$/,
+  /^pane\/[^/]+(?:\/(?:reply|keys|upload|close|rename|history|chat|changes|files|focus|processes))?$/,
   // One picture under the Files root, as bytes (ADR 0090): off the disk of the member that owns the
   // pane or the space, like the Files read it sits beside. Mirrors `PANE_FILES_IMAGE_ROUTE` and
   // `WORKSPACE_FILES_IMAGE_ROUTE` in bridge/server.ts one-for-one. Additive-optional (§7.1).
@@ -116,13 +117,14 @@ const FORWARDABLE: readonly RegExp[] = [
  * by pane or by space. A picture (`files/image`) and a blob are bytes, never text, and stay byte for
  * byte, and so does every write's answer.
  */
-export type TextAnswer = "pane" | "history" | "chat" | "changes" | "files";
+export type TextAnswer = "pane" | "history" | "chat" | "changes" | "files" | "processes";
 
 /** Which {@link TextAnswer} a crew route answers with, or `null` for a route whose answer is not text. */
 export function textAnswerOf(route: string): TextAnswer | null {
   if (/^pane\/[^/]+$/.test(route)) return "pane";
   if (/^pane\/[^/]+\/history$/.test(route)) return "history";
   if (/^pane\/[^/]+\/chat$/.test(route)) return "chat";
+  if (/^pane\/[^/]+\/processes$/.test(route)) return "processes";
   if (/^(?:pane|workspace)\/[^/]+\/changes$/.test(route)) return "changes";
   if (/^(?:pane|workspace)\/[^/]+\/files$/.test(route)) return "files";
   return null;
@@ -134,7 +136,7 @@ export function textAnswerOf(route: string): TextAnswer | null {
  * this module still reads no journal and touches no disk; absent when the lead's own `COLLIE_REDACT`
  * is off, which leaves every answer byte for byte.
  */
-export type AnswerMask = (answer: TextAnswer, body: string) => string | null;
+export type AnswerMask = (answer: TextAnswer, body: string, expectedPaneId?: string) => string | null;
 
 /** `workspace/<id>/changes`, `.../files` and `.../files/image` — the workspace routes that are reads. */
 function isWorkspaceRead(route: string): boolean {
@@ -142,8 +144,8 @@ function isWorkspaceRead(route: string): boolean {
 }
 
 /** The pane actions that only read, as bridge/server.ts's `isPaneReadAction` lists them. */
-function isPaneRead(action: string | undefined): action is undefined | "history" | "chat" | "changes" | "files" {
-  return action === undefined || action === "history" || action === "chat" || action === "changes" || action === "files";
+function isPaneRead(action: string | undefined): action is undefined | "history" | "chat" | "changes" | "files" | "processes" {
+  return action === undefined || action === "history" || action === "chat" || action === "changes" || action === "files" || action === "processes";
 }
 
 /** The inverse of {@link crewRouteFor}, for the peer dispatching a crew route into its own routes. */
@@ -560,17 +562,20 @@ export interface ForwardDeps {
  * mirror poll would then cost a full body. No
  * `content-length` is copied ({@link proxiedResponse}), so the new body is framed by its own length.
  */
-async function maskedAnswer(res: Response, answer: TextAnswer, mask: AnswerMask, memberId: string): Promise<Response> {
+async function maskedAnswer(res: Response, answer: TextAnswer, mask: AnswerMask, memberId: string, expectedPaneId?: string): Promise<Response> {
   if (res.status < 200 || res.status >= 300 || res.status === 204 || res.body === null) return res;
-  let raw: string;
+  let raw: string | null;
   try {
-    raw = await res.text();
+    raw = answer === "processes" ? await readBoundedUtf8(res, MAX_PROCESS_INFO_BODY_BYTES) : await res.text();
+    if (raw === null) {
+      return forwardError("answer_unmaskable", `host ${memberId} sent invalid or oversized process details, so they were not passed on`, 502, { host: memberId });
+    }
   } catch (err) {
     return forwardError("host_unreachable", `host ${memberId}: the answer broke off (${String(err)})`, 503, {
       host: memberId,
     });
   }
-  const masked = mask(answer, raw);
+  const masked = mask(answer, raw, expectedPaneId);
   if (masked === null) {
     return forwardError(
       "answer_unmaskable",
@@ -580,6 +585,39 @@ async function maskedAnswer(res: Response, answer: TextAnswer, mask: AnswerMask,
     );
   }
   return new Response(masked, { status: res.status, headers: res.headers });
+}
+
+/** Read process JSON incrementally; a peer may not control the lead's response allocation. */
+async function readBoundedUtf8(response: Response, limit: number): Promise<string | null> {
+  const reader = response.body?.getReader();
+  if (!reader) return "";
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const next = await reader.read();
+      if (next.done) break;
+      total += next.value.byteLength;
+      if (total > limit) {
+        await reader.cancel();
+        return null;
+      }
+      chunks.push(next.value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -732,7 +770,7 @@ export async function forwardToPeer(req: Request, url: URL, deps: ForwardDeps): 
   const answered =
     answer === null || deps.mask === undefined
       ? outcome.value
-      : withSaltedTag(await maskedAnswer(outcome.value, answer, deps.mask, deps.link.memberId));
+      : withSaltedTag(await maskedAnswer(outcome.value, answer, deps.mask, deps.link.memberId, paneId));
   // The phone's own `accept-encoding` — never the peer's, which was pinned to `identity` on the way
   // out. Compression is decided once per hop (.adr/0023).
   return proxiedResponse(answered, req.headers.get("accept-encoding"));
@@ -744,5 +782,6 @@ export function forwardGate(route: string, method: string): "read" | "device-rea
   const control = controlGate(`/api/${route}`, method);
   if (control) return control;
   if (/^(?:pane|workspace)\/[^/]+\/files(?:\/image)?$/.test(route)) return "device-read";
+  if (/^pane\/[^/]+\/processes$/.test(route)) return "device-read";
   return forwardKind(route);
 }

@@ -10,6 +10,7 @@ import {
   forwardHeaders,
   forwardKind,
   forwardPaneId,
+  forwardGate,
   forwardParams,
   forwardToPeer,
   crewRouteFor,
@@ -19,6 +20,7 @@ import {
   type ForwardTransport,
 } from "./forward.ts";
 import { crewDeviceOf, crewPairedIdentityOf } from "./peer-gate.ts";
+import { maskForwardedAnswer } from "./mask.ts";
 import { crewTimeoutBudget, WRITE_BUDGET_MS, type CrewLink, type PeerOutcome } from "./peer-client.ts";
 import type { PeerState } from "./registry.ts";
 
@@ -215,7 +217,7 @@ describe("which routes cross a link", () => {
     // The list IS the inventory of what crosses a link; `chat` joined it with the live window, and
     // `files` with the Files view (ADR 0083).
     expect(paneActions).toEqual([
-      "changes", "chat", "close", "files", "focus", "history", "keys", "rename", "reply", "upload",
+      "changes", "chat", "close", "files", "focus", "history", "keys", "processes", "rename", "reply", "upload",
     ]);
     for (const action of paneActions) expect(crewRouteFor(`/api/pane/x/${action}`)).toBe(`pane/x/${action}`);
     const tabActions = tab.match(alternation)![1]!.split("|").toSorted();
@@ -263,6 +265,8 @@ describe("which routes cross a link", () => {
     // must be attempted against a stale member rather than refused before it is tried (§10.3).
     expect(forwardKind("pane/w1:p1/chat")).toBe("read");
     expect(forwardKind("pane/w1:p1/changes")).toBe("read");
+    expect(forwardKind("pane/w1:p1/processes")).toBe("read");
+    expect(forwardGate("pane/w1:p1/processes", "GET")).toBe("device-read");
     for (const action of ["reply", "keys", "upload", "close", "rename"]) {
       expect(forwardKind(`pane/w1:p1/${action}`)).toBe("write");
     }
@@ -644,6 +648,26 @@ describe("a write to a member that is not reachable (§10.3)", () => {
     expect(res.status).toBe(404);
     expect(calls).toHaveLength(1);
     expect(calls[0]!.route).toBe("folders");
+  });
+
+  test("process diagnostics preserve an older peer's 404 instead of presenting an empty census", async () => {
+    const { transport, calls } = transportOf(() => ok(new Response('{"error":"not found"}', { status: 404 })));
+    const [req, url] = get("/api/pane/w1:p1/processes?host=laptop&session=dev");
+    const res = await forward(req, url, { transport });
+    expect(res.status).toBe(404);
+    expect(await res.text()).toBe('{"error":"not found"}');
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.route).toBe("pane/w1:p1/processes");
+    expect(calls[0]!.params).toEqual({ session: "dev" });
+  });
+
+  test("process details stop reading a peer body at the aggregate byte ceiling", async () => {
+    const raw = JSON.stringify({ ok: true, paneId: "w1:p1", truncated: false, processes: [] }) + " ".repeat(1_000_001);
+    const { transport } = transportOf(() => ok(new Response(raw, { headers: { "content-type": "application/json" } })));
+    const [req, url] = get("/api/pane/w1:p1/processes?host=laptop&session=dev");
+    const res = await forward(req, url, { transport, mask: maskForwardedAnswer });
+    expect(res.status).toBe(502);
+    expect(await res.text()).not.toContain("processes");
   });
 
   test("a READ to a dead member is still attempted — a stale mirror is worth asking for", async () => {

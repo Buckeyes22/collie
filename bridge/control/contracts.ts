@@ -4,6 +4,7 @@ import type { GateLevel } from "../crew/peer-gate.ts";
 
 /** Closed HTTP vocabulary. Feature owners add concrete entries; no vendor RPC crosses this seam. */
 export const CONTROL_ROUTES = [
+  { name: "paneProcesses", method: "GET", pattern: /^\/api\/pane\/[^/]+\/processes$/, gate: "device-read", scope: "session", capability: "paneProcesses", maxBodyBytes: 0 },
   { name: "refresh", method: "POST", pattern: /^\/api\/refresh$/, gate: "read", scope: "session", capability: null, maxBodyBytes: 0 },
   { name: "operation", method: "GET", pattern: /^\/api\/control\/operations\/([a-zA-Z0-9_-]{1,128})$/, gate: "read", scope: "session", capability: "controlOperations", maxBodyBytes: 0 },
 ] as const;

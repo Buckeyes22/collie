@@ -45,6 +45,7 @@ import {
   type MuxGridRequest,
   type MuxOutcome,
   type MuxPane,
+  type MuxPaneProcessInfo,
   type MuxRefusalOutcome,
   type MuxSession,
   type MuxSnapshot,
@@ -75,9 +76,31 @@ import {
 } from "./client.ts";
 import { buildSubscriptions, changedPaneId } from "./events.ts";
 import { HERDR_UNSENDABLE_KEYS, toHerdrKey } from "./keys.ts";
+import { redactText } from "../../redact.ts";
+import { MAX_PROCESS_INFO_TEXT_CHARS } from "../../process-info-limits.ts";
 
 /** The registry name this adapter answers to, and the value of {@link HerdrMux.mux}. */
 export const HERDR_MUX = "herdr";
+
+interface BoundedProcessInfoRow {
+  pid: number;
+  name: string;
+  argv?: readonly string[];
+  argv0?: string;
+  cmdline?: string;
+  cwd?: string;
+}
+
+interface BoundedProcessInfo {
+  paneId: string;
+  foregroundCwd?: string;
+  restoreError?: string;
+  shellPid?: number;
+  foregroundProcessGroupId?: number;
+  processes: readonly BoundedProcessInfoRow[];
+  truncated: boolean;
+  tty?: string;
+}
 
 /**
  * What Herdr can do, read off the methods in this file.
@@ -94,6 +117,7 @@ const HERDR_CAPABILITIES = declareCapabilities({
     "gridScrollback",
     "agentDetection",
     "agentSessionRef",
+    "paneProcesses",
     "typeText",
     "sendKeys",
     "renamePane",
@@ -424,6 +448,54 @@ export class HerdrMux implements MuxAdapter {
     }
   }
 
+  /** Sensitive process metadata, read for an explicit pane and fenced by its runtime terminal id. */
+  async processInfo(paneId: string): Promise<MuxOutcome<MuxPaneProcessInfo>> {
+    try {
+      const before = (await this.client.listPanes()).find((pane) => pane.pane_id === paneId);
+      if (!before) return muxGone("The pane no longer exists.");
+      const terminalId = before.terminal_id;
+      const raw = await this.client.processInfo(paneId);
+      const after = (await this.client.listPanes()).find((pane) => pane.pane_id === paneId);
+      if (!after || after.terminal_id !== terminalId || raw.pane_id !== paneId) {
+        return muxGone("The pane occupant changed while process details were being read.");
+      }
+      const included = raw.foreground_processes.slice(0, 64);
+      let remaining = MAX_PROCESS_INFO_TEXT_CHARS;
+      let truncated = raw.truncated === true || raw.foreground_processes.length > 64 || included.some((process) => (process.argv?.length ?? 0) > 64) ||
+        (raw.tty !== undefined && raw.tty !== null && raw.tty.length > 4096) ||
+        (after.foreground_cwd !== undefined && after.foreground_cwd.length > 4096) ||
+        (after.restore_error !== undefined && after.restore_error !== null && after.restore_error.length > 4096);
+      const clip = (value: string, limit: number): string => {
+        const redacted = redactText(value);
+        const length = Math.min(redacted.length, limit, remaining);
+        if (length < redacted.length) truncated = true;
+        remaining -= length;
+        return redacted.slice(0, length);
+      };
+      const processes: BoundedProcessInfoRow[] = included.map((process) => {
+        const bounded: BoundedProcessInfoRow = {
+          pid: process.pid,
+          name: clip(process.name, 256),
+        };
+        if (process.argv !== undefined && process.argv !== null) bounded.argv = process.argv.slice(0, 64).map((arg) => clip(arg, 2048));
+        if (process.argv0 !== undefined && process.argv0 !== null) bounded.argv0 = clip(process.argv0, 2048);
+        if (process.cmdline !== undefined && process.cmdline !== null) bounded.cmdline = clip(process.cmdline, 8192);
+        if (process.cwd !== undefined && process.cwd !== null) bounded.cwd = clip(process.cwd, 4096);
+        return bounded;
+      });
+      const value: BoundedProcessInfo = { paneId, processes, truncated };
+      if (raw.shell_pid !== undefined && raw.shell_pid !== null) value.shellPid = raw.shell_pid;
+      if (raw.foreground_process_group_id !== undefined && raw.foreground_process_group_id !== null) value.foregroundProcessGroupId = raw.foreground_process_group_id;
+      if (after.foreground_cwd !== undefined) value.foregroundCwd = clip(after.foreground_cwd, 4096);
+      if (after.restore_error !== undefined && after.restore_error !== null) value.restoreError = clip(after.restore_error, 4096);
+      if (raw.tty !== undefined && raw.tty !== null) value.tty = clip(raw.tty, 4096);
+      value.truncated = truncated;
+      return muxOk(value);
+    } catch (err) {
+      return transportRefusal(err);
+    }
+  }
+
   /**
    * The same scrollback with soft wraps undone (`recent_unwrapped`), for URL repair.
    *
@@ -664,6 +736,8 @@ function toMuxPane(
   //
   // A user-set pane label (herdr pane.rename); omitted when unset.
   if (raw.label !== null && raw.label !== undefined && raw.label.length > 0) pane.paneLabel = raw.label;
+  if (raw.foreground_cwd !== undefined && raw.foreground_cwd.length > 0) pane.foregroundCwd = raw.foreground_cwd;
+  if (raw.restore_error !== undefined && raw.restore_error !== null && raw.restore_error.length > 0) pane.restoreError = raw.restore_error;
   // The tab's label, dropped when it's Herdr's positional default in a single-tab space.
   const tabLabel = meaningfulTabLabel(tabById.get(raw.tab_id)?.label);
   if (tabLabel) {

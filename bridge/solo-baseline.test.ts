@@ -105,6 +105,8 @@ const claudePane: AgentView = {
   sessionName: "guard-work",
   // Server-side only: toPaneWire must strip this to `hasSession` and never leak the value.
   agentSession: { kind: "id", value: "abc-123" },
+  foregroundCwd: "/sensitive/foreground",
+  restoreError: "restore error with private path /secret",
   readableLines: 48,
   tabLabel: "collie",
   lastActiveAt: TS - 60_000,
@@ -562,6 +564,12 @@ describe("solo zero-tax — the snapshot body is byte-for-byte today's", () => {
     expect(snap.agents.map((p) => Object.hasOwn(p, "agentSession"))).toEqual([false, false]);
     expect(snap.agents.map((p) => p.hasSession)).toEqual([true, undefined]);
   });
+
+  test("sensitive runtime process metadata is returned only by the device-read detail route", () => {
+    const pane = soloSnapshot(soloRegistry()).agents[0]!;
+    expect(pane).not.toHaveProperty("foregroundCwd");
+    expect(pane).not.toHaveProperty("restoreError");
+  });
 });
 
 // ── 3. ETag stability ────────────────────────────────────────────────────────
@@ -629,7 +637,7 @@ describe("solo zero-tax — routes", () => {
       // the poll path, forwarded to the owning member and taxing a solo instance with nothing.
       // `files` is the Files view (ADR 0083): one folder or one file under the Changes root, a read
       // gated on an authorised device and forwarded to the owning member like `changes`.
-      "/^\\/api\\/pane\\/([^/]+)(?:\\/(reply|keys|upload|close|rename|history|chat|changes|files|focus))?$/",
+      "/^\\/api\\/pane\\/([^/]+)(?:\\/(reply|keys|upload|close|rename|history|chat|changes|files|focus|processes))?$/",
       // Which paths exist under the Files root (ADR 0088), asked in one batch for the pane view's
       // links: a read with the Files gate, one `lstat` per path, not forwarded across a crew link.
       "/^\\/api\\/pane\\/([^/]+)\\/files\\/exist$/",

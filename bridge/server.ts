@@ -2,6 +2,7 @@ import { controlScope, refusal, refusalResponse } from "./control/contracts.ts";
 import { OperationStore } from "./control/operations.ts";
 import { executeBoundIntent, ownerBoundCallerReady, ownerBoundOperationReady, type IntentOwnerContext } from "./intent-operation-binding.ts";
 import { serveControlRoute } from "./control/routes.ts";
+import { servePaneProcesses } from "./control/processes.ts";
 import { hostControlForMux } from "./mux/registry.ts";
 import type { HostControlPort } from "./host-control/types.ts";
 import { hostControlConfig } from "./host-control/registry.ts";
@@ -394,7 +395,7 @@ export function isLoopbackPeer(address: string | null | undefined): boolean {
   return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(v4);
 }
 
-const PANE_ROUTE = /^\/api\/pane\/([^/]+)(?:\/(reply|keys|upload|close|rename|history|chat|changes|files|focus))?$/;
+const PANE_ROUTE = /^\/api\/pane\/([^/]+)(?:\/(reply|keys|upload|close|rename|history|chat|changes|files|focus|processes))?$/;
 
 /**
  * A pairing claim's refusal, as an error code.
@@ -536,7 +537,7 @@ export function marksPaneSeen(req: Request, action: string | undefined): boolean
  * forwarded route's kind the same way.
  */
 export function isPaneReadAction(action: string | undefined): boolean {
-  return action === "history" || action === "chat" || action === "changes" || action === "files";
+  return action === "history" || action === "chat" || action === "changes" || action === "files" || action === "processes";
 }
 
 /**
@@ -564,8 +565,13 @@ export function afterPaneInput(engine: Pick<StateEngine, "noteInput">, res: Resp
  * into or restructures a terminal.
  */
 export function paneGateLevel(action: string | undefined): GateLevel {
-  if (action === "files") return "device-read";
+  if (action === "files" || action === "processes") return "device-read";
   return !action || isPaneReadAction(action) ? "read" : "write";
+}
+
+/** Process argv and paths stay masked on Crew even when the optional terminal redaction switch is off. */
+export function shouldMaskForwardedAnswer(pathname: string, redact: boolean): boolean {
+  return redact || /^\/api\/pane\/[^/]+\/processes$/.test(pathname);
 }
 
 /**
@@ -1819,6 +1825,9 @@ export async function startServer(opts: {
       // `files` is a read that still needs an authorised device (ADR 0083); see paneGateLevel.
       const denied = caller.gate(paneGateLevel(action));
       if (denied) return denied;
+      if (action === "processes" && !controlScope(url, "session")) {
+        return refusalResponse(refusal("scope.malformed", "Malformed process inspection scope", "scope"), 400);
+      }
       const rt = await caller.resolve();
       if (rt instanceof Response) return rt;
       const { herdr, name: session } = rt;
@@ -1860,6 +1869,8 @@ export async function startServer(opts: {
       if (action === "changes" && req.method === "GET") return paneChanges(rt.engine, paneId, url, req, homedir(), cfg.redact);
       if (action === "files" && req.method === "GET")
         return paneFiles(rt.engine, paneId, url, req, filesPrivateFolders(cfg), homedir(), cfg.redact);
+      if (action === "processes" && req.method === "GET")
+        return servePaneProcesses(herdr, rt.engine, paneId);
       // A landed input makes the engine hot for a few polls (§ isPaneInput). On a member this runs
       // through the crew dispatch, so the member that owns the pane is the one that goes hot.
       if (action === "reply" && req.method === "POST")
@@ -2214,9 +2225,9 @@ export async function startServer(opts: {
               await crewLead!.forward(req, url, resolved, {
                 device: whois(req).device,
                 pairedIdentity: pairedIdentityOf(req, pairingGate),
-                // A member's text is masked here too, by the lead's own switch, so a member one
-                // release behind cannot send a key to the phone in clear (CREW_PROTOCOL.md §9.1).
-                mask: cfg.redact ? maskForwardedAnswer : undefined,
+                // A member's text is masked here too. Process details are always masked because
+                // argv and paths are sensitive regardless of the operator's terminal-redaction preference.
+                mask: shouldMaskForwardedAnswer(pathname, cfg.redact) ? maskForwardedAnswer : undefined,
                 audit: (entry) => {
                   // Assigned, never conditionally spread: an entry without a pane or session must
                   // carry NO such key rather than record it as `undefined`.

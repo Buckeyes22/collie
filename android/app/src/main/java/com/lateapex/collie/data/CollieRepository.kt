@@ -35,6 +35,7 @@ import com.lateapex.collie.network.WorktreePlanResponse
 import com.lateapex.collie.network.PairResult
 import com.lateapex.collie.network.PaneHistoryResponse
 import com.lateapex.collie.network.PaneReadResponse
+import com.lateapex.collie.network.PaneProcessesResponse
 import com.lateapex.collie.network.SnapshotResponse
 import com.lateapex.collie.network.SttResponse
 import com.lateapex.collie.network.StandbyUpdateResponse
@@ -174,12 +175,12 @@ class CollieRepository(
     /** Suspending seam for deterministic admission-race tests; production remains a no-op. */
     internal var beforeReadAdmissionForTesting: suspend () -> Unit = {}
     private val authorityInvalidations = java.util.concurrent.CopyOnWriteArrayList<(AuthorityInvalidation) -> Unit>()
+    private val readContextInvalidations = java.util.concurrent.CopyOnWriteArrayList<(AuthorityInvalidation) -> Unit>()
     private val mutableReadSource = MutableStateFlow<ReadSourceState>(ReadSourceState.Unavailable(0))
     val readSource: StateFlow<ReadSourceState> = mutableReadSource.asStateFlow()
     private val refreshMutex = Mutex()
     private val refreshes = mutableMapOf<Pair<ScopedRequestKey, Long>, kotlinx.coroutines.CompletableDeferred<ApiResult<ActionResponse>>>()
     private val cacheLock = Any()
-    private val readContextInvalidations = java.util.concurrent.CopyOnWriteArrayList<(AuthorityInvalidation) -> Unit>()
     private val paneCache = object : LinkedHashMap<PaneCacheKey, CachedPane>(16, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<PaneCacheKey, CachedPane>?): Boolean =
             size > maxPaneCacheEntries
@@ -443,6 +444,16 @@ class CollieRepository(
         expectedContext: ScopedReadContext? = null,
     ): ApiResult<PaneChatResponse> = withConnection(address.scope, address.paneId, expectedContext) {
         api.chat(it, address, limit, after, before, etag)
+    }
+
+    suspend fun paneProcesses(address: PaneAddress): ApiResult<PaneProcessesResponse> = withConnection(address.scope, address.paneId) { configured ->
+        when (val config = api.config(configured, address.scope)) {
+            is ApiResult.Failure -> config
+            is ApiResult.NotModified -> ApiResult.Failure(ApiFailure.Protocol("Process capability was not verified"))
+            is ApiResult.Success -> if (config.value.mux?.supportsNew("paneProcesses") != true) {
+                ApiResult.Failure(ApiFailure.Http(501, "Process inspection is unsupported on this runtime", "capability.unsupported"))
+            } else api.paneProcesses(configured, address)
+        }
     }
 
     suspend fun startLaunch(scope: Scope, target: StartTarget, requestId: String, cwd: String? = null): ApiResult<CreateResponse> = withWritableConnection(scope) {
