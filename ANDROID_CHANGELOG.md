@@ -7,6 +7,7 @@ the first Android release from this fork.
 ## Unreleased
 
 - Add bounded native document and text attachments with a scoped picker, private temporary storage, and one-shot uploads.
+- Show sourced cache timing, model and Git facts with lead-owned cache watches and shared machine/cache notification preferences.
 
 - Open New Space and worktree creation sheets expanded, with a bounded scrolling viewport that keeps Create reachable at large text sizes.
 

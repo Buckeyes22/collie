@@ -93,6 +93,18 @@
                 android:maxLines="1"
                 android:textColor="@color/collie_muted"
                 android:textSize="11sp" />
+
+            <TextView
+                android:id="@+id/pane_context_chip"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:minHeight="48dp"
+                android:ellipsize="end"
+                android:gravity="center_vertical"
+                android:maxLines="1"
+                android:textColor="@color/collie_primary"
+                android:textSize="12sp"
+                android:visibility="gone" />
         </LinearLayout>
 
         <androidx.appcompat.widget.AppCompatButton

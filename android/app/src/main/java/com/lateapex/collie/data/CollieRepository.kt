@@ -29,6 +29,9 @@ import com.lateapex.collie.network.OriginValidator
 import com.lateapex.collie.network.CrewStatusResponse
 import com.lateapex.collie.network.ChatAfter
 import com.lateapex.collie.network.ChatBefore
+import com.lateapex.collie.network.CacheRulesResponse
+import com.lateapex.collie.network.CacheWatchListResponse
+import com.lateapex.collie.network.CacheWatchResponse
 import com.lateapex.collie.network.PaneChatResponse
 import com.lateapex.collie.network.QueuedSendGuard
 import com.lateapex.collie.network.isCanonicalQueuedSendIdentity
@@ -1386,6 +1389,25 @@ class CollieRepository(
 
     suspend fun notificationPreferences(): ApiResult<NotifyPreferences> =
         withConnection(block = api::notificationPreferences)
+
+    /** The catalog is always owned by the connected lead; never label it as a peer's provenance. */
+    suspend fun cacheRules(scope: Scope = selectedScope.value, subjectIdentity: String? = activeSubject, etag: String? = null, expectedContext: ScopedReadContext? = null): ApiResult<CacheRulesResponse> {
+        if (scope.host != null) return ApiResult.Failure(ApiFailure.Protocol("The peer owns its cache rule catalog"))
+        return withConnection(scope, subjectIdentity, expectedContext) { api.cacheRules(it, etag) }
+    }
+
+    suspend fun cacheWatch(address: PaneAddress, expectedContext: ScopedReadContext? = null): ApiResult<CacheWatchResponse> =
+        withConnection(address.scope, address.paneId, expectedContext) { api.cacheWatch(it, address) }
+
+    /** This server preference route is paired-read gated; it does not change a terminal. */
+    suspend fun setCacheWatch(address: PaneAddress, on: Boolean, expectedContext: ScopedReadContext? = null): ApiResult<CacheWatchResponse> =
+        withConnection(address.scope, address.paneId, expectedContext) { api.setCacheWatch(it, address, on) }
+
+    suspend fun cacheWatchList(): ApiResult<CacheWatchListResponse> =
+        withConnection(block = api::cacheWatchList)
+
+    suspend fun forgetCacheWatch(id: String): ApiResult<CacheWatchListResponse> =
+        withConnection { api.forgetCacheWatch(it, id) }
 
     suspend fun setNotificationPreferences(
         patch: NotifyPreferencesPatch,

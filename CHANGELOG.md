@@ -21,6 +21,7 @@ newest tag. The phone PWA updates itself within about a minute; no reload needed
 Running a crew? Update the lead first; members follow on their own. Details:
 `docs/crew.md` → *Updating from 1.7.0*.
 
+
 ## [Unreleased]
 
 ### Added
@@ -44,6 +45,8 @@ Running a crew? Update the lead first; members follow on their own. Details:
 
 - **Large upstream merges keep their required commit checks effective.** Read entire staged path lists before judging changelog, protocol and flake-lock evidence so an early matching path cannot cause SIGPIPE to hide the match or skip a required gate.
 - **Claude command help reflects current review and fork behavior.** Describe `/review` as a current-diff or specified-target review and `/fork` as a copied background session with an optional prompt in the shared Android and web catalogs.
+- **Cache watches preserve each peer session’s exact pane identity.** Ambiguous old peer watches remain removable orphan rows, and current cache details retire their copied facts and catalog validators with their actor.
+
 
 ## [1.19.0] - 2026-10-09
 

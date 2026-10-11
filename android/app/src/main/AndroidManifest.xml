@@ -40,6 +40,10 @@
             android:exported="false"
             android:parentActivityName=".ui.PaneActivity" />
         <activity
+            android:name=".ui.CacheWatchActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.PaneActivity" />
+        <activity
             android:name=".ui.ChangesActivity"
             android:exported="false"
             android:parentActivityName=".ui.PaneActivity" />

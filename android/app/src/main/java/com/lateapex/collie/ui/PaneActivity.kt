@@ -648,6 +648,25 @@ class PaneActivity : AppCompatActivity() {
         binding.paneDiscriminator.isVisible = presentation.discriminator != null
         binding.paneCwd.text = presentation.cwd.orEmpty()
         binding.paneCwd.isVisible = presentation.cwd != null
+        val contextFacts = buildList {
+            pane.cache?.let { cache ->
+                val stateLabel = cache.state?.takeIf { it in setOf("warm", "expiring", "cold", "unknown") }
+                    ?.let { when (it) {
+                        "warm" -> getString(R.string.cache_state_warm)
+                        "expiring" -> getString(R.string.cache_state_expiring)
+                        "cold" -> getString(R.string.cache_state_cold)
+                        else -> getString(R.string.cache_state_unknown)
+                    } } ?: getString(R.string.cache_state_unknown)
+                add(getString(R.string.cache_chip_cache, stateLabel))
+            }
+            pane.model?.takeIf(String::isNotBlank)?.let { add(getString(R.string.cache_chip_model, it)) }
+            pane.gitHead?.let(CacheContextPresenter::gitFact)?.let { fact ->
+                add(getString(if (fact.kind == "branch") R.string.cache_git_branch else R.string.cache_git_detached, fact.value))
+            }
+        }
+        binding.paneContextChip.text = contextFacts.joinToString(" · ")
+        binding.paneContextChip.contentDescription = getString(R.string.cache_chip_description)
+        binding.paneContextChip.isVisible = contextFacts.isNotEmpty()
         binding.paneStatusDot.isVisible = !presentation.shell
         binding.paneStatusDot.backgroundTintList = ColorStateList.valueOf(PaneStatusVocabulary.colour(this, presentation.status))
         binding.paneStatus.text = PaneStatusVocabulary.label(resources, agentName, presentation.status)
@@ -660,6 +679,7 @@ class PaneActivity : AppCompatActivity() {
     }
 
     private fun bindActions() = with(binding) {
+        paneContextChip.setOnClickListener { startActivity(CacheWatchActivity.intent(this@PaneActivity, address)) }
         backButton.setOnClickListener {
             if (drawer != ComposerDrawer.NONE) showDrawer(ComposerDrawer.NONE) else finish()
         }
@@ -3722,6 +3742,9 @@ class PaneActivity : AppCompatActivity() {
             }
             closingRow(getString(R.string.pane_action_processes)) {
                 startActivity(PaneProcessesActivity.intent(this, address))
+            }
+            closingRow(getString(R.string.pane_action_cache)) {
+                startActivity(CacheWatchActivity.intent(this@PaneActivity, address))
             }
             closingRow(getString(R.string.pane_action_changes)) {
                 startActivity(ChangesActivity.intentForPane(

@@ -15,6 +15,9 @@
     <item name="settings_notify_blocked_switch" type="id" />
     <item name="settings_notify_done_switch" type="id" />
     <item name="settings_notify_updates_switch" type="id" />
+    <item name="settings_notify_machines_switch" type="id" />
+    <item name="settings_notify_cache_switch" type="id" />
+    <item name="settings_cache_watch_card" type="id" />
     <item name="settings_snooze_30" type="id" />
     <item name="settings_snooze_60" type="id" />
     <item name="settings_snooze_240" type="id" />

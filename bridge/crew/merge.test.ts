@@ -2,6 +2,9 @@ import { describe, expect, test } from "bun:test";
 
 import { computeEtag } from "../http-cache.ts";
 import type { PaneWire, SessionSummary, SnapshotResponse, TabView, WorkspaceView } from "../types.ts";
+import { toPaneWire } from "../types.ts";
+import { evaluate } from "../cache/engine.ts";
+import { allCacheRules } from "../cache/rules/index.ts";
 import { NARROW_VIEW } from "../sessions.ts";
 import {
   leadLabel,
@@ -114,6 +117,34 @@ describe("leadLabel — the lead's servers[].name is a machine label, not the cr
 // ── The three states of §10.2 ────────────────────────────────────────────────
 
 describe("mergeSnapshot — reachable / unreachable / incompatible, never conflated", () => {
+  test("serialized peer snapshot preserves the owner's sourced cache label and exact pane scope", async () => {
+    const ownerRule = allCacheRules().find((row) => row.id === "claude.api");
+    expect(ownerRule).toBeDefined();
+    const cache = evaluate({
+      rule: ownerRule,
+      override: { ruleId: "claude.api", ttlSeconds: 300, sourceUrl: "https://operator.invalid/cache", retrieved: "2026-10-11" },
+      probe: { lastRequestAt: NOW - 60_000, turnId: "fixture-turn", evidence: "fixture" },
+      now: NOW,
+    });
+    expect(cache).toBeDefined();
+    const ownerPane = toPaneWire(pane({
+      paneId: "w1:p7",
+      session: "work",
+      cache: cache?.cache,
+    }), () => true);
+    const peer = parsePeerSnapshot({ sessions: [], agents: [ownerPane], shellPanes: [], workspaces: [], tabs: [] });
+    expect(peer).not.toBeNull();
+    const serialized = JSON.stringify(mergeSnapshot(localBody({
+      agents: [], shellPanes: [], workspaces: [], tabs: [], sessions: [],
+    }), {
+      self: SELF,
+      peers: [contribution({ state: state({ memberId: "peer-east" }), body: peer })],
+      now: NOW,
+    }));
+    const fixture = await Bun.file(new URL("../../android/app/src/test/resources/peer-cache-snapshot.json", import.meta.url)).text();
+    expect(serialized).toBe(fixture.trim());
+  });
+
   test("a reachable peer contributes its sessions and panes, host-tagged by the lead", () => {
     const merged = mergeSnapshot(localBody(), {
       self: SELF,

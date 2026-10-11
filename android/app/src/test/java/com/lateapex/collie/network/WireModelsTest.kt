@@ -2,6 +2,7 @@ package com.lateapex.collie.network
 
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.json.Json
+import com.lateapex.collie.ui.CacheContextPresenter
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Test
@@ -36,6 +37,52 @@ class WireModelsTest {
         val snapshot = json.decodeFromString(SnapshotResponse.serializer(), body)
         assertEquals("w1:p1", snapshot.agents.single().paneId)
         assertEquals(42L, snapshot.ts)
+    }
+
+    @Test
+    fun snapshotDecodesOptionalSourcedCacheGitAndModelFactsWithoutClosingVocabulary() {
+        val body = """
+            {"bridge":"connected","agents":[{"paneId":"peer:p1","workspaceId":"w1","workspaceLabel":"work","workspaceNumber":1,"tabId":"t1","agent":"claude","status":"working","cwd":"/repo","focused":true,"host":"peer","session":"work","model":"claude-opus-5-5","gitHead":{"kind":"detached","sha":"0123456789abcdef0123456789abcdef01234567"},"cache":{"state":"future-state","expiresAt":1700000300000,"ttlSeconds":300,"ruleId":"claude.api","label":"Claude API prompt cache","confidence":"future-confidence","measuredAt":1700000000000,"coldReason":"future-reason","futureField":true}}],"shellPanes":[],"workspaces":[],"tabs":[],"ts":1700000000100}
+        """.trimIndent()
+
+        val pane = json.decodeFromString(SnapshotResponse.serializer(), body).agents.single()
+
+        assertEquals("claude-opus-5-5", pane.model)
+        assertEquals("detached", pane.gitHead?.kind)
+        assertEquals("0123456789abcdef0123456789abcdef01234567", pane.gitHead?.sha)
+        assertEquals("future-state", pane.cache?.state)
+        assertEquals("future-confidence", pane.cache?.confidence)
+        assertEquals("Claude API prompt cache", pane.cache?.label)
+        assertEquals("future-reason", pane.cache?.coldReason)
+    }
+
+    @Test
+    fun actualCrewMergedPeerSnapshotCarriesItsSourcedLabelWithoutLeadCatalogProvenance() {
+        val snapshotText = javaClass.classLoader!!.getResourceAsStream("peer-cache-snapshot.json")!!
+            .bufferedReader().use { it.readText() }
+        val snapshot = json.decodeFromString(SnapshotResponse.serializer(), snapshotText)
+        val peer = snapshot.agents.single()
+
+        assertEquals("peer-east", peer.host)
+        assertEquals("work", peer.session)
+        val source = CacheContextPresenter.peerSource(requireNotNull(peer.cache))
+        assertEquals("Claude Code on an API key or third-party provider", source?.label)
+        assertEquals("reported", source?.confidence)
+        assertEquals(true, source?.overridden)
+        assertEquals(false, source?.catalogAvailable)
+    }
+
+    @Test
+    fun cacheWatchRowsKeepOrphansNonlinkableAndMetadataOptional() {
+        val list = json.decodeFromString(
+            CacheWatchListResponse.serializer(),
+            """{"entries":[{"id":"opaque","label":"retained"},{"id":"peer","label":"active","host":"east","session":"main","paneId":"w2:p1","future":true}]}""",
+        )
+
+        assertEquals(null, list.entries.first().paneId)
+        assertEquals("east", list.entries.last().host)
+        assertEquals("main", list.entries.last().session)
+        assertEquals("w2:p1", list.entries.last().paneId)
     }
 
     @Test

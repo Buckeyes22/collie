@@ -18,7 +18,7 @@ import { loadMachineHistory, saveMachineHistory } from "./machine-history.ts";
 import { DiskWatch } from "./machine-disks.ts";
 import { MachineSampler } from "./machine-stats.ts";
 import { machineRosterOf, MachineWatch, SOLO_MACHINE_ID, type MachineRosterEntry } from "./machines.ts";
-import { localWatchPane, peerWatchPane } from "./cache/watch-key.ts";
+import { localWatchPane, peerWatchPane, resolvePeerWatchPane } from "./cache/watch-key.ts";
 import { buildJournalRegistry } from "./journal/registry.ts";
 import { createCacheRulesReader } from "./operator-cache-rules.ts";
 import { AuditLog, fileAuditAppender } from "./audit.ts";
@@ -1518,6 +1518,7 @@ const crewLead = (() => {
       // (bridge/cache/watch-key.ts).
       cacheWarden.tick(
         body.agents.flatMap((p) => {
+          if (resolvePeerWatchPane(body, p.paneId, p.session) !== p) return [];
           const pane = peerWatchPane(p, memberId);
           return pane === undefined ? [] : [pane];
         }),

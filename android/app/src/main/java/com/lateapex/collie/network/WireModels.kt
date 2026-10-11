@@ -127,12 +127,94 @@ data class PaneSummary(
     val hint: String? = null,
     val lastActiveAt: Long? = null,
     val lastSeenAt: Long? = null,
-    val gitHead: JsonObject? = null,
-    val cache: JsonObject? = null,
+    val gitHead: PaneGitHead? = null,
+    val cache: PaneCacheReading? = null,
     val model: String? = null,
     val hidden: Boolean = false,
     val host: String? = null,
     val session: String? = null,
+)
+
+/** Bounded, additive cache telemetry carried with a pane. Unknown vocabulary stays display-only. */
+@Serializable
+data class PaneCacheReading(
+    val state: String? = null,
+    val expiresAt: Long? = null,
+    val ttlSeconds: Long? = null,
+    val ruleId: String? = null,
+    val label: String? = null,
+    val confidence: String? = null,
+    val lastRequestAt: Long? = null,
+    val measuredAt: Long? = null,
+    val overridden: Boolean? = null,
+    val coldReason: String? = null,
+    val reset: PaneCacheReset? = null,
+)
+
+@Serializable
+data class PaneCacheReset(
+    val ruleId: String? = null,
+    val label: String? = null,
+    val at: Long? = null,
+)
+
+@Serializable
+data class PaneGitHead(
+    val kind: String? = null,
+    val name: String? = null,
+    val sha: String? = null,
+)
+
+@Serializable
+data class CacheRulesResponse(val rules: List<CacheRule> = emptyList())
+
+@Serializable
+data class CacheRule(
+    val id: String,
+    val label: String,
+    val ttlSeconds: Long,
+    val confidence: String,
+    val sourceTitle: String,
+    val sourceUrl: String,
+    val retrievedAt: String,
+    val slidingWindow: Boolean = false,
+    val automatic: Boolean = false,
+    val note: String? = null,
+    val overridden: CacheRuleOverride? = null,
+)
+
+@Serializable
+data class CacheRuleOverride(
+    val ttlSeconds: Long,
+    val sourceUrl: String,
+    val retrieved: String,
+    val note: String? = null,
+)
+
+@Serializable
+data class CacheWatchResponse(
+    val on: Boolean,
+    val global: Boolean,
+    val watchable: Boolean,
+    val warnSeconds: Long,
+)
+
+@Serializable
+internal data class CacheWatchRequest(val on: Boolean)
+
+@Serializable
+internal data class CacheWatchForgetRequest(val id: String)
+
+@Serializable
+data class CacheWatchListResponse(val entries: List<CacheWatchEntry>)
+
+@Serializable
+data class CacheWatchEntry(
+    val id: String,
+    val label: String,
+    val host: String? = null,
+    val session: String? = null,
+    val paneId: String? = null,
 )
 
 @Serializable

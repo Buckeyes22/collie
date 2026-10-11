@@ -36,7 +36,7 @@ export interface CacheWatchEntry {
   host?: string;
   /** The named Herdr session. Absent for the primary, the same omitted-not-null rule. */
   session?: string;
-  /** See `watch-key.ts`: a harness session ref locally, `pane:<id>` for a peer's pane. */
+  /** See `watch-key.ts`: a harness session ref locally, `peer-pane:<id>` plus its advertised session for a peer's pane. */
   ref: string;
   label: string;
   lastSeenAt: number;

@@ -209,6 +209,11 @@ interface CollieApi {
     }
     suspend fun transcribe(connection: Connection, audio: AudioUpload): ApiResult<SttResponse> =
         unavailable("Speech to text")
+    suspend fun cacheRules(connection: Connection, etag: String? = null): ApiResult<CacheRulesResponse> = unavailable("Cache rule catalog")
+    suspend fun cacheWatch(connection: Connection, address: PaneAddress): ApiResult<CacheWatchResponse> = unavailable("Cache watch")
+    suspend fun setCacheWatch(connection: Connection, address: PaneAddress, on: Boolean): ApiResult<CacheWatchResponse> = unavailable("Cache watch update")
+    suspend fun cacheWatchList(connection: Connection): ApiResult<CacheWatchListResponse> = unavailable("Cache watch list")
+    suspend fun forgetCacheWatch(connection: Connection, id: String): ApiResult<CacheWatchListResponse> = unavailable("Cache watch forget")
     suspend fun notificationPreferences(connection: Connection): ApiResult<NotifyPreferences> = unavailable("Notification preferences")
     suspend fun setNotificationPreferences(
         connection: Connection,
@@ -453,6 +458,7 @@ class CollieApiClient(
                 PaneProcessesResponse.serializer(),
                 READ_TIMEOUT_SECONDS,
                 maxResponseBytes = MAX_PROCESS_INFO_BODY_BYTES,
+                limitMessage = "Process details response exceeded its size limit",
             ),
             "Malformed process details response",
         ) { response ->
@@ -1225,6 +1231,94 @@ class CollieApiClient(
         }
     }
 
+    override suspend fun cacheRules(connection: Connection, etag: String?): ApiResult<CacheRulesResponse> {
+        val builder = requestBuilder(connection, url(connection.origin, path("cache-rules")))
+        if (!etag.isNullOrBlank()) builder.header("If-None-Match", etag)
+        return requireContract(
+            executeJson(
+                builder.get().build(),
+                CacheRulesResponse.serializer(),
+                READ_TIMEOUT_SECONDS,
+                allowNotModified = true,
+                maxResponseBytes = MAX_CACHE_RULES_BODY_BYTES,
+                limitMessage = "Cache rule catalog exceeded its size limit",
+            ),
+            "Malformed cache rule catalog",
+        ) { catalog ->
+            catalog.rules.size <= MAX_CACHE_RULES && catalog.rules.all { rule ->
+                rule.id.length in 1..128 && rule.label.length in 1..256 && rule.ttlSeconds in 1..MAX_CACHE_TTL_SECONDS &&
+                    rule.confidence.length <= 32 && rule.sourceTitle.length <= 256 && rule.sourceUrl.length in 1..MAX_CACHE_URL_CHARS &&
+                    rule.retrievedAt.length <= 32 && (rule.note?.length ?: 0) <= MAX_CACHE_NOTE_CHARS &&
+                    (rule.overridden == null || rule.overridden.ttlSeconds in 1..MAX_CACHE_TTL_SECONDS &&
+                        rule.overridden.sourceUrl.length in 1..MAX_CACHE_URL_CHARS && rule.overridden.retrieved.length <= 32 &&
+                        (rule.overridden.note?.length ?: 0) <= MAX_CACHE_NOTE_CHARS)
+            }
+        }
+    }
+
+    override suspend fun cacheWatch(connection: Connection, address: PaneAddress): ApiResult<CacheWatchResponse> {
+        val target = scopedUrl(
+            connection.origin,
+            path("notifications", "cache-watch"),
+            address.scope,
+            listOf("pane" to address.paneId),
+        )
+        return validateCacheWatch(executeJson(request(connection, target), CacheWatchResponse.serializer(), READ_TIMEOUT_SECONDS))
+    }
+
+    override suspend fun setCacheWatch(
+        connection: Connection,
+        address: PaneAddress,
+        on: Boolean,
+    ): ApiResult<CacheWatchResponse> {
+        val target = scopedUrl(
+            connection.origin,
+            path("notifications", "cache-watch"),
+            address.scope,
+            listOf("pane" to address.paneId),
+        )
+        return validateCacheWatch(
+            executeJson(post(connection, target, json.encodeToString(CacheWatchRequest(on))), CacheWatchResponse.serializer(), MUTATION_TIMEOUT_SECONDS),
+        )
+    }
+
+    override suspend fun cacheWatchList(connection: Connection): ApiResult<CacheWatchListResponse> = validateCacheWatchList(
+        executeJson(
+            request(connection, path("notifications", "cache-watch", "list")),
+            CacheWatchListResponse.serializer(),
+            READ_TIMEOUT_SECONDS,
+            maxResponseBytes = MAX_CACHE_WATCH_LIST_BODY_BYTES,
+            limitMessage = "Cache watch list exceeded its size limit",
+        ),
+    )
+
+    override suspend fun forgetCacheWatch(connection: Connection, id: String): ApiResult<CacheWatchListResponse> {
+        require(id.isNotBlank())
+        return validateCacheWatchList(
+            executeJson(
+                post(connection, url(connection.origin, path("notifications", "cache-watch", "forget")), json.encodeToString(CacheWatchForgetRequest(id))),
+                CacheWatchListResponse.serializer(),
+                MUTATION_TIMEOUT_SECONDS,
+                maxResponseBytes = MAX_CACHE_WATCH_LIST_BODY_BYTES,
+                limitMessage = "Cache watch list exceeded its size limit",
+            ),
+        )
+    }
+
+    private fun validateCacheWatch(result: ApiResult<CacheWatchResponse>): ApiResult<CacheWatchResponse> =
+        requireContract(result, "Malformed cache watch response") { it.warnSeconds in 1..MAX_CACHE_TTL_SECONDS }
+
+    private fun validateCacheWatchList(result: ApiResult<CacheWatchListResponse>): ApiResult<CacheWatchListResponse> =
+        requireContract(result, "Malformed cache watch list") { response ->
+            response.entries.size <= MAX_CACHE_WATCHES && response.entries.all { entry ->
+                entry.id.length in 1..128 && entry.label.length <= 256 &&
+                    (entry.host?.length ?: 0) <= 128 && (entry.session?.length ?: 0) <= 128 &&
+                    (entry.paneId?.length ?: 0) <= 256 &&
+                    (entry.host == null || entry.host.isNotBlank()) && (entry.session == null || entry.session.isNotBlank()) &&
+                    (entry.paneId == null || entry.paneId.isNotBlank())
+            }
+        }
+
     override suspend fun notificationPreferences(connection: Connection): ApiResult<NotifyPreferences> =
         executeJson(
             request(connection, url(connection.origin, path("notifications", "prefs"))),
@@ -1471,11 +1565,12 @@ class CollieApiClient(
         timeoutSeconds: Long,
         allowNotModified: Boolean = false,
         maxResponseBytes: Int? = null,
+        limitMessage: String = "Response exceeded its size limit",
     ): ApiResult<T> = executeResponse(request, timeoutSeconds) {
         if (allowNotModified && it.code == 304) return@executeResponse ApiResult.NotModified(it.header("ETag"), responseAuthority(it))
         if (it.code in REDIRECT_CODES) return@executeResponse ApiResult.Failure(ApiFailure.Redirect(it.code))
         val body = (if (maxResponseBytes == null) it.body?.string().orEmpty() else readBoundedBody(it, maxResponseBytes))
-            ?: return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Response exceeded its size limit"))
+            ?: return@executeResponse ApiResult.Failure(ApiFailure.Protocol(limitMessage))
         if (!it.isSuccessful) return@executeResponse failure(it, body)
         val value = decode(serializer, body)
             ?: return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Malformed successful response"))
@@ -1708,6 +1803,13 @@ class CollieApiClient(
         private const val MAX_PROCESS_INFO_TEXT_CHARS = 220 * 1024
         private const val MAX_PROCESS_INFO_BODY_BYTES = 1_000_000
         internal const val MAX_LAYOUT_RESPONSE_BYTES = 1_000_000
+        private const val MAX_CACHE_RULES_BODY_BYTES = 256_000
+        private const val MAX_CACHE_WATCH_LIST_BODY_BYTES = 256_000
+        private const val MAX_CACHE_RULES = 128
+        private const val MAX_CACHE_WATCHES = 1_000
+        private const val MAX_CACHE_TTL_SECONDS = 86_400L
+        private const val MAX_CACHE_URL_CHARS = 2_048
+        private const val MAX_CACHE_NOTE_CHARS = 1_024
         private const val MAX_CHANGES_ID_CHARS = 8_192
         private const val MAX_CHANGES_RESPONSE_BYTES = 5L * 1024L * 1024L
         private const val MAX_FILES_ID_CHARS = 512
@@ -1738,6 +1840,7 @@ class CollieApiClient(
                 .build()
     }
 }
+
 
 private suspend fun <T> Call.await(timeoutSeconds: Long, read: (Response) -> T): T =
     suspendCancellableCoroutine { continuation ->

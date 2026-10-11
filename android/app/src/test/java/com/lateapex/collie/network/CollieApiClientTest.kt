@@ -757,6 +757,86 @@ class CollieApiClientTest {
     }
 
     @Test
+    fun cacheCatalogUsesItsEtagAndWatchCallsKeepTheExactHostSessionPaneAddress() = runBlocking<Unit> {
+        val mounted = Connection(CollieOrigin(server.url("/base/").toString()), "phone", "token")
+        server.enqueue(jsonResponse("""{"rules":[]}""").setHeader("ETag", "\"cache-v1\""))
+        val catalog = api.cacheRules(mounted)
+        assertEquals("\"cache-v1\"", (catalog as ApiResult.Success).etag)
+        assertEquals("/base/api/cache-rules", server.takeRequest().path)
+
+        server.enqueue(MockResponse().setResponseCode(304).setHeader("ETag", "\"cache-v1\""))
+        assertEquals("\"cache-v1\"", (api.cacheRules(mounted, "\"cache-v1\"") as ApiResult.NotModified).etag)
+        assertEquals("\"cache-v1\"", server.takeRequest().getHeader("If-None-Match"))
+
+        val address = PaneAddress(Scope(host = "peer-east", session = "work"), "w2:p7")
+        server.enqueue(jsonResponse("""{"on":false,"global":true,"watchable":true,"warnSeconds":120}"""))
+        assertTrue(api.cacheWatch(mounted, address) is ApiResult.Success)
+        server.takeRequest().also { request ->
+            assertEquals("GET", request.method)
+            assertEquals("/base/api/notifications/cache-watch", request.requestUrl?.encodedPath)
+            assertEquals("w2:p7", request.requestUrl?.queryParameter("pane"))
+            assertEquals("peer-east", request.requestUrl?.queryParameter("host"))
+            assertEquals("work", request.requestUrl?.queryParameter("session"))
+            assertEquals("Bearer token", request.getHeader("Authorization"))
+        }
+
+        server.enqueue(jsonResponse("""{"on":true,"global":false,"watchable":true,"warnSeconds":120}"""))
+        assertTrue(api.setCacheWatch(mounted, address, true) is ApiResult.Success)
+        server.takeRequest().also { request ->
+            assertEquals("POST", request.method)
+            assertEquals("/base/api/notifications/cache-watch", request.requestUrl?.encodedPath)
+            assertEquals("w2:p7", request.requestUrl?.queryParameter("pane"))
+            assertEquals("peer-east", request.requestUrl?.queryParameter("host"))
+            assertEquals("work", request.requestUrl?.queryParameter("session"))
+            assertEquals("{\"on\":true}", request.body.readUtf8())
+            assertEquals(mounted.origin.headerValue, request.getHeader("Origin"))
+        }
+
+        server.enqueue(jsonResponse("""{"entries":[{"id":"opaque","label":"agent","host":"peer-east","session":"work","paneId":"w2:p7"}]}"""))
+        assertTrue(api.cacheWatchList(mounted) is ApiResult.Success)
+        assertEquals("/base/api/notifications/cache-watch/list", server.takeRequest().path)
+
+        server.enqueue(jsonResponse("""{"entries":[]}"""))
+        assertTrue(api.forgetCacheWatch(mounted, "opaque") is ApiResult.Success)
+        server.takeRequest().also { request ->
+            assertEquals("/base/api/notifications/cache-watch/forget", request.path)
+            assertEquals("{\"id\":\"opaque\"}", request.body.readUtf8())
+        }
+    }
+
+    @Test
+    fun cacheWatchListRequiresAnEntriesArrayAndDistinguishesMalformedFromEmpty() = runBlocking<Unit> {
+        val connection = Connection(origin, "phone", "token")
+        for (body in listOf("{}", "{\"entries\":null}", "{\"entries\":\"not-an-array\"}")) {
+            server.enqueue(jsonResponse(body))
+            val result = api.cacheWatchList(connection)
+            assertTrue("Expected a typed protocol refusal for $body", result is ApiResult.Failure && result.error is ApiFailure.Protocol)
+            server.takeRequest()
+        }
+
+        server.enqueue(jsonResponse("{\"entries\":[]}"))
+        val empty = api.cacheWatchList(connection)
+        assertTrue(empty is ApiResult.Success)
+        assertTrue((empty as ApiResult.Success).value.entries.isEmpty())
+        server.takeRequest()
+    }
+
+    @Test
+    fun machineAndCachePreferencesAreAnAdditivePartialPatch() = runBlocking<Unit> {
+        server.enqueue(jsonResponse("""{"blocked":true,"done":false,"updates":true,"machines":false,"cache":true}"""))
+        val connection = Connection(origin, "phone", "token")
+
+        val result = api.setNotificationPreferences(connection, NotifyPreferencesPatch(machines = false, cache = true))
+
+        assertEquals(false, (result as ApiResult.Success).value.machines)
+        assertEquals(true, result.value.cache)
+        server.takeRequest().also { request ->
+            assertEquals("/api/notifications/prefs", request.path)
+            assertEquals("{\"cache\":true,\"machines\":false}", request.body.readUtf8())
+        }
+    }
+
+    @Test
     fun updateDismissalUsesMountedReadRouteAndDistinctOfferAndCrewScopes(): Unit = runBlocking {
         val mounted = Connection(CollieOrigin(server.url("/mount/").toString()), "phone", "token")
         server.enqueue(jsonResponse(updateInfoResponse(dismissed = "1.6.0")))

@@ -46,7 +46,7 @@ import { MAX_PANE_READ_LINES, negotiateReadLimit } from "./mux/read-limits.ts";
 import { allCacheRules } from "./cache/rules/index.ts";
 import type { CacheOverride } from "./cache/engine.ts";
 import type { GitHeadSurface } from "./git-head.ts";
-import { localWatchPane, peerWatchPane, type CacheWarnPane } from "./cache/watch-key.ts";
+import { localWatchPane, peerWatchPane, resolvePeerWatchPane, type CacheWarnPane } from "./cache/watch-key.ts";
 import { watchKeyOf, type CacheWatchSurface } from "./cache/watch.ts";
 import { createCacheRulesReader } from "./operator-cache-rules.ts";
 import { computeEtag, conditionalJsonResponse, gzipJsonResponse, notModified, wantsGzip } from "./http-cache.ts";
@@ -204,7 +204,6 @@ import type {
   CacheRulesResponse,
   CacheRuleWire,
   CacheWatchListResponse,
-  CacheWatchResponse,
   PaneCache,
   PaneChangeCommitHistoryResponse,
   PaneChangeCommitDiffResponse,
@@ -1494,20 +1493,13 @@ export async function startServer(opts: {
     }
     for (const contribution of crewLead?.contributions() ?? []) {
       for (const wire of contribution.body?.agents ?? []) {
+        if (contribution.body === null || resolvePeerWatchPane(contribution.body, wire.paneId, wire.session) !== wire) continue;
         const pane = peerWatchPane(wire, contribution.state.memberId);
         if (pane !== undefined) out.set(pane.key, pane.paneId);
       }
     }
     return out;
   };
-
-  /** One pane's place in the list, as the sheet reads it. */
-  const cacheWatchBody = (watch: CacheWatchSurface, pane: CacheWarnPane): CacheWatchResponse => ({
-    on: watch.has(pane.key),
-    global: notifyPrefs.current().cache,
-    watchable: cacheWatchable(pane),
-    warnSeconds: cfg.cacheWarnSeconds,
-  });
 
   /** The whole bridge's list, with a pane id on every row whose pane is in sight. */
   const cacheWatchListBody = (watch: CacheWatchSurface): CacheWatchListResponse => {
@@ -2203,7 +2195,7 @@ export async function startServer(opts: {
       ): { pane: CacheWarnPane; error?: undefined } | { pane?: undefined; error: ErrorCode } => {
         if (selector.kind === "member") {
           const body = crewLead?.contributions().find((c) => c.state.memberId === selector.id)?.body;
-          const wire = body?.agents.find((p) => p.paneId === paneId);
+          const wire = body === null || body === undefined ? undefined : resolvePeerWatchPane(body, paneId, session);
           if (wire === undefined) return { error: "cache.pane_unknown" };
           // A peer's pane carries no ref, so `hasSession` is what "names a session" means here — the
           // same flag the History affordance is gated on.
@@ -2621,38 +2613,8 @@ export async function startServer(opts: {
         if (denied) return denied;
         const watch = opts.cacheWatch;
         if (!watch) return text("not found", 404);
-        const paneId = url.searchParams.get("pane");
-        // A malformed REQUEST is refused the way the prefs block above refuses one: in plain text, with
-        // no code. A code is for a refusal the phone has to explain to the operator, and "you forgot a
-        // query parameter" is a bug in the caller. The two refusals below are the explainable ones.
-        if (paneId === null || paneId === "") return text("bad request", 400);
-        const found = watchTargetFor(paneId, host, sessionName);
-        if (found.error !== undefined) {
-          const status = found.error === "cache.pane_unknown" ? 404 : 409;
-          return jsonError(apiError(found.error, { paneId }), status, req.headers.get("accept-encoding"));
-        }
-        if (req.method === "POST") {
-          let body: JsonValue;
-          try {
-            // SAFETY: `Request.json()` output IS a JsonValue by construction; `parseCacheWatchRequest`
-            // rejects anything that is not a single boolean `on`.
-            body = (await req.json()) as JsonValue;
-          } catch {
-            return text("bad request", 400);
-          }
-          const parsed = parseCacheWatchRequest(body);
-          if (parsed === null) return text("bad on", 400);
-          // The 409 a race earns: the GET already reported `watchable: false` and the sheet already
-          // disabled the switch, so the ordinary operator never sees this. It exists for the tap that
-          // lands after the harness dropped its session, where accepting would leave a switch that lies.
-          if (parsed.on && !cacheWatchable(found.pane)) {
-            return jsonError(apiError("cache.no_session", { paneId }), 409, req.headers.get("accept-encoding"));
-          }
-          await watch.set(found.pane, found.pane.label, parsed.on);
-        } else if (req.method !== "GET") {
-          return text("method not allowed", 405);
-        }
-        return json(cacheWatchBody(watch, found.pane), req.headers.get("accept-encoding"));
+        return serveCacheWatchRoute(req, url, watch, (paneId) => watchTargetFor(paneId, host, sessionName),
+          () => notifyPrefs.current().cache, cfg.cacheWarnSeconds);
       }
       if (pathname === "/api/notifications/cache-watch/list" && req.method === "GET") {
         const denied = guard(req, cfg, "read", pairingGate);
@@ -7442,4 +7404,42 @@ function gzippedBytes(
  */
 export function cacheControlFor(rel: string): string {
   return rel.startsWith("assets/") ? "public, max-age=31536000, immutable" : "no-cache";
+}
+
+/** The actual lead-owned preference handler, injectable for scoped store/HTTP fixtures. */
+export async function serveCacheWatchRoute(
+  req: Request,
+  url: URL,
+  watch: CacheWatchSurface,
+  resolve: (paneId: string) => { pane: CacheWarnPane; error?: undefined } | { pane?: undefined; error: ErrorCode },
+  global: () => boolean,
+  warnSeconds: number,
+): Promise<Response> {
+  const paneId = url.searchParams.get("pane");
+  if (paneId === null || paneId === "") return text("bad request", 400);
+  let on: boolean | undefined;
+  if (req.method === "POST") {
+    let body: JsonValue;
+    try {
+      // SAFETY: JSON.parse returns JSON; the closed boolean parser validates its schema.
+      body = (await req.json()) as JsonValue;
+    } catch { return text("bad request", 400); }
+    const parsed = parseCacheWatchRequest(body);
+    if (parsed === null) return text("bad on", 400);
+    on = parsed.on;
+  } else if (req.method !== "GET") return text("method not allowed", 405);
+  // Resolve after body consumption so a suspended POST cannot use an earlier swept target.
+  const found = resolve(paneId);
+  if (found.error !== undefined) {
+    return jsonError(apiError(found.error, { paneId }), found.error === "cache.pane_unknown" ? 404 : 409,
+      req.headers.get("accept-encoding"));
+  }
+  if (on !== undefined) {
+    if (on && !cacheWatchable(found.pane)) {
+      return jsonError(apiError("cache.no_session", { paneId }), 409, req.headers.get("accept-encoding"));
+    }
+    await watch.set(found.pane, found.pane.label, on);
+  }
+  return json({ on: watch.has(found.pane.key), global: global(), watchable: cacheWatchable(found.pane), warnSeconds },
+    req.headers.get("accept-encoding"));
 }

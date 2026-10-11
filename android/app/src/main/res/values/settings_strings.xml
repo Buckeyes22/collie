@@ -76,7 +76,7 @@
     <string name="symbol_minus" translatable="false">−</string>
     <string name="symbol_plus" translatable="false">+</string>
     <string name="settings_notify_title">Notify when</string>
-    <string name="settings_notify_description">Applies to all devices.</string>
+    <string name="settings_notify_description">These preferences are shared by every device receiving bridge notifications. Native background delivery is not available in this app.</string>
     <string name="settings_snooze_title">Do not disturb</string>
     <string name="settings_snooze_description">Temporarily silence bridge notifications on every device.</string>
     <string name="settings_updates_description">Update Collie, and the crew with it.</string>
@@ -108,8 +108,20 @@
     <string name="settings_notify_needs_input">Needs input</string>
     <string name="settings_notify_finished">Finished</string>
     <string name="settings_notify_updates">Server updates</string>
+    <string name="settings_notify_machines">Machine alerts</string>
+    <string name="settings_notify_cache">Cache alerts</string>
     <string name="settings_notify_updating">Updating notification preference…</string>
     <string name="settings_notify_subject">Notification preferences</string>
+    <string name="settings_cache_watches_title">Watched panes</string>
+    <string name="settings_cache_watches_description">Lead-owned cache watches across this bridge. Entries without a current pane can be forgotten but cannot be opened.</string>
+    <string name="settings_cache_watches_loading">Loading watched panes…</string>
+    <string name="settings_cache_watches_failed">Watched panes are unavailable. Refresh Settings and check the connection.</string>
+    <string name="settings_cache_watches_unsupported">This server does not provide cache-watch controls.</string>
+    <string name="settings_cache_watches_empty">No panes are being watched.</string>
+    <string name="settings_cache_watches_orphan">%1$s · pane is no longer available; this entry cannot be opened.</string>
+    <string name="settings_cache_watches_open">Open watched pane %1$s</string>
+    <string name="settings_cache_watches_forget">Forget watch</string>
+    <string name="settings_cache_watches_forgetting">Forgetting cache watch…</string>
     <string name="settings_snoozed_until">Snoozed until %1$s</string>
     <string name="settings_notifications_active">Notifications are active</string>
     <string name="settings_snooze_resume">Resume</string>

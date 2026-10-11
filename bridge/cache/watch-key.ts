@@ -11,8 +11,8 @@
 // A PEER's pane cannot be: `agentSession` is stripped before a pane goes on any wire
 // (`bridge/types.ts` § PaneWire), so a lead holds no ref for a pane on a member and adding one to the
 // crew wire would publish an agent-reported filesystem path across a machine boundary. A peer's pane is
-// therefore keyed `pane:<paneId>`, which is the identity the lead actually has — the same identity
-// `bridge/crew/notify.ts` already keys a peer's alerts by. The cost is named rather than hidden: a
+// therefore keyed `peer-pane:<paneId>` with its advertised session tag, which is the identity the lead actually has.
+// Old unscoped peer keys remain orphaned rather than inheriting a guessed session. The cost is named rather than hidden: a
 // renumbered pane on a member orphans its entry, which then ages out exactly as a moved pi path ref
 // does.
 //
@@ -40,7 +40,7 @@ const SEP = String.fromCharCode(0);
 export interface WatchIdentity {
   readonly host?: string;
   readonly session?: string;
-  /** `"<kind>:<value>"` for a local pane, `"pane:<paneId>"` for a peer's. See the module header. */
+  /** `"<kind>:<value>"` for a local pane, `"peer-pane:<paneId>"` for a peer's. See the module header. */
   readonly ref: string;
 }
 
@@ -132,8 +132,11 @@ export function localWatchPane(
 
 /** A pane on a crew member, keyed by the identity the lead actually has (see the module header). */
 export function peerWatchPane(pane: PaneWire, host: string): CacheWarnPane | undefined {
-  if (pane.kind === "shell") return undefined;
-  const id: WatchIdentity = { host, ref: `pane:${pane.paneId}` };
+  // NUL is the private key separator, never part of an admitted peer address.
+  if (pane.kind === "shell" || host.includes(SEP) || pane.paneId.includes(SEP) || pane.session?.includes(SEP)) return undefined;
+  // Never migrate the old unscoped pane:<id> namespace by guessing a session.
+  const identity: WatchIdentity = { host, ref: `peer-pane:${pane.paneId}` };
+  const id = pane.session === undefined ? identity : { ...identity, session: pane.session };
   const out: CacheWarnPane = {
     key: watchKeyOf(id),
     ref: id.ref,
@@ -143,5 +146,27 @@ export function peerWatchPane(pane: PaneWire, host: string): CacheWarnPane | und
   };
   // Assigned, never spread as `undefined`: a pane with no reading must carry no key at all, which is
   // what makes `watchable` false for it rather than "false-ish".
-  return pane.cache === undefined ? out : { ...out, cache: pane.cache };
+  const addressed = pane.session === undefined ? out : { ...out, session: pane.session };
+  return pane.cache === undefined ? addressed : { ...addressed, cache: pane.cache };
+}
+
+/** Resolve a peer preference from its authenticated swept body, never by pane ID alone.
+ * Tagged bodies require an exact session. An older untagged body can prove only a
+ * unique default pane, or its single advertised session; it cannot prove a named
+ * session in a multi-session body. Duplicate matches are always refused.
+ */
+export function resolvePeerWatchPane(
+  body: { agents: readonly PaneWire[]; sessions: readonly { name: string; isPrimary?: boolean }[] },
+  paneId: string,
+  session: string | undefined,
+): PaneWire | undefined {
+  const candidates = body.agents.filter((p) => p.paneId === paneId);
+  const primaries = body.sessions.filter((s) => s.isPrimary === true);
+  const primary = primaries.length === 1 ? primaries[0]?.name : body.sessions.length === 1 ? body.sessions[0]?.name : undefined;
+  const named = session ?? primary;
+  const exact = candidates.filter((p) => p.session !== undefined && p.session === named);
+  if (exact.length === 1 && !candidates.some((p) => p.session === undefined)) return exact[0];
+  if (exact.length !== 0 || candidates.length !== 1 || candidates[0]?.session !== undefined) return undefined;
+  if (body.sessions.length > 1 || (session !== undefined && session !== primary)) return undefined;
+  return candidates[0];
 }

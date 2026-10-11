@@ -13,6 +13,13 @@ for the architecture decision. The former TWA [specification](../ANDROID_TWA_SPE
 [implementation plan](../ANDROID_TWA_IMPLEMENTATION_PLAN.md) are retained only as superseded
 history.
 
+Pane details expose the model, Git head and cache state supplied by the owning bridge. Cache expiry
+uses the bridge snapshot clock and preserves confidence and rule provenance; a peer carries its
+sourced cache-rule label while the lead's catalog stays unavailable as peer provenance. Cache timing
+is not a billing estimate. Cache watches and machine/cache
+alert preferences are stored on the lead and affect subscribed bridge notification clients. Native
+background delivery is not available in this app, so these controls do not promise a phone alert.
+
 The read-only Changes screen lists bridge-discovered repositories and their working-tree diffs.
 Its commit history is delivered in bounded first-parent pages pinned to the first page's HEAD;
 selecting a row loads that commit and only its listed file diffs. Older peers that do not return
@@ -355,3 +362,7 @@ See [scoped control authority decision](../.adr/0096-control-authority-is-scoped
 Document chips show the sanitized filename, detected MIME type, and actual byte count, including accessible text. Provider work has two process-wide ownership slots; blocked cancellation or close cannot stall the caller or create unlimited replacement workers. A cancelled import unlinks its registered private spool immediately, and its slot stays occupied until provider and asynchronous cleanup finish. No document upload is automatically replayed.
 
 Pane layout controls are available from a pane's actions when the connected runtime positively declares layout support and durable operation receipts. The native screen shows the server-reported pane geometry and adjacency, then plans and confirms split, resize, zoom, swap, directional focus or movement. A timeout is shown as uncertain and is never sent again automatically. Same-ID recovery is offered only when the owner-bound receipt capability is present. On older peers, the operator can inspect the current layout and explicitly abandon the local recovery record after a duplicate-risk warning; this does not claim that the earlier change was undone.
+Cache watches preserve the exact host/session/pane address. Older ambiguous peer watches stay
+in the list with Forget available and no pane link; add a new watch from a current exact pane.
+Cache details clear live facts and catalog validators when their authority retires or the screen
+stops. The existing Refresh action acquires fresh facts before the switch becomes usable again.

@@ -90,6 +90,16 @@ so validation does not replace the running deployment's assets.
 
 ## Scoped control compatibility
 
+Cache/model/Git fields decode as optional typed snapshot facts. The owning bridge carries a bounded
+sourced rule label with a cache reading. The native detail screen uses the snapshot's server timestamp
+for cache timing and shows confidence/reset/provenance without deriving model identity from terminal
+text or billing savings. `/api/cache-rules` is fetched only for a local lead pane and uses its ETag;
+peer catalog provenance is reported unavailable while the peer-carried label/confidence/override flag
+stay visible. Cache-watch query
+preferences keep the exact pane/host/session selectors but remain lead-owned, and the Settings list
+never links an entry without a current pane ID. Machine/cache switches preserve the other server
+preference fields. Native background notification delivery remains unsupported and is stated in the UI.
+
 New control support requires a positive declaration in `/api/config.control.capabilities`; legacy mux absent-field compatibility applies only to existing actions. Crew negotiates the peer's independent `hello.controlCapabilities`. `hostControl` declares a separate typed host-management provider/capability/reason surface: current unsupported providers report every administration capability false and typed inspection returns unsupported. This is an interface for later workflows, not a claim that plugin/configuration/install actions exist.
 
 Native request contexts bind the HTTPS origin including its mount, credential and leader generation, host/session and subject. Space Look now uses the owning session's read-gated POST refresh before snapshot; older 404 peers get a labeled ordinary reload. Captured media scope is checked before upload and before applying its result. Saved copies never authorize terminal or structural actions. Unknown/gateway 401/403 freezes actions while retaining pairing; only exact authoritative Collie pairing provenance retires it.
@@ -112,3 +122,13 @@ Document preparation admits the picker-captured scope/credential actor for confi
 ## Pane layout control (B12)
 
 The native client adds bounded layout, neighbor and edge reads plus a dedicated layout screen. New layout actions require positive mux declarations and `controlOperations` durable receipt readiness. Actions use the mounted Collie HTTP API with exact scoped targets, a plan token and caller-held request ID; the client never calls a mux socket or forwards vendor RPC. Unknown mutation outcomes remain visible for operation inspection and are not automatically repeated. A successful move returns a new pane ID; native navigation discards the old pane state before opening the new ID. Unsupported/mixed-version peers hide the actions or return a typed unavailable result.
+B20 watch authority correction: peer watch keys bind the advertised host/session/pane. An older
+untagged snapshot proves only a unique default pane or its single advertised session; ambiguous
+selectors refuse. Previously unscoped peer watches remain nonlinkable with Forget available,
+without guessed migration. Catalog validators and cached rules belong to the admitted read actor
+and clear with retirement. Cache details wipe copied facts on stop and acknowledge an authority
+wipe on the main thread before its listener returns.
+
+Cache details also observe the real connection store: replacing a credential retires their
+private actor, catalog and copied facts without waiting for another API read. A delayed old
+connection notification cannot retire an actor already admitted for the current connection.
