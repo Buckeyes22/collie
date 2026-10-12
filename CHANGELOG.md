@@ -64,6 +64,7 @@ Running a crew? Update the lead first; members follow on their own. Details:
 - **Gemini journal drift canaries follow structural Part fields.** Count unknown field names without recording their payloads, including appended patches and replacement snapshots.
 - **Native gateway responses retain their matching compressed wire encoding.** Forward gzip and other encoded upstream bodies without decoding them under the original encoding headers, preserving bounded streams and current identity checks.
 - **Native identity profiles retain explicitly configured API resource scopes.** Export bounded additional issuer scopes for native authorization without changing the required signed token audience or gateway admission.
+- **Keep pane read limits through agent identity decorators.** Preserve the owning adapter's declared ceiling when beacon hooks and hints wrap it, so production reads can request the same bounded history as direct adapter reads.
 
 ## [1.19.0] - 2026-10-09
 

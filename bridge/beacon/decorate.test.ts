@@ -4,7 +4,7 @@ import { withAgentBeacons, type AgentBeaconDeps, type BeaconMatcher } from "./de
 import { withAgentHints } from "./hint.ts";
 import { fakeBeaconReader, FAKE_BEACON_NOW, type FakeBeacon } from "./fake.ts";
 import { BEACON_SCHEMA_VERSION, type BeaconMarker, type BeaconStatus } from "./types.ts";
-import { declareCapabilities, type MuxCapability } from "../mux/capabilities.ts";
+import { declareCapabilities, type MuxCapability, type MuxCapabilityDeclaration } from "../mux/capabilities.ts";
 import { herdrHostControl } from "../host-control/herdr.ts";
 import {
   muxAck,
@@ -226,6 +226,35 @@ function deps(hooksInstalled: boolean, matcher: BeaconMatcher = stubMatcher()): 
 function decorate(adapter: MuxAdapter, beacons: readonly FakeBeacon[], hooks = true, matcher = stubMatcher()): MuxAdapter {
   return withAgentBeacons(adapter, fakeBeaconReader(beacons), deps(hooks, matcher));
 }
+
+describe("production decorator composition preserves declared read bounds", () => {
+  for (const maxRequestedLines of [1_000, 10_000]) {
+    test(`hooks and hints keep the owning adapter's ${maxRequestedLines}-line ceiling`, () => {
+      const metadata: Omit<MuxCapabilityDeclaration, "supports" | "notes"> = {
+        unsupportedKeys: ["F1"],
+        spaces: "one",
+        topologyLatency: { kind: "bounded", ms: 321 },
+        readLimits: { maxRequestedLines },
+      };
+      const raw = new StubAdapter();
+      raw.capabilities = declareCapabilities({ ...metadata, supports: ["paneGrid", "gridScrollback", "typeText", "sendKeys"] });
+      let installed = false;
+      const beacons = withAgentBeacons(raw, fakeBeaconReader([]), { matcher: stubMatcher(), hooksInstalled: () => installed });
+      const composed = withAgentHints(beacons, { hooksInstalled: () => installed });
+      for (const state of [false, true, false]) {
+        installed = state;
+        for (const wrapped of [beacons, composed]) {
+          expect(wrapped.capabilities.readLimits.maxRequestedLines).toBe(maxRequestedLines);
+          expect(wrapped.capabilities.spaces).toBe(metadata.spaces);
+          expect(wrapped.capabilities.topologyLatency).toEqual(metadata.topologyLatency);
+          expect(wrapped.capabilities.unsupportedKeys).toEqual(metadata.unsupportedKeys);
+          expect(wrapped.capabilities.supports.agentDetection).toBe(state);
+          expect(wrapped.capabilities.supports.agentSessionRef).toBe(state);
+        }
+      }
+    });
+  }
+});
 
 async function paneOf(adapter: MuxAdapter, paneId: string): Promise<MuxPane> {
   const found = (await adapter.snapshot()).panes.find((pane) => pane.paneId === paneId);
