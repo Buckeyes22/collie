@@ -9,6 +9,8 @@ import type { HerdrWorktreeRemove, WireWorktreeRemoved, HerdrLayoutNode, HerdrRp
 import type { JsonValue } from "../../json.ts";
 import { FakeHerdr } from "./fixture.ts";
 import { buildSubscriptions } from "./events.ts";
+import { ORIGINAL_AGENT_BINDING, ORIGINAL_RUNTIME_INCARNATION, type AgentControlInfo } from "../../control/agent-models.ts";
+import { muxOk } from "../types.ts";
 
 // WHICH REPO A WORKSPACE SITS IN, across the two Herdr shapes (ADR 0032).
 //
@@ -311,11 +313,56 @@ describe("herdr pane process metadata", () => {
   });
 });
 
+describe("H14 pane metadata occupant safety", () => {
+  test("refuses token patches without an upstream occupant guard and marks post-write occupant races unknown", async () => {
+    class RacingMetadata extends FakeHerdr {
+      reportCount = 0;
+      target = "";
+      async reportPaneMetadata(_params: import("../../json.ts").JsonObject): Promise<import("../../json.ts").JsonObject> {
+        this.reportCount += 1;
+        this.changeTerminalOccupant(this.target, "replacement-terminal");
+        return { type: "ok" };
+      }
+    }
+    const fake = new RacingMetadata();
+    const mux = new HerdrMux(fake, () => []);
+    await mux.reachable();
+    const pane = (await fake.listPanes())[0]!;
+    fake.target = pane.pane_id;
+    const token = await mux.reportPaneMetadata(pane.pane_id, { source: "collie.native", agent: pane.agent ?? null, tokens: { secret: "value" } });
+    expect(token).toMatchObject({ ok: false, reason: "refused", detail: "metadata.token_occupant_guard_unavailable" });
+    expect(fake.reportCount).toBe(0);
+    const result = await mux.reportPaneMetadata(pane.pane_id, { source: "collie.native", agent: pane.agent ?? null, title: "safe presentation" });
+    expect(result).toMatchObject({ ok: false, reason: "unreachable" });
+    expect(fake.reportCount).toBe(1);
+  });
+
+  test("uses only a positively negotiated original binding for token patches", async () => {
+    const fake = new FakeHerdr();
+    fake.metadataCaps.paneOriginalMetadataV1 = true;
+    const mux = new HerdrMux(fake, () => []);
+    await mux.reachable();
+    const pane = (await fake.listPanes())[0]!;
+    const original: AgentControlInfo = {
+      paneId: pane.pane_id, terminalId: pane.terminal_id, workspaceId: pane.workspace_id, tabId: pane.tab_id,
+      runtimeIdentity: fake.runtimeIdentity, agent: pane.agent ?? null, sessionIdentity: null, processIdentity: "process-a", name: null,
+      status: "working", focused: true, interactiveReady: true, launchPending: false, stateChangeSeq: "0", completionSeq: null,
+      [ORIGINAL_AGENT_BINDING]: "a".repeat(64), [ORIGINAL_RUNTIME_INCARNATION]: "original-runtime-a",
+    };
+    mux.agentControl = async () => muxOk(original);
+    const result = await mux.reportPaneMetadataOriginal(pane.pane_id, { source: "collie.native", agent: pane.agent ?? null, tokens: { ticket: "owned" } }, original, () => true);
+    expect(result).toMatchObject({ ok: true });
+    expect(fake.lastOriginalMetadata).toMatchObject({ original_binding: "a".repeat(64), report: { pane_id: pane.pane_id, tokens: { ticket: "owned" } } });
+  });
+});
+
 describe("herdr pane layout capability and neutral adapter", () => {
   const admitLayoutMutation = () => true;
   test("layout invalidation subscription is added only after positive runtime support", () => {
     expect(buildSubscriptions([]).some((entry) => entry.type === "layout.updated")).toBe(false);
     expect(buildSubscriptions([], true).some((entry) => entry.type === "layout.updated")).toBe(true);
+      expect(buildSubscriptions([], false, true).some((entry) => entry.type === "workspace.metadata_updated")).toBe(true);
+      expect(buildSubscriptions([]).some((entry) => entry.type === "workspace.metadata_updated")).toBe(false);
   });
   test("layout APIs stay absent until a schema-22 0.9.3 handshake and stay absent on older servers", async () => {
     const old = new FakeHerdr();

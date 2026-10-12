@@ -2,12 +2,47 @@ package com.lateapex.collie.network
 
 import java.security.MessageDigest
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonArray
 import org.junit.Assert.*
 import org.junit.Test
 
 class ControlModelsTest {
+    @Test fun uncertainMutationTransportFailuresRequireReconciliation() {
+        assertTrue(ApiFailure.Timeout.mutationOutcomeUnknown())
+        assertTrue(ApiFailure.Network("socket reset").mutationOutcomeUnknown())
+        assertTrue(ApiFailure.Redirect(307).mutationOutcomeUnknown())
+        assertTrue(ApiFailure.Protocol("malformed acknowledgment").mutationOutcomeUnknown())
+        assertTrue(ApiFailure.Http(503, null, null).mutationOutcomeUnknown())
+        assertFalse(ApiFailure.Http(400, null, "invalid_agent_view").mutationOutcomeUnknown())
+    }
+
+    @Test fun agentViewFilterAndSortUsePinnedFieldEnumsAndClosedRecursiveBounds() {
+        fun request(filter: String, sort: String = "[]") = AgentViewRequest(
+            "view_1", null, Json.parseToJsonElement(filter).jsonObject,
+            Json.parseToJsonElement(sort).jsonArray.map { it.jsonObject },
+        )
+        assertTrue(AgentViewSchema.valid(request("""{"op":"eq","field":"status","value":"working"}""", """[{"field":"attention","order":"desc"}]""")))
+        assertTrue(AgentViewSchema.valid(request("""{"op":"all","filters":[{"op":"exists","field":"seen"},{"op":"not","filter":{"op":"in","field":"workspace_id","values":["x",{"context":"current_workspace_id"}]}}]}""")))
+        assertTrue(AgentViewSchema.valid(request("""{"op":"eq","field":"tab_id","value":{"context":"current_tab_id"}}""")))
+        assertFalse(AgentViewSchema.valid(request("""{"op":"eq","field":"status","value":{"context":"current_workspace_id"}}""")))
+        assertFalse(AgentViewSchema.valid(request("""{"op":"in","field":"tab_id","values":[{"context":"current_workspace_id"}]}""")))
+        assertFalse(AgentViewSchema.valid(request("""{"op":"eq","field":"agent_status","value":"working"}""")))
+        assertFalse(AgentViewSchema.valid(request("""{"op":"eq","field":"title","value":"review"}""")))
+        assertFalse(AgentViewSchema.valid(request("""{"op":"eq","field":"attention","value":"high"}""")))
+        assertFalse(AgentViewSchema.valid(request("""{"op":"exists","field":{"token":"bad.name"}}""")))
+        assertFalse(AgentViewSchema.valid(request("""{"op":"eq","field":"status","value":"working","extra":true}""")))
+
+        var tooDeep = Json.parseToJsonElement("""{"op":"exists","field":"status"}""")
+        repeat(9) { tooDeep = Json.parseToJsonElement("""{"op":"not","filter":${Json.encodeToString(JsonElement.serializer(), tooDeep)}}""") }
+        assertFalse(AgentViewSchema.valid(AgentViewRequest("view_1", filter = tooDeep.jsonObject)))
+        val manyChildren = (1..33).joinToString(",") { """{"op":"exists","field":"status"}""" }
+        assertFalse(AgentViewSchema.valid(request("""{"op":"all","filters":[$manyChildren]}""")))
+        assertFalse(AgentViewSchema.valid(request("""{"op":"exists","field":"status"}""", """[{"field":"title"}]""")))
+    }
+
     @Test fun newCapabilitiesRequirePositiveDeclarations() {
         val json = Json { ignoreUnknownKeys = true }
         assertFalse(json.decodeFromString<ControlCapabilityResponse>("{}").supportsNew("controlOperations"))

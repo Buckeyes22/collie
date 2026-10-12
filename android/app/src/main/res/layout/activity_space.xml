@@ -88,6 +88,15 @@
             android:textAllCaps="false" />
 
         <ImageButton
+            android:id="@+id/metadata_button"
+            android:layout_width="@dimen/collie_touch_target"
+            android:layout_height="@dimen/collie_touch_target"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/workspace_metadata_open"
+            android:padding="10dp"
+            android:src="@android:drawable/ic_menu_edit" />
+
+        <ImageButton
             android:id="@+id/settings_button"
             android:layout_width="@dimen/collie_touch_target"
             android:layout_height="@dimen/collie_touch_target"

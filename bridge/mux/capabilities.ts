@@ -31,6 +31,7 @@ export const MUX_CAPABILITIES = [
   "agentDetection",
   "agentSessionRef",
   "agentIdentity",
+  "agentMetadata",
   "agentLifecycleWrites",
   "agentAutomation",
   "agentWaits",
@@ -116,6 +117,7 @@ export const MUX_CAPABILITY_ROUTES = {
     "GET /api/pane/:id/history — the journal keys an on-disk log off the session an agent named. Without this, history is absent, not empty (bridge/journal/registry.ts).",
   agentIdentity:
     "GET /api/pane/:id/agent — state, readiness, completion sequence and native session provenance supplied by the owning runtime; lifecycle authority source is reported as unknown when the runtime does not expose it.",
+  agentMetadata: "POST /api/pane/:id/metadata and POST /api/workspace/:id/metadata — bounded source-owned display metadata with no lifecycle authority.",
   agentLifecycleWrites:
     "POST /api/pane/:id/agent/{state,session,release,authority/clear} — requires source registration and atomic current-occupant compare-and-set; unsupported while the owning runtime lacks that guarantee.",
   agentAutomation: "GET /api/agents/named and /api/pane/:id/agent/{control,read,explain}; POST /api/pane/:id/agent/{start,rename,prompt,focus,keys,input} — named, original-occupant actions with retained one-shot outcomes.",
@@ -263,6 +265,7 @@ export function declareCapabilities(input: MuxCapabilityInput): MuxCapabilityDec
     agentDetection: claimed.has("agentDetection"),
     agentSessionRef: claimed.has("agentSessionRef"),
     agentIdentity: claimed.has("agentIdentity"),
+    agentMetadata: claimed.has("agentMetadata"),
     agentLifecycleWrites: claimed.has("agentLifecycleWrites"),
     agentAutomation: claimed.has("agentAutomation"),
     agentWaits: claimed.has("agentWaits"),

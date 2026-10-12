@@ -73,6 +73,12 @@ sealed interface ApiFailure {
     data object Timeout : ApiFailure
 }
 
+/** True when transport/response evidence cannot establish whether a one-shot mutation committed. */
+fun ApiFailure.mutationOutcomeUnknown(): Boolean = when (this) {
+    is ApiFailure.Network, ApiFailure.Timeout, is ApiFailure.Redirect, is ApiFailure.Protocol -> true
+    is ApiFailure.Http -> status in setOf(408, 425, 429) || status >= 500
+}
+
 interface CollieApi {
     suspend fun health(connection: Connection): ApiResult<HealthResponse>
     suspend fun config(connection: Connection): ApiResult<BridgeConfigResponse> =
@@ -88,6 +94,13 @@ interface CollieApi {
     ): ApiResult<PaneReadResponse>
     suspend fun paneProcesses(connection: Connection, address: PaneAddress): ApiResult<PaneProcessesResponse> = unavailable("Pane process details")
     suspend fun paneAgentIdentity(connection: Connection, address: PaneAddress): ApiResult<AgentIdentityResponse> = unavailable("Agent identity details")
+    suspend fun paneMetadata(connection: Connection, address: PaneAddress, reconcileRequestId: String? = null): ApiResult<MetadataRouteResponse> = unavailable("Pane metadata")
+    suspend fun writePaneMetadata(connection: Connection, address: PaneAddress, request: PaneMetadataRequest): ApiResult<MetadataRouteResponse> = unavailable("Pane metadata write")
+    suspend fun workspaceMetadata(connection: Connection, scope: Scope, workspaceId: String, reconcileRequestId: String? = null): ApiResult<MetadataRouteResponse> = unavailable("Workspace metadata")
+    suspend fun writeWorkspaceMetadata(connection: Connection, scope: Scope, workspaceId: String, request: WorkspaceMetadataRequest): ApiResult<MetadataRouteResponse> = unavailable("Workspace metadata write")
+    suspend fun agentView(connection: Connection): ApiResult<AgentViewRouteResponse> = unavailable("Agent view")
+    suspend fun setAgentView(connection: Connection, request: AgentViewRequest): ApiResult<AgentViewRouteResponse> = unavailable("Agent view write")
+    suspend fun clearAgentView(connection: Connection, requestId: String): ApiResult<AgentViewRouteResponse> = unavailable("Agent view clear")
     suspend fun refresh(connection: Connection, scope: Scope = Scope()): ApiResult<ActionResponse>
     suspend fun pair(origin: CollieOrigin, code: String, label: String): ApiResult<PairResult>
     suspend fun namedAgentRead(connection: Connection, address: PaneAddress, source: String, lines: Int): ApiResult<NamedAgentReadResponse> = unavailable("Named agent read")
@@ -545,6 +558,62 @@ class CollieApiClient(
                         session.value.isNotBlank() && session.value.length <= 2048
                 } != false
         }
+    }
+
+    override suspend fun paneMetadata(connection: Connection, address: PaneAddress, reconcileRequestId: String?): ApiResult<MetadataRouteResponse> {
+        val query = reconcileRequestId?.let { listOf("request_id" to it) }.orEmpty()
+        val result = executeJson(request(connection, scopedUrl(connection.origin, path("pane", address.paneId, "metadata"), address.scope, query)), MetadataRouteResponse.serializer(), READ_TIMEOUT_SECONDS, maxResponseBytes = 64 * 1024)
+        return requireContract(result, "Malformed pane metadata receipt") { it.ok && it.target == address.paneId && !it.authoritative && it.reconcileRequired && it.contributions.size <= 64 &&
+            (reconcileRequestId == null && it.operation == null || reconcileRequestId != null && it.operation?.validFor(reconcileRequestId) == true && it.operation.capability == "agentMetadata") }
+    }
+
+    override suspend fun writePaneMetadata(connection: Connection, address: PaneAddress, request: PaneMetadataRequest): ApiResult<MetadataRouteResponse> {
+        if (!validMetadataRequest(request)) return ApiResult.Failure(ApiFailure.Protocol("Pane metadata request is outside the bounded schema"))
+        val result = executeJson(post(connection, scopedUrl(connection.origin, path("pane", address.paneId, "metadata"), address.scope), json.encodeToString(request)), MetadataRouteResponse.serializer(), MUTATION_TIMEOUT_SECONDS, maxResponseBytes = 16 * 1024)
+        return requireContract(result, "Malformed pane metadata acknowledgment") { it.ok && it.target == null && it.requestId == request.requestId && it.receipt && it.reconcileRequired && it.source?.startsWith("collie.native.") == true ||
+            !it.ok && it.requestId == null && it.operation?.let { op -> op.validFor(request.requestId) && op.capability == "agentMetadata" && op.state in setOf("pending", "unknown") } == true }
+    }
+
+    override suspend fun workspaceMetadata(connection: Connection, scope: Scope, workspaceId: String, reconcileRequestId: String?): ApiResult<MetadataRouteResponse> {
+        if (!validControlId(workspaceId)) return ApiResult.Failure(ApiFailure.Protocol("Workspace id is malformed"))
+        val query = reconcileRequestId?.let { listOf("request_id" to it) }.orEmpty()
+        val result = executeJson(request(connection, scopedUrl(connection.origin, path("workspace", workspaceId, "metadata"), scope, query)), MetadataRouteResponse.serializer(), READ_TIMEOUT_SECONDS, maxResponseBytes = 64 * 1024)
+        return requireContract(result, "Malformed workspace metadata receipt") { it.ok && it.target == workspaceId && !it.authoritative && it.reconcileRequired && it.contributions.size <= 64 &&
+            (reconcileRequestId == null && it.operation == null || reconcileRequestId != null && it.operation?.validFor(reconcileRequestId) == true && it.operation.capability == "agentMetadata") }
+    }
+
+    override suspend fun writeWorkspaceMetadata(connection: Connection, scope: Scope, workspaceId: String, request: WorkspaceMetadataRequest): ApiResult<MetadataRouteResponse> {
+        if (!validControlId(workspaceId) || !validWorkspaceMetadataRequest(request)) return ApiResult.Failure(ApiFailure.Protocol("Workspace metadata request is outside the bounded schema"))
+        val result = executeJson(post(connection, scopedUrl(connection.origin, path("workspace", workspaceId, "metadata"), scope), json.encodeToString(request)), MetadataRouteResponse.serializer(), MUTATION_TIMEOUT_SECONDS, maxResponseBytes = 16 * 1024)
+        return requireContract(result, "Malformed workspace metadata acknowledgment") { it.ok && it.target == null && it.requestId == request.requestId && it.receipt && it.reconcileRequired && it.source?.startsWith("collie.native.") == true ||
+            !it.ok && it.requestId == null && it.operation?.let { op -> op.validFor(request.requestId) && op.capability == "agentMetadata" && op.state in setOf("pending", "unknown") } == true }
+    }
+
+    override suspend fun agentView(connection: Connection): ApiResult<AgentViewRouteResponse> {
+        val result = executeJson(request(connection, url(connection.origin, path("host", "agent-view"))), AgentViewRouteResponse.serializer(), READ_TIMEOUT_SECONDS, maxResponseBytes = 32 * 1024)
+        return requireContract(result, "Malformed agent-view receipt") { response ->
+            response.ok && response.authoritative == !response.reconcileRequired &&
+                (response.view == null || ((response.view["source"] as? JsonPrimitive)?.contentOrNull?.startsWith("collie.native.") == true &&
+                    response.view.keys.all { it in setOf("source", "label", "filter", "sort") }))
+        }
+    }
+
+    override suspend fun setAgentView(connection: Connection, request: AgentViewRequest): ApiResult<AgentViewRouteResponse> {
+        if (!validAgentViewRequest(request)) return ApiResult.Failure(ApiFailure.Protocol("Agent view is outside the bounded schema"))
+        val body = json.encodeToString(request)
+        val result = executeJson(post(connection, url(connection.origin, path("host", "agent-view")), body), AgentViewRouteResponse.serializer(), MUTATION_TIMEOUT_SECONDS, maxResponseBytes = 16 * 1024)
+        return requireContract(result, "Malformed agent-view acknowledgment") { it.ok && it.requestId == request.requestId && it.receipt && it.reconcileRequired && it.source?.startsWith("collie.native.") == true ||
+            !it.ok && it.requestId == null && it.operation?.let { op -> op.validFor(request.requestId) && op.capability == "agentViews" && op.state in setOf("pending", "unknown") } == true }
+    }
+
+    override suspend fun clearAgentView(connection: Connection, requestId: String): ApiResult<AgentViewRouteResponse> {
+        if (!validRequestId(requestId)) return ApiResult.Failure(ApiFailure.Protocol("Agent-view request id is malformed"))
+        val body = json.encodeToString(mapOf("requestId" to requestId)).toRequestBody(JSON_MEDIA_TYPE)
+        val url = url(connection.origin, path("host", "agent-view"))
+        val req = requestBuilder(connection, url).header("Origin", connection.origin.headerValue).method("DELETE", OneShotRequestBody(body)).build()
+        val result = executeJson(req, AgentViewRouteResponse.serializer(), MUTATION_TIMEOUT_SECONDS, maxResponseBytes = 16 * 1024)
+        return requireContract(result, "Malformed agent-view clear acknowledgment") { it.ok && it.requestId == requestId && it.receipt && it.reconcileRequired && it.source?.startsWith("collie.native.") == true ||
+            !it.ok && it.requestId == null && it.operation?.let { op -> op.validFor(requestId) && op.capability == "agentViews" && op.state in setOf("pending", "unknown") } == true }
     }
 
     override suspend fun refresh(connection: Connection, scope: Scope): ApiResult<ActionResponse> {
@@ -2083,6 +2152,22 @@ class CollieApiClient(
 
     private fun request(connection: Connection, relativePath: List<String>): Request =
         request(connection, url(connection.origin, relativePath))
+
+    private fun validRequestId(value: String): Boolean = value.matches(Regex("[A-Za-z0-9_-]{1,128}"))
+    private fun validControlId(value: String): Boolean = value.length in 1..128 && value.matches(Regex("[A-Za-z0-9_.:-]+"))
+    private fun validMetadataText(value: String?): Boolean = value == null || value.length <= 256 && value.none(Char::isISOControl)
+    private fun validMetadataTokens(tokens: Map<String, String?>): Boolean = tokens.size <= 32 && tokens.all { (key, value) ->
+        key.matches(Regex("[A-Za-z0-9_-]{1,32}")) && (value == null || value.length <= 80 && value.none(Char::isISOControl))
+    }
+    private fun validMetadataCommon(requestId: String, seq: Long?, ttlMs: Long?): Boolean = validRequestId(requestId) &&
+        (seq == null || seq in 0L..9_007_199_254_740_991L) && (ttlMs == null || ttlMs in 1L..86_400_000L)
+    private fun validMetadataRequest(request: PaneMetadataRequest): Boolean =
+        validMetadataCommon(request.requestId, request.seq, request.ttlMs) && request.agent.length in 1..256 && request.agent.none(Char::isISOControl) &&
+        validMetadataTokens(request.tokens) && listOf(request.displayAgent, request.title).all { it == null || it.length <= 80 && it.none(Char::isISOControl) } &&
+        (request.stateLabels?.let { labels -> labels.size <= 5 && labels.all { (key, value) -> key in setOf("idle", "working", "blocked", "done", "unknown") && value.length <= 80 && value.none(Char::isISOControl) } } ?: true)
+    private fun validWorkspaceMetadataRequest(request: WorkspaceMetadataRequest): Boolean =
+        validMetadataCommon(request.requestId, request.seq, request.ttlMs) && validMetadataTokens(request.tokens)
+    private fun validAgentViewRequest(request: AgentViewRequest): Boolean = AgentViewSchema.valid(request)
 
     private fun request(connection: Connection, url: HttpUrl): Request =
         requestBuilder(connection, url).get().build()

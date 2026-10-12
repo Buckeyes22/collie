@@ -3976,6 +3976,12 @@ class PaneActivity : AppCompatActivity() {
             closingRow(getString(R.string.pane_action_agent_identity)) {
                 startActivity(AgentIdentityActivity.intent(this, address))
             }
+            closingRow(getString(R.string.pane_action_agent_metadata)) {
+                startActivity(AgentMetadataActivity.intent(this, address))
+            }
+            closingRow(getString(R.string.pane_action_agent_view)) {
+                startActivity(AgentViewActivity.intent(this, address))
+            }
             closingRow(getString(R.string.pane_action_changes)) {
                 startActivity(ChangesActivity.intentForPane(
                     this,

@@ -79,6 +79,14 @@ when the runtime does not publish it. Herdr 0.9.3 has no atomic current-occupant
 report/session mutations, so state, session, resume and release controls stay unavailable; opening
 the screen does not focus the terminal or mark its transcript seen.
 
+Pane actions also expose bounded, per-device presentation metadata and an Agent view screen. Metadata
+cannot claim lifecycle state. Pane token patches remain refused until Herdr provides an atomic
+current-occupant guard; workspace token patches remain available. The view screen previews the closed
+declarative filter against the local snapshot separately from the action that applies or clears
+Herdr's terminal agent-list projection. Fields absent from the local snapshot remain unknown in the
+preview. Bridge receipt refreshes are non-authoritative and never clear an uncertain-write lock; H14
+does not currently expose an owner read for agent-view reconciliation.
+
 The native New flow also opens launch recipe management and one-off Run on the selected machine and
 session. The phone uses only the existing launcher, validation, run and recent-history routes. It
 requires the host to declare each action, labels syntax checks as non-PATH checks, confirms

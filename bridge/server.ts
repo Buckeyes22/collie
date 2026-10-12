@@ -1,9 +1,11 @@
+import { herdrTerminalIncarnation } from "./mux/herdr/adapter.ts";
+import type { AgentOccupant } from "./control/agent-models.ts";
 import { serveAgentRoute, AGENT_ACTION_ROUTE, type AgentCaller } from "./control/agents.ts";
 import { AgentWaitStore, serveWaitRoute, WAIT_ACTION_ROUTE } from "./control/waits.ts";
 import { withNativeFinalAdmission } from "./native-access/final-effect.ts";
 import type { GatewayIngress, VerifiedIngressActor } from "./native-access/ingress.ts";
 import { gatewayRefusal } from "./native-access/ingress.ts";
-import { controlScope, refusal, refusalResponse } from "./control/contracts.ts";
+import { controlScope, payloadHash, refusal, refusalResponse } from "./control/contracts.ts";
 import { OperationStore } from "./control/operations.ts";
 import { executeBoundIntent, ownerBoundCallerReady, ownerBoundOperationReady, type IntentOwnerContext } from "./intent-operation-binding.ts";
 import { PlanStore } from "./control/plans.ts";
@@ -11,6 +13,8 @@ import { servePaneLayoutRoute } from "./control/layout.ts";
 import { serveLayoutRecipeRoute } from "./control/layout-recipes.ts";
 import { serveOrganizationRoute } from "./control/organization.ts";
 import { serveControlRoute } from "./control/routes.ts";
+import { MetadataStateStore, serveMetadataRoute } from "./control/metadata.ts";
+import { memoryAgentViewReceipts, serveAgentViewRoute } from "./host-control/agent-views.ts";
 import { serveWorktreeRemoveRoute } from "./control/worktree-remove.ts";
 import { servePaneProcesses } from "./control/processes.ts";
 import { servePaneAgentIdentity } from "./control/agent-identity.ts";
@@ -53,6 +57,11 @@ import {
 import { apiError, type ApiErrorBody, type ApiErrorDetail, type ErrorCode } from "./error-codes.ts";
 import { keysDeliverable, MUX_CAPABILITIES, type MuxCapability, type MuxCapabilityDeclaration } from "./mux/capabilities.ts";
 import type { MuxAdapter, MuxAck, MuxGrid, MuxWorktreeCreateRequest } from "./mux/types.ts";
+
+/** Match private raw Herdr identity against its existing public incarnation projection. */
+export function currentOriginalHerdrPane(pane: Pick<AgentView, "paneId" | "terminalIncarnation" | "workspaceId" | "tabId"> | undefined, expected: AgentOccupant): boolean {
+  return pane !== undefined && pane.paneId === expected.paneId && pane.terminalIncarnation === herdrTerminalIncarnation(expected.terminalId) && pane.workspaceId === expected.workspaceId && pane.tabId === expected.tabId;
+}
 
 function parseAgentMutationAction(action: string | undefined): AgentMutationKind | null {
   if (action === "agent/state") return "state";
@@ -1276,6 +1285,8 @@ export async function startServer(opts: {
   const worktreeBases = opts.worktreeBases ?? memoryWorktreeBases();
   const launchReceipts = opts.launchReceipts ?? memoryLaunchReceipts();
   const controlOperations = opts.controlOperations ?? new OperationStore(cfg.stateDir);
+  const metadataState = new MetadataStateStore();
+  const agentViewReceipts = memoryAgentViewReceipts();
   const controlPlans = opts.controlPlans ?? new PlanStore();
   const agentWaits = new AgentWaitStore(cfg.stateDir);
   const controlHostId = opts.controlHostId ?? opts.crewStatus?.()?.self.id ?? "local";
@@ -1402,6 +1413,19 @@ export async function startServer(opts: {
 
   /** One in-flight "look now" per session — see bridge/refresh.ts for why it coalesces. */
   const refreshes = new RefreshCoalescer();
+  const metadataCleanupEngines = new WeakSet<StateEngine>();
+  const reconcileMetadataTargets = (session: string, snapshot: ReturnType<StateEngine["current"]>): void => {
+    const active = new Set<string>();
+    for (const p of [...snapshot.agents, ...snapshot.shellPanes]) {
+      const targetIdentity = payloadHash({ pane: p.paneId, terminal: p.terminalIncarnation ?? null, agent: p.agent });
+      active.add(`${controlHostId}\0${session}\0pane\0${p.paneId}\0${targetIdentity}`);
+    }
+    for (const workspace of snapshot.workspaces) {
+      const targetIdentity = payloadHash({ workspace: workspace.workspaceId });
+      active.add(`${controlHostId}\0${session}\0workspace\0${workspace.workspaceId}\0${targetIdentity}`);
+    }
+    metadataState.retainSessionTargets(controlHostId, session, active);
+  };
 
   /**
    * Take a fresh look at one session's multiplexer, then make the bridge re-read it.
@@ -1439,6 +1463,11 @@ export async function startServer(opts: {
     const rt = registry.get(sessionName);
     if (!rt) return undefined;
     const { workspaces, tabs, bridge } = rt.engine.current();
+    if (!metadataCleanupEngines.has(rt.engine)) {
+      metadataCleanupEngines.add(rt.engine);
+      rt.engine.onUpdate((snapshot) => reconcileMetadataTargets(rt.name, snapshot));
+    }
+    reconcileMetadataTargets(rt.name, rt.engine.current());
     // Attach each pane's activity timestamps. Done here rather than in the state engine so the
     // engine stays a pure Herdr-poller with no knowledge of the ledger — and so the two numbers
     // are read at serialise time, i.e. as fresh as the request. The ledger is keyed by SESSION, so
@@ -1634,7 +1663,7 @@ export async function startServer(opts: {
           return { host: controlHostId, session: captured.name, mux: captured.herdr, currentRuntime: () => registry.get(captured.name) === captured, current: (expected) => {
             if (registry.get(captured.name) !== captured) return false;
             const pane = [...captured.engine.current().agents, ...captured.engine.current().shellPanes].find((candidate) => candidate.paneId === expected.paneId);
-            return pane !== undefined && pane.terminalIncarnation === expected.terminalId && pane.workspaceId === expected.workspaceId && pane.tabId === expected.tabId;
+            return currentOriginalHerdrPane(pane, expected);
           } };
         },
       };
@@ -1643,6 +1672,29 @@ export async function startServer(opts: {
       const waitAnswer = await serveWaitRoute(req, url, agentCaller, agentWaits);
       if (waitAnswer) return waitAnswer;
     }
+    const agentViewAnswer = await serveAgentViewRoute(req, url, {
+      gate: (level) => caller.gate(level),
+      pairedIdentity: () => caller.pairedIdentity?.() ?? null,
+      audit: (action, host, outcome) => audit.record({ action, host, device: whois(req).device, detail: { outcome } }),
+      resolve: async () => {
+        const runtime = await caller.resolve();
+        if (runtime instanceof Response) return runtime;
+        const port = opts.hostControl ?? runtime.herdr.hostControl;
+        return port ? { host: controlHostId, port } : Response.json({ ok: false, code: "host_control.unavailable", error: "Host control is unavailable on this runtime" }, { status: 501 });
+      },
+    }, agentViewReceipts, controlOperations);
+    if (agentViewAnswer) return agentViewAnswer;
+
+    const metadataAnswer = await serveMetadataRoute(req, url, {
+      gate: (level) => caller.gate(level),
+      pairedIdentity: () => caller.pairedIdentity?.() ?? null,
+      audit: (action, target, host, session, outcome) => audit.record({ action, host, paneId: target, session: session ?? undefined, device: whois(req).device, detail: { outcome } }),
+      resolve: async () => {
+        const runtime = await caller.resolve();
+        return runtime instanceof Response ? runtime : { host: controlHostId, session: runtime.name, mux: runtime.herdr, currentRuntime: () => registry.get(runtime.name) === runtime };
+      },
+    }, metadataState, controlOperations);
+    if (metadataAnswer) return metadataAnswer;
 
     const controlled = await serveControlRoute(req, url, {
       gate: (level) => caller.gate(level),

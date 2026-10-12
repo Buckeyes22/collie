@@ -27,6 +27,7 @@ Running a crew? Update the lead first; members follow on their own. Details:
 
 ### Added
 
+- **Report bounded agent metadata and manage declarative Herdr views.** Guard pane token reports with a negotiated original-occupant binding, and reconcile terminal projections through the producer's owner-scoped view reader. Keep unsupported runtimes and unresolved dispatch outcomes fail-closed.
 
 
 - **Share portable pane layouts with a reviewed preview.** Add bounded JSON export/import and exact boolean-path split-ratio controls through capability-gated Herdr routes and Crew; apply plans accept only declared launcher commands and keep plugin-backed commands unavailable pending B32 resolution.

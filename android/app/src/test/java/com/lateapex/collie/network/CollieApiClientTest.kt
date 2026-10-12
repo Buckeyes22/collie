@@ -30,6 +30,45 @@ import org.junit.Test
 import kotlinx.serialization.json.put
 
 class CollieApiClientTest {
+    @Test fun metadataAndAgentViewUseMountedScopedRoutesAndOneShotReceipts(): Unit = runBlocking {
+        val mounted = Connection(CollieOrigin(server.url("/nested/collie/").toString()), "phone", "token")
+        server.enqueue(MockResponse.Builder().body("""{"ok":true,"target":"pane-7","contributions":[],"authoritative":false,"reconcileRequired":true}""").build())
+        assertTrue(api.paneMetadata(mounted, PaneAddress(Scope(host = "peer", session = "work"), "pane-7")) is ApiResult.Success)
+        assertEquals("/nested/collie/api/pane/pane-7/metadata?host=peer&session=work", server.takeRequest().target)
+
+        server.enqueue(MockResponse.Builder().body("""{"ok":true,"requestId":"meta_1","source":"collie.native.abcdef012345","receipt":true,"reconcileRequired":true}""").build())
+        val metadata = PaneMetadataRequest("meta_1", "codex", tokens = mapOf("ticket" to "123"), title = "Review", ttlMs = 60_000)
+        assertTrue(api.writePaneMetadata(mounted, PaneAddress(Scope(), "pane-7"), metadata) is ApiResult.Success)
+        val metadataRequest = server.takeRequest()
+        assertEquals("POST", metadataRequest.method)
+        assertEquals("/nested/collie/api/pane/pane-7/metadata", metadataRequest.target)
+        assertEquals("https://localhost:${server.port}", metadataRequest.headers["Origin"])
+        assertFalse(metadataRequest.body!!.utf8().contains("\"source\""))
+
+        server.enqueue(MockResponse.Builder().body("""{"ok":true,"view":null,"authoritative":false,"reconcileRequired":true}""").build())
+        assertTrue(api.agentView(mounted) is ApiResult.Success)
+        assertEquals("/nested/collie/api/host/agent-view", server.takeRequest().target)
+
+        val requestsBeforeInvalidView = server.requestCount
+        val badFilter = kotlinx.serialization.json.buildJsonObject { put("op", "eq"); put("field", "agent_status"); put("value", "working") }
+        assertTrue(api.setAgentView(mounted, AgentViewRequest("bad_view", filter = badFilter)) is ApiResult.Failure)
+        assertEquals(requestsBeforeInvalidView, server.requestCount)
+
+        server.enqueue(MockResponse.Builder().body("""{"ok":true,"requestId":"view_1","source":"collie.native.abcdef012345","receipt":true,"reconcileRequired":true}""").build())
+        val filter = kotlinx.serialization.json.buildJsonObject { put("op", "eq"); put("field", "status"); put("value", "working") }
+        val sort = kotlinx.serialization.json.buildJsonObject { put("field", "attention"); put("order", "desc") }
+        assertTrue(api.setAgentView(mounted, AgentViewRequest("view_1", "Codex only", filter, listOf(sort))) is ApiResult.Success)
+        val viewRequest = server.takeRequest()
+        assertEquals("POST", viewRequest.method)
+        assertEquals("/nested/collie/api/host/agent-view", viewRequest.target)
+
+        server.enqueue(MockResponse.Builder().body("""{"ok":true,"requestId":"clear_1","source":"collie.native.abcdef012345","receipt":true,"reconcileRequired":true}""").build())
+        assertTrue(api.clearAgentView(mounted, "clear_1") is ApiResult.Success)
+        val clearRequest = server.takeRequest()
+        assertEquals("DELETE", clearRequest.method)
+        assertEquals("/nested/collie/api/host/agent-view", clearRequest.target)
+    }
+
     @Test fun mountedRemovalRefusalIsTypedAndMalformedSuccessNeverBecomesAReceipt(): Unit = runBlocking {
         val mounted = Connection(CollieOrigin(server.url("/nested/collie/").toString()), "phone", "token")
         val now = System.currentTimeMillis()

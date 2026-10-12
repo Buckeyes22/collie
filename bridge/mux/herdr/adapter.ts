@@ -1,4 +1,5 @@
 import { HerdrAgentControl } from "./agent-control.ts";
+import { ORIGINAL_AGENT_BINDING, ORIGINAL_RUNTIME_INCARNATION, sameAgentOccupant } from "../../control/agent-models.ts";
 import type { AgentAction, AgentControlInfo, AgentExplain, AgentOccupant, AgentWaitCondition } from "../../control/agent-models.ts";
 // HERDR, BEHIND THE CONTRACT — the reference adapter (M10/02).
 //
@@ -35,6 +36,7 @@ import { herdrMachineCandidates } from "./machine-list.ts";
 import { herdrSessionSource } from "./sessions.ts";
 import { HERDR_LOGO_SVG } from "./logo.ts";
 import { createHerdrHostControl } from "../../host-control/herdr.ts";
+import { herdrHostControlWithAgentViews } from "../../host-control/agent-views.ts";
 import type { HostControlPort } from "../../host-control/types.ts";
 import type { MuxAdapterFactory, MuxTarget } from "../registry.ts";
 import {
@@ -163,6 +165,7 @@ const HERDR_BASE_CAPABILITIES = [
 const HERDR_CAPABILITIES = declareCapabilities({
   supports: [
     ...HERDR_BASE_CAPABILITIES,
+    "agentMetadata",
     "removeWorktree",
     "agentAutomation", "agentWaits",
     "paneLayout", "portableLayouts", "tabTransfer", "paneSplit", "paneResize", "paneZoom", "paneSwap", "paneMove", "paneDirectionalFocus",
@@ -521,7 +524,7 @@ export class HerdrMux implements MuxAdapter {
     private readonly sessions: () => readonly MuxSession[],
     socketPath = "",
   ) {
-    this.hostControl = createHerdrHostControl(client, socketPath);
+    this.hostControl = herdrHostControlWithAgentViews(client, () => this.paneLayoutReady, () => this.layoutRuntimeIdentity(), createHerdrHostControl(client, socketPath));
   }
 
   private agentPort(): HerdrAgentControl { return new HerdrAgentControl(this.client, () => this.layoutRuntimeIdentity()); }
@@ -1143,6 +1146,77 @@ export class HerdrMux implements MuxAdapter {
     }
   }
 
+  async reportPaneMetadata(paneId: string, request: import("../../control/metadata.ts").PaneMetadataRequest): Promise<MuxAck> {
+    if (!this.capabilities.supports.agentMetadata) return muxUnsupported("agentMetadata", "This Herdr runtime has not completed a current compatible protocol handshake.");
+    // H14's `agent` guard applies only to presentation fields, not token patches. Until Herdr
+    // exposes an atomic expected-occupant guard for tokens, do not send a pane token to a mutable ID.
+    if (request.tokens && Object.keys(request.tokens).length > 0) return muxRefused("metadata.token_occupant_guard_unavailable");
+    try {
+      const before = await this.client.getPane(paneId);
+      if (request.agent == null || before.agent !== request.agent) return muxGone("The pane agent changed before metadata was reported.");
+      // SAFETY: request was validated at the HTTP boundary and pane_id is the adapter's exact target.
+      const params = JSON.parse(JSON.stringify({ ...request, pane_id: paneId })) as JsonObject;
+      if (!this.client.reportPaneMetadata) return muxUnsupported("agentMetadata", "This adapter has no verified metadata reporter.");
+      await this.client.reportPaneMetadata(params);
+      const after = await this.client.getPane(paneId);
+      if (before.pane_id !== after.pane_id || before.terminal_id !== after.terminal_id || before.agent !== after.agent) {
+        return muxUnreachable("The pane occupant changed after metadata dispatch; the outcome is unknown.");
+      }
+      return muxAck();
+    } catch (err) { return transportRefusal(err); }
+  }
+
+  /** Retain route admission's original custody; later reads can retire it, never replace it. */
+  async reportPaneMetadataOriginal(paneId: string, request: import("../../control/metadata.ts").PaneMetadataRequest, expected: AgentControlInfo, finalAdmission: (runtime: string) => boolean): Promise<MuxAck> {
+    if (!this.client.metadataProtocolCapabilities?.().paneOriginalMetadataV1) return muxUnsupported("agentMetadata", "This Herdr runtime does not advertise original-occupant metadata writes.");
+    if (!this.client.reportPaneMetadataOriginal) return muxUnsupported("agentMetadata", "This adapter has no verified original-occupant metadata reporter.");
+    const original = Object.freeze({ ...expected });
+    const binding = original[ORIGINAL_AGENT_BINDING];
+    if (!binding || !original[ORIGINAL_RUNTIME_INCARNATION] || !/^[a-f0-9]{64}$/u.test(binding)) return muxUnsupported("agentMetadata", "The original metadata occupant has no producer custody binding.");
+    if (original.paneId !== paneId || request.agent == null || request.agent !== original.agent) return muxGone("The report does not belong to the original pane agent.");
+    const admitted = (runtime: string): boolean => runtime === original.runtimeIdentity && finalAdmission(runtime);
+    const currentOriginal = async (): Promise<boolean> => {
+      if (!admitted(original.runtimeIdentity)) return false;
+      const current = await this.agentControl(original.paneId);
+      return current.ok && sameAgentOccupant(original, current.value) && current.value[ORIGINAL_RUNTIME_INCARNATION] === original[ORIGINAL_RUNTIME_INCARNATION] && admitted(original.runtimeIdentity);
+    };
+    let dispatched = false;
+    try {
+      if (!await currentOriginal()) return muxGone("The original metadata occupant changed before dispatch.");
+      // SAFETY: symbol-keyed original custody stays private and is retained from route admission;
+      // current reads only compare it. Neither receipts nor HTTP/Crew DTOs include the binding.
+      const payload = JSON.parse(JSON.stringify({ original_binding: binding, report: { ...request, pane_id: paneId } })) as JsonObject;
+      dispatched = true;
+      await this.client.reportPaneMetadataOriginal(payload, {
+        runtimeIdentity: original.runtimeIdentity, finalAdmission: admitted,
+        beforeFirstBytes: currentOriginal,
+      });
+      if (!await currentOriginal()) return muxUnreachable("The original occupant changed after metadata dispatch; its outcome is unknown.");
+      return muxAck();
+    } catch (err) {
+      const detail = reason(err);
+      if (detail.includes("metadata_original_target_changed")) return muxGone("The original pane occupant changed before the guarded metadata write.");
+      if (detail.includes("metadata_original_agent_mismatch")) return muxRefused("metadata.agent_mismatch");
+      if (err instanceof WriteAdmissionRetired && !err.bytesMayHaveBeenSent) return muxGone("The original metadata admission retired before dispatch.");
+      return dispatched ? muxUnreachable("Metadata may have been dispatched; the original outcome is unknown.") : transportRefusal(err);
+    }
+  }
+
+  async reportWorkspaceMetadata(workspaceId: string, request: import("../../control/metadata.ts").WorkspaceMetadataRequest): Promise<MuxAck> {
+    if (!this.capabilities.supports.agentMetadata) return muxUnsupported("agentMetadata", "This Herdr runtime has not completed a current compatible protocol handshake.");
+    try {
+      const before = (await this.client.listWorkspaces()).find((workspace) => workspace.workspace_id === workspaceId);
+      if (!before) return muxGone("The workspace no longer exists.");
+      if (!this.client.reportWorkspaceMetadata) return muxUnsupported("agentMetadata", "This adapter has no verified metadata reporter.");
+      // SAFETY: request was validated at the HTTP boundary and workspace_id is the adapter's exact target.
+      const params = JSON.parse(JSON.stringify({ ...request, workspace_id: workspaceId })) as JsonObject;
+      await this.client.reportWorkspaceMetadata(params);
+      const after = (await this.client.listWorkspaces()).find((workspace) => workspace.workspace_id === workspaceId);
+      if (!after) return muxUnreachable("The workspace closed after metadata dispatch; the outcome is unknown.");
+      return muxAck();
+    } catch (err) { return transportRefusal(err); }
+  }
+
   /**
    * The same scrollback with soft wraps undone (`recent_unwrapped`), for URL repair.
    *
@@ -1370,7 +1444,7 @@ export class HerdrMux implements MuxAdapter {
 
   watch(options: MuxWatchOptions): MuxSubscription {
     return this.client.subscribeEvents({
-      subscriptions: buildSubscriptions(options.panes, this.paneLayoutReady),
+      subscriptions: buildSubscriptions(options.panes, this.paneLayoutReady, this.capabilities.supports.agentMetadata === true),
       onUp: () => {
         // Whatever moved while the stream was down, a repo binding included, is re-read.
         this.repoByWorkspace.clear();
@@ -1451,6 +1525,11 @@ function sameWireSession(
  * The joins live here because the space and tab a pane belongs to are things the MULTIPLEXER knows;
  * a caller re-deriving them would have to learn Herdr's record shapes to do it.
  */
+/** The public terminal incarnation is derived from a producer's raw terminal id. */
+export function herdrTerminalIncarnation(terminalId: string): string {
+  return createHash("sha256").update("collie/herdr-terminal/v1\0", "utf8").update(terminalId, "utf8").digest("hex");
+}
+
 type MutableMuxPane = { -readonly [K in keyof MuxPane]: MuxPane[K] };
 
 function toMuxPane(
@@ -1468,7 +1547,7 @@ function toMuxPane(
   // conditionally spread, so absent stays absent and each condition reads as the one rule it is.
   const pane: MutableMuxPane = {
     paneId: raw.pane_id,
-    terminalIncarnation: createHash("sha256").update("collie/herdr-terminal/v1\0", "utf8").update(raw.terminal_id, "utf8").digest("hex"),
+    terminalIncarnation: herdrTerminalIncarnation(raw.terminal_id),
     spaceId: raw.workspace_id,
     spaceLabel,
     spaceNumber: space?.number ?? 0,

@@ -158,7 +158,7 @@ export function createHerdrHostControl(client: HerdrRpc, socketPath: string, run
     integrations: false, integrationInstall: false, integrationUninstall: false,
     experimentalLettaIntegration: false, agentManifests: false, manifestReload: false,
     manifestRefresh: false, plugins: false, configuration: false, persistence: false,
-    machines: false, serverAdministration: false,
+    machines: false, serverAdministration: false, agentViews: false,
   } as const satisfies Readonly<Record<(typeof HOST_CAPABILITIES)[number], boolean>>;
   const port: HostControlPort = {
     provider: "herdr",
@@ -280,7 +280,7 @@ export const herdrHostControl: HostControlPort = {
     integrations: false, integrationInstall: false, integrationUninstall: false,
     experimentalLettaIntegration: false, agentManifests: false, manifestReload: false,
     manifestRefresh: false, plugins: false, configuration: false, persistence: false,
-    machines: false, serverAdministration: false,
+    machines: false, serverAdministration: false, agentViews: false,
   },
   notes: Object.fromEntries(HOST_CAPABILITIES.map((name) => [name, UNSUPPORTED])),
   async listIntegrations() { return unsupported("integrations"); },

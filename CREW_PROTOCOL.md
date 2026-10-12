@@ -3220,6 +3220,8 @@ Each final action carries a caller-held request ID, exact action, and short-live
 
 Under §7.1, an owning bridge may advertise `controlCapabilities.filesDiscovery=true` in hello; the lead publishes only that member’s stored declaration in host-scoped config. Absence or false never enables automatic discovery. A pane read may carry `filesReadReady` as a strict boolean, computed after its grid read from the owning caller’s device-read gate. It is included in the response ETag and preserved by lead masking; a lead never substitutes its own verdict. Clients require both positive declarations under the same captured host/session/pane, connection and navigation actor. This adds no route, config forwarding, bypass or filesystem read. Existing Files endpoints still enforce both factors at dispatch.
 
+The control route forwarder carries pane/workspace metadata GET as `device-read`, their POST reports as `write`, and host-only agent-view GET/POST/DELETE as `device-read`/`write`/`write`, respectively. It preserves the exact host/session query and bounded JSON body. These additions do not change `hello` or its protocol version; peers that lack the route return their own unsupported response without RPC fallback.
+
 ## Workspace and tab organization control routes
 
 ## Portable layout control routes

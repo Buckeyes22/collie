@@ -87,6 +87,8 @@ class StubAdapter implements MuxAdapter {
   moveTab?: MuxAdapter["moveTab"];
   focusTab?: MuxAdapter["focusTab"];
   agentIdentity?: (paneId: string) => Promise<MuxOutcome<import("../mux/types.ts").MuxAgentIdentity>>;
+  reportPaneMetadata?: MuxAdapter["reportPaneMetadata"];
+  reportWorkspaceMetadata?: MuxAdapter["reportWorkspaceMetadata"];
   capabilities = declareCapabilities({
     supports: ["paneGrid", "typeText", "sendKeys"],
     notes: { agentDetection: "the adapter's own note", closePane: "untouched" },
@@ -322,6 +324,9 @@ describe("a decorator preserves the adapter's whole surface", () => {
     agentWait: true,
     agentObservedMove: true,
     agentObservedTransition: true,
+    reportPaneMetadata: true,
+    reportPaneMetadataOriginal: true,
+    reportWorkspaceMetadata: true,
     readLogicalText: true,
     readLayout: true,
     applyPortableLayout: true,
@@ -369,7 +374,7 @@ describe("a decorator preserves the adapter's whole surface", () => {
 
   /** A raw adapter carrying EVERY field, so a decorator dropping any one of them is visible. */
   function fullAdapter(): MuxAdapter {
-    const stub: StubAdapter & Pick<MuxAdapter, "agentList" | "agentRead" | "agentControl" | "agentExplain" | "agentAction" | "agentWait" | "agentObservedMove" | "agentObservedTransition"> = new StubAdapter();
+    const stub: StubAdapter & Pick<MuxAdapter, "agentList" | "agentRead" | "agentControl" | "agentExplain" | "agentAction" | "agentWait" | "agentObservedMove" | "agentObservedTransition" | "reportPaneMetadataOriginal"> = new StubAdapter();
     stub.logo = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"></svg>`;
     stub.hostControl = herdrHostControl;
     stub.readLogicalText = (paneId, lines) => Promise.resolve(muxOk(`${paneId}:${lines}`));
@@ -406,6 +411,9 @@ describe("a decorator preserves the adapter's whole surface", () => {
     stub.agentWait = async () => ({ ok: false, reason: "refused", detail: "fixture" });
     stub.agentObservedTransition = async () => ({ ok: false, reason: "gone", detail: "fixture" });
     stub.agentObservedMove = async () => ({ ok: false, reason: "gone", detail: "fixture" });
+    stub.reportPaneMetadata = async () => muxOk(undefined);
+    stub.reportPaneMetadataOriginal = async () => muxOk(undefined);
+    stub.reportWorkspaceMetadata = async () => muxOk(undefined);
     return stub;
   }
 

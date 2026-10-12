@@ -69,7 +69,9 @@ const FORWARDABLE: readonly RegExp[] = [
   /^pane\/[^/]+\/agent\/(?:control|explain|read|start|rename|prompt|focus|keys|input)$/,
   /^waits(?:\/[A-Za-z0-9_-]{1,128})?$/,
   /^control\/operations\/[a-zA-Z0-9_-]{1,128}$/,
+  /^host\/agent-view$/,
   /^pane\/[^/]+(?:\/(?:reply|keys|upload|close|rename|history|chat|changes|files|focus|processes|agent|agent\/(?:state|session|release|authority\/clear)))?$/,
+  /^pane\/[^/]{1,128}\/metadata$/,
   /^pane\/[^/]+\/layout(?:\/(?:neighbor|edges|plan|split|resize|zoom|swap|move|focus-direction))?$/,
   /^tab\/[^/]+\/layout\/(?:export|split-ratio)$/,
   /^layout\/(?:plan|apply)$/,
@@ -88,6 +90,7 @@ const FORWARDABLE: readonly RegExp[] = [
   /^tab\/[^/]+\/(?:move|focus)(?:\/plan)?$/,
   /^workspace$/,
   /^workspace\/[^/]+\/(?:rename|close|move|focus)(?:\/plan)?$/,
+  /^workspace\/[^/]{1,128}\/metadata$/,
   /^workspace\/[^/]+\/worktree\/(?:remove-plan|remove)$/,
   /^workspaces\/reorder(?:\/plan)?$/,
   // The Changes view asked by workspace (ADR 0065): read-only git over the folder of a space that

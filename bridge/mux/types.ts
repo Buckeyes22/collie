@@ -31,6 +31,7 @@ import type { AgentStatus } from "../types.ts";
 import type { MuxCapability, MuxCapabilityDeclaration } from "./capabilities.ts";
 import type { HostControlPort } from "../host-control/types.ts";
 import type { MuxIdentity } from "./identity.ts";
+import type { PaneMetadataRequest, WorkspaceMetadataRequest } from "../control/metadata.ts";
 
 export type {
   MuxCapability,
@@ -774,6 +775,11 @@ export interface MuxAdapter {
   agentObservedMove?(original: AgentOccupant, observed: import("../control/agent-models.ts").AgentObservedMove, owner: import("../control/agent-models.ts").AgentObservationOwner): Promise<MuxOutcome<AgentControlInfo>>;
 
 
+  /** Report source-owned display metadata; never writes lifecycle authority. */
+  reportPaneMetadata?(paneId: string, request: PaneMetadataRequest): Promise<MuxAck>;
+  reportPaneMetadataOriginal?(paneId: string, request: PaneMetadataRequest, original: import("../control/agent-models.ts").AgentControlInfo, finalAdmission: (runtime: string) => boolean): Promise<MuxAck>;
+  reportWorkspaceMetadata?(workspaceId: string, request: WorkspaceMetadataRequest): Promise<MuxAck>;
+
   /**
    * The same rows with soft wraps undone, when the multiplexer can produce them.
    *
@@ -928,6 +934,7 @@ export function muxDataFields(adapter: MuxAdapter): Pick<MuxAdapter, "logo" | "h
  */
 type MuxOptionalMethodFields = Pick<MuxAdapter,
   | "readLogicalText" | "processInfo" | "readLayout" | "applyLayout" | "exportPortableLayout" | "applyPortableLayout" | "setSplitRatio" | "layoutRuntimeIdentity" | "agentIdentity" | "agentList" | "agentRead" | "agentControl" | "agentExplain" | "agentAction" | "agentWait" | "agentObservedMove" | "agentObservedTransition"
+  | "reportPaneMetadata" | "reportPaneMetadataOriginal" | "reportWorkspaceMetadata"
   | "removeWorktree"
   | "renameSpace" | "closeSpace" | "moveSpace" | "moveSpaceBlock" | "focusSpace" | "moveTab" | "focusTab"
 >;
@@ -957,6 +964,9 @@ export function muxOptionalMethods(adapter: MuxAdapter): MuxOptionalMethodFields
   const agentWait = adapter.agentWait?.bind(adapter);
   const agentObservedTransition = adapter.agentObservedTransition?.bind(adapter);
   const agentObservedMove = adapter.agentObservedMove?.bind(adapter);
+  const reportPaneMetadata = adapter.reportPaneMetadata?.bind(adapter);
+  const reportPaneMetadataOriginal = adapter.reportPaneMetadataOriginal?.bind(adapter);
+  const reportWorkspaceMetadata = adapter.reportWorkspaceMetadata?.bind(adapter);
   const methods: MuxOptionalMethodFields = {};
   if (readLogicalText !== undefined) methods.readLogicalText = readLogicalText;
   if (processInfo !== undefined) methods.processInfo = processInfo;
@@ -983,5 +993,8 @@ export function muxOptionalMethods(adapter: MuxAdapter): MuxOptionalMethodFields
   if (agentWait !== undefined) methods.agentWait = agentWait;
   if (agentObservedTransition !== undefined) methods.agentObservedTransition = agentObservedTransition;
   if (agentObservedMove !== undefined) methods.agentObservedMove = agentObservedMove;
+  if (reportPaneMetadata !== undefined) methods.reportPaneMetadata = reportPaneMetadata;
+  if (reportPaneMetadataOriginal !== undefined) methods.reportPaneMetadataOriginal = reportPaneMetadataOriginal;
+  if (reportWorkspaceMetadata !== undefined) methods.reportWorkspaceMetadata = reportWorkspaceMetadata;
   return methods;
 }

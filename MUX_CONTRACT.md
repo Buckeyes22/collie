@@ -383,6 +383,14 @@ Native request contexts bind the HTTPS origin including its mount, credential an
 
 Control receipts use GET `/api/control/operations/<id>` and never return secret payload/evidence. Pending after restart is unknown, with no repeat dispatch. Existing launch/worktree/add receipts still use POST replay. The bridge health adapter uses its existing health seam with exact typed Herdr ping/pong validation; source/schema fixtures do not prove a live vendor handshake.
 
+Bounded metadata reports use session-scoped GET/POST `/api/pane/<id>/metadata` and `/api/workspace/<id>/metadata`; host terminal projections use GET/POST/DELETE `/api/host/agent-view`. Metadata writes derive a reserved `collie.native.<device>` source, bind the current pane occupant and durable operation receipt, and recheck admission before dispatch. Tokens, TTLs, state labels, recursive filters and sort fields have closed bounds. A report-only Herdr protocol has no getter: bridge state is a receipt/cache, marked non-authoritative and requiring reconcile. Agent views require the current positive Herdr handshake and affect Herdr's projection only; they do not change agent lifecycle or global attention counts. Native filtering remains local until the operator explicitly applies a terminal projection. Metadata event subscriptions are enabled only with the compatible protocol declaration.
+
 See [scoped control authority decision](.adr/0096-control-authority-is-scoped-and-positive.md). Joint B02/B03 and live vendor/device acceptance are tracked in the B01 handoff.
 
 New receipt ownership requires the stable opaque pairing incarnation, independent of a mutable device label. The B01 isolated seam advertises `controlOperations:false` until the joint B02 local and admitted Crew identity producer is integrated; missing identity refuses. Primitive injected-owner fixtures establish the shared store/reader seam, not final runtime support.
+
+B31 original pane token writes capture the existing source-private `AgentControlInfo`
+once at route admission, retaining its original binding and runtime incarnation
+through durable reservation and the adapter dispatch. Later observations compare
+against that capture and cannot substitute a successor. These source-private fields
+never enter HTTP, Crew, native, or operation receipt DTOs.

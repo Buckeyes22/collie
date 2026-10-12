@@ -375,6 +375,10 @@ describe("which routes cross a link", () => {
     expect(forwardKind("pane/w1:p1/changes")).toBe("read");
     expect(forwardKind("pane/w1:p1/processes")).toBe("read");
     expect(forwardKind("pane/w1:p1/agent")).toBe("read");
+    expect(forwardKind("pane/w1:p1/metadata", "GET")).toBe("read");
+    expect(forwardGate("pane/w1:p1/metadata", "GET")).toBe("device-read");
+    expect(forwardKind("pane/w1:p1/metadata", "POST")).toBe("write");
+    expect(forwardGate("pane/w1:p1/metadata", "POST")).toBe("write");
     expect(forwardGate("pane/w1:p1/processes", "GET")).toBe("device-read");
     expect(forwardGate("pane/w1:p1/agent", "GET")).toBe("device-read");
     for (const action of ["reply", "keys", "upload", "close", "rename"]) {
@@ -1236,6 +1240,23 @@ describe("scoped foundation Crew reads", () => {
       expect(forwardGate(route, method)).toBe(gate);
     }
     expect(crewRouteFor("/api/workspace/w1/worktree/arbitrary")).toBeNull();
+  });
+
+  test("metadata and host agent-view routes cross Crew with exact read/write admission", () => {
+    for (const [route, method, gate] of [
+      ["pane/p1/metadata", "GET", "device-read"],
+      ["pane/p1/metadata", "POST", "write"],
+      ["workspace/w1/metadata", "GET", "device-read"],
+      ["workspace/w1/metadata", "POST", "write"],
+      ["host/agent-view", "GET", "device-read"],
+      ["host/agent-view", "POST", "write"],
+      ["host/agent-view", "DELETE", "write"],
+    ] as const) {
+      expect(crewRouteFor(`/api/${route}`)).toBe(route);
+      expect(forwardGate(route, method)).toBe(gate);
+      expect(forwardKind(route, method)).toBe(gate === "write" ? "write" : "read");
+    }
+    expect(crewRouteFor("/api/host/agent-view/anything")).toBeNull();
   });
 });
 

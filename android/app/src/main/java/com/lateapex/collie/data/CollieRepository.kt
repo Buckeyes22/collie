@@ -1224,6 +1224,55 @@ class CollieRepository(
             else block(configured)
         }
 
+
+    suspend fun paneMetadata(address: PaneAddress, expectedContext: ScopedReadContext? = null, reconcileRequestId: String? = null): ApiResult<com.lateapex.collie.network.MetadataRouteResponse> =
+        withFeatureConnection(address.scope, address.paneId, "agentMetadata", expectedContext) { configured -> api.paneMetadata(configured, address, reconcileRequestId) }
+
+    suspend fun writePaneMetadata(address: PaneAddress, request: com.lateapex.collie.network.PaneMetadataRequest, expectedContext: ScopedReadContext? = null): ApiResult<com.lateapex.collie.network.MetadataRouteResponse> =
+        withFeatureWritableConnection(address.scope, address.paneId, "agentMetadata", expectedContext) { configured -> api.writePaneMetadata(configured, address, request) }
+
+    suspend fun workspaceMetadata(scope: Scope, workspaceId: String, expectedContext: ScopedReadContext? = null, reconcileRequestId: String? = null): ApiResult<com.lateapex.collie.network.MetadataRouteResponse> =
+        withFeatureConnection(scope, workspaceId, "agentMetadata", expectedContext) { configured -> api.workspaceMetadata(configured, scope, workspaceId, reconcileRequestId) }
+
+    suspend fun writeWorkspaceMetadata(scope: Scope, workspaceId: String, request: com.lateapex.collie.network.WorkspaceMetadataRequest, expectedContext: ScopedReadContext? = null): ApiResult<com.lateapex.collie.network.MetadataRouteResponse> =
+        withFeatureWritableConnection(scope, workspaceId, "agentMetadata", expectedContext) { configured -> api.writeWorkspaceMetadata(configured, scope, workspaceId, request) }
+
+    suspend fun agentView(expectedContext: ScopedReadContext? = null): ApiResult<com.lateapex.collie.network.AgentViewRouteResponse> = withConnection(expectedContext = expectedContext) { configured ->
+        val config = api.config(configured)
+        if (config !is ApiResult.Success) return@withConnection configFailure(config)
+        if (config.value.hostControl?.supportsNew("agentViews") != true) return@withConnection ApiResult.Failure(ApiFailure.Http(404, "Terminal agent views are unsupported on this server", "capability.unsupported"))
+        api.agentView(configured)
+    }
+
+    suspend fun setAgentView(request: com.lateapex.collie.network.AgentViewRequest, expectedContext: ScopedReadContext? = null): ApiResult<com.lateapex.collie.network.AgentViewRouteResponse> = withWritableConnection(expectedContext = expectedContext) {
+        val config = api.config(it)
+        if (config !is ApiResult.Success) return@withWritableConnection configFailure(config)
+        if (config.value.hostControl?.supportsNew("agentViews") != true) return@withWritableConnection ApiResult.Failure(ApiFailure.Http(404, "Terminal agent views are unsupported on this server", "capability.unsupported"))
+        api.setAgentView(it, request)
+    }
+
+    suspend fun clearAgentView(requestId: String, expectedContext: ScopedReadContext? = null): ApiResult<com.lateapex.collie.network.AgentViewRouteResponse> = withWritableConnection(expectedContext = expectedContext) {
+        val config = api.config(it)
+        if (config !is ApiResult.Success) return@withWritableConnection configFailure(config)
+        if (config.value.hostControl?.supportsNew("agentViews") != true) return@withWritableConnection ApiResult.Failure(ApiFailure.Http(404, "Terminal agent views are unsupported on this server", "capability.unsupported"))
+        api.clearAgentView(it, requestId)
+    }
+
+    private suspend fun <T> withFeatureConnection(scope: Scope, subject: String, feature: String, expectedContext: ScopedReadContext?, block: suspend (Connection) -> ApiResult<T>): ApiResult<T> =
+        withConnection(scope, subject, expectedContext) { configured ->
+            val config = api.config(configured, scope)
+            if (config !is ApiResult.Success) configFailure(config)
+            else if (config.value.mux?.supportsNew(feature) != true) ApiResult.Failure(ApiFailure.Http(404, "This feature is unsupported on this server", "capability.unsupported"))
+            else block(configured)
+        }
+
+    private suspend fun <T> withFeatureWritableConnection(scope: Scope, subject: String, feature: String, expectedContext: ScopedReadContext?, block: suspend (Connection) -> ApiResult<T>): ApiResult<T> =
+        withWritableConnection(scope, subject, expectedContext) { configured ->
+            val config = api.config(configured, scope)
+            if (config !is ApiResult.Success) configFailure(config)
+            else if (config.value.mux?.supportsNew(feature) != true) ApiResult.Failure(ApiFailure.Http(404, "This feature is unsupported on this server", "capability.unsupported"))
+            else block(configured)
+        }
     /** Ordinary paired reads. Change paths remain opaque; the bridge validates repository membership. */
     suspend fun changes(target: ChangesTarget, scope: Scope, lookup: ChangesLookup, expectedContext: ScopedReadContext? = null): ApiResult<ChangesListAnswer> =
         withConnection(scope, target.id, expectedContext) { api.changes(it, target, scope, lookup) }

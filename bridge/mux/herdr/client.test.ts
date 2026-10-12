@@ -149,8 +149,24 @@ describe("HerdrClient per-call timeout", () => {
 describe("HerdrClient exact ping mapping", () => {
   test("one-shot ping returns validated vendor identity without listing or mutating panes", async () => {
     const client = new HerdrClient(await lateHerdr({ type: "pong", version: "0.9.3", protocol: 22 }), 1000);
-    expect(await client.handshake()).toEqual({ version: "0.9.3", protocol: 22 });
+    expect(await client.handshake()).toEqual({ version: "0.9.3", protocol: 22, paneOriginalMetadataV1: false, agentViewReadV1: false });
     expect(lastRequest).toEqual({ method: "ping", params: {} });
+  });
+  test("advertises only positive additive metadata capabilities from ping", async () => {
+    const client = new HerdrClient(await lateHerdr({ type: "pong", version: "0.9.3", protocol: 22, capabilities: { pane_original_metadata_v1: true, agent_view_read_v1: true } }), 1000);
+    expect(await client.handshake()).toEqual({ version: "0.9.3", protocol: 22, paneOriginalMetadataV1: true, agentViewReadV1: true });
+  });
+  test("ignores unnegotiated top-level flags and refuses malformed nested flags", async () => {
+    const top = new HerdrClient(await lateHerdr({ type: "pong", version: "0.9.3", protocol: 22, pane_original_metadata_v1: true, agent_view_read_v1: true }), 1000);
+    expect(await top.handshake()).toMatchObject({ paneOriginalMetadataV1: false, agentViewReadV1: false });
+    const malformed = new HerdrClient(await lateHerdr({ type: "pong", version: "0.9.3", protocol: 22, capabilities: { pane_original_metadata_v1: "true" } }), 1000);
+    await expect(malformed.handshake()).rejects.toThrow("malformed metadata capability");
+  });
+  test("accepts the producer's omitted optional label and cleared-source fields", async () => {
+    const set = new HerdrClient(await lateHerdr({ type: "agent_view", active: true, source: "collie.native.owner" }), 1000);
+    expect(await set.setAgentView({ source: "collie.native.owner" })).toEqual({ type: "agent_view", active: true, source: "collie.native.owner" });
+    const clear = new HerdrClient(await lateHerdr({ type: "agent_view", active: false }), 1000);
+    expect(await clear.clearAgentView({ source: "collie.native.owner" })).toEqual({ type: "agent_view", active: false });
   });
   for (const result of [{ type: "ok", version: "0.9.3", protocol: 22 }, { type: "pong", version: "0.9.3", protocol: -1 }, { type: "pong", version: "0.9.3", protocol: 22.5 }]) {
     test(`health refuses malformed pong ${JSON.stringify(result)}`, async () => {
@@ -159,6 +175,18 @@ describe("HerdrClient exact ping mapping", () => {
       expect(lastRequest?.method).toBe("ping");
     });
   }
+});
+
+describe("B31 producer-specific guarded methods", () => {
+  test("uses exact method names and bounded owner-scoped payloads", async () => {
+    const client = new HerdrClient(await lateHerdr({ type: "ok" }), 1000);
+    await client.reportPaneMetadataOriginal({ original_binding: "a".repeat(64), report: { pane_id: "p1", source: "collie.native" } });
+    expect(lastRequest).toEqual({ method: "pane.report_metadata.original_v1", params: { original_binding: "a".repeat(64), report: { pane_id: "p1", source: "collie.native" } } });
+    server?.close(); server = null;
+    const stateClient = new HerdrClient(await lateHerdr({ type: "agent_view_state", source: "owner-a", active: false, view: null }), 1000);
+    await stateClient.getAgentView({ source: "owner-a" });
+    expect(lastRequest).toEqual({ method: "agent.view.get", params: { source: "owner-a" } });
+  });
 });
 
 describe("HerdrClient workspace and tab organization wire mapping", () => {

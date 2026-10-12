@@ -35,9 +35,10 @@ const GLOBAL_SUBSCRIPTIONS: readonly string[] = [
  * The full subscription list for the current set of agent panes: every global above, plus one
  * pane-scoped `pane.agent_status_changed` per agent pane (the status flips that drive triage).
  */
-export function buildSubscriptions(agentPaneIds: readonly string[], layoutUpdates = false): Subscription[] {
+export function buildSubscriptions(agentPaneIds: readonly string[], layoutUpdates = false, metadataUpdates = false): Subscription[] {
   const subs: Subscription[] = GLOBAL_SUBSCRIPTIONS.map((type) => ({ type }));
   if (layoutUpdates) subs.push({ type: "layout.updated" });
+  if (metadataUpdates) subs.push({ type: "workspace.metadata_updated" });
   for (const id of agentPaneIds) subs.push({ type: "pane.agent_status_changed", pane_id: id });
   return subs;
 }

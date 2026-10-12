@@ -2,6 +2,11 @@ import { strictAgentJson } from "../../control/agent-requests.ts";
 import { agentObject, agentString, parseAgentControlInfo, agentEventMatch, type WireAgentControlInfo } from "./agent-codecs.ts";
 import { AGENT_LIMITS, type AgentAction, type AgentEventCondition, type AgentWaitCondition } from "../../control/agent-models.ts";
 import type { JsonObject, JsonValue } from "../../json.ts";
+
+function expectHerdrType(response: JsonObject, type: string): JsonObject {
+  if (response.type !== type) throw new Error(`herdr response: expected ${type}`);
+  return response;
+}
 import { HOST } from "../../host.ts";
 import { statSync } from "node:fs";
 import { createHash } from "node:crypto";
@@ -25,7 +30,8 @@ import { INTEGRATION_TARGETS, type AgentManifestSnapshot, type AgentManifestSumm
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Identity reported by the vendor ping; this alone grants no feature authority. */
-export interface HerdrHandshake { readonly version: string; readonly protocol: number }
+export interface HerdrHandshake { readonly version: string; readonly protocol: number; readonly paneOriginalMetadataV1?: boolean; readonly agentViewReadV1?: boolean }
+export interface HerdrMetadataProtocolCapabilities { readonly paneOriginalMetadataV1: boolean; readonly agentViewReadV1: boolean }
 export type HerdrMoveDestination =
   | { readonly type: "tab"; readonly tab_id: string; readonly split: "right" | "down"; readonly target_pane_id: string; readonly ratio: number | null }
   | { readonly type: "new_tab"; readonly workspace_id: string; readonly label: string | null }
@@ -614,6 +620,7 @@ export type HerdrRpc = Pick<
   | "handshake"
   | "layoutHandshakeSample"
   | "layoutRuntimeIdentity"
+  | "metadataProtocolCapabilities"
   | "removeWorktree"
   | "retireLayoutRuntime"
   | "readPaneLayout"
@@ -636,6 +643,12 @@ export type HerdrRpc = Pick<
   | "uninstallIntegration"
   | "agentManifests"
   | "reloadAgentManifests"
+  | "reportPaneMetadata"
+  | "reportPaneMetadataOriginal"
+  | "reportWorkspaceMetadata"
+  | "setAgentView"
+  | "clearAgentView"
+  | "getAgentView"
 >>;
 
 let idCounter = 0;
@@ -759,6 +772,11 @@ export class HerdrClient {
     return this.runtimeIdentity(witness);
   }
 
+  metadataProtocolCapabilities(): HerdrMetadataProtocolCapabilities {
+    const current = this.layoutRuntimeIdentity() !== null;
+    return { paneOriginalMetadataV1: current && this.verifiedPaneOriginalMetadataV1, agentViewReadV1: current && this.verifiedAgentViewReadV1 };
+  }
+
   /** A compatible ping bracketed by the OS witness of the actual local endpoint. */
   async layoutHandshakeSample(): Promise<{ handshake: HerdrHandshake; identity: string } | null> {
     const before = this.observeEndpointWitness();
@@ -803,6 +821,8 @@ export class HerdrClient {
   }
   private retireHandshake(): void {
     this.verifiedHandshake = null;
+    this.verifiedPaneOriginalMetadataV1 = false;
+    this.verifiedAgentViewReadV1 = false;
     this.verifiedEndpointWitness = null;
     this.lastEndpointWitness = null;
     this.handshakeGeneration += 1;
@@ -810,6 +830,8 @@ export class HerdrClient {
     this.verifiedOriginalAgentInputs = false;
   }
   private verifiedHandshake: string | null = null;
+  private verifiedPaneOriginalMetadataV1 = false;
+  private verifiedAgentViewReadV1 = false;
   private verifiedEndpointWitness: string | null = null;
   private lastEndpointWitness: string | null = null;
   private handshakeGeneration = 0;
@@ -1610,8 +1632,40 @@ export class HerdrClient {
     this.verifiedOriginalAgentObservations = capabilities?.agent_observation_cursor_v1 === true;
     if (capabilities?.agent_original_input_v1 !== undefined && typeof capabilities.agent_original_input_v1 !== "boolean") { this.retireHandshake(); throw new Error("herdr ping: malformed original input capability"); }
     this.verifiedOriginalAgentInputs = capabilities?.agent_original_input_v1 === true;
-    this.verifiedHandshake = `${result.version}:${result.protocol}:${this.verifiedOriginalAgentObservations}:${this.verifiedOriginalAgentInputs}`;
-    return { version: result.version, protocol: result.protocol };
+    for (const name of ["pane_original_metadata_v1", "agent_view_read_v1"] as const) {
+      if (capabilities?.[name] !== undefined && typeof capabilities[name] !== "boolean") { this.retireHandshake(); throw new Error("herdr ping: malformed metadata capability"); }
+    }
+    const paneOriginalMetadataV1 = capabilities?.pane_original_metadata_v1 === true;
+    const agentViewReadV1 = capabilities?.agent_view_read_v1 === true;
+    this.verifiedHandshake = `${result.version}:${result.protocol}:${this.verifiedOriginalAgentObservations}:${this.verifiedOriginalAgentInputs}:${paneOriginalMetadataV1}:${agentViewReadV1}`;
+    this.verifiedPaneOriginalMetadataV1 = paneOriginalMetadataV1;
+    this.verifiedAgentViewReadV1 = agentViewReadV1;
+    return { version: result.version, protocol: result.protocol, paneOriginalMetadataV1, agentViewReadV1 };
+  }
+
+  async reportPaneMetadata(params: JsonObject): Promise<JsonObject> {
+    return expectHerdrType(await this.request<JsonObject>("pane.report_metadata", params), "ok");
+  }
+  async reportPaneMetadataOriginal(params: JsonObject, admission?: HerdrDispatchAdmission): Promise<JsonObject> {
+    return expectHerdrType(await this.request<JsonObject>("pane.report_metadata.original_v1", params, this.timeoutMs, undefined, undefined, admission), "ok");
+  }
+  async reportWorkspaceMetadata(params: JsonObject): Promise<JsonObject> {
+    return expectHerdrType(await this.request<JsonObject>("workspace.report_metadata", params), "ok");
+  }
+  async setAgentView(params: JsonObject): Promise<JsonObject> {
+    const response = expectHerdrType(await this.request<JsonObject>("agent.view.set", params), "agent_view");
+    if (response.active !== true || typeof response.source !== "string" || response.label !== undefined && response.label !== null && typeof response.label !== "string") throw new Error("herdr agent.view.set: malformed response");
+    return response;
+  }
+  async clearAgentView(params: JsonObject): Promise<JsonObject> {
+    const response = expectHerdrType(await this.request<JsonObject>("agent.view.clear", params), "agent_view");
+    if (response.active !== false || response.source !== undefined && response.source !== null && typeof response.source !== "string" || response.label !== undefined && response.label !== null && typeof response.label !== "string") throw new Error("herdr agent.view.clear: malformed response");
+    return response;
+  }
+  async getAgentView(params: JsonObject): Promise<JsonObject> {
+    const response = expectHerdrType(await this.request<JsonObject>("agent.view.get", params), "agent_view_state");
+    if (typeof response.source !== "string" || typeof response.active !== "boolean" || response.view !== null && (response.view === undefined || typeof response.view !== "object" || Array.isArray(response.view))) throw new Error("herdr agent.view.get: malformed response");
+    return response;
   }
 
   /** Reachability check through the existing adapter health seam; never infer new capabilities. */

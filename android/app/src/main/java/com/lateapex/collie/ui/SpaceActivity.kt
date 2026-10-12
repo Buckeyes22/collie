@@ -105,6 +105,9 @@ class SpaceActivity : AppCompatActivity() {
         binding.changesButton.setOnClickListener {
             startActivity(ChangesActivity.intentForWorkspace(this, workspaceId, scope, intent.getStringExtra(EXTRA_TITLE)))
         }
+        binding.metadataButton.setOnClickListener {
+            startActivity(AgentMetadataActivity.intentForWorkspace(this, workspaceId, scope))
+        }
         binding.settingsButton.setOnClickListener { startActivity(Intent(this, SettingsActivity::class.java)) }
         binding.newWorkflowButton.setOnClickListener { startActivity(NewActivity.intent(this, scope)) }
         binding.spaceList.layoutManager = LinearLayoutManager(this)

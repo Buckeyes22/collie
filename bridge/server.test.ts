@@ -3257,7 +3257,7 @@ describe("the host gate — `?host=` selects among enrolled members and nothing 
     // The load-bearing claim: `?h=laptop` + `w1:p1` must never be served the DESK's `w1:p1`, and
     // pane ids collide across machines, so a fall-through here is a cross-host write.
     //
-    // All TWENTY-SIX session-scoped route handlers (tab create, workspace create, launch, this host's launcher
+    // All TWENTY-EIGHT session-scoped route handlers (tab create, workspace create, launch, this host's launcher
     // rows, this host's folder list and a star on it, one journal blob, a workspace's Changes list,
     // a workspace's Files view, the Files existence check by pane or workspace, the Files image read
     // by pane or workspace (ADR 0090), tab action, the pane family, "look now", the worktree listing,
@@ -3268,9 +3268,9 @@ describe("the host gate — `?host=` selects among enrolled members and nothing 
     // worktree removal planning/execution, and the owning workspace's Source read, scoped agent
     // inventory, workspace/tab organization, portable layouts and host integration actions) reach
     // their runtime through the caller's resolver and nothing else.
-    // All scoped routes, including host integrations and named agent operations, resolve only through the captured caller.
-    expect([...src.matchAll(/await caller\.resolve\(\);/g)]).toHaveLength(29);
-    // Twelve registry reads retain the explicitly enumerated uses below.
+    // All scoped routes, including host integrations, named agent operations and metadata/views, resolve only through the captured caller.
+    expect([...src.matchAll(/await caller\.resolve\(\);/g)]).toHaveLength(31);
+    // Thirteen registry reads retain the explicitly enumerated uses below.
     // than exempted: assembling THIS collie's own snapshot body; `localRuntime`, the single
     // "(session) → runtime, or 404" helper both callers share; `/api/config`, which reports THIS
     // collie's own multiplexer (M10/06) and is not session-scoped at all; `/api/mux/logo.svg`,
@@ -3288,8 +3288,9 @@ describe("the host gate — `?host=` selects among enrolled members and nothing 
     // engine because the sweep that brings the member's answer back rides its tick (CREW_PROTOCOL.md
     // §10.1). It runs after the forward has answered and writes nothing; removal readiness
     // only publishes a capability. B19 adds two original-registry equality checks, never a
-    // fresh resolver or replacement authority source.
-    expect([...src.matchAll(/registry\.get\(/g)]).toHaveLength(12);
+    // fresh resolver or replacement authority source. B31 retains one further equality
+    // check for its original metadata runtime through dispatch.
+    expect([...src.matchAll(/registry\.get\(/g)]).toHaveLength(13);
     // The mux read is a read of the LOCAL primary — never `?host=`, because a peer's capabilities
     // are its own business and reach the lead over the crew API, never out of this registry.
     expect(src).toContain("const activeMux = registry.get();");

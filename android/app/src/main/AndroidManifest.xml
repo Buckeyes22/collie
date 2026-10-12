@@ -62,6 +62,14 @@
             android:exported="false"
             android:parentActivityName=".ui.PaneActivity" />
         <activity
+            android:name=".ui.AgentMetadataActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.PaneActivity" />
+        <activity
+            android:name=".ui.AgentViewActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.PaneActivity" />
+        <activity
             android:name=".ui.ChangesActivity"
             android:exported="false"
             android:parentActivityName=".ui.PaneActivity" />

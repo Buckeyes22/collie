@@ -78,6 +78,8 @@ function notFound(method: string, code: string, id: string): Error {
  * the real one, unmodified.
  */
 export class FakeHerdr implements HerdrRpc {
+  metadataCaps = { paneOriginalMetadataV1: false, agentViewReadV1: false };
+  metadataProtocolCapabilities(): { readonly paneOriginalMetadataV1: boolean; readonly agentViewReadV1: boolean } { return this.metadataCaps; }
   layoutVersion = "0.9.3";
   layoutProtocol = 22;
   runtimeIdentity = "fake-herdr-runtime-1";
@@ -98,6 +100,7 @@ export class FakeHerdr implements HerdrRpc {
   private connected = true;
   readonly processInfoTargets: string[] = [];
   readonly agentInfoRows: WireAgentInfo[] = [];
+  lastOriginalMetadata: import("../../json.ts").JsonObject | null = null;
 
   constructor() {
     this.seed();
@@ -282,13 +285,20 @@ export class FakeHerdr implements HerdrRpc {
   async processInfo(paneId: string): Promise<WirePaneProcessInfo> {
     const pane = this.pane("pane.process_info", paneId);
     this.processInfoTargets.push(paneId);
-    return {
+    const result: WirePaneProcessInfo = {
       pane_id: paneId,
       shell_pid: 100,
       foreground_process_group_id: 100,
       foreground_processes: [{ pid: 100, name: "zsh", argv: ["zsh"], cwd: pane.foreground_cwd ?? pane.cwd }],
       tty: "/dev/pts/1",
     };
+    if (this.metadataCaps.paneOriginalMetadataV1) result.original_binding = "a".repeat(64);
+    return result;
+  }
+
+  async reportPaneMetadataOriginal(params: import("../../json.ts").JsonObject): Promise<import("../../json.ts").JsonObject> {
+    this.lastOriginalMetadata = params;
+    return { type: "ok" };
   }
 
   changeTerminalOccupant(paneId: string, terminalId: string): void {

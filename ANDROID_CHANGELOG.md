@@ -9,6 +9,7 @@ the first Android release from this fork.
 ## Unreleased
 
 - Keep saved-pane status compact and show the complete saved-copy provenance without clipping.
+- Add bounded pane metadata with original-occupant token guards and owner-scoped agent-view reconciliation; keep unsupported and unresolved writes fail-closed.
 
 - Add native machine alert rule editing with revision and incarnation checks; preserve server-owned rule extensions and require review after conflicts or uncertain outcomes.
 

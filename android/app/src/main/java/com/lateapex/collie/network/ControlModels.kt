@@ -12,6 +12,8 @@ import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.JsonContentPolymorphicSerializer
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.longOrNull
 
 enum class FailureSource { COLLIE, GATEWAY, UNKNOWN }
 enum class FailureFactor { PAIRING, IDENTITY, DEVICE, SCOPE, CAPABILITY, OPERATION, UNKNOWN }
@@ -32,6 +34,140 @@ data class ControlCapabilityResponse(val capabilities: Map<String, Boolean> = em
         null -> CapabilityState.Unknown
     }
 }
+
+/** Bounded, non-authoritative metadata sent by this paired phone. */
+@Serializable
+data class PaneMetadataRequest(
+    val requestId: String,
+    val agent: String,
+    val seq: Long? = null,
+    @kotlinx.serialization.SerialName("ttl_ms") val ttlMs: Long? = 86_400_000,
+    val tokens: Map<String, String?> = emptyMap(),
+    @kotlinx.serialization.SerialName("display_agent") val displayAgent: String? = null,
+    val title: String? = null,
+    @kotlinx.serialization.SerialName("state_labels") val stateLabels: Map<String, String>? = null,
+    @kotlinx.serialization.SerialName("clear_display_agent") val clearDisplayAgent: Boolean = false,
+    @kotlinx.serialization.SerialName("clear_title") val clearTitle: Boolean = false,
+    @kotlinx.serialization.SerialName("clear_state_labels") val clearStateLabels: Boolean = false,
+)
+
+@Serializable
+data class WorkspaceMetadataRequest(
+    val requestId: String,
+    val seq: Long? = null,
+    @kotlinx.serialization.SerialName("ttl_ms") val ttlMs: Long? = 86_400_000,
+    val tokens: Map<String, String?>,
+)
+
+@Serializable
+data class MetadataRouteResponse(
+    val ok: Boolean = false,
+    val target: String? = null,
+    val contributions: List<JsonObject> = emptyList(),
+    val authoritative: Boolean = false,
+    val reconcileRequired: Boolean = true,
+    val requestId: String? = null,
+    val source: String? = null,
+    val receipt: Boolean = false,
+    val operation: ControlOperation? = null,
+    val error: String? = null,
+    val code: String? = null,
+)
+
+@Serializable
+data class AgentViewRequest(
+    val requestId: String,
+    val label: String? = null,
+    val filter: JsonObject? = null,
+    val sort: List<JsonObject> = emptyList(),
+)
+
+/** Closed, resource-bounded Herdr v0.9.3 agent-view schema shared by transport and native preview. */
+object AgentViewSchema {
+    private val filterBuiltins = setOf("status", "workspace_id", "tab_id", "pane_id", "agent", "seen", "state_change_seq")
+    private val sortBuiltins = filterBuiltins + setOf("workspace_order", "tab_order", "pane_order", "attention")
+    private val tokenName = Regex("[A-Za-z0-9_-]{1,32}")
+    private val maxSafeInteger = 9_007_199_254_740_991L
+
+    fun valid(request: AgentViewRequest): Boolean = request.requestId.matches(Regex("[A-Za-z0-9_-]{1,128}")) &&
+        (request.label == null || safeText(request.label)) && request.sort.size <= 8 && request.sort.all(::validSort) &&
+        (request.filter == null || validFilter(request.filter))
+
+    fun validFilter(filter: kotlinx.serialization.json.JsonElement): Boolean {
+        var nodes = 0
+        fun field(value: kotlinx.serialization.json.JsonElement?): Boolean = when (value) {
+            is kotlinx.serialization.json.JsonPrimitive -> value.isString && value.content in filterBuiltins
+            is kotlinx.serialization.json.JsonObject -> value.keys == setOf("token") &&
+                (value["token"] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull?.matches(tokenName) == true
+            else -> false
+        }
+        fun operand(value: kotlinx.serialization.json.JsonElement?): Boolean = when (value) {
+            is kotlinx.serialization.json.JsonPrimitive -> when {
+                value.isString -> safeText(value.content)
+                value.booleanOrNull != null -> true
+                else -> value.longOrNull?.let { it in 0L..maxSafeInteger } == true
+            }
+            is kotlinx.serialization.json.JsonObject -> value.keys == setOf("context") &&
+                (value["context"] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull in setOf("current_workspace_id", "current_tab_id")
+            else -> false
+        }
+        fun contextMatches(field: kotlinx.serialization.json.JsonElement?, value: kotlinx.serialization.json.JsonElement?): Boolean {
+            val context = (value as? kotlinx.serialization.json.JsonObject)?.get("context")
+                ?.let { (it as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull } ?: return true
+            val fieldName = (field as? kotlinx.serialization.json.JsonPrimitive)?.takeIf { it.isString }?.content
+            return when (context) {
+                "current_workspace_id" -> fieldName == "workspace_id"
+                "current_tab_id" -> fieldName == "tab_id"
+                else -> false
+            }
+        }
+        fun walk(node: kotlinx.serialization.json.JsonElement, depth: Int): Boolean {
+            if (++nodes > 128 || depth > 8) return false
+            val row = node as? kotlinx.serialization.json.JsonObject ?: return false
+            val op = (row["op"] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull ?: return false
+            return when (op) {
+                "all", "any" -> row.keys == setOf("op", "filters") &&
+                    (row["filters"] as? kotlinx.serialization.json.JsonArray)?.let { filters -> filters.size <= 32 && filters.all { walk(it, depth + 1) } } == true
+                "not" -> row.keys == setOf("op", "filter") && row["filter"]?.let { walk(it, depth + 1) } == true
+                "eq" -> row.keys == setOf("op", "field", "value") && field(row["field"]) && operand(row["value"]) && contextMatches(row["field"], row["value"])
+                "in" -> row.keys == setOf("op", "field", "values") && field(row["field"]) &&
+                    (row["values"] as? kotlinx.serialization.json.JsonArray)?.let { values -> values.isNotEmpty() && values.size <= 32 && values.all { operand(it) && contextMatches(row["field"], it) } } == true
+                "exists" -> row.keys == setOf("op", "field") && field(row["field"])
+                else -> false
+            }
+        }
+        return walk(filter, 0)
+    }
+
+    private fun validSort(row: kotlinx.serialization.json.JsonObject): Boolean {
+        if (row.keys.any { it !in setOf("field", "order") }) return false
+        val field = row["field"]
+        val validField = when (field) {
+            is kotlinx.serialization.json.JsonPrimitive -> field.isString && field.content in sortBuiltins
+            is kotlinx.serialization.json.JsonObject -> field.keys == setOf("token") &&
+                (field["token"] as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull?.matches(tokenName) == true
+            else -> false
+        }
+        val order = row["order"]
+        return validField && (order == null || (order as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull in setOf("asc", "desc"))
+    }
+
+    private fun safeText(value: String): Boolean = value.length <= 80 && value.none(Char::isISOControl)
+}
+
+@Serializable
+data class AgentViewRouteResponse(
+    val ok: Boolean = false,
+    val view: JsonObject? = null,
+    val authoritative: Boolean = false,
+    val reconcileRequired: Boolean = true,
+    val requestId: String? = null,
+    val source: String? = null,
+    val receipt: Boolean = false,
+    val operation: ControlOperation? = null,
+    val error: String? = null,
+    val code: String? = null,
+)
 @Serializable
 data class HostControlResponse(
     val provider: String = "none",
