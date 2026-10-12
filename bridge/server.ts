@@ -1,7 +1,7 @@
 import { withNativeFinalAdmission } from "./native-access/final-effect.ts";
 import type { GatewayIngress, VerifiedIngressActor } from "./native-access/ingress.ts";
 import { gatewayRefusal } from "./native-access/ingress.ts";
-import { controlGate, controlScope, refusal, refusalResponse } from "./control/contracts.ts";
+import { controlScope, refusal, refusalResponse } from "./control/contracts.ts";
 import { OperationStore } from "./control/operations.ts";
 import { executeBoundIntent, ownerBoundCallerReady, ownerBoundOperationReady, type IntentOwnerContext } from "./intent-operation-binding.ts";
 import { PlanStore } from "./control/plans.ts";
