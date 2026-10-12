@@ -1006,4 +1006,5 @@ Read-only. Retry live to update.</string>
     <string name="agent_control_census">List named agents</string>
     <string name="agent_control_clear_history">Clear settled action tracking</string>
     <string name="agent_control_problem_code">Result: %1$s</string>
+    <string name="offline_saved_copy_status">Saved copy · read-only</string>
 </resources>

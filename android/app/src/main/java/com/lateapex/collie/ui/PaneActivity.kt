@@ -710,8 +710,8 @@ class PaneActivity : AppCompatActivity() {
     }
 
     private fun renderIdentity(state: PaneUiState) {
-        state.savedCopy?.let { copy ->
-            binding.paneStatus.text = savedCopyCaption(copy)
+        state.savedCopy?.let {
+            binding.paneStatus.setText(R.string.offline_saved_copy_status)
             binding.paneStatus.setTextColor(getColor(R.color.collie_muted))
             binding.paneStatusDot.isVisible = false
             return
@@ -2840,6 +2840,7 @@ class PaneActivity : AppCompatActivity() {
             return@with
         }
         val saved = state.savedCopy?.let(::savedCopyCaption)
+        maxLines = if (saved != null) Int.MAX_VALUE else 4
         text = listOfNotNull(saved, state.mutationError ?: state.error ?: state.status).joinToString("\n")
         isVisible = saved != null || state.mutationError != null || state.error != null || state.status != null
         setTextColor(getColor(if (state.mutationError != null || state.error != null) R.color.collie_error else R.color.collie_muted))

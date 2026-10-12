@@ -8,6 +8,8 @@ the first Android release from this fork.
 
 ## Unreleased
 
+- Keep saved-pane status compact and show the complete saved-copy provenance without clipping.
+
 - Add native machine alert rule editing with revision and incarnation checks; preserve server-owned rule extensions and require review after conflicts or uncertain outcomes.
 
 - Preserve opted saved pane Views through temporary supporting-read failures while keeping actions frozen; continue synchronous copied-content wipe on actual read-custody retirement.
