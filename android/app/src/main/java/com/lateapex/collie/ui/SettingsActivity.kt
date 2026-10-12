@@ -104,6 +104,18 @@ class SettingsActivity : AppCompatActivity() {
                 android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
             ),
         )
+        binding.settingsServerControls.addView(
+            com.google.android.material.button.MaterialButton(this).apply {
+                setText(R.string.settings_manage_plugins)
+                isAllCaps = false
+                minHeight = (48 * resources.displayMetrics.density).toInt()
+                setOnClickListener { startActivity(Intent(this@SettingsActivity, PluginsActivity::class.java)) }
+            },
+            android.widget.LinearLayout.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+            ),
+        )
         binding.root.applyAppTypeface()
         @Suppress("DEPRECATION")
         val vibrator = getSystemService(VIBRATOR_SERVICE) as? Vibrator

@@ -22,6 +22,7 @@ import { AgentReporterRegistry, refuseUnsafeAgentMutation, type AgentMutationKin
 import { HOST_CAPABILITIES, type HostControlPort } from "./host-control/types.ts";
 import { hostControlConfig } from "./host-control/registry.ts";
 import { serveHostIntegrationRoute } from "./host-control/integrations.ts";
+import { serveHostPluginsRoute } from "./host-control/plugins.ts";
 import { mkdir } from "node:fs/promises";
 import { isIP } from "node:net";
 import { homedir, networkInterfaces } from "node:os";
@@ -1627,6 +1628,23 @@ export async function startServer(opts: {
     if (worktreeRemoveAnswer) {
       if (req.method === "POST") server.timeout(req, WORKTREE_ROUTE_BUDGET_S);
       return worktreeRemoveAnswer;
+    }
+
+    const hostPluginsAnswer = await serveHostPluginsRoute(req, url, {
+      gate: (level) => caller.gate(level),
+      pairedIdentity: () => caller.pairedIdentity?.() ?? null,
+      resolve: async () => {
+        const runtime = await caller.resolve();
+        if (runtime instanceof Response) return runtime;
+        const port = opts.hostControl ?? runtime.herdr.hostControl;
+        return port ? { host: controlHostId, port } : refusalResponse(refusal(
+          "host.control_unsupported", "This host has no verified host-administration adapter", "capability",
+        ), 501);
+      },
+    }, controlPlans, controlOperations);
+    if (hostPluginsAnswer) {
+      if (req.method === "POST") server.timeout(req, WORKTREE_ROUTE_BUDGET_S);
+      return hostPluginsAnswer;
     }
 
     const hostIntegrationAnswer = await serveHostIntegrationRoute(req, url, {

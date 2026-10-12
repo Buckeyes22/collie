@@ -7,6 +7,9 @@ function expectHerdrType(response: JsonObject, type: string): JsonObject {
   if (response.type !== type) throw new Error(`herdr response: expected ${type}`);
   return response;
 }
+function hasControlCharacters(value: string): boolean {
+  return Array.from(value).some((character) => { const code = character.codePointAt(0) ?? 0; return code < 0x20 || code === 0x7f; });
+}
 import { HOST } from "../../host.ts";
 import { statSync } from "node:fs";
 import { createHash } from "node:crypto";
@@ -30,7 +33,7 @@ import { INTEGRATION_TARGETS, type AgentManifestSnapshot, type AgentManifestSumm
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Identity reported by the vendor ping; this alone grants no feature authority. */
-export interface HerdrHandshake { readonly version: string; readonly protocol: number; readonly paneOriginalMetadataV1?: boolean; readonly agentViewReadV1?: boolean }
+export interface HerdrHandshake { readonly version: string; readonly protocol: number; readonly paneOriginalMetadataV1?: boolean; readonly agentViewReadV1?: boolean; readonly pluginUserDirsV1?: boolean; readonly pluginOwnerOperationsV1?: boolean }
 export interface HerdrMetadataProtocolCapabilities { readonly paneOriginalMetadataV1: boolean; readonly agentViewReadV1: boolean }
 export type HerdrMoveDestination =
   | { readonly type: "tab"; readonly tab_id: string; readonly split: "right" | "down"; readonly target_pane_id: string; readonly ratio: number | null }
@@ -641,6 +644,23 @@ export type HerdrRpc = Pick<
   | "listIntegrations"
   | "installIntegration"
   | "uninstallIntegration"
+  | "listPlugins"
+  | "listPluginActions"
+  | "listPluginLogs"
+  | "setPluginEnabled"
+  | "unlinkPlugin"
+  | "invokePluginAction"
+  | "openPluginPane"
+  | "focusPluginPane"
+  | "closePluginPane"
+  | "preparePluginUserDirs"
+  | "pluginOwnerContext"
+  | "planPluginInstall"
+  | "applyPluginInstall"
+  | "applyPluginLink"
+  | "planPluginUninstall"
+  | "applyPluginUninstall"
+  | "getPluginOwnerOperation"
   | "agentManifests"
   | "reloadAgentManifests"
   | "reportPaneMetadata"
@@ -1045,6 +1065,99 @@ export class HerdrClient {
     if (!INTEGRATION_TARGETS.some((candidate) => candidate === target)) throw new Error("invalid integration target");
     const result = await this.request<JsonValue>("integration.uninstall", { target }, this.timeoutMs, undefined, undefined, admission);
     return hostMutation(result, "integration_uninstall", target);
+  }
+
+  /** Plugin APIs stay a finite typed surface; no caller can choose a socket method name. */
+  async listPlugins(pluginId?: string): Promise<JsonObject> {
+    return wireObject(await this.request<JsonValue>("plugin.list", pluginId === undefined ? {} : { plugin_id: pluginId }, this.timeoutMs, 512 * 1024), "plugin.list result");
+  }
+  async listPluginActions(pluginId?: string): Promise<JsonObject> {
+    return wireObject(await this.request<JsonValue>("plugin.action.list", pluginId === undefined ? {} : { plugin_id: pluginId }, this.timeoutMs, 256 * 1024), "plugin.action.list result");
+  }
+  async listPluginLogs(pluginId: string, limit: number): Promise<JsonObject> {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new Error("invalid plugin log limit");
+    return wireObject(await this.request<JsonValue>("plugin.log.list", { plugin_id: pluginId, limit }, this.timeoutMs, 512 * 1024), "plugin.log.list result");
+  }
+  async setPluginEnabled(pluginId: string, enabled: boolean, admission?: HerdrDispatchAdmission): Promise<JsonObject> {
+    if (typeof enabled !== "boolean") throw new Error("invalid plugin enabled state");
+    const method = enabled ? "plugin.enable" : "plugin.disable";
+    return wireObject(await this.request<JsonValue>(method, { plugin_id: pluginId }, this.timeoutMs, undefined, undefined, admission), `${method} result`);
+  }
+  async unlinkPlugin(pluginId: string, admission?: HerdrDispatchAdmission): Promise<JsonObject> {
+    return wireObject(await this.request<JsonValue>("plugin.unlink", { plugin_id: pluginId }, this.timeoutMs, undefined, undefined, admission), "plugin.unlink result");
+  }
+  async invokePluginAction(pluginId: string, actionId: string, correlationId: string, admission?: HerdrDispatchAdmission): Promise<JsonObject> {
+    // The server supplies only these two context fields. Herdr fills every workspace/tab/pane/status
+    // field from its own live state; client-provided authority or selection is never forwarded.
+    const context = { invocation_source: "api", correlation_id: correlationId };
+    return wireObject(await this.request<JsonValue>("plugin.action.invoke", { plugin_id: pluginId, action_id: actionId, context }, this.timeoutMs, 256 * 1024, undefined, admission), "plugin.action.invoke result");
+  }
+  async openPluginPane(params: {
+    readonly pluginId: string; readonly entrypoint: string; readonly placement?: "overlay" | "popup" | "split" | "tab" | "zoomed";
+    readonly width?: number | string; readonly height?: number | string; readonly workspaceId?: string; readonly targetPaneId?: string;
+    readonly direction?: "right" | "down"; readonly cwd?: string; readonly focus?: boolean;
+    readonly env?: Readonly<Record<string, string>>;
+  }, admission?: HerdrDispatchAdmission): Promise<JsonObject> {
+    const { pluginId, entrypoint, placement, width, height, workspaceId, targetPaneId, direction, cwd, focus, env } = params;
+    const wire: JsonObject = { plugin_id: pluginId, entrypoint };
+    if (placement !== undefined) wire.placement = placement;
+    if (width !== undefined) wire.width = width;
+    if (height !== undefined) wire.height = height;
+    if (workspaceId !== undefined) wire.workspace_id = workspaceId;
+    if (targetPaneId !== undefined) wire.target_pane_id = targetPaneId;
+    if (direction !== undefined) wire.direction = direction;
+    if (cwd !== undefined) wire.cwd = cwd;
+    if (focus !== undefined) wire.focus = focus;
+    if (env !== undefined) wire.env = { ...env };
+    return wireObject(await this.request<JsonValue>("plugin.pane.open", wire, this.timeoutMs, undefined, undefined, admission), "plugin.pane.open result");
+  }
+  async focusPluginPane(paneId: string, admission?: HerdrDispatchAdmission): Promise<JsonObject> {
+    return wireObject(await this.request<JsonValue>("plugin.pane.focus", { pane_id: paneId }, this.timeoutMs, undefined, undefined, admission), "plugin.pane.focus result");
+  }
+  async closePluginPane(paneId: string, admission?: HerdrDispatchAdmission): Promise<JsonObject> {
+    return wireObject(await this.request<JsonValue>("plugin.pane.close", { pane_id: paneId }, this.timeoutMs, undefined, undefined, admission), "plugin.pane.close result");
+  }
+  async preparePluginUserDirs(pluginId: string, expectedRevision: string, admission?: HerdrDispatchAdmission): Promise<JsonObject> {
+    if (!/^[A-Za-z0-9][A-Za-z0-9:._-]{0,119}$/u.test(pluginId) || !/^[a-f0-9]{64}$/u.test(expectedRevision)) throw new Error("invalid plugin user directory preparation binding");
+    return wireObject(await this.request<JsonValue>("plugin.prepare_user_dirs", { plugin_id: pluginId, expected_revision: expectedRevision }, this.timeoutMs, 16 * 1024, undefined, admission), "plugin.prepare_user_dirs result");
+  }
+
+  async pluginOwnerContext(admission?: HerdrDispatchAdmission): Promise<JsonObject> {
+    return wireObject(await this.request<JsonValue>("plugin.owner_context", {}, this.timeoutMs, 128 * 1024, undefined, admission), "plugin.owner_context result");
+  }
+
+  async planPluginInstall(params: { readonly owner: string; readonly repo: string; readonly subdir?: string; readonly ref?: string; readonly expectedOwnerRevision: string }, admission?: HerdrDispatchAdmission): Promise<JsonObject> {
+    if (!/^[A-Za-z0-9-]{1,100}$/u.test(params.owner) || !/^[A-Za-z0-9._-]{1,100}$/u.test(params.repo) || params.subdir !== undefined && (!params.subdir || params.subdir.length > 512 || params.subdir.startsWith("/") || params.subdir.split("/").some((part) => part === ".." || part === "." || part === "")) || params.ref !== undefined && (!params.ref || params.ref.length > 256 || hasControlCharacters(params.ref)) || !/^[a-f0-9]{64}$/u.test(params.expectedOwnerRevision)) throw new Error("invalid plugin install plan input");
+    const body: JsonObject = { owner: params.owner, repo: params.repo, expected_owner_revision: params.expectedOwnerRevision };
+    if (params.subdir !== undefined) body.subdir = params.subdir;
+    if (params.ref !== undefined) body.ref = params.ref;
+    return wireObject(await this.request<JsonValue>("plugin.install.plan", body, this.timeoutMs, 128 * 1024, undefined, admission), "plugin.install.plan result");
+  }
+
+  async applyPluginInstall(planId: string, checksum: string, expectedOwnerRevision: string, requestId: string, admission?: HerdrDispatchAdmission): Promise<JsonObject> {
+    return this.applyPluginOwnerOperation("plugin.install.apply", { plan_id: planId, checksum, expected_owner_revision: expectedOwnerRevision, request_id: requestId }, admission);
+  }
+
+  async applyPluginLink(selectionId: string, expectedOwnerRevision: string, requestId: string, admission?: HerdrDispatchAdmission): Promise<JsonObject> {
+    return this.applyPluginOwnerOperation("plugin.link.apply", { selection_id: selectionId, expected_owner_revision: expectedOwnerRevision, request_id: requestId }, admission);
+  }
+
+  async planPluginUninstall(pluginId: string, expectedOwnerRevision: string, admission?: HerdrDispatchAdmission): Promise<JsonObject> {
+    if (!/^[A-Za-z0-9][A-Za-z0-9:._-]{0,119}$/u.test(pluginId) || !/^[a-f0-9]{64}$/u.test(expectedOwnerRevision)) throw new Error("invalid plugin uninstall plan input");
+    return wireObject(await this.request<JsonValue>("plugin.uninstall.plan", { plugin_id: pluginId, expected_owner_revision: expectedOwnerRevision }, this.timeoutMs, 32 * 1024, undefined, admission), "plugin.uninstall.plan result");
+  }
+
+  async applyPluginUninstall(planId: string, expectedRevision: string, expectedOwnerRevision: string, requestId: string, admission?: HerdrDispatchAdmission): Promise<JsonObject> {
+    return this.applyPluginOwnerOperation("plugin.uninstall.apply", { plan_id: planId, expected_revision: expectedRevision, expected_owner_revision: expectedOwnerRevision, request_id: requestId }, admission);
+  }
+
+  async getPluginOwnerOperation(requestId: string, admission?: HerdrDispatchAdmission): Promise<JsonObject> {
+    if (!/^[A-Za-z0-9_-]{1,128}$/u.test(requestId)) throw new Error("invalid plugin operation request id");
+    return wireObject(await this.request<JsonValue>("plugin.owner_operation.get", { request_id: requestId }, this.timeoutMs, 64 * 1024, undefined, admission), "plugin.owner_operation.get result");
+  }
+
+  private async applyPluginOwnerOperation(method: "plugin.install.apply" | "plugin.link.apply" | "plugin.uninstall.apply", params: JsonObject, admission?: HerdrDispatchAdmission): Promise<JsonObject> {
+    return wireObject(await this.request<JsonValue>(method, params, WORKTREE_TIMEOUT_MS, 64 * 1024, undefined, admission), `${method} result`);
   }
 
   async agentManifests(): Promise<AgentManifestSnapshot> {
@@ -1632,15 +1745,17 @@ export class HerdrClient {
     this.verifiedOriginalAgentObservations = capabilities?.agent_observation_cursor_v1 === true;
     if (capabilities?.agent_original_input_v1 !== undefined && typeof capabilities.agent_original_input_v1 !== "boolean") { this.retireHandshake(); throw new Error("herdr ping: malformed original input capability"); }
     this.verifiedOriginalAgentInputs = capabilities?.agent_original_input_v1 === true;
-    for (const name of ["pane_original_metadata_v1", "agent_view_read_v1"] as const) {
+    for (const name of ["pane_original_metadata_v1", "agent_view_read_v1", "plugin_user_dirs_v1", "plugin_owner_operations_v1"] as const) {
       if (capabilities?.[name] !== undefined && typeof capabilities[name] !== "boolean") { this.retireHandshake(); throw new Error("herdr ping: malformed metadata capability"); }
     }
     const paneOriginalMetadataV1 = capabilities?.pane_original_metadata_v1 === true;
     const agentViewReadV1 = capabilities?.agent_view_read_v1 === true;
-    this.verifiedHandshake = `${result.version}:${result.protocol}:${this.verifiedOriginalAgentObservations}:${this.verifiedOriginalAgentInputs}:${paneOriginalMetadataV1}:${agentViewReadV1}`;
+    const pluginUserDirsV1 = capabilities?.plugin_user_dirs_v1 === true;
+    const pluginOwnerOperationsV1 = capabilities?.plugin_owner_operations_v1 === true;
+    this.verifiedHandshake = `${result.version}:${result.protocol}:${this.verifiedOriginalAgentObservations}:${this.verifiedOriginalAgentInputs}:${paneOriginalMetadataV1}:${agentViewReadV1}:${pluginUserDirsV1}:${pluginOwnerOperationsV1}`;
     this.verifiedPaneOriginalMetadataV1 = paneOriginalMetadataV1;
     this.verifiedAgentViewReadV1 = agentViewReadV1;
-    return { version: result.version, protocol: result.protocol, paneOriginalMetadataV1, agentViewReadV1 };
+    return { version: result.version, protocol: result.protocol, paneOriginalMetadataV1, agentViewReadV1, pluginUserDirsV1, pluginOwnerOperationsV1 };
   }
 
   async reportPaneMetadata(params: JsonObject): Promise<JsonObject> {

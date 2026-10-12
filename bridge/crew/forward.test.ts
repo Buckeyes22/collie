@@ -246,6 +246,35 @@ describe("which routes cross a link", () => {
     expect(crewRouteFor("/api/host/integrations/unsafe_target/install")).toBeNull();
   });
 
+  test("plugin inventory, config, and owner lifecycle routes cross Crew with closed gates", () => {
+    const cases = [
+      ["/api/host/plugins", "host/plugins", "GET", "device-read", "read"],
+      ["/api/host/plugins/example.safe/actions", "host/plugins/example.safe/actions", "GET", "device-read", "read"],
+      ["/api/host/plugins/example.safe/logs", "host/plugins/example.safe/logs", "GET", "device-read", "read"],
+      ["/api/host/plugins/example.safe/config", "host/plugins/example.safe/config", "GET", "device-read", "read"],
+      ["/api/host/plugins/example.safe/config/prepare/plan", "host/plugins/example.safe/config/prepare/plan", "POST", "device-read", "read"],
+      ["/api/host/plugins/example.safe/config/prepare", "host/plugins/example.safe/config/prepare", "POST", "write", "write"],
+      ["/api/host/plugins/example.safe/config/plan", "host/plugins/example.safe/config/plan", "POST", "device-read", "read"],
+      ["/api/host/plugins/example.safe/config/apply", "host/plugins/example.safe/config/apply", "POST", "write", "write"],
+      ["/api/host/plugins/install/plan", "host/plugins/install/plan", "POST", "device-read", "read"],
+      ["/api/host/plugins/install", "host/plugins/install", "POST", "write", "write"],
+      ["/api/host/plugins/link/selections", "host/plugins/link/selections", "GET", "device-read", "read"],
+      ["/api/host/plugins/link/plan", "host/plugins/link/plan", "POST", "device-read", "read"],
+      ["/api/host/plugins/link", "host/plugins/link", "POST", "write", "write"],
+      ["/api/host/plugins/example.safe/uninstall/plan", "host/plugins/example.safe/uninstall/plan", "POST", "device-read", "read"],
+      ["/api/host/plugins/example.safe/uninstall", "host/plugins/example.safe/uninstall", "POST", "write", "write"],
+      ["/api/host/plugins/operations/request-1", "host/plugins/operations/request-1", "GET", "device-read", "read"],
+    ] as const;
+    for (const [path, route, method, gate, kind] of cases) {
+      expect(crewRouteFor(path)).toBe(route);
+      expect(apiPathFor(route)).toBe(path);
+      expect(forwardGate(route, method)).toBe(gate);
+      expect(forwardKind(route, method)).toBe(kind);
+    }
+    expect(crewRouteFor("/api/host/plugins/install/extra")).toBeNull();
+    expect(crewRouteFor("/api/host/plugins/link/arbitrary")).toBeNull();
+  });
+
   test("the folder list and a star on it cross the link — folders live on the member that has them", () => {
     // #289: the new-space sheet's list is that member's own `folders.json`, so a `?host=` read or star
     // reaches the member, never the lead's file.

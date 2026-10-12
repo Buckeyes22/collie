@@ -1,12 +1,14 @@
-import { redactText } from "../redact.ts";
+import { HerdrAgentRefusal } from "../mux/herdr/client.ts";
 import type { HerdrDispatchAdmission, HerdrHandshake, HerdrRpc } from "../mux/herdr/client.ts";
-import type { AgentManifestSnapshot, HostControlOutcome, HostControlPort, HostMutationResult, IntegrationTarget, IntegrationVersionStatus } from "./types.ts";
+import type { AgentManifestSnapshot, HostControlOutcome, HostControlPort, HostMutationResult, IntegrationTarget, IntegrationVersionStatus, HostPluginActionResult, HostPluginPaneResult, HostPluginUserDirsPrepared, HostPluginInstallPlanInput, HostPluginInstallPlan } from "./types.ts";
 import { HOST_CAPABILITIES, INTEGRATION_TARGETS } from "./types.ts";
+import { actionRows, commandRows, logRows, object, optionalEnum, parsePluginOwnerContext, parsePluginOwnerOperation, parsePluginUninstallPlan, parsePluginUserDirsPrepared, pluginRows, PLUGIN_ACTION_ID, PLUGIN_ID, PLUGIN_PLACEMENTS, safeMessage, text } from "./plugin-codecs.ts";
 
-type HostAdminCapability = "integrations" | "integrationInstall" | "integrationUninstall" | "experimentalLettaIntegration" | "agentManifests" | "manifestReload" | "manifestRefresh";
+type HostAdminCapability = "integrations" | "integrationInstall" | "integrationUninstall" | "experimentalLettaIntegration" | "agentManifests" | "manifestReload" | "manifestRefresh" | "plugins" | "pluginOwnerOperations";
 type HerdrEnvironmentKey = "PATH" | "HOME" | "USERPROFILE" | "APPDATA" | "LOCALAPPDATA" | "XDG_CONFIG_HOME" | "HERDR_CONFIG_PATH" | "SYSTEMROOT" | "WINDIR" | "TMP" | "TEMP";
 type HerdrEnvironment = { HERDR_SOCKET_PATH: string } & Partial<Record<HerdrEnvironmentKey, string>>;
 type RuntimeAdmission = { readonly kind: "ready"; readonly identity: string } | { readonly kind: "unavailable"; readonly outcome: HostControlOutcome<never> };
+interface PluginInstallRequest { owner: string; repo: string; expectedOwnerRevision: string; subdir?: string; ref?: string }
 const HERDR_ENVIRONMENT_KEYS: readonly HerdrEnvironmentKey[] = ["PATH", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "XDG_CONFIG_HOME", "HERDR_CONFIG_PATH", "SYSTEMROOT", "WINDIR", "TMP", "TEMP"];
 
 const UNSUPPORTED = "This Herdr runtime has not completed a compatible host-administration handshake.";
@@ -24,13 +26,6 @@ function compatible(handshake: HerdrHandshake): boolean {
   // A prerelease of the floor itself is still below that stable release. Newer prereleases
   // remain above the floor (for example 0.9.4-rc.1 is newer than 0.9.3).
   return supported && !(major === 0 && minor === 9 && patch === 3 && handshake.version.includes("-"));
-}
-
-function safeMessage(text: string): string {
-  return Array.from(redactText(text), (character) => {
-    const code = character.codePointAt(0) ?? 0;
-    return code <= 0x1f || code === 0x7f ? " " : character;
-  }).join("").slice(0, 512);
 }
 
 function cliEnvironment(socketPath: string): HerdrEnvironment {
@@ -78,6 +73,13 @@ function unsupported<T>(capability: HostAdminCapability): HostControlOutcome<T> 
   return { kind: "unsupported", capability, reason: UNSUPPORTED };
 }
 
+const PLUGIN_UNCERTAIN_ERRORS = new Set(["plugin_owner_outcome_unknown", "plugin_owner_io_failed", "plugin_user_dir_create_failed", "plugin_user_dirs_outcome_unknown"]);
+function pluginMutationFailure(error: Error, reason: string): HostControlOutcome<never> {
+  if (error instanceof HerdrAgentRefusal && !PLUGIN_UNCERTAIN_ERRORS.has(error.vendorCode)) {
+    return { kind: "refused", code: error.vendorCode, reason: safeMessage(error.message) };
+  }
+  return { kind: "unavailable", reason };
+}
 interface CliIntegrationVersion extends IntegrationVersionStatus {}
 function isIntegrationTarget(value: string): value is IntegrationTarget {
   return INTEGRATION_TARGETS.some((target) => target === value);
@@ -110,12 +112,16 @@ export function parseIntegrationStatus(output: string): readonly CliIntegrationV
 export function createHerdrHostControl(client: HerdrRpc, socketPath: string, runCli: HerdrCliRunner = runHerdrCli): HostControlPort {
   let runtimeIdentity: string | null = null;
   let compatibleRuntime = false;
+  let pluginUserDirsSupported = false;
+  let pluginOwnerOperationsSupported = false;
   const sample = async (): Promise<string | null> => {
     if (!client.layoutHandshakeSample) return null;
     const observed = await client.layoutHandshakeSample();
-    if (!observed || !compatible(observed.handshake)) { runtimeIdentity = null; compatibleRuntime = false; return null; }
+    if (!observed || !compatible(observed.handshake)) { runtimeIdentity = null; compatibleRuntime = false; pluginUserDirsSupported = false; pluginOwnerOperationsSupported = false; return null; }
     runtimeIdentity = observed.identity;
     compatibleRuntime = true;
+    pluginUserDirsSupported = observed.handshake.pluginUserDirsV1 === true;
+    pluginOwnerOperationsSupported = observed.handshake.pluginOwnerOperationsV1 === true;
     return runtimeIdentity;
   };
   const stillCurrent = (identity: string): boolean => client.layoutRuntimeIdentity?.() === identity;
@@ -154,11 +160,47 @@ export function createHerdrHostControl(client: HerdrRpc, socketPath: string, run
       return parseIntegrationStatus(status.output);
     } catch { return null; }
   };
+  const pluginCall = async <T>(_method: string, operation: () => Promise<T>, mutation = false): Promise<HostControlOutcome<T>> => {
+    const ready = await check("plugins");
+    if (ready.kind !== "ready") return ready.outcome;
+    try {
+      const value = await operation();
+      if (!stillCurrent(ready.identity)) return { kind: "unavailable", reason: mutation ? "The Herdr runtime changed during the plugin operation; its outcome is unknown." : "The Herdr runtime changed while reading plugin state." };
+      return result(value);
+    } catch (error) {
+      const message = safeMessage(error instanceof Error ? error.message : "Herdr plugin operation failed");
+      if (mutation) return pluginMutationFailure(error instanceof Error ? error : new Error("unknown plugin operation failure"), "The plugin operation outcome is unknown. Read plugin state and logs before retrying.");
+      if (error instanceof HerdrAgentRefusal) return { kind: "refused", code: error.vendorCode, reason: message };
+      const match = /(?:herdr [^:]+: )?([a-z][a-z0-9_]{1,63}):/u.exec(message);
+      return { kind: "refused", code: match?.[1] ?? "plugin_operation_failed", reason: message };
+    }
+  };
+  const pluginAdmission = async (): Promise<HerdrDispatchAdmission | null> => {
+    const ready = await check("plugins");
+    return ready.kind === "ready" ? { runtimeIdentity: ready.identity, finalAdmission: (identity) => identity === ready.identity && stillCurrent(ready.identity) } : null;
+  };
+  const pluginOwnerCall = async <T>(operation: (admission: HerdrDispatchAdmission) => Promise<T>, mutation = false): Promise<HostControlOutcome<T>> => {
+    const ready = await check("pluginOwnerOperations");
+    if (ready.kind !== "ready") return ready.outcome;
+    if (!pluginOwnerOperationsSupported) return unsupported("pluginOwnerOperations");
+    const admission: HerdrDispatchAdmission = { runtimeIdentity: ready.identity, finalAdmission: (identity) => identity === ready.identity && stillCurrent(ready.identity) };
+    try {
+      const value = await operation(admission);
+      if (!stillCurrent(ready.identity)) return { kind: "unavailable", reason: mutation ? "The Herdr runtime changed during the plugin owner operation; its outcome is unknown." : "The Herdr runtime changed while reading plugin owner state." };
+      return result(value);
+    } catch (error) {
+      const message = safeMessage(error instanceof Error ? error.message : "Plugin owner operation failed");
+      if (mutation) return pluginMutationFailure(error instanceof Error ? error : new Error("unknown plugin owner operation failure"), "Plugin owner operation outcome is unknown; query its operation receipt before retrying.");
+      if (error instanceof HerdrAgentRefusal) return { kind: "refused", code: error.vendorCode, reason: message };
+      const match = /(?:herdr [^:]+: )?([a-z][a-z0-9_]{1,63}):/u.exec(message)?.[1];
+      return { kind: "refused", code: match ?? "plugin_owner_operation_failed", reason: message };
+    }
+  };
   const falseCapabilities = {
     integrations: false, integrationInstall: false, integrationUninstall: false,
     experimentalLettaIntegration: false, agentManifests: false, manifestReload: false,
-    manifestRefresh: false, plugins: false, configuration: false, persistence: false,
-    machines: false, serverAdministration: false, agentViews: false,
+    manifestRefresh: false, plugins: false, pluginOwnerOperations: false, configuration: false, persistence: false,
+    machines: false, serverAdministration: false, agentViews: false, hostUiActions: false, hostCommands: false,
   } as const satisfies Readonly<Record<(typeof HOST_CAPABILITIES)[number], boolean>>;
   const port: HostControlPort = {
     provider: "herdr",
@@ -169,6 +211,8 @@ export function createHerdrHostControl(client: HerdrRpc, socketPath: string, run
         integrationInstall: !!client.installIntegration, integrationUninstall: !!client.uninstallIntegration,
         experimentalLettaIntegration: true, agentManifests: !!client.agentManifests,
         manifestReload: !!client.reloadAgentManifests, manifestRefresh: true,
+        plugins: !!client.listPlugins && !!client.listPluginActions && !!client.listPluginLogs && !!client.setPluginEnabled && !!client.unlinkPlugin && !!client.invokePluginAction && !!client.openPluginPane && !!client.focusPluginPane && !!client.closePluginPane,
+        pluginOwnerOperations: pluginOwnerOperationsSupported && !!client.pluginOwnerContext && !!client.planPluginInstall && !!client.applyPluginInstall && !!client.applyPluginLink && !!client.planPluginUninstall && !!client.applyPluginUninstall && !!client.getPluginOwnerOperation,
       } : falseCapabilities;
     },
     get notes() {
@@ -268,6 +312,204 @@ export function createHerdrHostControl(client: HerdrRpc, socketPath: string, run
         return await port.agentManifests();
       } catch (error) { return { kind: "unavailable", reason: safeMessage(error instanceof Error ? error.message : "Manifest refresh is unavailable") }; }
     },
+    async listPlugins(pluginId?: string) {
+      if (pluginId !== undefined && !PLUGIN_ID.test(pluginId)) return { kind: "refused", code: "invalid_plugin_id", reason: "Plugin id is invalid." };
+      if (!client.listPlugins) return unsupported("plugins");
+      return pluginCall("plugin.list", async () => pluginRows(await client.listPlugins!(pluginId)));
+    },
+    async pluginOwnerContext() {
+      if (!client.pluginOwnerContext) return unsupported("pluginOwnerOperations");
+      return pluginOwnerCall(async (admission) => parsePluginOwnerContext(await client.pluginOwnerContext!(admission)));
+    },
+    async listPluginLinkSelections() {
+      if (!client.pluginOwnerContext) return unsupported("pluginOwnerOperations");
+      const context = await port.pluginOwnerContext!();
+      return context.kind === "available" ? result(context.value.linkSelections) : context;
+    },
+    async planPluginInstall(input: HostPluginInstallPlanInput) {
+      if (!client.pluginOwnerContext || !client.planPluginInstall) return unsupported("pluginOwnerOperations");
+      return pluginOwnerCall(async (admission) => {
+        const owner = parsePluginOwnerContext(await client.pluginOwnerContext!(admission));
+        const installRequest: PluginInstallRequest = {
+          owner: input.owner, repo: input.repo, expectedOwnerRevision: owner.revision,
+        };
+        if (input.subdir !== null) installRequest.subdir = input.subdir;
+        if (input.ref !== null) installRequest.ref = input.ref;
+        const raw = await client.planPluginInstall!(installRequest, admission);
+        if (raw.type !== "plugin_install_plan" || text(raw, "plan_id", 256) === null || text(raw, "owner_revision", 64) !== owner.revision) throw new Error("malformed plugin install plan");
+        const rawPlugin = object(raw.plugin, "plugin install plan metadata");
+        const plugin = pluginRows({ type: "plugin_list", plugins: [rawPlugin] })[0]!;
+        const source = object(raw.source, "plugin install source");
+        const sourceOwner = text(source, "owner", 100)!;
+        const repo = text(source, "repo", 100)!;
+        const subdir = text(source, "subdir", 512, true);
+        const ref = text(source, "ref", 256, true);
+        const commit = text(source, "commit", 64)!;
+        const checksum = text(raw, "checksum", 64)!;
+        const planId = text(raw, "plan_id", 256)!;
+        if (!/^[0-9a-f-]{36}$/u.test(planId) || sourceOwner.toLowerCase() !== input.owner.toLowerCase() || repo.toLowerCase() !== input.repo.toLowerCase() || subdir !== input.subdir || (input.ref !== null && ref !== input.ref) || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(commit) || !/^[a-f0-9]{64}$/u.test(checksum) || plugin.source.resolvedCommit !== commit) throw new Error("plugin install plan does not match its requested source");
+        return { id: planId, ownerRevision: owner.revision, plugin, source: { owner: sourceOwner, repo, subdir, ref, commit }, checksum,
+          buildCommands: commandRows(raw.build_commands, "plugin build commands"), startupCommands: commandRows(raw.startup_commands, "plugin startup commands") } satisfies HostPluginInstallPlan;
+      });
+    },
+    async applyPluginInstall(planId: string, checksum: string, ownerRevision: string, requestId: string) {
+      if (!client.pluginOwnerContext || !client.applyPluginInstall) return unsupported("pluginOwnerOperations");
+      return pluginOwnerCall(async (admission) => {
+        const owner = parsePluginOwnerContext(await client.pluginOwnerContext!(admission));
+        if (owner.revision !== ownerRevision) throw new HerdrAgentRefusal("plugin_owner_revision_mismatch");
+        const raw = await client.applyPluginInstall!(planId, checksum, ownerRevision, requestId, admission);
+        const operation = parsePluginOwnerOperation(raw);
+        if (operation.requestId !== requestId) throw new Error("malformed plugin install operation identity");
+        return operation;
+      }, true);
+    },
+    async linkPlugin(selectionId: string, ownerRevision: string, requestId: string) {
+      if (!client.pluginOwnerContext || !client.applyPluginLink) return unsupported("pluginOwnerOperations");
+      return pluginOwnerCall(async (admission) => {
+        const owner = parsePluginOwnerContext(await client.pluginOwnerContext!(admission));
+        if (owner.revision !== ownerRevision || !owner.linkSelections.some((selection) => selection.id === selectionId)) throw new HerdrAgentRefusal("plugin_owner_revision_mismatch");
+        const operation = parsePluginOwnerOperation(await client.applyPluginLink!(selectionId, ownerRevision, requestId, admission));
+        if (operation.requestId !== requestId) throw new Error("malformed plugin link operation identity");
+        return operation;
+      }, true);
+    },
+    async planPluginUninstall(pluginId: string) {
+      if (!client.pluginOwnerContext || !client.planPluginUninstall || !client.listPlugins) return unsupported("pluginOwnerOperations");
+      return pluginOwnerCall(async (admission) => {
+        const owner = parsePluginOwnerContext(await client.pluginOwnerContext!(admission));
+        const installed = pluginRows(await client.listPlugins!(pluginId)).find((plugin) => plugin.id === pluginId);
+        if (!installed) throw new Error("plugin_not_found: plugin is not installed");
+        const raw = await client.planPluginUninstall!(pluginId, owner.revision, admission);
+        return parsePluginUninstallPlan(raw, pluginId, owner.revision);
+      });
+    },
+    async uninstallPlugin(planId: string, revision: string, ownerRevision: string, requestId: string) {
+      if (!client.pluginOwnerContext || !client.applyPluginUninstall) return unsupported("pluginOwnerOperations");
+      return pluginOwnerCall(async (admission) => {
+        const owner = parsePluginOwnerContext(await client.pluginOwnerContext!(admission));
+        if (owner.revision !== ownerRevision) throw new HerdrAgentRefusal("plugin_owner_revision_mismatch");
+        const operation = parsePluginOwnerOperation(await client.applyPluginUninstall!(planId, revision, ownerRevision, requestId, admission));
+        if (operation.requestId !== requestId) throw new Error("malformed plugin uninstall operation identity");
+        return operation;
+      }, true);
+    },
+    async getPluginOwnerOperation(requestId: string) {
+      if (!client.getPluginOwnerOperation) return unsupported("pluginOwnerOperations");
+      return pluginOwnerCall(async (admission) => {
+        const operation = parsePluginOwnerOperation(await client.getPluginOwnerOperation!(requestId, admission));
+        if (operation.requestId !== requestId) throw new Error("plugin owner operation identity mismatch");
+        return operation;
+      });
+    },
+    async listPluginActions(pluginId?: string) {
+      if (pluginId !== undefined && !PLUGIN_ID.test(pluginId)) return { kind: "refused", code: "invalid_plugin_id", reason: "Plugin id is invalid." };
+      if (!client.listPluginActions || !client.listPlugins) return unsupported("plugins");
+      return pluginCall("plugin.action.list", async () => {
+        const plugins = pluginRows(await client.listPlugins!());
+        return actionRows(await client.listPluginActions!(pluginId), plugins);
+      });
+    },
+    async listPluginLogs(pluginId: string, limit: number) {
+      if (!PLUGIN_ID.test(pluginId)) return { kind: "refused", code: "invalid_plugin_id", reason: "Plugin id is invalid." };
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) return { kind: "refused", code: "invalid_plugin_log_limit", reason: "Plugin log limit must be between 1 and 100." };
+      if (!client.listPluginLogs) return unsupported("plugins");
+      return pluginCall("plugin.log.list", async () => logRows(await client.listPluginLogs!(pluginId, limit)));
+    },
+    async enablePlugin(pluginId: string) {
+      if (!PLUGIN_ID.test(pluginId)) return { kind: "refused", code: "invalid_plugin_id", reason: "Plugin id is invalid." };
+      if (!client.setPluginEnabled) return unsupported("plugins");
+      const admission = await pluginAdmission();
+      if (!admission) return unsupported("plugins");
+      return pluginCall("plugin.enable", async () => { await client.setPluginEnabled!(pluginId, true, admission); return { messages: [] }; }, true);
+    },
+    async disablePlugin(pluginId: string) {
+      if (!PLUGIN_ID.test(pluginId)) return { kind: "refused", code: "invalid_plugin_id", reason: "Plugin id is invalid." };
+      if (!client.setPluginEnabled) return unsupported("plugins");
+      const admission = await pluginAdmission();
+      if (!admission) return unsupported("plugins");
+      return pluginCall("plugin.disable", async () => { await client.setPluginEnabled!(pluginId, false, admission); return { messages: [] }; }, true);
+    },
+    async invokePluginAction(pluginId: string, actionId: string, _invocationSource, correlationId: string) {
+      if (!PLUGIN_ID.test(pluginId) || !PLUGIN_ACTION_ID.test(actionId) || !/^[A-Za-z0-9_-]{1,128}$/u.test(correlationId)) return { kind: "refused", code: "invalid_plugin_action", reason: "Plugin action identity or correlation id is invalid." };
+      if (!client.invokePluginAction) return unsupported("plugins");
+      const admission = await pluginAdmission();
+      if (!admission) return unsupported("plugins");
+      return pluginCall("plugin.action.invoke", async () => {
+        const raw = await client.invokePluginAction!(pluginId, actionId, correlationId, admission);
+        if (raw.type !== "plugin_action_invoked") throw new Error("malformed plugin action result");
+        const action = object(raw.action, "plugin action result");
+        const log = object(raw.log, "plugin action log");
+        if (text(action, "plugin_id", 120) !== pluginId || text(action, "action_id", 120) !== actionId) throw new Error("plugin action result identity mismatch");
+        const status = optionalEnum(log.status, ["running", "succeeded", "failed"] as const, "plugin action status");
+        if (!status) throw new Error("malformed plugin action status");
+        return { pluginId, actionId, logId: text(log, "log_id", 256, true), status } satisfies HostPluginActionResult;
+      }, true);
+    },
+    async openPluginPane(pluginId: string, entrypoint: string, options = {}) {
+      if (!PLUGIN_ID.test(pluginId) || !PLUGIN_ACTION_ID.test(entrypoint)) return { kind: "refused", code: "invalid_plugin_entrypoint", reason: "Plugin pane identity is invalid." };
+      if (!client.openPluginPane) return unsupported("plugins");
+      const admission = await pluginAdmission();
+      if (!admission) return unsupported("plugins");
+      const inventory = await port.listPlugins!(pluginId);
+      if (inventory.kind !== "available") return inventory;
+      const declared = inventory.value.find((plugin) => plugin.id === pluginId)?.panes.find((pane) => pane.id === entrypoint);
+      if (!declared) return { kind: "refused", code: "invalid_plugin_entrypoint", reason: "Plugin pane entrypoint is not in the installed manifest." };
+      let placement: HostPluginPaneResult["placement"];
+      try { placement = optionalEnum(options.placement, PLUGIN_PLACEMENTS, "plugin pane placement") ?? declared.placement; }
+      catch { return { kind: "refused", code: "invalid_plugin_entrypoint", reason: "Plugin pane placement is invalid." }; }
+      // SAFETY: the HTTP parser bounds each permitted pane option; these original IDs and resolved enum are pinned after options.
+      const params = { ...options, pluginId, entrypoint, placement } as Parameters<NonNullable<HerdrRpc["openPluginPane"]>>[0];
+      return pluginCall("plugin.pane.open", async () => {
+        const raw = await client.openPluginPane!(params, admission);
+        try {
+          if (placement === "popup" && raw.type === "ok") return { pluginId, entrypoint, paneId: null, placement };
+          if (raw.type !== "plugin_pane_opened") throw new Error("malformed plugin pane result");
+          const opened = object(raw.plugin_pane, "opened plugin pane");
+          if (opened.plugin_id !== pluginId || opened.entrypoint !== entrypoint) throw new Error("plugin pane result identity mismatch");
+          const pane = object(opened.pane, "opened pane");
+          const paneId = text(pane, "pane_id", 128)!;
+          if (!/^[A-Za-z0-9:._-]{1,128}$/u.test(paneId) || placement === "popup") throw new Error("malformed plugin pane identity");
+          return { pluginId, entrypoint, paneId, placement } satisfies HostPluginPaneResult;
+        } catch { throw new Error("Plugin pane acknowledgment could not be verified; outcome unknown."); }
+      }, true);
+    },
+    async focusPluginPane(paneId: string) {
+      if (!/^[A-Za-z0-9:._-]{1,128}$/u.test(paneId)) return { kind: "refused", code: "invalid_plugin_pane", reason: "Plugin pane id is invalid." };
+      if (!client.focusPluginPane) return unsupported("plugins");
+      const admission = await pluginAdmission(); if (!admission) return unsupported("plugins");
+      return pluginCall("plugin.pane.focus", async () => { await client.focusPluginPane!(paneId, admission); return { messages: [] }; }, true);
+    },
+    async closePluginPane(paneId: string) {
+      if (!/^[A-Za-z0-9:._-]{1,128}$/u.test(paneId)) return { kind: "refused", code: "invalid_plugin_pane", reason: "Plugin pane id is invalid." };
+      if (!client.closePluginPane) return unsupported("plugins");
+      const admission = await pluginAdmission(); if (!admission) return unsupported("plugins");
+      return pluginCall("plugin.pane.close", async () => { await client.closePluginPane!(paneId, admission); return { messages: [] }; }, true);
+    },
+    async unlinkPlugin(pluginId: string) {
+      if (!PLUGIN_ID.test(pluginId)) return { kind: "refused", code: "invalid_plugin_id", reason: "Plugin id is invalid." };
+      if (!client.unlinkPlugin) return unsupported("plugins");
+      const admission = await pluginAdmission(); if (!admission) return unsupported("plugins");
+      return pluginCall("plugin.unlink", async () => { await client.unlinkPlugin!(pluginId, admission); return { messages: [] }; }, true);
+    },
+    async preparePluginUserDirs(pluginId: string, expectedRevision: string): Promise<HostControlOutcome<HostPluginUserDirsPrepared>> {
+      if (!PLUGIN_ID.test(pluginId) || !/^[a-f0-9]{64}$/u.test(expectedRevision)) return { kind: "refused", code: "invalid_plugin_config_revision", reason: "Plugin configuration preparation binding is invalid." };
+      if (!client.preparePluginUserDirs || !client.listPlugins) return unsupported("plugins");
+      const ready = await check("plugins");
+      if (ready.kind !== "ready") return ready.outcome;
+      if (!pluginUserDirsSupported) return { kind: "unsupported", capability: "plugins", reason: "This Herdr runtime does not advertise owner-scoped plugin user-directory preparation." };
+      const admission: HerdrDispatchAdmission = { runtimeIdentity: ready.identity, finalAdmission: (identity) => identity === ready.identity && stillCurrent(ready.identity) };
+      try {
+        const plugins = pluginRows(await client.listPlugins());
+        const plugin = plugins.find((candidate) => candidate.id === pluginId);
+        if (!plugin) return { kind: "refused", code: "plugin_not_found", reason: "The plugin is no longer installed." };
+        if (plugin.userDirsRevision !== expectedRevision) return { kind: "refused", code: "plugin_revision_changed", reason: "Plugin metadata changed after this preparation plan was created." };
+        const raw = await client.preparePluginUserDirs(pluginId, expectedRevision, admission);
+        if (!stillCurrent(ready.identity)) return { kind: "unavailable", reason: "The Herdr runtime changed during plugin directory preparation; its outcome is unknown." };
+        return result(parsePluginUserDirsPrepared(raw, pluginId, expectedRevision));
+      } catch (error) {
+        return pluginMutationFailure(error instanceof Error ? error : new Error("unknown plugin directory preparation failure"), "Plugin directory preparation outcome is unknown. Refresh plugin status before retrying.");
+      }
+    },
     async inspect(request) { return { kind: "unsupported", capability: request.capability, reason: "This Herdr adapter exposes no generic host inspection method." }; },
   };
   return port;
@@ -279,8 +521,8 @@ export const herdrHostControl: HostControlPort = {
   capabilities: {
     integrations: false, integrationInstall: false, integrationUninstall: false,
     experimentalLettaIntegration: false, agentManifests: false, manifestReload: false,
-    manifestRefresh: false, plugins: false, configuration: false, persistence: false,
-    machines: false, serverAdministration: false, agentViews: false,
+    manifestRefresh: false, plugins: false, pluginOwnerOperations: false, configuration: false, persistence: false,
+    machines: false, serverAdministration: false, agentViews: false, hostUiActions: false, hostCommands: false,
   },
   notes: Object.fromEntries(HOST_CAPABILITIES.map((name) => [name, UNSUPPORTED])),
   async listIntegrations() { return unsupported("integrations"); },

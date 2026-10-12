@@ -23,7 +23,7 @@ function fixture() {
       integrations: true, integrationInstall: true, integrationUninstall: true,
       experimentalLettaIntegration: true, agentManifests: true, manifestReload: true,
       manifestRefresh: true, plugins: true, configuration: true, persistence: true,
-      machines: true, serverAdministration: true, agentViews: false,
+      machines: true, serverAdministration: true, agentViews: false, hostUiActions: false, hostCommands: false, pluginOwnerOperations: false,
     },
     notes: {},
     async listIntegrations() { return { kind: "available", value: integrations }; },

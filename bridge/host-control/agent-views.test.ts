@@ -52,7 +52,7 @@ describe("bounded Herdr agent views", () => {
       const port: HostControlPort = {
         ...herdrHostControl,
         provider: "herdr",
-        capabilities: { integrations: false, integrationInstall: false, integrationUninstall: false, experimentalLettaIntegration: false, agentManifests: false, manifestReload: false, manifestRefresh: false, plugins: false, configuration: false, persistence: false, machines: false, serverAdministration: false, agentViews: true },
+        capabilities: { integrations: false, integrationInstall: false, integrationUninstall: false, experimentalLettaIntegration: false, agentManifests: false, manifestReload: false, manifestRefresh: false, plugins: false, pluginOwnerOperations: false, configuration: false, persistence: false, machines: false, serverAdministration: false, agentViews: true, hostUiActions: false, hostCommands: false },
         notes: {},
         inspect: async () => ({ kind: "unsupported", capability: "agentViews", reason: "unused" }),
         agentViews: {

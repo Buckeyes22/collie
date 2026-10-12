@@ -111,6 +111,10 @@ const FORWARDABLE: readonly RegExp[] = [
   /^host\/integrations(?:\/status)?$/,
   new RegExp(`^host/integrations/(?:${INTEGRATION_TARGETS.join("|")}|letta)/(?:install|uninstall)(?:/plan)?$`),
   /^host\/agent-manifests(?:\/(?:reload|refresh)(?:\/plan)?)?$/,
+  /^host\/plugins$/,
+  /^host\/plugins\/[^/]{1,120}\/(?:actions|logs|config)$/,
+  /^host\/plugins\/[^/]{1,120}\/(?:enable|disable|unlink|uninstall(?:\/plan)?|actions\/[^/]{1,120}\/invoke|panes\/open|panes\/[^/]{1,128}\/focus|panes\/[^/]{1,128}\/close|config\/(?:plan|apply|prepare(?:\/plan)?))$/,
+  /^host\/plugins\/(?:install(?:\/plan)?|link(?:\/(?:plan|selections))?|operations\/[A-Za-z0-9_-]{1,128})$/,
 
   /^agents\/named$/,
   // The rows a phone adds, removes and renames (ADR 0094). Each machine keeps its own store, so a

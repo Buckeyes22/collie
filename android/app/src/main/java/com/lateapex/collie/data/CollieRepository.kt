@@ -23,6 +23,28 @@ import com.lateapex.collie.network.UploadSource
 import com.lateapex.collie.network.ImageBlob
 import com.lateapex.collie.network.LaunchersResponse
 import com.lateapex.collie.network.AgentCapabilitiesResponse
+import com.lateapex.collie.network.HostPluginConfigFilesResponse
+import com.lateapex.collie.network.HostPluginConfigResponse
+import com.lateapex.collie.network.HostPluginConfigPlanResponse
+import com.lateapex.collie.network.HostPluginConfigOperationResponse
+import com.lateapex.collie.network.HostPluginConfigFileRequest
+import com.lateapex.collie.network.HostPluginConfigPrepareRequest
+import com.lateapex.collie.network.HostPluginConfigApplyRequest
+import com.lateapex.collie.network.HostPluginsResponse
+import com.lateapex.collie.network.HostPluginActionsResponse
+import com.lateapex.collie.network.HostPluginLogsResponse
+import com.lateapex.collie.network.HostPluginActionResponse
+import com.lateapex.collie.network.HostPluginPaneRequest
+import com.lateapex.collie.network.HostPluginPaneResponse
+import com.lateapex.collie.network.HostPluginLinkSelectionsResponse
+import com.lateapex.collie.network.HostPluginLinkPlanResponse
+import com.lateapex.collie.network.HostPluginLinkRequest
+import com.lateapex.collie.network.HostPluginInstallPlanResponse
+import com.lateapex.collie.network.HostPluginInstallRequest
+import com.lateapex.collie.network.HostPluginUninstallPlanResponse
+import com.lateapex.collie.network.HostPluginUninstallRequest
+import com.lateapex.collie.network.HostPluginMutationResponse
+import com.lateapex.collie.network.HostPluginOwnerOperationResponse
 import com.lateapex.collie.network.NotificationState
 import com.lateapex.collie.network.NotifyPreferences
 import com.lateapex.collie.network.NotifyPreferencesPatch
@@ -2081,6 +2103,190 @@ class CollieRepository(
                 return@withResolvedConnection ApiResult.Failure(ApiFailure.Http(501, "Host integration inventory is unavailable on this runtime", "host.integrations_unsupported"))
             }
             api.hostIntegrations(configured, requestScope)
+        }
+
+    suspend fun hostPlugins(scope: Scope? = selectedScope.value, expectedContext: ScopedReadContext? = null): ApiResult<HostPluginsResponse> =
+        withResolvedConnection(hostOnly(scope), expectedContext) { configured, requestScope ->
+            if (!configured.isPaired) return@withResolvedConnection ApiResult.Failure(ApiFailure.Http(403, "Pair this device to inspect plugins", "pairing.required"))
+            val config = api.config(configured, requestScope)
+            if (config !is ApiResult.Success || config.value.hostControl?.supportsNew("plugins") != true) return@withResolvedConnection ApiResult.Failure(ApiFailure.Http(501, "Plugin controls are unavailable on this runtime", "host.plugins_unsupported"))
+            api.hostPlugins(configured, requestScope)
+        }
+
+    suspend fun hostPluginActions(pluginId: String, scope: Scope? = selectedScope.value, expectedContext: ScopedReadContext? = null): ApiResult<HostPluginActionsResponse> =
+        withResolvedConnection(hostOnly(scope), expectedContext) { configured, requestScope ->
+            if (!configured.isPaired) return@withResolvedConnection ApiResult.Failure(ApiFailure.Http(403, "Pair this device to inspect plugin actions", "pairing.required"))
+            val config = api.config(configured, requestScope)
+            if (config !is ApiResult.Success || config.value.hostControl?.supportsNew("plugins") != true) return@withResolvedConnection ApiResult.Failure(ApiFailure.Http(501, "Plugin controls are unavailable on this runtime", "host.plugins_unsupported"))
+            api.hostPluginActions(configured, requestScope, pluginId)
+        }
+
+    suspend fun hostPluginLogs(pluginId: String, scope: Scope? = selectedScope.value, expectedContext: ScopedReadContext? = null): ApiResult<HostPluginLogsResponse> =
+        withResolvedConnection(hostOnly(scope), expectedContext) { configured, requestScope ->
+            if (!configured.isPaired) return@withResolvedConnection ApiResult.Failure(ApiFailure.Http(403, "Pair this device to inspect plugin logs", "device.not_authorised"))
+            val config = api.config(configured, requestScope)
+            if (config !is ApiResult.Success || config.value.hostControl?.supportsNew("plugins") != true) return@withResolvedConnection ApiResult.Failure(ApiFailure.Http(501, "Plugin logs are unavailable on this runtime", "host.plugins_unsupported"))
+            api.hostPluginLogs(configured, requestScope, pluginId)
+        }
+
+    suspend fun hostPluginLinkSelections(scope: Scope? = selectedScope.value, expectedContext: ScopedReadContext? = null): ApiResult<HostPluginLinkSelectionsResponse> =
+        withResolvedConnection(hostOnly(scope), expectedContext) { configured, requestScope ->
+            if (!configured.isPaired) return@withResolvedConnection ApiResult.Failure(ApiFailure.Http(403, "Pair this device to inspect linkable plugins", "pairing.required"))
+            val config = api.config(configured, requestScope)
+            if (config !is ApiResult.Success || config.value.hostControl?.supportsNew("pluginOwnerOperations") != true) return@withResolvedConnection ApiResult.Failure(ApiFailure.Http(501, "Plugin link operations are unavailable", "host.plugins_unsupported"))
+            api.hostPluginLinkSelections(configured, requestScope)
+        }
+
+    suspend fun planHostPluginLink(selectionId: String, scope: Scope? = selectedScope.value, expectedContext: ScopedReadContext? = null): ApiResult<HostPluginLinkPlanResponse> =
+        withResolvedConnection(hostOnly(scope), expectedContext) { configured, requestScope ->
+            if (!configured.isPaired) return@withResolvedConnection ApiResult.Failure(ApiFailure.Http(403, "Pair this device before planning a plugin link", "pairing.required"))
+            val config = api.config(configured, requestScope)
+            if (config !is ApiResult.Success || config.value.hostControl?.supportsNew("pluginOwnerOperations") != true) return@withResolvedConnection ApiResult.Failure(ApiFailure.Http(501, "Plugin link operations are unavailable", "host.plugins_unsupported"))
+            api.planHostPluginLink(configured, requestScope, selectionId)
+        }
+
+    suspend fun applyHostPluginLink(request: HostPluginLinkRequest, scope: Scope? = selectedScope.value, expectedContext: ScopedReadContext? = null): ApiResult<HostPluginMutationResponse> =
+        withResolvedWritableConnection(hostOnly(scope), expectedContext) { configured, requestScope ->
+            if (!configured.isPaired) return@withResolvedWritableConnection ApiResult.Failure(ApiFailure.Http(403, "Pair this device before linking a plugin", "pairing.required"))
+            val config = api.config(configured, requestScope)
+            if (config !is ApiResult.Success || config.value.hostControl?.supportsNew("pluginOwnerOperations") != true) return@withResolvedWritableConnection ApiResult.Failure(ApiFailure.Http(501, "Plugin link operations are unavailable", "host.plugins_unsupported"))
+            api.applyHostPluginLink(configured, requestScope, request)
+        }
+
+    suspend fun planHostPluginInstall(owner: String, repo: String, subdir: String? = null, ref: String? = null, scope: Scope? = selectedScope.value, expectedContext: ScopedReadContext? = null): ApiResult<HostPluginInstallPlanResponse> =
+        withResolvedConnection(hostOnly(scope), expectedContext) { configured, requestScope ->
+            if (!configured.isPaired) return@withResolvedConnection ApiResult.Failure(ApiFailure.Http(403, "Pair this device before planning plugin installation", "pairing.required"))
+            val config = api.config(configured, requestScope)
+            if (config !is ApiResult.Success || config.value.hostControl?.supportsNew("pluginOwnerOperations") != true) return@withResolvedConnection ApiResult.Failure(ApiFailure.Http(501, "Plugin installation is unavailable", "host.plugins_unsupported"))
+            api.planHostPluginInstall(configured, requestScope, owner, repo, subdir, ref)
+        }
+
+    suspend fun applyHostPluginInstall(request: HostPluginInstallRequest, scope: Scope? = selectedScope.value, expectedContext: ScopedReadContext? = null): ApiResult<HostPluginMutationResponse> =
+        withResolvedWritableConnection(hostOnly(scope), expectedContext) { configured, requestScope ->
+            if (!configured.isPaired) return@withResolvedWritableConnection ApiResult.Failure(ApiFailure.Http(403, "Pair this device before installing a plugin", "pairing.required"))
+            val config = api.config(configured, requestScope)
+            if (config !is ApiResult.Success || config.value.hostControl?.supportsNew("pluginOwnerOperations") != true) return@withResolvedWritableConnection ApiResult.Failure(ApiFailure.Http(501, "Plugin installation is unavailable", "host.plugins_unsupported"))
+            api.applyHostPluginInstall(configured, requestScope, request)
+        }
+
+    suspend fun planHostPluginUninstall(pluginId: String, scope: Scope? = selectedScope.value, expectedContext: ScopedReadContext? = null): ApiResult<HostPluginUninstallPlanResponse> =
+        withResolvedConnection(hostOnly(scope), expectedContext) { configured, requestScope ->
+            if (!configured.isPaired) return@withResolvedConnection ApiResult.Failure(ApiFailure.Http(403, "Pair this device before planning plugin removal", "pairing.required"))
+            val config = api.config(configured, requestScope)
+            if (config !is ApiResult.Success || config.value.hostControl?.supportsNew("pluginOwnerOperations") != true) return@withResolvedConnection ApiResult.Failure(ApiFailure.Http(501, "Plugin removal is unavailable", "host.plugins_unsupported"))
+            api.planHostPluginUninstall(configured, requestScope, pluginId)
+        }
+
+    suspend fun applyHostPluginUninstall(pluginId: String, request: HostPluginUninstallRequest, scope: Scope? = selectedScope.value, expectedContext: ScopedReadContext? = null): ApiResult<HostPluginMutationResponse> =
+        withResolvedWritableConnection(hostOnly(scope), expectedContext) { configured, requestScope ->
+            if (!configured.isPaired) return@withResolvedWritableConnection ApiResult.Failure(ApiFailure.Http(403, "Pair this device before removing a plugin", "pairing.required"))
+            val config = api.config(configured, requestScope)
+            if (config !is ApiResult.Success || config.value.hostControl?.supportsNew("pluginOwnerOperations") != true) return@withResolvedWritableConnection ApiResult.Failure(ApiFailure.Http(501, "Plugin removal is unavailable", "host.plugins_unsupported"))
+            api.applyHostPluginUninstall(configured, requestScope, pluginId, request)
+        }
+
+    suspend fun hostPluginOwnerOperation(requestId: String, scope: Scope? = selectedScope.value, expectedContext: ScopedReadContext? = null): ApiResult<HostPluginOwnerOperationResponse> =
+        withResolvedConnection(hostOnly(scope), expectedContext) { configured, requestScope ->
+            if (!configured.isPaired) return@withResolvedConnection ApiResult.Failure(ApiFailure.Http(403, "Pair this device to inspect plugin operation status", "pairing.required"))
+            val config = api.config(configured, requestScope)
+            if (config !is ApiResult.Success || config.value.hostControl?.supportsNew("pluginOwnerOperations") != true) return@withResolvedConnection ApiResult.Failure(ApiFailure.Http(501, "Plugin operation receipts are unavailable", "host.plugins_unsupported"))
+            api.hostPluginOwnerOperation(configured, requestScope, requestId)
+        }
+
+    suspend fun unlinkHostPlugin(pluginId: String, scope: Scope? = selectedScope.value, expectedContext: ScopedReadContext? = null): ApiResult<ActionResponse> =
+        withResolvedWritableConnection(hostOnly(scope), expectedContext) { configured, requestScope ->
+            if (!configured.isPaired) return@withResolvedWritableConnection ApiResult.Failure(ApiFailure.Http(403, "Pair this device before unlinking a plugin", "pairing.required"))
+            val config = api.config(configured, requestScope)
+            if (config !is ApiResult.Success || config.value.hostControl?.supportsNew("plugins") != true) return@withResolvedWritableConnection ApiResult.Failure(ApiFailure.Http(501, "Plugin unlink is unavailable on this runtime", "host.plugins_unsupported"))
+            api.unlinkHostPlugin(configured, requestScope, pluginId)
+        }
+
+    suspend fun setHostPluginEnabled(pluginId: String, enabled: Boolean, scope: Scope? = selectedScope.value, expectedContext: ScopedReadContext? = null): ApiResult<ActionResponse> =
+        withResolvedWritableConnection(hostOnly(scope), expectedContext) { configured, requestScope ->
+            if (!configured.isPaired) return@withResolvedWritableConnection ApiResult.Failure(ApiFailure.Http(403, "Pair this device before changing plugin state", "pairing.required"))
+            val config = api.config(configured, requestScope)
+            if (config !is ApiResult.Success || config.value.hostControl?.supportsNew("plugins") != true) return@withResolvedWritableConnection ApiResult.Failure(ApiFailure.Http(501, "Plugin controls are unavailable on this runtime", "host.plugins_unsupported"))
+            api.setHostPluginEnabled(configured, requestScope, pluginId, enabled)
+        }
+
+    suspend fun invokeHostPluginAction(pluginId: String, actionId: String, correlationId: String, scope: Scope? = selectedScope.value, expectedContext: ScopedReadContext? = null): ApiResult<HostPluginActionResponse> =
+        withResolvedWritableConnection(hostOnly(scope), expectedContext) { configured, requestScope ->
+            if (!configured.isPaired) return@withResolvedWritableConnection ApiResult.Failure(ApiFailure.Http(403, "Pair this device before invoking a plugin action", "pairing.required"))
+            val config = api.config(configured, requestScope)
+            if (config !is ApiResult.Success || config.value.hostControl?.supportsNew("plugins") != true) return@withResolvedWritableConnection ApiResult.Failure(ApiFailure.Http(501, "Plugin actions are unavailable on this runtime", "host.plugins_unsupported"))
+            api.invokeHostPluginAction(configured, requestScope, pluginId, actionId, correlationId)
+        }
+
+    suspend fun openHostPluginPane(pluginId: String, request: HostPluginPaneRequest, scope: Scope? = selectedScope.value, expectedContext: ScopedReadContext? = null): ApiResult<HostPluginPaneResponse> =
+        withResolvedWritableConnection(hostOnly(scope), expectedContext) { configured, requestScope ->
+            if (!configured.isPaired) return@withResolvedWritableConnection ApiResult.Failure(ApiFailure.Http(403, "Pair this device before opening a plugin pane", "pairing.required"))
+            val config = api.config(configured, requestScope)
+            if (config !is ApiResult.Success || config.value.hostControl?.supportsNew("plugins") != true) return@withResolvedWritableConnection ApiResult.Failure(ApiFailure.Http(501, "Plugin panes are unavailable on this runtime", "host.plugins_unsupported"))
+            api.openHostPluginPane(configured, requestScope, pluginId, request)
+        }
+
+    suspend fun focusHostPluginPane(pluginId: String, paneId: String, scope: Scope? = selectedScope.value, expectedContext: ScopedReadContext? = null): ApiResult<ActionResponse> =
+        withResolvedWritableConnection(hostOnly(scope), expectedContext) { configured, requestScope ->
+            if (!configured.isPaired) return@withResolvedWritableConnection ApiResult.Failure(ApiFailure.Http(403, "Pair this device before focusing a plugin pane", "pairing.required"))
+            val config = api.config(configured, requestScope)
+            if (config !is ApiResult.Success || config.value.hostControl?.supportsNew("plugins") != true) return@withResolvedWritableConnection ApiResult.Failure(ApiFailure.Http(501, "Plugin panes are unavailable on this runtime", "host.plugins_unsupported"))
+            api.focusHostPluginPane(configured, requestScope, pluginId, paneId)
+        }
+
+    suspend fun closeHostPluginPane(pluginId: String, paneId: String, scope: Scope? = selectedScope.value, expectedContext: ScopedReadContext? = null): ApiResult<ActionResponse> =
+        withResolvedWritableConnection(hostOnly(scope), expectedContext) { configured, requestScope ->
+            if (!configured.isPaired) return@withResolvedWritableConnection ApiResult.Failure(ApiFailure.Http(403, "Pair this device before closing a plugin pane", "pairing.required"))
+            val config = api.config(configured, requestScope)
+            if (config !is ApiResult.Success || config.value.hostControl?.supportsNew("plugins") != true) return@withResolvedWritableConnection ApiResult.Failure(ApiFailure.Http(501, "Plugin panes are unavailable on this runtime", "host.plugins_unsupported"))
+            api.closeHostPluginPane(configured, requestScope, pluginId, paneId)
+        }
+
+    suspend fun hostPluginConfigFiles(pluginId: String, scope: Scope? = selectedScope.value, expectedContext: ScopedReadContext? = null): ApiResult<HostPluginConfigFilesResponse> =
+        withResolvedConnection(hostOnly(scope), expectedContext) { configured, requestScope ->
+            if (!configured.isPaired) return@withResolvedConnection ApiResult.Failure(ApiFailure.Http(403, "Pair this device to inspect plugin configuration", "pairing.required"))
+            val config = api.config(configured, requestScope)
+            if (config !is ApiResult.Success || config.value.hostControl?.supportsNew("plugins") != true) return@withResolvedConnection ApiResult.Failure(ApiFailure.Http(501, "Plugin configuration is unavailable on this runtime", "host.plugins_unsupported"))
+            api.hostPluginConfigFiles(configured, requestScope, pluginId)
+        }
+
+    suspend fun hostPluginConfig(pluginId: String, file: String, scope: Scope? = selectedScope.value, expectedContext: ScopedReadContext? = null): ApiResult<HostPluginConfigResponse> =
+        withResolvedConnection(hostOnly(scope), expectedContext) { configured, requestScope ->
+            if (!configured.isPaired) return@withResolvedConnection ApiResult.Failure(ApiFailure.Http(403, "Pair this device to inspect plugin configuration", "pairing.required"))
+            val config = api.config(configured, requestScope)
+            if (config !is ApiResult.Success || config.value.hostControl?.supportsNew("plugins") != true) return@withResolvedConnection ApiResult.Failure(ApiFailure.Http(501, "Plugin configuration is unavailable on this runtime", "host.plugins_unsupported"))
+            api.hostPluginConfig(configured, requestScope, pluginId, file)
+        }
+
+    suspend fun planHostPluginConfigPrepare(pluginId: String, scope: Scope? = selectedScope.value, expectedContext: ScopedReadContext? = null): ApiResult<HostPluginConfigPlanResponse> =
+        withResolvedConnection(hostOnly(scope), expectedContext) { configured, requestScope ->
+            if (!configured.isPaired) return@withResolvedConnection ApiResult.Failure(ApiFailure.Http(403, "Pair this device before preparing plugin configuration", "pairing.required"))
+            val config = api.config(configured, requestScope)
+            if (config !is ApiResult.Success || config.value.hostControl?.supportsNew("plugins") != true) return@withResolvedConnection ApiResult.Failure(ApiFailure.Http(501, "Plugin configuration preparation is unavailable", "host.plugins_unsupported"))
+            api.planHostPluginConfigPrepare(configured, requestScope, pluginId)
+        }
+
+    suspend fun applyHostPluginConfigPrepare(pluginId: String, request: HostPluginConfigPrepareRequest, scope: Scope? = selectedScope.value, expectedContext: ScopedReadContext? = null): ApiResult<HostPluginConfigOperationResponse> =
+        withResolvedWritableConnection(hostOnly(scope), expectedContext) { configured, requestScope ->
+            if (!configured.isPaired) return@withResolvedWritableConnection ApiResult.Failure(ApiFailure.Http(403, "Pair this device before preparing plugin configuration", "pairing.required"))
+            val config = api.config(configured, requestScope)
+            if (config !is ApiResult.Success || config.value.hostControl?.supportsNew("plugins") != true) return@withResolvedWritableConnection ApiResult.Failure(ApiFailure.Http(501, "Plugin configuration preparation is unavailable", "host.plugins_unsupported"))
+            api.applyHostPluginConfigPrepare(configured, requestScope, pluginId, request)
+        }
+
+    suspend fun planHostPluginConfigEdit(pluginId: String, request: HostPluginConfigFileRequest, scope: Scope? = selectedScope.value, expectedContext: ScopedReadContext? = null): ApiResult<HostPluginConfigPlanResponse> =
+        withResolvedConnection(hostOnly(scope), expectedContext) { configured, requestScope ->
+            if (!configured.isPaired) return@withResolvedConnection ApiResult.Failure(ApiFailure.Http(403, "Pair this device before planning plugin config edits", "pairing.required"))
+            val config = api.config(configured, requestScope)
+            if (config !is ApiResult.Success || config.value.hostControl?.supportsNew("plugins") != true) return@withResolvedConnection ApiResult.Failure(ApiFailure.Http(501, "Plugin config editing is unavailable", "host.plugins_unsupported"))
+            api.planHostPluginConfigEdit(configured, requestScope, pluginId, request)
+        }
+
+    suspend fun applyHostPluginConfigEdit(pluginId: String, request: HostPluginConfigApplyRequest, scope: Scope? = selectedScope.value, expectedContext: ScopedReadContext? = null): ApiResult<HostPluginConfigOperationResponse> =
+        withResolvedWritableConnection(hostOnly(scope), expectedContext) { configured, requestScope ->
+            if (!configured.isPaired) return@withResolvedWritableConnection ApiResult.Failure(ApiFailure.Http(403, "Pair this device before editing plugin configuration", "pairing.required"))
+            val config = api.config(configured, requestScope)
+            if (config !is ApiResult.Success || config.value.hostControl?.supportsNew("plugins") != true) return@withResolvedWritableConnection ApiResult.Failure(ApiFailure.Http(501, "Plugin config editing is unavailable", "host.plugins_unsupported"))
+            api.applyHostPluginConfigEdit(configured, requestScope, pluginId, request)
         }
 
     suspend fun hostIntegrationStatus(scope: Scope? = selectedScope.value): ApiResult<HostIntegrationsResponse> =

@@ -90,6 +90,18 @@
             android:exported="false"
             android:parentActivityName=".ui.SettingsActivity" />
         <activity
+            android:name=".ui.PluginsActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.SettingsActivity" />
+        <activity
+            android:name=".ui.PluginDetailsActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.PluginsActivity" />
+        <activity
+            android:name=".ui.PluginConfigActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.PluginDetailsActivity" />
+        <activity
             android:name=".ui.UpdatesActivity"
             android:exported="false"
             android:parentActivityName=".ui.SettingsActivity" />

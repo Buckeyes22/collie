@@ -112,6 +112,29 @@ interface CollieApi {
     suspend fun agentWait(connection: Connection, address: PaneAddress, id: String, cancel: Boolean = false): ApiResult<AgentWaitResponse> = unavailable("Bounded agent waits")
     suspend fun controlOperation(connection: Connection, scope: Scope, requestId: String): ApiResult<ControlOperationResponse> = unavailable("Control operations")
     suspend fun hostIntegrations(connection: Connection, scope: Scope): ApiResult<HostIntegrationsResponse> = unavailable("Host integrations")
+    suspend fun hostPlugins(connection: Connection, scope: Scope): ApiResult<HostPluginsResponse> = unavailable("Host plugins")
+    suspend fun hostPluginActions(connection: Connection, scope: Scope, pluginId: String): ApiResult<HostPluginActionsResponse> = unavailable("Plugin actions")
+    suspend fun hostPluginLogs(connection: Connection, scope: Scope, pluginId: String): ApiResult<HostPluginLogsResponse> = unavailable("Plugin logs")
+    suspend fun setHostPluginEnabled(connection: Connection, scope: Scope, pluginId: String, enabled: Boolean): ApiResult<ActionResponse> = unavailable("Plugin enabled state")
+    suspend fun unlinkHostPlugin(connection: Connection, scope: Scope, pluginId: String): ApiResult<ActionResponse> = unavailable("Plugin unlink")
+    suspend fun invokeHostPluginAction(connection: Connection, scope: Scope, pluginId: String, actionId: String, correlationId: String): ApiResult<HostPluginActionResponse> = unavailable("Plugin action")
+    suspend fun openHostPluginPane(connection: Connection, scope: Scope, pluginId: String, request: HostPluginPaneRequest): ApiResult<HostPluginPaneResponse> = unavailable("Plugin pane")
+    suspend fun focusHostPluginPane(connection: Connection, scope: Scope, pluginId: String, paneId: String): ApiResult<ActionResponse> = unavailable("Plugin pane focus")
+    suspend fun closeHostPluginPane(connection: Connection, scope: Scope, pluginId: String, paneId: String): ApiResult<ActionResponse> = unavailable("Plugin pane close")
+    suspend fun hostPluginLinkSelections(connection: Connection, scope: Scope): ApiResult<HostPluginLinkSelectionsResponse> = unavailable("Plugin link selections")
+    suspend fun planHostPluginLink(connection: Connection, scope: Scope, selectionId: String): ApiResult<HostPluginLinkPlanResponse> = unavailable("Plugin link plan")
+    suspend fun applyHostPluginLink(connection: Connection, scope: Scope, request: HostPluginLinkRequest): ApiResult<HostPluginMutationResponse> = unavailable("Plugin link")
+    suspend fun planHostPluginInstall(connection: Connection, scope: Scope, owner: String, repo: String, subdir: String?, ref: String?): ApiResult<HostPluginInstallPlanResponse> = unavailable("Plugin install plan")
+    suspend fun applyHostPluginInstall(connection: Connection, scope: Scope, request: HostPluginInstallRequest): ApiResult<HostPluginMutationResponse> = unavailable("Plugin install")
+    suspend fun planHostPluginUninstall(connection: Connection, scope: Scope, pluginId: String): ApiResult<HostPluginUninstallPlanResponse> = unavailable("Plugin uninstall plan")
+    suspend fun applyHostPluginUninstall(connection: Connection, scope: Scope, pluginId: String, request: HostPluginUninstallRequest): ApiResult<HostPluginMutationResponse> = unavailable("Plugin uninstall")
+    suspend fun hostPluginOwnerOperation(connection: Connection, scope: Scope, requestId: String): ApiResult<HostPluginOwnerOperationResponse> = unavailable("Plugin operation receipt")
+    suspend fun hostPluginConfigFiles(connection: Connection, scope: Scope, pluginId: String): ApiResult<HostPluginConfigFilesResponse> = unavailable("Plugin config files")
+    suspend fun hostPluginConfig(connection: Connection, scope: Scope, pluginId: String, file: String): ApiResult<HostPluginConfigResponse> = unavailable("Plugin config")
+    suspend fun planHostPluginConfigPrepare(connection: Connection, scope: Scope, pluginId: String): ApiResult<HostPluginConfigPlanResponse> = unavailable("Plugin config preparation plan")
+    suspend fun applyHostPluginConfigPrepare(connection: Connection, scope: Scope, pluginId: String, request: HostPluginConfigPrepareRequest): ApiResult<HostPluginConfigOperationResponse> = unavailable("Plugin config preparation")
+    suspend fun planHostPluginConfigEdit(connection: Connection, scope: Scope, pluginId: String, request: HostPluginConfigFileRequest): ApiResult<HostPluginConfigPlanResponse> = unavailable("Plugin config edit plan")
+    suspend fun applyHostPluginConfigEdit(connection: Connection, scope: Scope, pluginId: String, request: HostPluginConfigApplyRequest): ApiResult<HostPluginConfigOperationResponse> = unavailable("Plugin config edit")
     suspend fun hostIntegrationStatus(connection: Connection, scope: Scope): ApiResult<HostIntegrationsResponse> = unavailable("Host integration status")
     suspend fun agentManifestStatus(connection: Connection, scope: Scope): ApiResult<AgentManifestStatusResponse> = unavailable("Agent manifests")
     suspend fun planHostOperation(connection: Connection, scope: Scope, intent: HostOperationIntent): ApiResult<HostOperationPlanResponse> = unavailable("Host operation plan")
@@ -1814,6 +1837,154 @@ class CollieApiClient(
     override suspend fun hostIntegrations(connection: Connection, scope: Scope): ApiResult<HostIntegrationsResponse> {
         val result = executeJson(request(connection, scopedUrl(connection.origin, path("host", "integrations"), scope)), HostIntegrationsResponse.serializer(), READ_TIMEOUT_SECONDS)
         return requireContract(result, "Malformed host integration inventory") { it.valid() }
+    }
+
+    override suspend fun hostPlugins(connection: Connection, scope: Scope): ApiResult<HostPluginsResponse> {
+        val result = executeJson(request(connection, scopedUrl(connection.origin, path("host", "plugins"), scope)), HostPluginsResponse.serializer(), READ_TIMEOUT_SECONDS, maxResponseBytes = MAX_LAYOUT_RESPONSE_BYTES)
+        return requireContract(result, "Malformed plugin inventory") { it.valid() }
+    }
+
+    override suspend fun hostPluginActions(connection: Connection, scope: Scope, pluginId: String): ApiResult<HostPluginActionsResponse> {
+        require(pluginId.matches(Regex("[A-Za-z0-9][A-Za-z0-9:._-]{0,119}")))
+        val result = executeJson(request(connection, scopedUrl(connection.origin, path("host", "plugins", pluginId, "actions"), scope)), HostPluginActionsResponse.serializer(), READ_TIMEOUT_SECONDS)
+        return requireContract(result, "Malformed plugin action inventory") { it.valid() && it.actions.all { action -> action.pluginId == pluginId } }
+    }
+
+    override suspend fun hostPluginLogs(connection: Connection, scope: Scope, pluginId: String): ApiResult<HostPluginLogsResponse> {
+        require(pluginId.matches(Regex("[A-Za-z0-9][A-Za-z0-9:._-]{0,119}")))
+        val result = executeJson(request(connection, scopedUrl(connection.origin, path("host", "plugins", pluginId, "logs"), scope)), HostPluginLogsResponse.serializer(), READ_TIMEOUT_SECONDS)
+        return requireContract(result, "Malformed plugin logs") { it.valid() && it.logs.all { log -> log.pluginId == pluginId } }
+    }
+
+    override suspend fun setHostPluginEnabled(connection: Connection, scope: Scope, pluginId: String, enabled: Boolean): ApiResult<ActionResponse> {
+        require(pluginId.matches(Regex("[A-Za-z0-9][A-Za-z0-9:._-]{0,119}")))
+        val verb = if (enabled) "enable" else "disable"
+        val result = executeJson(post(connection, scopedUrl(connection.origin, path("host", "plugins", pluginId, verb), scope), ""), ActionResponse.serializer(), MUTATION_TIMEOUT_SECONDS)
+        return requireContract(result, "Malformed plugin enabled-state response") { it.ok }
+    }
+
+    override suspend fun unlinkHostPlugin(connection: Connection, scope: Scope, pluginId: String): ApiResult<ActionResponse> {
+        require(pluginId.matches(Regex("[A-Za-z0-9][A-Za-z0-9:._-]{0,119}")))
+        val result = executeJson(post(connection, scopedUrl(connection.origin, path("host", "plugins", pluginId, "unlink"), scope), ""), ActionResponse.serializer(), MUTATION_TIMEOUT_SECONDS)
+        return requireContract(result, "Malformed plugin unlink response") { it.ok }
+    }
+
+    override suspend fun invokeHostPluginAction(connection: Connection, scope: Scope, pluginId: String, actionId: String, correlationId: String): ApiResult<HostPluginActionResponse> {
+        require(pluginId.matches(Regex("[A-Za-z0-9][A-Za-z0-9:._-]{0,119}")) && actionId.matches(Regex("[A-Za-z0-9][A-Za-z0-9:_-]{0,119}")) && correlationId.matches(Regex("[A-Za-z0-9_-]{1,128}")))
+        val body = json.encodeToString(HostPluginActionRequest.serializer(), HostPluginActionRequest(correlationId))
+        val result = executeJson(post(connection, scopedUrl(connection.origin, path("host", "plugins", pluginId, "actions", actionId, "invoke"), scope), body), HostPluginActionResponse.serializer(), MUTATION_TIMEOUT_SECONDS)
+        return requireContract(result, "Malformed plugin action response") { it.valid() && it.action.pluginId == pluginId && it.action.actionId == actionId }
+    }
+
+    override suspend fun openHostPluginPane(connection: Connection, scope: Scope, pluginId: String, request: HostPluginPaneRequest): ApiResult<HostPluginPaneResponse> {
+        require(pluginId.matches(Regex("[A-Za-z0-9][A-Za-z0-9:._-]{0,119}")) && request.entrypoint.matches(Regex("[A-Za-z0-9][A-Za-z0-9:_-]{0,119}")) && (request.placement == null || request.placement in setOf("overlay", "popup", "split", "tab", "zoomed")))
+        val body = json.encodeToString(HostPluginPaneRequest.serializer(), request)
+        val result = executeJson(post(connection, scopedUrl(connection.origin, path("host", "plugins", pluginId, "panes", "open"), scope), body), HostPluginPaneResponse.serializer(), MUTATION_TIMEOUT_SECONDS)
+        return requireContract(result, "Malformed plugin pane response") { it.valid() && it.pane.pluginId == pluginId && it.pane.entrypoint == request.entrypoint }
+    }
+
+    override suspend fun focusHostPluginPane(connection: Connection, scope: Scope, pluginId: String, paneId: String): ApiResult<ActionResponse> {
+        require(pluginId.matches(Regex("[A-Za-z0-9][A-Za-z0-9:._-]{0,119}")) && paneId.matches(Regex("[A-Za-z0-9:._-]{1,128}")))
+        val result = executeJson(post(connection, scopedUrl(connection.origin, path("host", "plugins", pluginId, "panes", paneId, "focus"), scope), ""), ActionResponse.serializer(), MUTATION_TIMEOUT_SECONDS)
+        return requireContract(result, "Malformed plugin pane focus response") { it.ok }
+    }
+
+    override suspend fun closeHostPluginPane(connection: Connection, scope: Scope, pluginId: String, paneId: String): ApiResult<ActionResponse> {
+        require(pluginId.matches(Regex("[A-Za-z0-9][A-Za-z0-9:._-]{0,119}")) && paneId.matches(Regex("[A-Za-z0-9:._-]{1,128}")))
+        val result = executeJson(post(connection, scopedUrl(connection.origin, path("host", "plugins", pluginId, "panes", paneId, "close"), scope), ""), ActionResponse.serializer(), MUTATION_TIMEOUT_SECONDS)
+        return requireContract(result, "Malformed plugin pane close response") { it.ok }
+    }
+
+    override suspend fun hostPluginConfigFiles(connection: Connection, scope: Scope, pluginId: String): ApiResult<HostPluginConfigFilesResponse> {
+        require(pluginId.matches(Regex("[A-Za-z0-9][A-Za-z0-9:._-]{0,119}")))
+        val result = executeJson(request(connection, scopedUrl(connection.origin, path("host", "plugins", pluginId, "config"), scope)), HostPluginConfigFilesResponse.serializer(), READ_TIMEOUT_SECONDS)
+        return requireContract(result, "Malformed plugin config inventory") { it.valid() }
+    }
+
+    override suspend fun hostPluginConfig(connection: Connection, scope: Scope, pluginId: String, file: String): ApiResult<HostPluginConfigResponse> {
+        require(pluginId.matches(Regex("[A-Za-z0-9][A-Za-z0-9:._-]{0,119}")) && file.matches(Regex("[A-Za-z0-9._/-]{1,512}")) && !file.split('/').any { it in setOf("", ".", "..") })
+        val url = scopedUrl(connection.origin, path("host", "plugins", pluginId, "config"), scope).newBuilder().addQueryParameter("file", file).build()
+        val result = executeJson(request(connection, url), HostPluginConfigResponse.serializer(), READ_TIMEOUT_SECONDS, maxResponseBytes = MAX_LAYOUT_RESPONSE_BYTES)
+        return requireContract(result, "Malformed plugin config file") { it.valid() && it.file.id == file }
+    }
+
+    override suspend fun planHostPluginConfigPrepare(connection: Connection, scope: Scope, pluginId: String): ApiResult<HostPluginConfigPlanResponse> {
+        require(pluginId.matches(Regex("[A-Za-z0-9][A-Za-z0-9:._-]{0,119}")))
+        val result = executeJson(post(connection, scopedUrl(connection.origin, path("host", "plugins", pluginId, "config", "prepare", "plan"), scope), "{}"), HostPluginConfigPlanResponse.serializer(), MUTATION_TIMEOUT_SECONDS)
+        return requireContract(result, "Malformed plugin config preparation plan") { it.ok && it.plan.validFor(pluginId) }
+    }
+
+    override suspend fun applyHostPluginConfigPrepare(connection: Connection, scope: Scope, pluginId: String, request: HostPluginConfigPrepareRequest): ApiResult<HostPluginConfigOperationResponse> {
+        require(pluginId.matches(Regex("[A-Za-z0-9][A-Za-z0-9:._-]{0,119}")) && request.requestId.matches(Regex("[A-Za-z0-9_-]{1,128}")) && request.planToken.isNotBlank())
+        val body = json.encodeToString(HostPluginConfigPrepareRequest.serializer(), request)
+        val result = executeJson(post(connection, scopedUrl(connection.origin, path("host", "plugins", pluginId, "config", "prepare"), scope), body), HostPluginConfigOperationResponse.serializer(), MUTATION_TIMEOUT_SECONDS)
+        return requireContract(result, "Malformed plugin config preparation receipt") { it.valid() && it.operation.requestId == request.requestId }
+    }
+
+    override suspend fun planHostPluginConfigEdit(connection: Connection, scope: Scope, pluginId: String, request: HostPluginConfigFileRequest): ApiResult<HostPluginConfigPlanResponse> {
+        require(pluginId.matches(Regex("[A-Za-z0-9][A-Za-z0-9:._-]{0,119}")) && request.requestId.matches(Regex("[A-Za-z0-9_-]{1,128}")) && request.file.matches(Regex("[A-Za-z0-9._/-]{1,512}")) && !request.file.split('/').any { it in setOf("", ".", "..") } && request.content.length <= 65_536)
+        val body = json.encodeToString(HostPluginConfigFileRequest.serializer(), request)
+        val result = executeJson(post(connection, scopedUrl(connection.origin, path("host", "plugins", pluginId, "config", "plan"), scope), body), HostPluginConfigPlanResponse.serializer(), MUTATION_TIMEOUT_SECONDS)
+        return requireContract(result, "Malformed plugin config edit plan") { it.ok && it.plan.validFor(pluginId, request.file) }
+    }
+
+    override suspend fun applyHostPluginConfigEdit(connection: Connection, scope: Scope, pluginId: String, request: HostPluginConfigApplyRequest): ApiResult<HostPluginConfigOperationResponse> {
+        require(pluginId.matches(Regex("[A-Za-z0-9][A-Za-z0-9:._-]{0,119}")) && request.requestId.matches(Regex("[A-Za-z0-9_-]{1,128}")) && request.planToken.isNotBlank() && request.file.matches(Regex("[A-Za-z0-9._/-]{1,512}")) && !request.file.split('/').any { it in setOf("", ".", "..") } && request.content.length <= 65_536 && request.confirmed)
+        val body = json.encodeToString(HostPluginConfigApplyRequest.serializer(), request)
+        val result = executeJson(post(connection, scopedUrl(connection.origin, path("host", "plugins", pluginId, "config", "apply"), scope), body), HostPluginConfigOperationResponse.serializer(), MUTATION_TIMEOUT_SECONDS)
+        return requireContract(result, "Malformed plugin config operation receipt") { it.valid() && it.operation.requestId == request.requestId }
+    }
+
+    override suspend fun hostPluginLinkSelections(connection: Connection, scope: Scope): ApiResult<HostPluginLinkSelectionsResponse> {
+        val result = executeJson(request(connection, scopedUrl(connection.origin, path("host", "plugins", "link", "selections"), scope)), HostPluginLinkSelectionsResponse.serializer(), READ_TIMEOUT_SECONDS)
+        return requireContract(result, "Malformed plugin link selections") { it.valid() }
+    }
+
+    override suspend fun planHostPluginLink(connection: Connection, scope: Scope, selectionId: String): ApiResult<HostPluginLinkPlanResponse> {
+        require(selectionId.matches(Regex("[a-f0-9]{64}")))
+        val body = json.encodeToString(kotlinx.serialization.json.buildJsonObject { put("selectionId", selectionId) })
+        val result = executeJson(post(connection, scopedUrl(connection.origin, path("host", "plugins", "link", "plan"), scope), body), HostPluginLinkPlanResponse.serializer(), MUTATION_TIMEOUT_SECONDS)
+        return requireContract(result, "Malformed plugin link plan") { it.ok && it.plan.pluginId.length in 1..120 && it.plan.token.matches(Regex("[A-Fa-f0-9-]{36}")) && it.plan.effect.length in 1..2048 }
+    }
+
+    override suspend fun applyHostPluginLink(connection: Connection, scope: Scope, request: HostPluginLinkRequest): ApiResult<HostPluginMutationResponse> {
+        require(request.requestId.matches(Regex("[A-Za-z0-9_-]{1,128}")) && request.planToken.matches(Regex("[A-Fa-f0-9-]{36}")) && request.confirmed)
+        val body = json.encodeToString(HostPluginLinkRequest.serializer(), request)
+        val result = executeJson(post(connection, scopedUrl(connection.origin, path("host", "plugins", "link"), scope), body), HostPluginMutationResponse.serializer(), MUTATION_TIMEOUT_SECONDS)
+        return requireContract(result, "Malformed plugin link receipt") { it.validFor(request.requestId) }
+    }
+
+    override suspend fun planHostPluginInstall(connection: Connection, scope: Scope, owner: String, repo: String, subdir: String?, ref: String?): ApiResult<HostPluginInstallPlanResponse> {
+        require(owner.matches(Regex("[A-Za-z0-9-]{1,100}")) && repo.matches(Regex("[A-Za-z0-9._-]{1,100}")) && (subdir == null || subdir.length <= 512 && !subdir.startsWith("/") && !subdir.split('/').any { it in setOf("", ".", "..") }) && (ref == null || ref.isNotBlank() && ref.length <= 256 && ref.none(Char::isISOControl)))
+        val body = json.encodeToString(HostPluginInstallPlanInput.serializer(), HostPluginInstallPlanInput(owner, repo, subdir, ref))
+        val result = executeJson(post(connection, scopedUrl(connection.origin, path("host", "plugins", "install", "plan"), scope), body), HostPluginInstallPlanResponse.serializer(), MUTATION_TIMEOUT_SECONDS, maxResponseBytes = MAX_LAYOUT_RESPONSE_BYTES)
+        return requireContract(result, "Malformed plugin install plan") { it.ok && it.plan.plugin.valid() && it.plan.source.owner.equals(owner, true) && it.plan.source.repo.equals(repo, true) && it.plan.source.subdir == subdir && (ref == null || it.plan.source.ref == ref) && it.plan.source.commit.matches(Regex("(?:[a-f0-9]{40}|[a-f0-9]{64})")) && it.plan.checksum.matches(Regex("[a-f0-9]{64}")) && it.plan.effects.size <= 64 && it.plan.effects.all { effect -> effect.length <= 2048 } }
+    }
+
+    override suspend fun applyHostPluginInstall(connection: Connection, scope: Scope, request: HostPluginInstallRequest): ApiResult<HostPluginMutationResponse> {
+        require(request.requestId.matches(Regex("[A-Za-z0-9_-]{1,128}")) && request.planToken.matches(Regex("[A-Fa-f0-9-]{36}")) && request.checksum.matches(Regex("[a-f0-9]{64}")) && request.confirmed)
+        val body = json.encodeToString(HostPluginInstallRequest.serializer(), request)
+        val result = executeJson(post(connection, scopedUrl(connection.origin, path("host", "plugins", "install"), scope), body), HostPluginMutationResponse.serializer(), MUTATION_TIMEOUT_SECONDS)
+        return requireContract(result, "Malformed plugin install receipt") { it.validFor(request.requestId) }
+    }
+
+    override suspend fun planHostPluginUninstall(connection: Connection, scope: Scope, pluginId: String): ApiResult<HostPluginUninstallPlanResponse> {
+        require(pluginId.matches(Regex("[A-Za-z0-9][A-Za-z0-9:._-]{0,119}")))
+        val result = executeJson(post(connection, scopedUrl(connection.origin, path("host", "plugins", pluginId, "uninstall", "plan"), scope), "{}"), HostPluginUninstallPlanResponse.serializer(), MUTATION_TIMEOUT_SECONDS)
+        return requireContract(result, "Malformed plugin uninstall plan") { it.ok && it.plan.pluginId == pluginId && it.plan.token.matches(Regex("[A-Fa-f0-9-]{36}")) && it.plan.preservesConfigState && it.plan.effect.length in 1..2048 }
+    }
+
+    override suspend fun applyHostPluginUninstall(connection: Connection, scope: Scope, pluginId: String, request: HostPluginUninstallRequest): ApiResult<HostPluginMutationResponse> {
+        require(pluginId.matches(Regex("[A-Za-z0-9][A-Za-z0-9:._-]{0,119}")) && request.requestId.matches(Regex("[A-Za-z0-9_-]{1,128}")) && request.planToken.matches(Regex("[A-Fa-f0-9-]{36}")) && request.confirmed)
+        val body = json.encodeToString(HostPluginUninstallRequest.serializer(), request)
+        val result = executeJson(post(connection, scopedUrl(connection.origin, path("host", "plugins", pluginId, "uninstall"), scope), body), HostPluginMutationResponse.serializer(), MUTATION_TIMEOUT_SECONDS)
+        return requireContract(result, "Malformed plugin uninstall receipt") { it.validFor(request.requestId) }
+    }
+
+    override suspend fun hostPluginOwnerOperation(connection: Connection, scope: Scope, requestId: String): ApiResult<HostPluginOwnerOperationResponse> {
+        require(requestId.matches(Regex("[A-Za-z0-9_-]{1,128}")))
+        val result = executeJson(request(connection, scopedUrl(connection.origin, path("host", "plugins", "operations", requestId), scope)), HostPluginOwnerOperationResponse.serializer(), READ_TIMEOUT_SECONDS, maxResponseBytes = MAX_LAYOUT_RESPONSE_BYTES)
+        return requireContract(result, "Malformed plugin owner operation receipt") { it.validFor(requestId) }
     }
 
     override suspend fun hostIntegrationStatus(connection: Connection, scope: Scope): ApiResult<HostIntegrationsResponse> {

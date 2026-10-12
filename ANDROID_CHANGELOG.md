@@ -8,6 +8,8 @@ the first Android release from this fork.
 
 ## Unreleased
 
+- Add native Herdr plugin inventory, details, manifest actions, logs, pane navigation, secret-redacted configuration, and reviewed install/link/uninstall controls with durable operation receipts.
+
 - Keep saved-pane status compact and show the complete saved-copy provenance without clipping.
 - Add bounded pane metadata with original-occupant token guards and owner-scoped agent-view reconciliation; keep unsupported and unresolved writes fail-closed.
 

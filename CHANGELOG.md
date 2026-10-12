@@ -33,6 +33,8 @@ Running a crew? Update the lead first; members follow on their own. Details:
 
 ### Added
 
+- **Manage Herdr plugins from native clients.** Add host-scoped inventory, manifest actions, controlled logs and panes, secret-redacted bounded JSON config editing, and confirmed install/link/uninstall plans backed by owner-derived operations and durable receipts. Keep executable arguments, owner paths and secret values private.
+
 - **Report bounded agent metadata and manage declarative Herdr views.** Guard pane token reports with a negotiated original-occupant binding, and reconcile terminal projections through the producer's owner-scoped view reader. Keep unsupported runtimes and unresolved dispatch outcomes fail-closed.
 
 
