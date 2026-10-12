@@ -41,4 +41,9 @@
     <item name="pack_back_button" type="id" />
     <item name="pack_summary" type="id" />
     <item name="pack_members" type="id" />
+    <item name="settings_offline_retention" type="id" />
+    <item name="settings_offline_retention_off" type="id" />
+    <item name="settings_offline_retention_one_day" type="id" />
+    <item name="settings_offline_retention_seven_days" type="id" />
+    <item name="settings_saved_drafts_switch" type="id" />
 </resources>

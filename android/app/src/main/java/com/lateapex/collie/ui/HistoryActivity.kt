@@ -55,6 +55,11 @@ class HistoryActivity : AppCompatActivity() {
     private lateinit var binding: ActivityHistoryBinding
     private lateinit var address: PaneAddress
     private var authorityRegistration: AutoCloseable? = null
+    private var savedCopy: com.lateapex.collie.data.SavedCopyProvenance? = null
+    private var savedVersion: com.lateapex.collie.data.ScopedCustodyVersion? = null
+    private var savedExpiry: kotlinx.coroutines.Job? = null
+    private var savedClear: AutoCloseable? = null
+
     private var retired = false
     private var entries = emptyList<TranscriptEntry>()
     private var hasMore = false
@@ -140,7 +145,19 @@ class HistoryActivity : AppCompatActivity() {
             retainedReader.findQuery = ""
         }
         repository.selectSubject(address.scope, address.paneId)
+        savedClear = repository.offlineContentStore?.onReadsCleared { cutoff ->
+            withMainCustodyAck {
+                if (savedCopy?.clearRevision?.let { it < cutoff } == true) {
+                    val selected = repository.offlineSelection(address.scope, address.paneId)
+                    eraseSavedHistory()
+                    selected?.let(repository::expireSavedCopy)
+                }
+            }
+        }
         authorityRegistration = repository.onReadContextRetired { event ->
+            withOfflineRetirementOnMain(event, { savedVersion }) {
+                eraseSavedHistory()
+            }
             withRetirementOnMain(event, { custodyActor }) {
                 val reason = event.reason
                 loading = false
@@ -236,6 +253,10 @@ class HistoryActivity : AppCompatActivity() {
             }
         }
         binding.root.applyAppTypeface()
+        lifecycleScope.launch {
+            restoreSavedHistory()
+            repository.offlineContentStore?.changes?.collect { if (savedCopy != null) restoreSavedHistory() }
+        }
         if (entries.isNotEmpty()) {
             renderEntries()
             restoreFindChrome()
@@ -249,6 +270,7 @@ class HistoryActivity : AppCompatActivity() {
     override fun onDestroy() {
         authorityRegistration?.close()
         authorityRegistration = null
+        savedClear?.close(); savedClear = null
         super.onDestroy()
     }
 
@@ -357,6 +379,47 @@ class HistoryActivity : AppCompatActivity() {
             .hideSoftInputFromWindow(binding.historyRoot.windowToken, 0)
     }
 
+    private fun eraseSavedHistory() {
+        savedExpiry?.cancel(); savedExpiry = null; savedCopy = null; savedVersion = null
+        entries = emptyList(); admittedEntryUuids.clear(); admittedRenderContext = null
+        retainedReader.state = null; retainedReader.findQuery = ""
+        historyTextTargets.values.forEach { it.view.text = "" }
+        historyTextTargets.clear(); turnViews.clear(); expandedTools.clear(); findHits = emptyList(); findStops = emptyList()
+        renderer = null; rendererActor = null
+        binding.historyEntries.removeAllViews(); binding.historyFindQuery.text?.clear()
+        hasMore = false; loading = false
+    }
+
+    private suspend fun restoreSavedHistory(expected: ScopedReadContext? = null) {
+        val store = repository.offlineContentStore ?: return
+        val selected = repository.offlineSelection(address.scope, address.paneId) ?: return
+        if (expected != null && (selected.committed.connection !== expected.connection ||
+            selected.scope.incarnation != expected.connectionIncarnation || expected.requestScope != address.scope)) return
+        if (expected == null && savedCopy?.scope?.let { it != selected.scope } == true) return
+        val copy = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { store.pane(selected.scope) }
+        if (!repository.isOfflineSelectionCurrent(selected)) return
+        if (copy == null) {
+            if (savedCopy != null) { repository.expireSavedCopy(selected); eraseSavedHistory() }
+            return
+        }
+        if (copy.value.entries.isEmpty() || !repository.isOfflineOwnerCurrent(selected)) return
+        if (!repository.showSavedCopy(selected, copy.provenance.capturedAt, afterFailedRead = expected != null) || !repository.isOfflineOwnerCurrent(selected)) return
+        val displayVersion = repository.savedCopyVersion(selected) ?: return
+        if (!store.isDisplayCurrent(copy.provenance)) return
+        savedCopy = copy.provenance; savedVersion = displayVersion
+        admittedRenderContext = null; admittedEntryUuids.clear(); renderer = null; rendererActor = null
+        entries = copy.value.entries; hasMore = false; total = entries.size; loading = false; loadedOnce = true
+        renderEntries(); renderState(savedCopyCaption(copy.provenance))
+        savedExpiry?.cancel()
+        savedExpiry = lifecycleScope.launch {
+            kotlinx.coroutines.delay((copy.provenance.expiresAt - System.currentTimeMillis()).coerceAtLeast(1))
+            if (savedVersion == displayVersion) {
+                repository.expireSavedCopy(selected)
+                if (savedVersion == displayVersion) eraseSavedHistory()
+            }
+        }
+    }
+
     private fun loadPage(older: Boolean) {
         if (loading || older && !hasMore) return
         val oldest = entries.firstOrNull()?.uuid
@@ -380,16 +443,30 @@ class HistoryActivity : AppCompatActivity() {
                 before = oldest.takeIf { older },
                 expectedContext = context,
             )
-            if (retired || !repository.isCurrent(context)) return@launch
+            if (retired || !repository.isCurrent(context)) {
+                if (!retired && (result as? ApiResult.Failure)?.error.let { (it as? com.lateapex.collie.network.ApiFailure.Http)?.status in setOf(401, 403) }) {
+                    restoreSavedHistory(context)
+                    renderFailure(MainViewModel.describe(resources, (result as ApiResult.Failure).error))
+                }
+                return@launch
+            }
             when (result) {
                 is ApiResult.Success -> {
                     // Only a page admitted under this exact context can authorize its image
                     // references. Retained entries rendered before this read stay inert.
+                    if (savedCopy != null) eraseSavedHistory()
+                    if (result.value.available) {
+                        repository.retainPane(context, null, result.value.entries)
+                        if (!repository.isCurrent(context)) return@launch
+                    }
                     admittedRenderContext = context
                     if (admittedEntryUuids.addAll(result.value.entries.map { it.uuid })) rendererAdmissionRevision.incrementAndGet()
                     applyPage(result.value, older, anchor)
                 }
-                is ApiResult.Failure -> renderFailure(MainViewModel.describe(resources, result.error))
+                is ApiResult.Failure -> {
+                    restoreSavedHistory(context)
+                    renderFailure(MainViewModel.describe(resources, result.error))
+                }
                 is ApiResult.NotModified -> renderFailure(getString(R.string.history_load_failed))
             }
             loading = false
@@ -563,7 +640,7 @@ class HistoryActivity : AppCompatActivity() {
     }
 
     private fun renderFailure(detail: String) {
-        renderState(detail.ifBlank { getString(R.string.history_load_failed) })
+        renderState(listOfNotNull(savedCopy?.let(::savedCopyCaption), detail.ifBlank { getString(R.string.history_load_failed) }).joinToString("\n"))
         binding.historyLoadOlder.isVisible = hasMore || renderCount < entries.size
         updateRefreshVisibility()
     }

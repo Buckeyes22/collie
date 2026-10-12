@@ -19,7 +19,7 @@ internal object PaneWriteGate {
 
     fun block(address: PaneAddress, state: PaneUiState): PaneWriteBlock? = block(
         address = address,
-        canWrite = state.canWrite,
+        canWrite = state.canWrite && state.savedCopy == null,
         topologyKnown = state.topologyKnown,
         panes = state.panes,
         mux = state.mux,

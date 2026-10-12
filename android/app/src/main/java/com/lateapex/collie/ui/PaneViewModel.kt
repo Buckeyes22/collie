@@ -55,6 +55,8 @@ import kotlinx.coroutines.launch
 
 data class PaneUiState(
     val pane: PaneReadResponse? = null,
+    val savedCopy: com.lateapex.collie.data.SavedCopyProvenance? = null,
+    val savedCopyVersion: com.lateapex.collie.data.ScopedCustodyVersion? = null,
     val loading: Boolean = true,
     val sending: Boolean = false,
     val error: String? = null,
@@ -219,14 +221,184 @@ class PaneViewModel(
         }
     }
 
+    private var savedSelection: com.lateapex.collie.data.OfflineReadSelection? = null
+    private val savedCustodyLock = Any()
+    private var savedExpiryJob: Job? = null
+    private class SavedInstallation(val selected: com.lateapex.collie.data.OfflineReadSelection) {
+        val completed = kotlinx.coroutines.CompletableDeferred<Unit>()
+    }
+    private var savedInstallation: SavedInstallation? = null
+    private var activeReadActor: ScopedReadContext? = null
+    private class SavedPaneExpiry(
+        val selection: com.lateapex.collie.data.OfflineReadSelection,
+        val version: com.lateapex.collie.data.ScopedCustodyVersion,
+        val mirrorAt: Long?, val chatAt: Long?,
+        val mirrorDeadline: Long?, val chatDeadline: Long?, val overallDeadline: Long,
+    )
+    private var savedPaneExpiry: SavedPaneExpiry? = null
+    private val savedClear = repository.offlineContentStore?.onReadsCleared { cutoff ->
+        withMainCustodyAck {
+            val retired = synchronized(savedCustodyLock) {
+                val copy = mutableState.value.savedCopy ?: return@synchronized null
+                if (copy.clearRevision >= cutoff) return@synchronized null
+                val previous = savedSelection to savedExpiryJob
+                savedSelection = null; savedExpiryJob = null; savedPaneExpiry = null
+                mutableState.value = PaneUiState(loading = false, clearReplyDraft = true)
+                previous
+            }
+            retired?.second?.cancel()
+            retired?.first?.let(repository::expireSavedCopy)
+        }
+    }
+    private val savedRetirement = repository.onReadContextRetired { event ->
+        withOfflineRetirementOnMain(event, { mutableState.value.savedCopyVersion }) {
+            val retiredJob = synchronized(savedCustodyLock) {
+                if (!event.affectsCustody(mutableState.value.savedCopyVersion)) return@synchronized null
+                val job = savedExpiryJob
+                savedExpiryJob = null; savedSelection = null; savedPaneExpiry = null
+                mutableState.value = PaneUiState(loading = false, clearReplyDraft = true)
+                job
+            }
+            retiredJob?.cancel()
+        }
+    }
+
+    /** Plaintext expiry never waits for storage or the network. Only this exact copied version
+     * is erased; a newly accepted pane body has no saved version and cannot be touched here. */
+    private fun eraseExpiredSavedPane() {
+        val clock = repository.offlineContentStore?.currentTimeMillis() ?: return
+        synchronized(savedCustodyLock) {
+            val expiry = savedPaneExpiry ?: return
+            val shown = mutableState.value
+            val copy = shown.savedCopy ?: return
+            if (savedSelection !== expiry.selection || shown.savedCopyVersion != expiry.version ||
+                copy.scope != expiry.selection.scope || shown.paneReadContext != null) return
+            val validClock = clock >= copy.capturedAt && clock < expiry.overallDeadline
+            val mirrorValid = validClock && expiry.mirrorDeadline?.let { clock < it } == true
+            val chatValid = validClock && expiry.chatDeadline?.let { clock < it } == true
+            if (mirrorValid && chatValid || mirrorValid && shown.transcript.isEmpty() || chatValid && shown.pane == null) return
+            if (!mirrorValid && !chatValid) {
+                savedSelection = null; savedPaneExpiry = null
+                mutableState.value = shown.copy(pane = null, transcript = emptyList(), transcriptAvailable = false,
+                    savedCopy = null, savedCopyVersion = null, lastSuccessAt = null, loading = readInFlight.get(),
+                    canWrite = false, composerReady = false)
+            } else {
+                val at = maxOf(if (mirrorValid) expiry.mirrorAt ?: 0 else 0, if (chatValid) expiry.chatAt ?: 0 else 0)
+                val deadline = minOf(expiry.overallDeadline,
+                    maxOf(if (mirrorValid) expiry.mirrorDeadline ?: 0 else 0, if (chatValid) expiry.chatDeadline ?: 0 else 0))
+                mutableState.value = shown.copy(pane = shown.pane.takeIf { mirrorValid },
+                    transcript = shown.transcript.takeIf { chatValid }.orEmpty(), transcriptAvailable = chatValid && shown.transcript.isNotEmpty(),
+                    savedCopy = copy.copy(capturedAt = at, expiresAt = deadline), lastSuccessAt = at)
+            }
+            // Do not remint repository navigation while an original GET is held. Repository
+            // SavedCopy remains conservatively disarmed until a real live response restores it.
+        }
+    }
+
+    private fun savedInstallationAllowed(expected: ScopedReadContext?): Boolean =
+        if (expected == null) !readInFlight.get() && mutableState.value.paneReadContext == null
+        else readInFlight.get() && activeReadActor === expected
+
+    private fun scheduleSavedExpiry(expiry: SavedPaneExpiry) {
+        val old = savedExpiryJob
+        val job = viewModelScope.launch {
+            while (true) {
+                val deadline = synchronized(savedCustodyLock) {
+                    val shown = mutableState.value
+                    if (savedPaneExpiry !== expiry || savedSelection !== expiry.selection || shown.savedCopyVersion != expiry.version) null
+                    else listOfNotNull(expiry.mirrorDeadline.takeIf { shown.pane != null },
+                        expiry.chatDeadline.takeIf { shown.transcript.isNotEmpty() }, expiry.overallDeadline).minOrNull()
+                } ?: break
+                val clock = repository.offlineContentStore?.currentTimeMillis() ?: break
+                delay((deadline - clock).coerceAtLeast(1))
+                eraseExpiredSavedPane()
+            }
+        }
+        savedExpiryJob = job
+        old?.cancel() // Never cancel under the copied-custody lock.
+    }
+
+    private suspend fun restoreSavedPane(expected: ScopedReadContext? = null, failure: ApiFailure? = null) {
+        eraseExpiredSavedPane()
+        if (!synchronized(savedCustodyLock) { savedInstallationAllowed(expected) && savedInstallation == null }) return
+        val store = repository.offlineContentStore ?: return
+        val selected = repository.offlineSelection(address.scope, address.paneId) ?: return
+        if (expected != null && (selected.committed.connection !== expected.connection ||
+            selected.scope.incarnation != expected.connectionIncarnation || expected.requestScope != address.scope)) return
+        val shown = mutableState.value.savedCopy
+        if (expected == null && shown != null && shown.scope != selected.scope) return
+        val copy = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { store.pane(selected.scope) }
+        eraseExpiredSavedPane()
+        if (!repository.isOfflineSelectionCurrent(selected)) return
+        val installation = synchronized(savedCustodyLock) {
+            if (!savedInstallationAllowed(expected) || savedInstallation != null) null
+            else SavedInstallation(selected).also { savedInstallation = it }
+        } ?: return
+        try {
+            if (copy == null) {
+                val retired = synchronized(savedCustodyLock) {
+                    if (!savedInstallationAllowed(expected) || mutableState.value.savedCopy !== shown) null
+                    else savedSelection?.also {
+                        savedSelection = null; savedPaneExpiry = null
+                        mutableState.value = PaneUiState(loading = false)
+                    }
+                }
+                retired?.let(repository::expireSavedCopy)
+                return
+            }
+            // A local completion lease orders the installation with read START. No lock is held
+            // across canonical retirement/listeners/Main ACK. A read waits outside all locks.
+            if (!repository.showSavedCopy(selected, copy.provenance.capturedAt, afterFailedRead = expected != null) || !repository.isOfflineOwnerCurrent(selected)) return
+            if (kotlinx.coroutines.currentCoroutineContext()[Job]?.isActive != true) return
+            val displayVersion = repository.savedCopyVersion(selected) ?: return
+            val policy = store.retention
+            val expiry = SavedPaneExpiry(selected, displayVersion, copy.value.mirrorAt, copy.value.chatAt,
+                copy.value.mirrorAt?.let { it + 24L * 60 * 60 * 1000 },
+                copy.value.chatAt?.let { it + policy.days * 24L * 60 * 60 * 1000 }, copy.provenance.expiresAt)
+            val installed = synchronized(savedCustodyLock) {
+                if (!savedInstallationAllowed(expected) || !repository.isSavedCopyCurrent(selected.scope, displayVersion) ||
+                    !store.isDisplayCurrent(copy.provenance)) false else {
+                    savedSelection = selected; savedPaneExpiry = expiry
+                    mutableState.value = PaneUiState(pane = copy.value.pane, loading = false,
+                        error = failure?.let { MainViewModel.describe(getApplication<Application>().resources, it) } ?: mutableState.value.error,
+                        lastSuccessAt = copy.provenance.capturedAt, savedCopy = copy.provenance, savedCopyVersion = displayVersion,
+                        transcript = copy.value.entries, transcriptAvailable = copy.value.entries.isNotEmpty())
+                    true
+                }
+            }
+            if (installed) { eraseExpiredSavedPane(); scheduleSavedExpiry(expiry) }
+        } finally {
+            synchronized(savedCustodyLock) { if (savedInstallation === installation) savedInstallation = null }
+            installation.completed.complete(Unit) // Wake deliberate readers outside every lock.
+        }
+    }
+
     override fun onCleared() {
+        val installation = synchronized(savedCustodyLock) {
+            savedInstallation.also { savedInstallation = null; savedSelection = null; savedPaneExpiry = null }
+        }
+        installation?.completed?.complete(Unit)
+        savedExpiryJob?.cancel()
         authorityRegistration.close()
+        savedRetirement.close()
+        savedClear?.close()
         readContextRegistration.close()
         super.onCleared()
     }
 
     init {
         repository.selectSubject(address.scope, address.paneId)
+        viewModelScope.launch {
+            val store = repository.offlineContentStore
+            val initialRevision = store?.changes?.value
+            restoreSavedPane()
+            var first = true
+            store?.changes?.collectLatest { revision ->
+                val unchangedInitialReplay = first && revision == initialRevision
+                first = false
+                if (!unchangedInitialReplay && mutableState.value.savedCopy != null) restoreSavedPane()
+            }
+        }
         // A confirmation ("Reply sent.", "Typed into terminal.") is a notice, not a state: it used to
         // sit over the mirror until the next mutation replaced it. Only confirmations expire; the
         // authorization statuses stay until the fact they report changes.
@@ -1106,12 +1278,30 @@ class PaneViewModel(
     }
 
     private suspend fun load() {
-        if (!readInFlight.compareAndSet(false, true)) return
+        // Installation completion is a local ordering wait, never a network retry or admission
+        // override. Cache decryption itself does not hold this lease and cannot block a fresh GET.
+        val requestedOwner = repository.localDraftCustody(address) ?: return
+        while (true) {
+            val installing = synchronized(savedCustodyLock) {
+                savedInstallation ?: run {
+                    if (!readInFlight.compareAndSet(false, true)) return
+                    null
+                }
+            }
+            if (installing == null) break
+            installing.completed.await()
+            if (!repository.isLocalDraftCurrent(requestedOwner)) return
+            val currentSelection = repository.offlineSelection(address.scope, address.paneId) ?: return
+            val requestedVersion = installing.selected.installedVersion ?: installing.selected.version
+            if (currentSelection.version != requestedVersion) return
+        }
         try {
+            if (!repository.isLocalDraftCurrent(requestedOwner)) return
             run {
                 val lines = paneRequestedLines
                 val readActor = repository.readContext(address.scope, address.paneId) ?: throw DiscardedActor()
                 adoptOriginalContext(readActor)
+                synchronized(savedCustodyLock) { activeReadActor = readActor }
                 val acceptedActor = mutableState.value.paneReadContext
                 val canUseConditionalBody = mutableState.value.pane != null && acceptedActor != null &&
                     repository.isCurrent(acceptedActor) && acceptedActor.key == readActor.key &&
@@ -1122,8 +1312,15 @@ class PaneViewModel(
                         if (!repository.isCurrent(readActor)) throw DiscardedActor()
                         pollingBackoff.succeeded()
                         val newlyAcceptedBody = result.status == 200 && !result.value.notModified
+                        if (newlyAcceptedBody || canUseConditionalBody) {
+                            repository.retainPane(if (newlyAcceptedBody) readActor else requireNotNull(acceptedActor), result.value.pane)
+                            if (!repository.isCurrent(readActor)) throw DiscardedActor()
+                        }
+                        if (newlyAcceptedBody) { savedExpiryJob?.cancel(); savedExpiryJob = null; savedSelection = null; savedPaneExpiry = null }
                         mutableState.value = mutableState.value.copy(
                             pane = result.value.pane,
+                            savedCopy = if (newlyAcceptedBody) null else mutableState.value.savedCopy,
+                            savedCopyVersion = if (newlyAcceptedBody) null else mutableState.value.savedCopyVersion,
                             // A conditional 304 has no newly accepted body. Preserve an already
                             // current actor through a 304, but never revive a retired one.
                             paneReadContext = if (newlyAcceptedBody) readActor else mutableState.value.paneReadContext?.takeIf(repository::isCurrent),
@@ -1140,7 +1337,10 @@ class PaneViewModel(
                         loadTranscript()
                     }
                     is ApiResult.Failure -> {
-                        if (!repository.isCurrent(readActor)) throw DiscardedActor()
+                        if (!repository.isCurrent(readActor)) {
+                            if ((result.error as? ApiFailure.Http)?.status in setOf(401, 403)) restoreSavedPane(readActor, result.error)
+                            throw DiscardedActor()
+                        }
                         pollingBackoff.failed()
                         // Keep the last successful window actionable so a failed grow can be retried.
                         if (mutableState.value.loadingOlder && mutableState.value.loadedLines > 0) {
@@ -1154,6 +1354,7 @@ class PaneViewModel(
                             desiredLines = paneDesiredLines,
                             loadingOlder = false,
                         )
+                        restoreSavedPane(readActor, result.error)
                         return
                     }
                     is ApiResult.NotModified -> {
@@ -1164,7 +1365,7 @@ class PaneViewModel(
                 }
             }
         } finally {
-            readInFlight.set(false)
+            synchronized(savedCustodyLock) { activeReadActor = null; readInFlight.set(false) }
         }
     }
 
@@ -1232,6 +1433,8 @@ class PaneViewModel(
                             mutableState.value = mutableState.value.copy(transcriptSendNow = null)
                         }
                         if (merged) {
+                            repository.retainPane(transcriptContext, null, chatWindow.entries)
+                            if (!repository.isCurrent(transcriptContext)) return
                             acceptedReplies()?.reconcile(page)
                             chatEtag = result.etag
                             val sendNow = chatWindow.sendNow
@@ -1291,8 +1494,11 @@ class PaneViewModel(
                     )
                     return
                 }
+                val mergedEntries = HistoryPresentation.mergeNewer(mutableState.value.transcript, page.entries)
+                repository.retainPane(transcriptContext, null, mergedEntries)
+                if (!repository.isCurrent(transcriptContext)) return
                 mutableState.value = mutableState.value.copy(
-                    transcript = HistoryPresentation.mergeNewer(mutableState.value.transcript, page.entries),
+                    transcript = mergedEntries,
                     transcriptAvailable = true,
                     transcriptReason = null,
                     transcriptReadContext = transcriptContext,
@@ -1583,7 +1789,7 @@ class PaneViewModel(
     }
 
     private fun applyWriteAccess() {
-        val writable = connectionPaired && deviceWriteAllowed && repository.writesAllowed(address.scope, address.paneId)
+        val writable = mutableState.value.savedCopy == null && connectionPaired && deviceWriteAllowed && repository.writesAllowed(address.scope, address.paneId)
         val previous = mutableState.value
         val accessStatus = when {
             !connectionPaired -> text(R.string.pane_status_not_paired)

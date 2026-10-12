@@ -8,6 +8,15 @@ the first Android release from this fork.
 
 - Add native machine alert rule editing with revision and incarnation checks; preserve server-owned rule extensions and require review after conflicts or uncertain outcomes.
 
+- Preserve opted saved pane Views through temporary supporting-read failures while keeping actions frozen; continue synchronous copied-content wipe on actual read-custody retirement.
+
+- Bind draft keys and reads to exact targets, and prevent late saved-copy restoration from replacing a live pane; erase copied mirror and Chat content at their own deadlines even while a read is pending.
+
+- Keep local RAM drafts independent of live reads; retire exact-pane drafts and stopped editor copies on accepted password prompts, and deny retained content if retirement-intent enumeration fails.
+
+- Restore opted encrypted, scoped and expiring Dashboard, pane and Chat saved copies as read-only content; add independent encrypted draft retention, explicit legacy draft migration, usage and clear-now controls.
+
+
 - Use current Android APIs and MockWebServer 3 fixtures, and install a version-pinned Android CLI for CI SDK setup. Resolve the update preflight button style through its owning AppCompat resources.
 - Support the current Android 17 release only, with stable SDK 37.2, AGP built-in Kotlin and age-eligible build/runtime dependencies; preserve security and lifecycle tests on SDK 37.
 

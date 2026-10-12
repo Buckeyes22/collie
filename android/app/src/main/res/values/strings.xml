@@ -869,4 +869,27 @@ Only the declared issuer receives this authorization exchange. Pairing is retain
     <string name="machines_rules_ack_unavailable">The unresolved save could not be acknowledged. Keep reviewing current rules before trying again.</string>
     <string name="machines_rules_failed">The rule response could not be verified. Refresh before editing again.</string>
     <string name="machines_rules_write_unavailable">Connect a paired device with current write authorization to change alert rules.</string>
+
+    <string name="offline_retention_title">Offline copies</string>
+    <string name="offline_retention_description">Saved dashboard and pane copies expire after 24 hours. Chat can be kept for 1 or 7 days. Copies are encrypted on this phone, limited to 10 MiB total and 256 KiB per pane, and never enable actions.</string>
+    <string name="offline_retention_off">Off — delete saved reads</string>
+    <string name="offline_retention_one_day">Keep Chat for 1 day</string>
+    <string name="offline_retention_seven_days">Keep Chat for 7 days</string>
+    <string name="offline_clear_reads">Clear saved reads now</string>
+    <string name="offline_usage">Encrypted saved reads: %1$d bytes in %2$d copies</string>
+    <string name="offline_storage_unavailable">Encrypted storage is unavailable. No successful save or cleanup is claimed. Clear saved copies to retry safely.</string>
+    <string name="offline_draft_opt_in">Keep encrypted drafts for up to 48 hours</string>
+    <string name="offline_draft_description">Draft retention is independent of saved reads. New drafts stay in memory while this is off. Password input is never retained.</string>
+    <string name="offline_legacy_drafts">%1$d legacy draft copies remain. Installing this version does not silently delete or migrate them. Migration keeps only bounded drafts with the original current owner; unknown ownership remains for an explicit discard choice.</string>
+    <string name="offline_migrate_drafts">Migrate current-owner legacy drafts</string>
+    <string name="offline_discard_legacy">Discard legacy draft copies</string>
+    <string name="offline_discard_legacy_message">Delete the existing plaintext legacy draft copies on this phone. Current encrypted copies and read retention are unchanged.</string>
+    <string name="offline_migration_owner_required">Enable saved drafts and open the matching connected pane before migrating its legacy draft.</string>
+    <string name="offline_local_host">local</string>
+    <string name="offline_primary_session">primary</string>
+    <string name="offline_saved_copy">Saved copy · bounded · captured %1$d minutes ago · expires in %2$d minutes
+%3$s · host %4$s · session %5$s
+Read-only. Retry live to update.</string>
+    <string name="offline_retry_live">Retry live connection</string>
+    <string name="offline_clear_drafts">Clear saved drafts now</string>
 </resources>

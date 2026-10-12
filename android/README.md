@@ -121,6 +121,37 @@ Source fixtures do not establish genuine issuer, front-door, Keystore/external-b
 Windows, Crew, TalkBack or signed-push acceptance. Those runtime checks and the B18/B22/B23 shared
 joins remain required before the optional workflow can be considered complete.
 
+## Offline saved copies and drafts
+
+Settings offers **Off**, **Keep Chat for 1 day** and **Keep Chat for 7 days**. Read retention starts
+Off; Dashboard and terminal mirrors expire after at most 24 hours even with seven-day Chat enabled.
+Changing the retention choice clears previous read copies. Settings shows encrypted storage usage
+and **Clear saved reads now** erases the cache and copied screen state. The combined pane/Chat limit
+is 256 KiB, with a 10 MiB total encrypted read cache and bounded LRU pruning. Saved rosters and tails can be trimmed to fit; they are not a complete live inventory.
+
+After an offline cold start, opted copies display their capture age, expiry, HTTPS origin, host and
+session. **Saved copy** means read-only: queued-send, reply, keys, structural actions, uploads and
+cached file/image references have no live actor. Tap the label or Refresh to retry. Only accepted
+fresh live data restores authority; an unchanged response cannot turn a retired copy into a live
+prompt. Gateway or untyped access refusals keep pairing and saved content; declared Collie pairing
+retirement, disconnect or credential/origin replacement wipes the original owner's content.
+
+**Keep saved drafts** is an independent default-Off switch. Off permits volatile editing without
+new plaintext persistence or requiring a successful remote read. Local editing remains bound to its
+original connection/incarnation and pane; it never authorizes a send. Delimiter-bearing target IDs
+use an unambiguous local key, and both RAM and encrypted retrieval require the exact requested target. Opted drafts use Keystore encryption, the existing 8,192-character limit
+and a 48-hour expiry. An accepted password mirror clears and blocks that exact pane's RAM and encrypted drafts, including
+stopped editor copies. A newly accepted clean mirror can reopen ordinary editing; Chat cannot.
+Password prompts exclude retained pane content and drafts. Clear saved drafts
+is separate from clearing reads. Existing plaintext drafts from earlier versions are preserved
+until explicit consented, owner- and target-matched encrypted migration or confirmed discard. Open the matching connected
+pane before migrating its exact legacy draft; unknown-owner, hashed or unmatched keys are not
+silently migrated or deleted by upgrading.
+
+The [retention design](../.adr/0105-offline-content-is-encrypted-display-custody.md) records crash
+retirement and bounds. Source implementation is pending independent review, current native gates,
+physical Pixel lifecycle/large-font/TalkBack acceptance and the signed-provider retirement join.
+
 ## Pinned toolchain
 
 | Component | Version |

@@ -162,7 +162,7 @@ class SettingsActivityTest {
         )
         val behavior = activity.findViewById<LinearLayout>(R.id.settings_behavior_preferences)
         assertEquals(
-            listOf(R.id.settings_parity_hands_free_card, R.id.settings_diagnostics_card),
+            listOf(R.id.settings_parity_hands_free_card, R.id.settings_diagnostics_card, R.id.settings_offline_retention),
             (0 until behavior.childCount).map { behavior.getChildAt(it).id },
         )
         assertEquals(View.GONE, activity.findViewById<View>(R.id.settings_parity_hands_free_card).visibility)
@@ -171,6 +171,49 @@ class SettingsActivityTest {
         assertTrue(activity.findViewById<View>(R.id.settings_updates_button) is LinearLayout)
         assertTrue(activity.findViewById<View>(R.id.settings_pack_button) is LinearLayout)
         assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.settings_agent_catalog_button).visibility)
+        assertTrue(activity.findViewById<View>(R.id.settings_offline_retention) is LinearLayout)
+        assertFalse(activity.findViewById<com.google.android.material.materialswitch.MaterialSwitch>(R.id.settings_saved_drafts_switch).isChecked)
+        assertEquals(com.lateapex.collie.data.OfflineContentStore.Retention.OFF, NativePreferences(activity).offlineContentStore.retention)
+        assertFalse(NativePreferences(activity).offlineContentStore.draftsEnabled)
+    }
+
+    @Test
+    fun actualRetentionChoicesAndDraftSwitchRemainIndependentAndDefaultOff() {
+        val controller = Robolectric.buildActivity(SettingsActivity::class.java).create().start().resume()
+        val activity = controller.get()
+        val store = NativePreferences(activity).offlineContentStore
+        val drafts = activity.findViewById<com.google.android.material.materialswitch.MaterialSwitch>(R.id.settings_saved_drafts_switch)
+        fun awaitChoice(message: String, predicate: () -> Boolean) {
+            val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5)
+            while (!predicate() && System.nanoTime() < deadline) {
+                shadowOf(activity.mainLooper).idle()
+                if (!predicate()) Thread.sleep(5)
+            }
+            shadowOf(activity.mainLooper).idle()
+            assertTrue(message, predicate())
+        }
+        try {
+            assertEquals(com.lateapex.collie.data.OfflineContentStore.Retention.OFF, store.retention)
+            assertFalse(drafts.isChecked); assertFalse(store.draftsEnabled)
+            activity.findViewById<View>(R.id.settings_offline_retention_one_day).performClick()
+            awaitChoice("actual read choice commits without enabling saved drafts") {
+                store.retention == com.lateapex.collie.data.OfflineContentStore.Retention.ONE_DAY &&
+                    activity.findViewById<View>(R.id.settings_offline_retention_one_day).isSelected
+            }
+            assertFalse(drafts.isChecked); assertFalse(store.draftsEnabled)
+            drafts.isChecked = true
+            awaitChoice("actual independent draft consent commits") { store.draftsEnabled && drafts.isChecked }
+            assertEquals(com.lateapex.collie.data.OfflineContentStore.Retention.ONE_DAY, store.retention)
+            activity.findViewById<View>(R.id.settings_offline_retention_off).performClick()
+            awaitChoice("turning reads Off keeps the independent draft choice") {
+                store.retention == com.lateapex.collie.data.OfflineContentStore.Retention.OFF &&
+                    activity.findViewById<View>(R.id.settings_offline_retention_off).isSelected
+            }
+            assertTrue(drafts.isChecked); assertTrue(store.draftsEnabled)
+            drafts.isChecked = false
+            awaitChoice("the actual draft switch returns only its own policy to Off") { !store.draftsEnabled && !drafts.isChecked }
+            assertEquals(com.lateapex.collie.data.OfflineContentStore.Retention.OFF, store.retention)
+        } finally { controller.pause().stop().destroy() }
     }
 
     @Test

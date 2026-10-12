@@ -118,7 +118,7 @@ class PaneActivity : AppCompatActivity() {
                 val pane = matches.single()
                 // The new pane ID has a different owner-bound draft and key target. Drop old
                 // composition state before opening it so no old-pane input follows the move.
-                nativePreferences.savePaneDraft(paneDraftKey, "", paneContentContext?.let { com.lateapex.collie.data.ScopedCustodyOwner(it.key.origin, it.key.origin, it.key.pairedDeviceIdentity) })
+                persistPaneDraft("")
                 binding.replyInput.text?.clear()
                 paneKeyQueue.clear()
                 stableTerminalDraft = null
@@ -144,6 +144,8 @@ class PaneActivity : AppCompatActivity() {
         }
     }
     private var authorityRegistration: AutoCloseable? = null
+    private var draftClearRegistration: AutoCloseable? = null
+    private var passwordDraftRegistration: AutoCloseable? = null
     private lateinit var binding: ActivityPaneBinding
     private lateinit var viewModel: PaneViewModel
     private lateinit var address: PaneAddress
@@ -190,6 +192,10 @@ class PaneActivity : AppCompatActivity() {
         androidx.core.content.res.ResourcesCompat.getFont(this, R.font.collie_mono) ?: Typeface.MONOSPACE
     }
     private var terminalRenderJob: Job? = null
+    /** Instance-owned preparation dependency. Default is the actual Android text factory; its
+     * captured result still requires the original render-generation/owner checks before drawing. */
+    internal var precomputeTerminalText: (CharSequence, PrecomputedTextCompat.Params) -> PrecomputedTextCompat =
+        { text, metrics -> PrecomputedTextCompat.create(text, metrics) }
     @Volatile private var terminalRenderGeneration = 0L
     private var pendingTerminalRevision: Long? = null
     // Herdr 0.7.x reports revision 0 for every pane (HERDR_API.md), so revision alone can never
@@ -222,6 +228,7 @@ class PaneActivity : AppCompatActivity() {
     private var pendingDestructiveSend: PendingDestructiveSend? = null
     private var paneDraftKey = ""
     private var paneContentContext: com.lateapex.collie.data.ScopedReadContext? = null
+    private var localDraftCustody: com.lateapex.collie.data.LocalDraftCustody? = null
     private var restoringDraft = false
     private var pendingQuickReply: String? = null
     private var pendingReplyAttempt: PendingReplyAttempt? = null
@@ -332,7 +339,8 @@ class PaneActivity : AppCompatActivity() {
             PaneViewModel.Factory(application, address, intent.getStringExtra(EXTRA_AGENT)),
         )[PaneViewModel::class.java]
         paneContentContext = repository.readContext(address.scope, paneId)
-        paneDraftKey = listOf(origin, paneContentContext?.key?.pairedDeviceIdentity.orEmpty(), address.scope.host.orEmpty(), address.scope.session.orEmpty(), paneId).joinToString("|")
+        localDraftCustody = repository.localDraftCustody(address)
+        paneDraftKey = localDraftCustody?.key ?: listOf(origin, paneContentContext?.key?.pairedDeviceIdentity.orEmpty(), address.scope.host.orEmpty(), address.scope.session.orEmpty(), paneId).joinToString("|")
         binding.transcriptBody.onLoadOlder = viewModel::loadOlderTranscript
         binding.transcriptBody.onSendQueuedNow = viewModel::sendQueuedNow
         binding.transcriptBody.onDisplayedFileReferences = ::decorateTranscriptFileReferences
@@ -378,7 +386,48 @@ class PaneActivity : AppCompatActivity() {
         binding.replyInput.onDirectKeys = viewModel::sendDirectKeys
         binding.replyInput.onSendShortcut = ::sendReplyDraft
         restoringDraft = true
+        passwordDraftRegistration = nativePreferences.onPasswordDraftsRetired { event ->
+            val original = localDraftCustody ?: return@onPasswordDraftsRetired
+            if (original.scope != event.scope) return@onPasswordDraftsRetired
+            val key = paneDraftKey
+            withMainCustodyAck {
+                if (localDraftCustody !== original || paneDraftKey != key || nativePreferences.draftRevision(key) > event.cutoff) return@withMainCustodyAck
+                sendConfirmation.reset(); pendingDestructiveSend = null; pendingReplyAttempt = null; pendingQuickReply = null; pendingSent = null
+                restoringDraft = true; binding.replyInput.setText(""); restoringDraft = false
+            }
+        }
+        draftClearRegistration = nativePreferences.onDraftsCleared { cutoff ->
+            val original = paneContentContext
+            val key = paneDraftKey
+            val savedVersion = lastRenderedState?.savedCopyVersion
+            withMainCustodyAck {
+                if (paneContentContext !== original || paneDraftKey != key ||
+                    lastRenderedState?.savedCopyVersion != savedVersion || nativePreferences.draftRevision(key) > cutoff) return@withMainCustodyAck
+                sendConfirmation.reset(); pendingDestructiveSend = null
+                pendingReplyAttempt = null; pendingQuickReply = null; pendingSent = null
+                restoringDraft = true; binding.replyInput.setText(""); restoringDraft = false
+            }
+        }
         authorityRegistration = repository.onAuthorityRetired { event ->
+            val editingAtEntry = localDraftCustody
+            if (editingAtEntry != null && !repository.isLocalDraftOwnerCurrent(editingAtEntry)) {
+                withMainCustodyAck {
+                    if (localDraftCustody === editingAtEntry && !repository.isLocalDraftOwnerCurrent(editingAtEntry)) {
+                        localDraftCustody = null
+                        sendConfirmation.reset(); pendingDestructiveSend = null; pendingReplyAttempt = null; pendingQuickReply = null; pendingSent = null
+                        restoringDraft = true; binding.replyInput.setText(""); restoringDraft = false
+                    }
+                }
+            }
+            withOfflineRetirementOnMain(event, { lastRenderedState?.savedCopyVersion }) {
+                retireSensitiveCustody()
+                restoringDraft = true; binding.replyInput.setText(""); restoringDraft = false
+                binding.terminalText.text = ""; binding.terminalStatusline.text = ""
+                binding.terminalBlockContent.removeAllViews()
+                binding.transcriptBody.bind(agentName, emptyList(), false)
+                binding.semanticActions.removeAllViews(); binding.semanticPanel.isVisible = false
+                binding.errorText.text = ""
+            }
             withRetirementOnMain(event, { paneContentContext }) {
                 val reason = event.reason
                 // This callback only removes authority; it must never initiate another Files read.
@@ -394,11 +443,16 @@ class PaneActivity : AppCompatActivity() {
                     printedLinkConfirmed = emptySet()
                     printedLinkRoot = null
                 }
-                ++terminalRenderGeneration
-                terminalRenderJob?.cancel()
-                terminalRenderJob = null
-                pendingTerminalRevision = null
-                pendingTerminalText = null
+                val savedRender = lastRenderedState?.savedCopyVersion
+                if (savedRender == null || event.retiresReadActor && event.affectsCustody(savedRender)) {
+                    ++terminalRenderGeneration
+                    terminalRenderJob?.cancel()
+                    terminalRenderJob = null
+                    pendingTerminalRevision = null
+                    pendingTerminalText = null
+                }
+                // A supporting write/admission freeze does not cancel an unaffected saved-copy
+                // draw. Links/media/actions are still disarmed below; real retirement wipes it.
                 paneActionInFlight = false
                 tabCreateInFlight = false
                 composerMediaBusy = false
@@ -447,7 +501,10 @@ class PaneActivity : AppCompatActivity() {
                 }
             }
         }
-        binding.replyInput.setText(nativePreferences.paneDraft(paneDraftKey))
+        val draftAtOpen = localDraftCustody
+        binding.replyInput.setText(draftAtOpen?.let {
+            nativePreferences.paneDraft(it.key, it.owner, it.scope, it.localIdentity)
+        }.orEmpty())
         binding.replyInput.setSelection(binding.replyInput.text?.length ?: 0)
         if (savedInstanceState?.getString(STATE_ATTACHMENT_ORIGIN) == origin &&
             savedInstanceState.getString(STATE_ATTACHMENT_CUSTODY) == attachmentCustody()) {
@@ -461,7 +518,7 @@ class PaneActivity : AppCompatActivity() {
         binding.replyInput.addTextChangedListener(simpleTextWatcher { draft ->
             if (pendingDestructiveSend?.draft != draft) resetDestructiveConfirm()
             if (!restoringDraft && !directTyping && noEchoPrompt == null) {
-                nativePreferences.savePaneDraft(paneDraftKey, draft, paneContentContext?.let { com.lateapex.collie.data.ScopedCustodyOwner(it.key.origin, it.key.origin, it.key.pairedDeviceIdentity) })
+                persistPaneDraft(draft)
             }
             binding.draftPersistenceWarning.isVisible =
                 draft.isNotEmpty() && !nativePreferences.fitsPaneDraftStore(draft)
@@ -551,7 +608,7 @@ class PaneActivity : AppCompatActivity() {
         cancelActiveKeyRepeat = null
         resetDestructiveConfirm(render = false)
         if (!directTyping && noEchoPrompt == null) {
-            nativePreferences.savePaneDraft(paneDraftKey, binding.replyInput.text?.toString().orEmpty(), paneContentContext?.let { com.lateapex.collie.data.ScopedCustodyOwner(it.key.origin, it.key.origin, it.key.pairedDeviceIdentity) })
+            persistPaneDraft(binding.replyInput.text?.toString().orEmpty())
         }
         viewModel.endDirectTyping()
         setDirectTyping(false, announce = false)
@@ -570,6 +627,8 @@ class PaneActivity : AppCompatActivity() {
         retiredDocumentJob?.cancel()
         authorityRegistration?.close()
         authorityRegistration = null
+        draftClearRegistration?.close(); draftClearRegistration = null
+        passwordDraftRegistration?.close(); passwordDraftRegistration = null
         binding.root.viewTreeObserver.removeOnPreDrawListener(keysViewportListener)
         terminalRenderJob?.cancel()
         confirmHandler.removeCallbacksAndMessages(null)
@@ -648,7 +707,18 @@ class PaneActivity : AppCompatActivity() {
     }
 
     private fun renderIdentity(state: PaneUiState) {
-        val pane = currentPaneSummary() ?: return
+        state.savedCopy?.let { copy ->
+            binding.paneStatus.text = savedCopyCaption(copy)
+            binding.paneStatus.setTextColor(getColor(R.color.collie_muted))
+            binding.paneStatusDot.isVisible = false
+            return
+        }
+        val pane = currentPaneSummary() ?: run {
+            binding.paneStatus.text = PaneStatusVocabulary.label(resources, agentName, STATUS_UNKNOWN)
+            binding.paneStatus.setTextColor(PaneStatusVocabulary.colour(this, STATUS_UNKNOWN))
+            binding.paneStatusDot.isVisible = false
+            return
+        }
         val tabPaneCount = state.panes.count {
             it.host == pane.host && it.session == pane.session &&
                 it.workspaceId == pane.workspaceId && it.tabId == pane.tabId
@@ -710,7 +780,7 @@ class PaneActivity : AppCompatActivity() {
         noEchoType.setOnClickListener {
             if (noEchoPrompt == null || semanticSurface?.ownsKeyboard == true) return@setOnClickListener
             replyInput.text?.clear()
-            nativePreferences.savePaneDraft(paneDraftKey, "", paneContentContext?.let { com.lateapex.collie.data.ScopedCustodyOwner(it.key.origin, it.key.origin, it.key.pairedDeviceIdentity) })
+            persistPaneDraft("")
             if (!showDrawer(ComposerDrawer.NONE)) return@setOnClickListener
             setDirectTyping(true)
         }
@@ -754,6 +824,15 @@ class PaneActivity : AppCompatActivity() {
             keyButtons[button] = listOf(key)
             button.setOnClickListener { pressPaneKeys(listOf(key), button) }
             if (key in REPEATABLE_KEYS) bindKeyRepeat(button, key)
+        }
+    }
+
+    private fun persistPaneDraft(value: String) {
+        val original = localDraftCustody ?: return
+        val key = paneDraftKey
+        // RAM continuity is independent of accepted reads. This witness never reaches transport.
+        nativePreferences.savePaneDraft(key, value, original.owner, original.scope, original.localIdentity) {
+            localDraftCustody === original && paneDraftKey == key && repository.isLocalDraftCurrent(original)
         }
     }
 
@@ -1781,6 +1860,11 @@ class PaneActivity : AppCompatActivity() {
     }
 
     private fun render(state: PaneUiState) = with(binding) {
+        if (lastRenderedState?.savedCopyVersion != null && lastRenderedState?.savedCopyVersion != state.savedCopyVersion) {
+            retireSensitiveCustody()
+            terminalText.text = ""; terminalStatusline.text = ""; terminalBlockContent.removeAllViews()
+            transcriptBody.bind(agentName, emptyList(), false)
+        }
         val copied = state.paneReadContext ?: state.transcriptReadContext ?: state.filesConfigContext
         if (copied != null && repository.isCurrent(copied)) {
             if (paneContentContext != null && (paneContentContext?.connection !== copied.connection || paneContentContext?.connectionIncarnation != copied.connectionIncarnation)) {
@@ -1790,7 +1874,7 @@ class PaneActivity : AppCompatActivity() {
                 restoringDraft = false
             }
             paneContentContext = copied
-            paneDraftKey = listOf(copied.key.origin, copied.key.pairedDeviceIdentity, address.scope.host.orEmpty(), address.scope.session.orEmpty(), address.paneId).joinToString("|")
+            repository.localDraftCustody(address, copied)?.let { local -> localDraftCustody = local; paneDraftKey = local.key }
         }
         currentState = state
         lastRenderedState = state
@@ -1855,7 +1939,7 @@ class PaneActivity : AppCompatActivity() {
         if (effectiveNoEchoPrompt != null && noEchoPrompt == null) {
             // The local field remains available for an explicit Type handoff, but a value refused
             // at a no-echo prompt must never survive activity/process recreation on disk.
-            nativePreferences.savePaneDraft(paneDraftKey, "", paneContentContext?.let { com.lateapex.collie.data.ScopedCustodyOwner(it.key.origin, it.key.origin, it.key.pairedDeviceIdentity) })
+            persistPaneDraft("")
         }
         noEchoPrompt = effectiveNoEchoPrompt
         val observedTerminalDraft = analyzedTerminalDraft.takeIf {
@@ -1931,7 +2015,7 @@ class PaneActivity : AppCompatActivity() {
             pendingAttachmentThumb = null
             renderAttachmentChip()
             replyInput.text?.clear()
-            nativePreferences.savePaneDraft(paneDraftKey, "", paneContentContext?.let { com.lateapex.collie.data.ScopedCustodyOwner(it.key.origin, it.key.origin, it.key.pairedDeviceIdentity) })
+            persistPaneDraft("")
             viewModel.onReplyDraftCleared()
         }
         renderPendingSent()
@@ -2079,6 +2163,7 @@ class PaneActivity : AppCompatActivity() {
             return
         }
         val textMetrics = TextViewCompat.getTextMetricsParams(binding.terminalText)
+        val precompute = precomputeTerminalText
         terminalRenderJob?.cancel()
         terminalRenderJob = lifecycleScope.launch {
             val prepared = withContext(Dispatchers.Default) {
@@ -2091,7 +2176,7 @@ class PaneActivity : AppCompatActivity() {
                     displayAgent,
                     omittedMarker,
                 )
-                projection.copy(text = PrecomputedTextCompat.create(projection.text, textMetrics))
+                projection.copy(text = precompute(projection.text, textMetrics))
             }
             if (generation != terminalRenderGeneration || (context != null && !repository.isCurrent(context)) || pendingTerminalRevision != revision ||
                 pendingTerminalText != text
@@ -2749,8 +2834,9 @@ class PaneActivity : AppCompatActivity() {
             setTextColor(getColor(R.color.collie_muted))
             return@with
         }
-        text = state.mutationError ?: state.error ?: state.status.orEmpty()
-        isVisible = state.mutationError != null || state.error != null || state.status != null
+        val saved = state.savedCopy?.let(::savedCopyCaption)
+        text = listOfNotNull(saved, state.mutationError ?: state.error ?: state.status).joinToString("\n")
+        isVisible = saved != null || state.mutationError != null || state.error != null || state.status != null
         setTextColor(getColor(if (state.mutationError != null || state.error != null) R.color.collie_error else R.color.collie_muted))
     }
 

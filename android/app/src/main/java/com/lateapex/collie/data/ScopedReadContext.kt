@@ -47,6 +47,7 @@ data class ScopedCustodyVersion(val owner: ScopedCustodyOwner, val connectionInc
     override fun toString(): String = "ScopedCustodyVersion(<redacted>)"
 }
 private object ReadCustodyProcess { val identity: String = java.util.UUID.randomUUID().toString() }
+internal val currentReadCustodyProcessIdentity: String get() = ReadCustodyProcess.identity
 val ScopedReadContext.custodyVersion: ScopedCustodyVersion
     get() = ScopedCustodyVersion(custodyOwner, connectionIncarnation, key.connectionGeneration, navigationGeneration, custodyProcessIdentity)
 

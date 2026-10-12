@@ -68,6 +68,7 @@ class SettingsActivity : AppCompatActivity() {
             it.bindDisplay(binding.settingsLocalPreferences)
             it.bindBehavior(binding.settingsBehaviorPreferences)
         }
+        RetentionSettingsSection(this, nativePreferences, repository).bind(binding.settingsBehaviorPreferences)
         serverControls = SettingsServerControls(
             this,
             repository,

@@ -59,6 +59,8 @@ import kotlinx.coroutines.launch
 class MainActivity : AppCompatActivity() {
     private var renderedContext: com.lateapex.collie.data.ScopedReadContext? = null
     private var authorityRegistration: AutoCloseable? = null
+    private val savedTextCopies = java.util.WeakHashMap<android.widget.TextView, Unit>()
+    private var renderedSavedVersion: com.lateapex.collie.data.ScopedCustodyVersion? = null
     private val repository get() = (application as CollieApplication).container.repository
     private lateinit var binding: ActivityMainBinding
     private lateinit var viewModel: MainViewModel
@@ -168,7 +170,15 @@ class MainActivity : AppCompatActivity() {
         })
         if (savedInstanceState == null) openDeepLink(intent.data)
 
+        binding.paneList.addOnChildAttachStateChangeListener(object : androidx.recyclerview.widget.RecyclerView.OnChildAttachStateChangeListener {
+            override fun onChildViewAttachedToWindow(view: android.view.View) { if (renderedSavedVersion != null) rememberSavedText(view) }
+            override fun onChildViewDetachedFromWindow(view: android.view.View) = Unit
+        })
         authorityRegistration = repository.onAuthorityRetired { event ->
+            withOfflineRetirementOnMain(event, { renderedSavedVersion }) {
+                renderedSavedVersion = null
+                render(MainUiState())
+            }
             withRetirementOnMain(event, { renderedContext }) {
                 if (event.reason in setOf(com.lateapex.collie.data.AuthorityInvalidation.CONNECTION_CHANGED,
                     com.lateapex.collie.data.AuthorityInvalidation.DISCONNECTED, com.lateapex.collie.data.AuthorityInvalidation.PAIRING_RETIRED)) {
@@ -294,8 +304,19 @@ class MainActivity : AppCompatActivity() {
         return super.dispatchKeyEvent(event)
     }
 
+    private fun rememberSavedText(view: android.view.View) {
+        if (view is android.widget.TextView) savedTextCopies[view] = Unit
+        if (view is android.view.ViewGroup) for (index in 0 until view.childCount) rememberSavedText(view.getChildAt(index))
+    }
+
     private fun render(state: MainUiState) = with(binding) {
-        renderedContext = state.originalReadContext ?: renderedContext
+        if (renderedSavedVersion != null && renderedSavedVersion != state.savedCopyVersion) {
+            savedTextCopies.keys.toList().forEach { it.text = "" }
+            savedTextCopies.clear()
+            // AsyncListDiffer's null fast path removes its old sensitive list synchronously.
+            adapter.submitList(null)
+        }
+        renderedContext = if (state.savedCopy != null) null else state.originalReadContext ?: renderedContext
         latestShellState = state
         setupPanel.visibility = if (state.configured && !state.pairingRequired) View.GONE else View.VISIBLE
         dashboardPanel.visibility = if (state.configured && !state.pairingRequired) View.VISIBLE else View.GONE
@@ -349,6 +370,12 @@ class MainActivity : AppCompatActivity() {
         val freshness = TopologyStatus.describe(state.mux, state.lastSuccessAt, System.currentTimeMillis())
         headerStatus.text = listOfNotNull(muxTitle, freshness).joinToString(" · ")
         headerStatus.contentDescription = listOfNotNull(muxTitle, freshness).joinToString(". ")
+        renderedSavedVersion = state.savedCopyVersion
+        state.savedCopyVersion?.let { original ->
+            paneList.post {
+                if (renderedSavedVersion == original) rememberSavedText(paneList)
+            }
+        }
         dashboardReadOnlyBanner.isVisible = state.configured && !state.writeAuthorized
         if (dashboardReadOnlyBanner.isVisible) {
             // Offline is not "unauthorised": until a snapshot has answered, the device's standing is
@@ -366,6 +393,13 @@ class MainActivity : AppCompatActivity() {
                 },
             )
             dashboardReadOnlyBanner.isClickable = !state.paired
+            state.savedCopy?.let { copy ->
+                dashboardReadOnlyBanner.text = savedCopyCaption(copy)
+                dashboardReadOnlyBanner.contentDescription = savedCopyCaption(copy)
+                dashboardReadOnlyBanner.minimumHeight = dp(48)
+                dashboardReadOnlyBanner.setOnClickListener { viewModel.refresh() }
+                dashboardReadOnlyBanner.isClickable = true
+            }
         }
         renderScopeSwitchers(state)
         errorText.text = state.error.orEmpty()

@@ -277,3 +277,14 @@ owned saved copy on Main outside custody/admission locks; delayed A never clears
 Current cancellation/rotation positives and temporary actor fencing remain distinct from true
 retirement. Latest-version physical-Pixel acceptance remains required; historical legacy matrices
 are preserved as history under the user’s updated scope.
+
+## Opt-in local saved reads
+
+B25 adds no bridge or Crew route. It retains bounded sanitized display data from existing admitted
+Snapshot, pane and Chat/history reads, under the original committed origin/mount, credential, host,
+session and pane. A cold retained copy never supplies capabilities, file/media actors, a prompt
+binding or mutation permission. Fresh accepted responses remain mandatory before writes; a cached
+304 cannot reauthorize content. Bare 401/403 and gateway refusals preserve owned ciphertext, while
+exact declared Collie pairing retirement and original-owner connection retirement wipe it. Actual
+Crew, current physical Pixel, lifecycle/accessibility and B22 provider-retirement integration remain
+pending; local persistence is not a new peer capability or acceptance claim.

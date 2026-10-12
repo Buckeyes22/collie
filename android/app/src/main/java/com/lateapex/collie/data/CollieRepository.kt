@@ -152,6 +152,8 @@ class CollieRepository(
     private val launchIntentStore: LaunchIntentStore? = null,
     private val intentJson: Json = Json { explicitNulls = false; encodeDefaults = false },
     private val machineRuleAttemptStore: MachineRuleAttemptStore? = null,
+
+    val offlineContentStore: OfflineContentStore? = null,
 ) {
     private companion object {
         const val OUTCOME_UNKNOWN_CODE = "launch.outcome_unknown"
@@ -459,6 +461,107 @@ class CollieRepository(
     /** Identity login does not authorize terminal writes; demand a fresh owning snapshot. */
     fun proxyIdentityChanged() = invalidateAuthority(AuthorityInvalidation.ACCESS_FROZEN)
 
+    /** A saved-copy selection is local display custody, never a read actor or a dispatch lease. */
+    internal fun localDraftCustody(address: PaneAddress, original: ScopedReadContext? = null): LocalDraftCustody? = synchronized(readAdmissionLock) {
+        if (mutableScope.value != address.scope || activeSubject != address.paneId) return@synchronized null
+        val committed = connectionStore.captureCommitted()
+        val configured = if (committed == null) connection.value else committed.connection
+        if (original != null && (isActorRetired(original) || configured !== original.connection || committed?.incarnationId != original.connectionIncarnation)) return@synchronized null
+        val id = committed?.incarnationId
+        val owner = configured?.let { ScopedCustodyOwner(it.origin.value, it.origin.value, credentialIdentity(it, id)) }
+        val scope = if (owner != null && id != null) RetainedReadScope(owner, id, address.scope.host, address.scope.session, address.paneId, address.scope.viewAll) else null
+        val localId = "local:" + RetainedReadDatabase.digest("$currentReadCustodyProcessIdentity|${committed?.revision ?: generation.get()}")
+        LocalDraftCustody(address, owner, scope, localId, configured, id, committed?.revision)
+    }
+
+    /** Local edit continuity does not inspect snapshot/write authority or manufacture a read actor. */
+    internal fun isLocalDraftOwnerCurrent(original: LocalDraftCustody): Boolean = synchronized(readAdmissionLock) {
+        val current = connectionStore.captureCommitted()
+        val configured = if (current == null) connection.value else current.connection
+        configured === original.connection && current?.incarnationId == original.incarnation &&
+            (configured != null || current?.revision == original.revision)
+    }
+    internal fun isLocalDraftCurrent(original: LocalDraftCustody): Boolean = synchronized(readAdmissionLock) {
+        isLocalDraftOwnerCurrent(original) &&
+            mutableScope.value == original.address.scope && activeSubject == original.address.paneId
+    }
+
+    internal fun offlineSelection(scope: Scope, subject: String?): OfflineReadSelection? = synchronized(readAdmissionLock) {
+        if (pendingAuthorityTransitions != 0) return@synchronized null
+        val committed = connectionStore.captureCommitted() ?: return@synchronized null
+        val configured = committed.connection ?: return@synchronized null
+        val id = committed.incarnationId ?: return@synchronized null
+        if (configured === retiredCredentialConnection || configured !== generationConnection || id != generationIncarnation ||
+            mutableScope.value != scope || activeSubject != subject) return@synchronized null
+        val owner = ScopedCustodyOwner(configured.origin.value, configured.origin.value, credentialIdentity(configured, id))
+        val target = RetainedReadScope(owner, id, scope.host, scope.session, subject, scope.viewAll)
+        OfflineReadSelection(target, committed, ScopedCustodyVersion(owner, id, generation.get(), navigationGeneration.get(), currentReadCustodyProcessIdentity), mutableReadSource.value)
+    }
+
+    internal fun isOfflineOwnerCurrent(selection: OfflineReadSelection): Boolean = synchronized(readAdmissionLock) {
+        val current = connectionStore.captureCommitted()
+        current?.connection === selection.committed.connection && current?.incarnationId == selection.committed.incarnationId &&
+            current?.connection !== retiredCredentialConnection && mutableScope.value == Scope(selection.scope.host, selection.scope.session, selection.scope.viewAll) &&
+            activeSubject == selection.scope.subject
+    }
+
+    internal fun isOfflineSelectionCurrent(selection: OfflineReadSelection): Boolean = synchronized(readAdmissionLock) {
+        isOfflineOwnerCurrent(selection) && pendingAuthorityTransitions == 0 &&
+            selection.version.connectionGeneration == generation.get() && selection.version.navigationGeneration == navigationGeneration.get()
+    }
+
+    internal fun showSavedCopy(selection: OfflineReadSelection, capturedAt: Long, afterFailedRead: Boolean = false): Boolean {
+        var accepted = false
+        invalidateAuthority(AuthorityInvalidation.SAVED_COPY, change = {
+            if (!isOfflineOwnerCurrent(selection) || pendingAuthorityTransitions > 1 ||
+                selection.version.connectionGeneration != generation.get() || selection.version.navigationGeneration != navigationGeneration.get() ||
+                mutableReadSource.value !== selection.readSource || !afterFailedRead && mutableReadSource.value is ReadSourceState.Live) false else { accepted = true; true }
+        }, settled = {
+            if (isOfflineOwnerCurrent(selection)) {
+                mutableReadSource.value = ReadSourceState.SavedCopy(capturedAt, generation.get())
+                selection.installedVersion = ScopedCustodyVersion(selection.scope.owner, selection.scope.incarnation, generation.get(), navigationGeneration.get(), currentReadCustodyProcessIdentity)
+            }
+        })
+        return accepted && isOfflineOwnerCurrent(selection) && readSource.value is ReadSourceState.SavedCopy
+    }
+
+    internal fun expireSavedCopy(selection: OfflineReadSelection) {
+        invalidateAuthority(AuthorityInvalidation.SAVED_COPY, change = {
+            val version = selection.installedVersion ?: selection.version
+            isOfflineOwnerCurrent(selection) && version.connectionGeneration == generation.get() &&
+                version.navigationGeneration == navigationGeneration.get() && mutableReadSource.value is ReadSourceState.SavedCopy
+        }, settled = { mutableReadSource.value = ReadSourceState.Unavailable(generation.get()) })
+    }
+
+    internal fun savedCopyVersion(selection: OfflineReadSelection): ScopedCustodyVersion? = synchronized(readAdmissionLock) {
+        if (!isOfflineOwnerCurrent(selection) || pendingAuthorityTransitions != 0 || mutableReadSource.value !is ReadSourceState.SavedCopy) null
+        else selection.installedVersion?.takeIf { it.connectionGeneration == generation.get() && it.navigationGeneration == navigationGeneration.get() }
+    }
+
+    internal fun isSavedCopyCurrent(scope: RetainedReadScope, version: ScopedCustodyVersion): Boolean = synchronized(readAdmissionLock) {
+        val selected = offlineSelection(Scope(scope.host, scope.session, scope.viewAll), scope.subject) ?: return@synchronized false
+        selected.scope == scope && selected.version == version && mutableReadSource.value is ReadSourceState.SavedCopy
+    }
+
+    internal fun retentionScope(context: ScopedReadContext): RetainedReadScope? = context.connectionIncarnation?.let {
+        RetainedReadScope(context.custodyOwner, it, context.key.host, context.key.session, context.key.subjectIdentity, context.requestScope.viewAll)
+    }
+
+    internal suspend fun retainSnapshot(context: ScopedReadContext, snapshot: SnapshotResponse) {
+        val store = offlineContentStore ?: return
+        val scope = retentionScope(context)?.takeIf { it.subject == null } ?: return
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { store.retainDashboard(scope, snapshot) { isCurrent(context) } }
+    }
+
+    internal suspend fun retainPane(context: ScopedReadContext, pane: PaneReadResponse?, entries: List<com.lateapex.collie.network.TranscriptEntry>? = null) {
+        val store = offlineContentStore ?: return
+        val scope = retentionScope(context) ?: return
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            if (pane != null && com.lateapex.collie.ui.terminal.TerminalComposerSemantics.noEchoPrompt(pane.text) != null) store.passwordPane(scope) { isCurrent(context) }
+            else store.retainPane(scope, pane, entries) { isCurrent(context) }
+        }
+    }
+
     fun showSavedCopy(capturedAt: Long) {
         invalidateAuthority(AuthorityInvalidation.SAVED_COPY, settled = {
             mutableReadSource.value = ReadSourceState.SavedCopy(capturedAt, generation.get())
@@ -519,6 +622,9 @@ class CollieRepository(
         val event = AuthorityRetirement(reason, transition.owner, transition.retiresReadActor,
             transition.retiredConnection, transition.retiredIncarnation, transition.pendingGeneration, transition.retiredNavigation, refusal = transition.refusal)
         try {
+            if (reason in setOf(AuthorityInvalidation.CONNECTION_CHANGED, AuthorityInvalidation.PAIRING_RETIRED, AuthorityInvalidation.DISCONNECTED)) {
+                transition.owner?.let { owner -> offlineContentStore?.retireOwner(owner) }
+            }
             transition.jobs.forEach { it.cancel() }
             if (transition.retiresReadActor) {
                 transition.readListeners.forEach { listener -> runCatching { listener(event) } }

@@ -64,4 +64,35 @@ class AndroidKeystoreConnectionStoreTest {
                 .contains(EncryptedConnectionStore.RECORD),
         )
     }
+
+    @Test
+    fun retainedContentUsesRealKeystoreAndColdScopedExpiryAndRetirementWithoutTouchingPairing() {
+        val directory = java.io.File(context.noBackupFilesDir, "retention-instrumentation-${java.util.UUID.randomUUID()}")
+        var clock = System.currentTimeMillis()
+        fun cold() = OfflineContentStore(RetainedReadDatabase(context, cipher, { clock }, directory), { clock })
+        val store = cold()
+        val owner = ScopedCustodyOwner("https://retention.example/mount/", "https://retention.example/mount/", "instrumented-owner")
+        val scope = RetainedReadScope(owner, "00000000-0000-0000-0000-000000000001", "peer-a", "session-a", "pane-1")
+        try {
+            org.junit.Assert.assertTrue(store.chooseRetention(OfflineContentStore.Retention.SEVEN_DAYS))
+            org.junit.Assert.assertTrue(store.chooseDrafts(true))
+            org.junit.Assert.assertTrue(store.retainPane(scope,
+                com.lateapex.collie.network.PaneReadResponse("pane-1", "instrumented retained masked mirror", false, 1),
+                listOf(com.lateapex.collie.network.TranscriptEntry("turn-1", "2026-10-12", "assistant", listOf(com.lateapex.collie.network.TranscriptPart("text", "instrumented retained Chat"))))) { true })
+            org.junit.Assert.assertTrue(store.saveDraft("instrumented-draft", "instrumented saved draft", owner, scope))
+            assertEquals("instrumented retained masked mirror", cold().pane(scope)?.value?.pane?.text)
+            assertNull(cold().pane(scope.copy(session = "other")))
+            directory.walkTopDown().filter { it.isFile }.forEach { file ->
+                assertFalse(file.readBytes().decodeToString().contains("instrumented retained"))
+                assertFalse(file.readBytes().decodeToString().contains("instrumented saved draft"))
+            }
+            clock += 48L * 60 * 60 * 1000
+            assertNull(cold().draft("instrumented-draft", owner))
+            assertNull(cold().pane(scope)?.value?.pane)
+            org.junit.Assert.assertNotNull(cold().pane(scope)?.value?.entries)
+            org.junit.Assert.assertTrue(store.retireOwner(owner))
+            assertNull(cold().pane(scope))
+            assertEquals(OfflineContentStore.Retention.SEVEN_DAYS, cold().retention)
+        } finally { directory.deleteRecursively() }
+    }
 }

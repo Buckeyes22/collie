@@ -82,6 +82,7 @@ class AppContainer(context: Context) {
         launchIntentStore = launchIntentStore,
         intentJson = json,
         machineRuleAttemptStore = machineRuleAttemptStore,
+        offlineContentStore = nativePreferences.offlineContentStore,
     )
     val imageLoader = ScopedImageLoader(repository)
     init {

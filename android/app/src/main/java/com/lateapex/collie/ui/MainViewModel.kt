@@ -60,6 +60,8 @@ data class MainUiState(
     val receiptContextBound: Boolean? = null,
     val unknownLaunchIntents: List<StoredLaunchIntent> = emptyList(),
     val originalReadContext: ScopedReadContext? = null,
+    val savedCopy: com.lateapex.collie.data.SavedCopyProvenance? = null,
+    val savedCopyVersion: com.lateapex.collie.data.ScopedCustodyVersion? = null,
 ) {
     val panes: List<PaneSummary>
         get() = snapshot?.let { it.agents + it.shellPanes }.orEmpty()
@@ -95,7 +97,7 @@ class MainViewModel @JvmOverloads constructor(
             scopeValidationPending = true
         }
         originalContext = context
-        mutableState.value = mutableState.value.copy(originalReadContext = context)
+        mutableState.value = mutableState.value.copy(originalReadContext = context.takeIf { mutableState.value.savedCopy == null })
     }
 
     private val authorityRegistration = repository.onAuthorityRetired { event ->
@@ -116,14 +118,88 @@ class MainViewModel @JvmOverloads constructor(
         }
     }
 
+    private var savedSelection: com.lateapex.collie.data.OfflineReadSelection? = null
+    private val savedCustodyLock = Any()
+    private var savedExpiryJob: Job? = null
+    private val savedClear = repository.offlineContentStore?.onReadsCleared { cutoff ->
+        withMainCustodyAck {
+            val retired = synchronized(savedCustodyLock) {
+                val copy = mutableState.value.savedCopy ?: return@synchronized null
+                if (copy.clearRevision >= cutoff) return@synchronized null
+                val previous = savedSelection to savedExpiryJob
+                savedSelection = null; savedExpiryJob = null
+                mutableState.value = MainUiState(configured = repository.connection.value != null)
+                previous
+            }
+            retired?.second?.cancel()
+            retired?.first?.let(repository::expireSavedCopy)
+        }
+    }
+    private val savedRetirement = repository.onReadContextRetired { event ->
+        withOfflineRetirementOnMain(event, { mutableState.value.savedCopyVersion }) {
+            val retiredJob = synchronized(savedCustodyLock) {
+                if (!event.affectsCustody(mutableState.value.savedCopyVersion)) return@synchronized null
+                val job = savedExpiryJob
+                savedExpiryJob = null; savedSelection = null
+                mutableState.value = MainUiState(configured = repository.connection.value != null)
+                job
+            }
+            retiredJob?.cancel()
+        }
+    }
+
+    private suspend fun restoreSavedDashboard(expected: ScopedReadContext? = null) {
+        val store = repository.offlineContentStore ?: return
+        val scope = currentScope
+        val selected = repository.offlineSelection(scope, null) ?: return
+        if (expected != null && (selected.committed.connection !== expected.connection ||
+            selected.scope.incarnation != expected.connectionIncarnation || expected.requestScope != scope)) return
+        val shown = mutableState.value.savedCopy
+        if (expected == null && shown != null && shown.scope != selected.scope) return
+        val copy = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { store.dashboard(selected.scope) }
+        if (!repository.isOfflineSelectionCurrent(selected)) return
+        if (copy == null) {
+            if (mutableState.value.savedCopy != null) {
+                savedSelection?.let(repository::expireSavedCopy)
+                savedSelection = null; mutableState.value = mutableState.value.copy(snapshot = null, savedCopy = null, savedCopyVersion = null, writeAuthorized = false)
+            }
+            return
+        }
+        if (!repository.showSavedCopy(selected, copy.provenance.capturedAt, afterFailedRead = expected != null)) return
+        if (!repository.isOfflineOwnerCurrent(selected)) return
+        val displayVersion = repository.savedCopyVersion(selected) ?: return
+        synchronized(savedCustodyLock) {
+        if (!repository.isSavedCopyCurrent(selected.scope, displayVersion) || !store.isDisplayCurrent(copy.provenance)) return
+        savedSelection = selected
+        mutableState.value = mutableState.value.copy(snapshot = copy.value, loading = false, refreshing = false,
+            savedCopy = copy.provenance, savedCopyVersion = displayVersion, originalReadContext = null,
+            writeAuthorized = false, snapshotFailed = true, mux = null, launchers = null, lastSuccessAt = copy.provenance.capturedAt)
+        }
+        savedExpiryJob?.cancel()
+        savedExpiryJob = viewModelScope.launch {
+            delay((copy.provenance.expiresAt - System.currentTimeMillis()).coerceAtLeast(1))
+            if (savedSelection === selected) {
+                repository.expireSavedCopy(selected)
+                savedSelection = null
+                mutableState.value = mutableState.value.copy(snapshot = null, savedCopy = null, savedCopyVersion = null, writeAuthorized = false)
+            }
+        }
+    }
+
     override fun onCleared() {
         authorityRegistration.close()
+        savedRetirement.close()
+        savedClear?.close()
         super.onCleared()
     }
 
     init {
-        repository.selectScope(nativePreferences.dashboardScope)
+        repository.selectSubject(nativePreferences.dashboardScope, null)
         syncConnection()
+        viewModelScope.launch {
+            restoreSavedDashboard()
+            repository.offlineContentStore?.changes?.collectLatest { if (mutableState.value.savedCopy != null) restoreSavedDashboard() }
+        }
         viewModelScope.launch {
             repository.connection.collectLatest { connection ->
                 val adopted = originalContext?.takeIf { !repository.isActorRetired(it) }
@@ -547,7 +623,11 @@ class MainViewModel @JvmOverloads constructor(
                 repository.readContext(initialScope) ?: return
             }
             var result = repository.snapshot(initialScope, initialContext)
-            if (!repository.isCurrent(context)) return
+            if (!repository.isCurrent(context)) {
+                val failure = (result as? ApiResult.Failure)?.error as? ApiFailure.Http
+                if (failure?.status in setOf(401, 403)) restoreSavedDashboard(context)
+                return
+            }
             if (result is ApiResult.Success && scopeValidationPending) {
                 val restore = DashboardScopePersistence.resolve(requestedScope, result.value)
                 scopeValidationPending = false
@@ -567,11 +647,16 @@ class MainViewModel @JvmOverloads constructor(
             when (result) {
                 is ApiResult.Success -> {
                     pollingBackoff.succeeded()
+                    val accepted = originalContext ?: return
+                    repository.retainSnapshot(accepted, result.value)
+                    if (!repository.isCurrent(accepted)) return
+                    savedExpiryJob?.cancel(); savedExpiryJob = null; savedSelection = null
                     val now = System.currentTimeMillis()
                     mutableState.value = mutableState.value.copy(
                         loading = false,
                         refreshing = false,
                         snapshot = result.value,
+                        savedCopy = null, savedCopyVersion = null, originalReadContext = accepted,
                         writeAuthorized = repository.writesAllowed(),
                         error = null,
                         lastSuccessAt = now.takeIf { result.value.bridge != "disconnected" }
@@ -596,6 +681,7 @@ class MainViewModel @JvmOverloads constructor(
                         snapshotFailed = !pairingRequired,
                         authError = authError && !pairingRequired,
                     )
+                    restoreSavedDashboard(context)
                 }
                 is ApiResult.NotModified -> {
                     pollingBackoff.succeeded()
