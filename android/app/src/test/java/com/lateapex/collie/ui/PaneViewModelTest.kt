@@ -1047,13 +1047,131 @@ class PaneViewModelTest {
         assertEquals("the actor follows the ViewModel's actual fresh pane read", 1, f.api.paneFreshReads)
         assertTrue("ordinary unavailable live-chat fallback must not retire the accepted pane actor", f.api.chatCalls > 0)
 
+        // A current consumer retains its original actor on a genuine conditional304.
+        f.api.paneAlwaysNotModified = true
+        f.viewModel.refresh(); advanceUntilIdle()
+        assertTrue(original === f.viewModel.state.value.paneReadContext)
         f.repository.showSavedCopy(1L)
         assertNull(f.viewModel.state.value.paneReadContext)
         f.api.paneAlwaysNotModified = true
+        f.api.paneUnsolicitedNotModified = true
         f.viewModel.refresh(); advanceUntilIdle()
+        assertNull(f.api.paneEtags.last())
+        assertEquals(1, f.api.paneUnsolicitedReads)
         assertNull("304 without a fresh body cannot re-admit retained terminal text", f.viewModel.state.value.paneReadContext)
         assertFalse(f.repository.isCurrent(original))
         assertTrue("the fixture dispatched the actual conditional pane read", f.api.paneConditionalReads > 0)
+    }
+
+    @Test
+    fun actualHttpsNewPaneConsumerRequiresFresh200AndNeverMintsAnActorFromSharedCache304(): Unit = runTest(dispatcher) {
+        val certificate = okhttp3.tls.HeldCertificate.Builder().commonName("localhost")
+            .addSubjectAlternativeName("localhost").build()
+        val certificates = okhttp3.tls.HandshakeCertificates.Builder().heldCertificate(certificate).build()
+        val trust = okhttp3.tls.HandshakeCertificates.Builder().addTrustedCertificate(certificate.certificate).build()
+        val server = okhttp3.mockwebserver.MockWebServer()
+        server.useHttps(certificates.sslSocketFactory(), false)
+        server.start()
+        try {
+            val client = com.lateapex.collie.network.CollieApiClient.defaultHttpClient().newBuilder()
+                .sslSocketFactory(trust.sslSocketFactory(), trust.trustManager).build()
+            val actual = com.lateapex.collie.network.CollieApiClient(client, kotlinx.serialization.json.Json { ignoreUnknownKeys = true })
+            val address = PaneAddress(paneId = "w1:p1")
+            val f = fixture(ApiResult.Success(ActionResponse(ok = true), 200), agent = "shell", address = address)
+            f.store.save(Connection(CollieOrigin(server.url("/mount/").toString()), "phone", "token"))
+            runCurrent()
+            f.api.paneTransport = actual
+            f.api.config = BridgeConfigResponse(control = com.lateapex.collie.network.ControlCapabilityResponse(mapOf("filesDiscovery" to true)))
+            fun body() = okhttp3.mockwebserver.MockResponse().setHeader("Content-Type", "application/json")
+                .setHeader("ETag", "\"fixture7\"")
+                .setBody("""{"paneId":"w1:p1","text":"See src/source.txt:3\n","truncated":false,"revision":7,"filesReadReady":true}""")
+            fun request(): okhttp3.mockwebserver.RecordedRequest {
+                val request = requireNotNull(server.takeRequest(2, java.util.concurrent.TimeUnit.SECONDS))
+                assertEquals("GET", request.method)
+                assertEquals("/mount/api/pane/w1%3Ap1", request.requestUrl?.encodedPath)
+                assertEquals("Bearer token", request.getHeader("Authorization"))
+                return request
+            }
+            server.enqueue(body())
+            assertTrue(f.repository.readPane(address) is ApiResult.Success)
+            assertNull(request().getHeader("If-None-Match"))
+            server.enqueue(okhttp3.mockwebserver.MockResponse().setResponseCode(304))
+            val cached = f.repository.readPane(address) as ApiResult.Success
+            assertEquals(304, cached.status)
+            assertTrue(cached.value.notModified)
+            assertEquals("\"fixture7\"", request().getHeader("If-None-Match"))
+
+            // Same repository/cache as the previous consumer; this new ViewModel owns no body.
+            val fresh = PaneViewModel(ApplicationProvider.getApplicationContext<Application>(), address, "shell", f.repository,
+                com.lateapex.collie.diagnostics.RecordingDiagnosticsRecorder(mutableListOf()), f.queuedAttempts)
+            assertNull(fresh.state.value.paneReadContext)
+            var completedPaneLoads = 0
+            // Supporting config runs only after load() has processed the real pane response.
+            // Its next invocation distinguishes a completed 304 from an already-present actor.
+            f.api.configHook = { completedPaneLoads++ }
+            fun refreshAndAwaitResponse() {
+                val priorLoads = completedPaneLoads
+                fresh.refresh()
+                val responseDeadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(2)
+                while (completedPaneLoads == priorLoads && System.nanoTime() < responseDeadline) {
+                    runCurrent()
+                    if (completedPaneLoads == priorLoads) Thread.sleep(10)
+                }
+                runCurrent()
+                assertEquals("Actual HTTPS pane response is processed before supporting reads", priorLoads + 1, completedPaneLoads)
+                assertFalse("The completed pane phase settles loading", fresh.state.value.loading)
+            }
+            server.enqueue(body())
+            refreshAndAwaitResponse()
+            assertNull("new consumer must request its own fresh body", request().getHeader("If-None-Match"))
+            val accepted = requireNotNull(fresh.state.value.paneReadContext)
+            assertTrue(f.repository.isCurrent(accepted))
+            assertTrue(fresh.state.value.pane?.filesReadReady == true)
+            assertTrue(fresh.state.value.pane?.text?.contains("src/source.txt:3") == true)
+            assertNotNull(fresh.state.value.filesConfigContext)
+
+            server.enqueue(okhttp3.mockwebserver.MockResponse().setResponseCode(304))
+            refreshAndAwaitResponse()
+            assertEquals("\"fixture7\"", request().getHeader("If-None-Match"))
+            assertTrue("same current consumer retains its original accepted actor", accepted === fresh.state.value.paneReadContext)
+
+            f.repository.showSavedCopy(1L)
+            assertNull(fresh.state.value.paneReadContext)
+            assertFalse(f.repository.isCurrent(accepted))
+            server.enqueue(okhttp3.mockwebserver.MockResponse().setResponseCode(304))
+            refreshAndAwaitResponse()
+            assertNull(request().getHeader("If-None-Match"))
+            assertNull("unsolicited304 must never admit a new or retired body actor", fresh.state.value.paneReadContext)
+            assertNotNull(fresh.state.value.error)
+
+            server.enqueue(body())
+            refreshAndAwaitResponse()
+            assertNull(request().getHeader("If-None-Match"))
+            val recovered = requireNotNull(fresh.state.value.paneReadContext)
+            assertTrue(f.repository.isCurrent(recovered))
+            assertTrue(recovered.navigationGeneration != accepted.navigationGeneration)
+            assertEquals(cached.value.pane.text, fresh.state.value.pane?.text)
+            assertEquals(6, server.requestCount)
+        } finally {
+            server.shutdown()
+        }
+    }
+
+    @Test
+    fun aFreshPaneReadCannotPublishWithAnActorReplacedDuringItsTransportWait() = runTest(dispatcher) {
+        val f = fixture(ApiResult.Success(ActionResponse(ok = true), 200))
+        val original = requireNotNull(f.repository.readContext(Scope(), "w1:p1"))
+        val replacement = Connection(CollieOrigin("https://collie.example/"), "replacement", "replacement-token")
+        f.api.paneHook = { f.store.save(replacement) }
+        f.viewModel.refresh(); advanceUntilIdle()
+        assertFalse(f.repository.isCurrent(original))
+        assertNull(f.viewModel.state.value.paneReadContext)
+        assertEquals(1, f.api.paneLines.size)
+        f.api.paneHook = null
+        f.viewModel.refresh(); advanceUntilIdle()
+        val recovered = requireNotNull(f.viewModel.state.value.paneReadContext)
+        assertTrue(f.repository.isCurrent(recovered))
+        assertTrue(recovered.connection === replacement)
     }
 
     @Test
@@ -1528,6 +1646,10 @@ class PaneViewModelTest {
             revision = 7,
         )
         var paneAlwaysNotModified = false
+        var paneUnsolicitedNotModified = false
+        var paneUnsolicitedReads = 0
+        var paneTransport: CollieApi? = null
+        val paneEtags = mutableListOf<String?>()
         var paneConditionalReads = 0
         var paneFreshReads = 0
         val historyPages = ArrayDeque<PaneHistoryResponse>()
@@ -1595,7 +1717,13 @@ class PaneViewModelTest {
             markSeen: Boolean,
         ): ApiResult<PaneReadResponse> {
             paneLines += lines
+            paneEtags += etag
             paneHook?.invoke()
+            paneTransport?.let { return it.pane(connection, address, lines, etag, markSeen) }
+            if (paneUnsolicitedNotModified && etag == null) {
+                paneUnsolicitedReads++
+                return ApiResult.NotModified(null)
+            }
             if (paneAlwaysNotModified) {
                 paneConditionalReads++
                 assertNotNull("cached304 test must send the cache's actual ETag", etag)

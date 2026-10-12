@@ -354,6 +354,91 @@ class FilesActivityTest {
         } finally { controller.pause().stop().destroy(); fixture.close() }
     }
 
+    @Test
+    fun directReferenceToolbarAndSystemBackReturnToCallerWithoutReadingADirectory() {
+        for (systemBack in listOf(false, true)) {
+            FilesFixture().use { fixture ->
+                val intent = FilesActivity.intent(fixture.app, FilesTarget.Pane("p1"), Scope(),
+                    path = "docs/guide.md", line = 3, openReference = true)
+                val controller = Robolectric.buildActivity(FilesActivity::class.java, intent).create().start().resume().visible()
+                try {
+                    val activity = controller.get()
+                    waitForMain { activity.findViewById<View>(R.id.files_source_scroll).isShown }
+                    assertEquals("guide.md", activity.findViewById<TextView>(R.id.files_title).text.toString())
+                    val readsBeforeBack = fixture.reads.toList()
+                    if (systemBack) activity.onBackPressedDispatcher.onBackPressed()
+                    else activity.findViewById<View>(R.id.files_back).performClick()
+                    shadowOf(Looper.getMainLooper()).idle()
+                    assertTrue("a direct source reference returns through the Android caller stack", activity.isFinishing)
+                    assertEquals("Back must not replace the direct reference with an inferred listing", readsBeforeBack, fixture.reads)
+                } finally { controller.pause().stop().destroy() }
+            }
+        }
+    }
+
+    @Test
+    fun recreatedDirectReferenceKeepsReturnToOriginNavigationWithoutRestoringAuthority() {
+        FilesFixture().use { fixture ->
+            val intent = FilesActivity.intent(fixture.app, FilesTarget.Pane("p1"), Scope(),
+                path = "docs/guide.md", openReference = true)
+            var controller = Robolectric.buildActivity(FilesActivity::class.java, intent).create().start().resume().visible()
+            try {
+                var activity = controller.get()
+                waitForMain { activity.findViewById<View>(R.id.files_source_scroll).isShown }
+                val saved = android.os.Bundle()
+                controller.saveInstanceState(saved)
+                assertTrue(saved.getBoolean("files.state.reference-return"))
+                controller.pause().stop().destroy()
+                val previousReads = fixture.reads.size
+                controller = Robolectric.buildActivity(FilesActivity::class.java, intent).create(saved).start().resume().visible()
+                activity = controller.get()
+                waitForMain { fixture.reads.size > previousReads && activity.findViewById<View>(R.id.files_source_scroll).isShown }
+                assertEquals("path:docs/guide.md", fixture.reads.last())
+                val readsBeforeBack = fixture.reads.toList()
+                activity.onBackPressedDispatcher.onBackPressed()
+                shadowOf(Looper.getMainLooper()).idle()
+                assertTrue(activity.isFinishing)
+                assertEquals(readsBeforeBack, fixture.reads)
+            } finally { controller.pause().stop().destroy() }
+        }
+    }
+
+    @Test
+    fun deliberateReferenceBreadcrumbBrowsingKeepsNormalHierarchyAfterRecreation() {
+        FilesFixture().use { fixture ->
+            val intent = FilesActivity.intent(fixture.app, FilesTarget.Pane("p1"), Scope(),
+                path = "docs/guide.md", openReference = true)
+            var controller = Robolectric.buildActivity(FilesActivity::class.java, intent).create().start().resume().visible()
+            try {
+                var activity = controller.get()
+                waitForMain { activity.findViewById<View>(R.id.files_source_scroll).isShown }
+                val breadcrumb = activity.findViewById<TextView>(R.id.files_breadcrumb)
+                val spans = breadcrumb.text as Spanned
+                val docsOffset = breadcrumb.text.toString().indexOf("docs")
+                assertTrue(docsOffset >= 0)
+                val currentDocs = spans.getSpans(docsOffset, docsOffset + 4, ClickableSpan::class.java).single()
+                currentDocs.onClick(breadcrumb)
+                waitForMain { fixture.reads.lastOrNull() == "dir:docs" && activity.findViewById<View>(R.id.files_list).isShown }
+                assertFalse(activity.isFinishing)
+                val saved = android.os.Bundle()
+                controller.saveInstanceState(saved)
+                assertFalse(saved.getBoolean("files.state.reference-return", true))
+                controller.pause().stop().destroy()
+                val previousReads = fixture.reads.size
+                controller = Robolectric.buildActivity(FilesActivity::class.java, intent).create(saved).start().resume().visible()
+                activity = controller.get()
+                waitForMain { fixture.reads.size > previousReads && activity.findViewById<View>(R.id.files_list).isShown }
+                assertEquals("dir:docs", fixture.reads.last())
+                activity.findViewById<View>(R.id.files_back).performClick()
+                waitForMain { fixture.reads.lastOrNull() == "dir:" && activity.findViewById<View>(R.id.files_list).isShown }
+                assertFalse("ordinary nested-directory Back returns to its parent", activity.isFinishing)
+                activity.findViewById<View>(R.id.files_back).performClick()
+                shadowOf(Looper.getMainLooper()).idle()
+                assertTrue("the normal root listing still returns to its caller", activity.isFinishing)
+            } finally { controller.pause().stop().destroy() }
+        }
+    }
+
     private class FilesFixture : AutoCloseable {
         val app = ApplicationProvider.getApplicationContext<CollieApplication>()
         private val originalRepository = app.container.repository

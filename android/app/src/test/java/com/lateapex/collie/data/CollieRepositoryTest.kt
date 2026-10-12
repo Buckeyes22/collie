@@ -136,6 +136,37 @@ class CollieRepositoryTest {
     }
 
     @Test
+    fun aConsumerCanRequireItsOwnFreshBodyFromAnExistingSharedPaneCache() = runBlocking {
+        val pane = PaneAddress(paneId = "w1:p1")
+        val first = repository.readPane(pane) as ApiResult.Success
+        val cached = repository.readPane(pane) as ApiResult.Success
+        val actor = requireNotNull(repository.readContext(pane.scope, pane.paneId))
+        val fresh = repository.readPane(pane, conditional = false, expectedContext = actor) as ApiResult.Success
+        assertFalse(first.value.notModified)
+        assertTrue(cached.value.notModified)
+        assertEquals(304, cached.status)
+        assertFalse(fresh.value.notModified)
+        assertEquals(200, fresh.status)
+        assertEquals(first.value.pane, fresh.value.pane)
+        assertEquals(listOf(null, "\"local\"", null), api.paneEtags)
+        assertTrue(repository.isCurrent(actor))
+    }
+
+    @Test
+    fun expectedPaneReadActorCannotBorrowAnotherAddressOrRetiredConnection() = runBlocking {
+        val pane = PaneAddress(paneId = "w1:p1")
+        repository.selectSubject(pane.scope, pane.paneId)
+        val actor = requireNotNull(repository.readContext(pane.scope, pane.paneId))
+        assertTrue(repository.readPane(PaneAddress(paneId = "w1:p2"), conditional = false, expectedContext = actor) is ApiResult.Failure)
+        assertTrue(repository.readPane(PaneAddress(Scope(host = "other"), pane.paneId), conditional = false, expectedContext = actor) is ApiResult.Failure)
+        assertTrue(repository.isCurrent(actor))
+        assertTrue(api.paneEtags.isEmpty())
+        store.save(Connection(connection.origin, "replacement", "replacement-token"))
+        assertTrue(repository.readPane(pane, conditional = false, expectedContext = actor) is ApiResult.Failure)
+        assertTrue(api.paneEtags.isEmpty())
+    }
+
+    @Test
     fun paneEtagIsNotReusedAcrossDifferentRequestedLineWindows() = runBlocking {
         val pane = PaneAddress(paneId = "w1:p1")
 

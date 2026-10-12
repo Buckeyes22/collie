@@ -69,6 +69,8 @@ class FilesActivity : AppCompatActivity() {
     private val copiedPreviewActors = java.util.WeakHashMap<View, com.lateapex.collie.data.ScopedReadContext>()
     private var showPreview = false
     private var savedHandoffRequired = false
+    // Navigation mode only: a direct reference returns to its caller, not a guessed folder.
+    private var returnToOriginOnBack = false
     private var lastFindOffset = 0
     private var currentSource: FilesAnswer.Source? = null
     @Volatile private var acceptedPageContext: com.lateapex.collie.data.ScopedReadContext? = null
@@ -101,6 +103,8 @@ class FilesActivity : AppCompatActivity() {
         val directory = if (savedInstanceState != null) savedInstanceState.getString(STATE_DIRECTORY).orEmpty() else intent.getStringExtra(EXTRA_DIRECTORY).orEmpty()
         val path = if (savedInstanceState != null) savedInstanceState.getString(STATE_PATH) else intent.getStringExtra(EXTRA_PATH)
         val openReference = if (savedInstanceState == null) intent.getStringExtra(EXTRA_REFERENCE) else null
+        returnToOriginOnBack = savedInstanceState?.getBoolean(STATE_REFERENCE_RETURN)
+            ?: (intent.getStringExtra(EXTRA_REFERENCE)?.let { RelativeFilePath.parse(it) != null } == true)
         val initialLine = savedInstanceState?.getInt(STATE_LINE) ?: intent.getIntExtra(EXTRA_LINE, 0)
         val ignored = savedInstanceState?.getBoolean(STATE_IGNORED) ?: intent.getBooleanExtra(EXTRA_IGNORED, false)
         currentLine = initialLine.coerceIn(0, 999_999_999)
@@ -163,8 +167,7 @@ class FilesActivity : AppCompatActivity() {
         if (currentFind.isNotEmpty()) findViewById<EditText>(R.id.files_find).setText(currentFind)
         if (initialLine > 0) findViewById<EditText>(R.id.files_line).setText(initialLine.toString())
         findViewById<View>(R.id.files_back).setOnClickListener {
-            if (currentSource != null) { showPreview = false; viewModel.backToDirectory() }
-            else if (viewModel.state.value.directory.isNotEmpty()) viewModel.backToDirectory() else finish()
+            if (!navigateBackWithinFiles()) finish()
         }
         findViewById<Button>(R.id.files_retry).setOnClickListener { viewModel.refresh() }
         ignoredCheck.setOnCheckedChangeListener { _, checked -> viewModel.setIgnored(checked) }
@@ -177,14 +180,31 @@ class FilesActivity : AppCompatActivity() {
         }
         onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                if (currentSource != null) { showPreview = false; viewModel.backToDirectory() }
-                else if (viewModel.state.value.directory.isNotEmpty()) viewModel.backToDirectory()
-                else { isEnabled = false; onBackPressedDispatcher.onBackPressed() }
+                if (!navigateBackWithinFiles()) { isEnabled = false; onBackPressedDispatcher.onBackPressed() }
             }
         })
     }
 
+    /** Preserve the ordinary source/directory hierarchy once the user deliberately browses. */
+    private fun navigateBackWithinFiles(): Boolean {
+        if (returnToOriginOnBack) {
+            finish()
+            return true
+        }
+        if (currentSource != null) {
+            showPreview = false
+            viewModel.backToDirectory()
+            return true
+        }
+        if (viewModel.state.value.directory.isNotEmpty()) {
+            viewModel.backToDirectory()
+            return true
+        }
+        return false
+    }
+
     override fun onSaveInstanceState(outState: Bundle) {
+        outState.putBoolean(STATE_REFERENCE_RETURN, returnToOriginOnBack)
         outState.putBoolean(STATE_HANDOFF_REQUIRED, intent.getBooleanExtra(EXTRA_HANDOFF_REQUIRED, false) ||
             savedHandoffRequired)
         if (::viewModel.isInitialized) {
@@ -626,6 +646,7 @@ class FilesActivity : AppCompatActivity() {
     private fun onEntry(entry: FileEntry, directory: String, context: com.lateapex.collie.data.ScopedReadContext?, listing: FilesAnswer.Listing?) {
         if (context == null || listing == null || context !== acceptedPageContext || listing !== acceptedListing || !repository.isCurrent(context)) return
         val path = listOf(directory, entry.name).filter(String::isNotEmpty).joinToString("/")
+        returnToOriginOnBack = false
         if (entry.kind == FileEntryKind.DIRECTORY) viewModel.openDirectory(path) else viewModel.openFile(path)
     }
 
@@ -638,7 +659,7 @@ class FilesActivity : AppCompatActivity() {
         val label = if (path.isBlank()) "/" else "/$path"
         val styled = SpannableString(label)
         styled.setSpan(object : ClickableSpan() {
-            override fun onClick(widget: View) { if (ownsPage()) viewModel.openDirectory("") }
+            override fun onClick(widget: View) { if (ownsPage()) { returnToOriginOnBack = false; viewModel.openDirectory("") } }
         }, 0, 1, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
         var start = 1
         val parts = path.split('/').filter(String::isNotEmpty)
@@ -646,7 +667,7 @@ class FilesActivity : AppCompatActivity() {
             val end = start + part.length
             val destination = parts.take(index + 1).joinToString("/")
             styled.setSpan(object : ClickableSpan() {
-                override fun onClick(widget: View) { if (ownsPage()) viewModel.openDirectory(destination) }
+                override fun onClick(widget: View) { if (ownsPage()) { returnToOriginOnBack = false; viewModel.openDirectory(destination) } }
             }, start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
             start = end + 1
         }
@@ -686,6 +707,7 @@ class FilesActivity : AppCompatActivity() {
         private const val EXTRA_LINE = "files_line"
         private const val EXTRA_REFERENCE = "files_reference"
         private const val EXTRA_ANCHOR = "files_anchor"
+        private const val STATE_REFERENCE_RETURN = "files.state.reference-return"
         private const val STATE_DIRECTORY = "files.state.directory"
         private const val STATE_PATH = "files.state.path"
         private const val STATE_IGNORED = "files.state.ignored"

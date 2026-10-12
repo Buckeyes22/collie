@@ -1112,7 +1112,12 @@ class PaneViewModel(
                 val lines = paneRequestedLines
                 val readActor = repository.readContext(address.scope, address.paneId) ?: throw DiscardedActor()
                 adoptOriginalContext(readActor)
-                when (val result = repository.readPane(address, lines, markSeen = true)) {
+                val acceptedActor = mutableState.value.paneReadContext
+                val canUseConditionalBody = mutableState.value.pane != null && acceptedActor != null &&
+                    repository.isCurrent(acceptedActor) && acceptedActor.key == readActor.key &&
+                    acceptedActor.navigationGeneration == readActor.navigationGeneration
+                when (val result = repository.readPane(address, lines, markSeen = true,
+                    conditional = canUseConditionalBody, expectedContext = readActor)) {
                     is ApiResult.Success -> {
                         if (!repository.isCurrent(readActor)) throw DiscardedActor()
                         pollingBackoff.succeeded()

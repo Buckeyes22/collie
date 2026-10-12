@@ -6,6 +6,10 @@ the first Android release from this fork.
 
 ## Unreleased
 
+- Return directly opened file references to their calling pane on Back, including after recreation; retain folder hierarchy after deliberate breadcrumb or listing navigation.
+
+- Fetch a fresh pane body for a new or retired pane screen before admitting file-reference links; keep conditional reads only for a current body accepted by that screen.
+
 - Restore retained local Codex input acknowledgements when the authoritative legacy connection returns, without resetting an already adopted pane or accepting queued old connection values.
 
 - Retire proxy identity transactions, calls, nonce entries and callback/editor copies by their original connection and navigation owner; preserve an admitted replacement while old cleanup is acknowledged. Persist owned binding retirement before notifying its consumers.

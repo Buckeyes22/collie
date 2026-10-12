@@ -1789,15 +1789,22 @@ class CollieRepository(
         address: PaneAddress,
         lines: Int = 600,
         markSeen: Boolean = true,
+        conditional: Boolean = true,
+        expectedContext: ScopedReadContext? = null,
     ): ApiResult<PaneContent> {
-        val context = readContext(address.scope, address.paneId) ?: return notConnected()
+        val context = expectedContext ?: readContext(address.scope, address.paneId) ?: return notConnected()
+        if (!isCurrent(context) || context.key.host != address.scope.host ||
+            context.key.session != address.scope.session || context.key.subjectIdentity != address.paneId
+        ) return staleScope()
         val configured = context.connection
         val cacheKey = PaneCacheKey(configured, address, context.connectionIncarnation)
         // A pane body is conditional only for the exact window that produced it. Reusing the
         // 600-line ETag for a later 1,000-line request can otherwise turn a valid grow into a 304
         // with the shorter cached body when a bridge keys ETags to pane revision rather than size.
         // Credential identity is part of the key so reconnecting cannot reuse another device's body.
-        val cached = synchronized(cacheLock) { paneCache[cacheKey] }?.takeIf { it.lines == lines }
+        // A new consumer must accept its own fresh body before it may conditionally reuse one.
+        // In unconditional mode an unsolicited304 has no selected cache and refuses below.
+        val cached = if (conditional) synchronized(cacheLock) { paneCache[cacheKey] }?.takeIf { it.lines == lines } else null
         return when (val result = withConnectionOf(configured, address.scope, address.paneId, expectedContext = context) { api.pane(it, address, lines, cached?.etag, markSeen) }) {
             is ApiResult.Success -> {
                 val pane = result.value
