@@ -19,6 +19,8 @@ the first Android release from this fork.
 - Add a native portable-layout share/import screen with bounded JSON, host previews, one-shot ratio edits and encrypted unknown-operation recovery.
 
 
+- Add native host integration inventory, status, and planned install/removal controls with explicit manifest reload and refresh confirmation. Paired diagnostic reads do not require terminal-write authority; repair state and manifest source, cache, override, freshness, outcome and Codex hook-trust guidance remain visible.
+
 - Use current Android APIs and MockWebServer 3 fixtures, and install a version-pinned Android CLI for CI SDK setup. Resolve the update preflight button style through its owning AppCompat resources.
 - Support the current Android 17 release only, with stable SDK 37.2, AGP built-in Kotlin and age-eligible build/runtime dependencies; preserve security and lifecycle tests on SDK 37.
 

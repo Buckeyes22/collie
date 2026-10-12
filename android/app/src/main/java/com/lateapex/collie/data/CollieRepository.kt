@@ -90,6 +90,12 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import com.lateapex.collie.network.retiresPairing
 import com.lateapex.collie.network.ControlOperationResponse
+import com.lateapex.collie.network.HostIntegrationsResponse
+import com.lateapex.collie.network.AgentManifestStatusResponse
+import com.lateapex.collie.network.HostOperationIntent
+import com.lateapex.collie.network.HostOperationPlanResponse
+import com.lateapex.collie.network.HostOperationRequest
+import com.lateapex.collie.network.HostOperationResponse
 import com.lateapex.collie.network.OrganizationAction
 import com.lateapex.collie.network.OrganizationPlanResponse
 import com.lateapex.collie.network.OrganizationOperationResponse
@@ -1977,6 +1983,59 @@ class CollieRepository(
     /** Read-only per-harness implementation inventory from the exact owning host/session. */
     suspend fun agentCapabilities(scope: Scope = selectedScope.value, expectedContext: ScopedReadContext? = null): ApiResult<AgentCapabilitiesResponse> =
         withConnection(scope, expectedContext = expectedContext) { api.agentCapabilities(it, scope) }
+
+    /** Host administration deliberately drops the selected session; only the selected host crosses this boundary. */
+    private fun hostOnly(scope: Scope?): Scope = Scope(host = scope?.host)
+
+    suspend fun hostIntegrations(scope: Scope? = selectedScope.value): ApiResult<HostIntegrationsResponse> =
+        withResolvedConnection(hostOnly(scope)) { configured, requestScope ->
+            if (!configured.isPaired) return@withResolvedConnection ApiResult.Failure(ApiFailure.Http(403, "Pair this device to inspect host integrations", "pairing.required"))
+            val config = api.config(configured, requestScope)
+            if (config !is ApiResult.Success || config.value.hostControl?.supportsNew("integrations") != true) {
+                return@withResolvedConnection ApiResult.Failure(ApiFailure.Http(501, "Host integration inventory is unavailable on this runtime", "host.integrations_unsupported"))
+            }
+            api.hostIntegrations(configured, requestScope)
+        }
+
+    suspend fun hostIntegrationStatus(scope: Scope? = selectedScope.value): ApiResult<HostIntegrationsResponse> =
+        withResolvedConnection(hostOnly(scope)) { configured, requestScope ->
+            if (!configured.isPaired) return@withResolvedConnection ApiResult.Failure(ApiFailure.Http(403, "Pair this device to inspect host integration details", "device.not_authorised"))
+            val config = api.config(configured, requestScope)
+            if (config !is ApiResult.Success || config.value.hostControl?.supportsNew("integrations") != true) {
+                return@withResolvedConnection ApiResult.Failure(ApiFailure.Http(501, "Host integration status is unavailable on this runtime", "host.integrations_unsupported"))
+            }
+            api.hostIntegrationStatus(configured, requestScope)
+        }
+
+    suspend fun agentManifestStatus(scope: Scope? = selectedScope.value): ApiResult<AgentManifestStatusResponse> =
+        withResolvedConnection(hostOnly(scope)) { configured, requestScope ->
+            if (!configured.isPaired) return@withResolvedConnection ApiResult.Failure(ApiFailure.Http(403, "Pair this device to inspect agent manifests", "device.not_authorised"))
+            val config = api.config(configured, requestScope)
+            if (config !is ApiResult.Success || config.value.hostControl?.supportsNew("agentManifests") != true) {
+                return@withResolvedConnection ApiResult.Failure(ApiFailure.Http(501, "Agent manifest status is unavailable on this runtime", "host.manifests_unsupported"))
+            }
+            api.agentManifestStatus(configured, requestScope)
+        }
+
+    suspend fun planHostOperation(intent: HostOperationIntent, scope: Scope? = selectedScope.value): ApiResult<HostOperationPlanResponse> =
+        withResolvedConnection(hostOnly(scope)) { configured, requestScope ->
+            if (!configured.isPaired) return@withResolvedConnection ApiResult.Failure(ApiFailure.Http(403, "Pair this device before planning host changes", "pairing.required"))
+            val config = api.config(configured, requestScope)
+            if (config !is ApiResult.Success || config.value.hostControl?.supportsNew(intent.capability) != true) {
+                return@withResolvedConnection ApiResult.Failure(ApiFailure.Http(501, "This host operation is unavailable on the selected runtime", "host.operation_unsupported"))
+            }
+            api.planHostOperation(configured, requestScope, intent)
+        }
+
+    suspend fun applyHostOperation(intent: HostOperationIntent, request: HostOperationRequest, scope: Scope? = selectedScope.value): ApiResult<HostOperationResponse> =
+        withResolvedWritableConnection(hostOnly(scope)) { configured, requestScope ->
+            if (!configured.isPaired || !writesAllowed(requestScope)) return@withResolvedWritableConnection ApiResult.Failure(ApiFailure.Http(403, "Pair and authorize this device before changing host integrations", "device.not_authorised"))
+            val config = api.config(configured, requestScope)
+            if (config !is ApiResult.Success || config.value.hostControl?.supportsNew(intent.capability) != true) {
+                return@withResolvedWritableConnection ApiResult.Failure(ApiFailure.Http(501, "This host operation is unavailable on the selected runtime", "host.operation_unsupported"))
+            }
+            api.applyHostOperation(configured, requestScope, intent, request)
+        }
 
     /** `command` must be a value returned by [launchers], never caller-authored shell text. */
     suspend fun launch(

@@ -382,4 +382,36 @@ Also visible in the 0.7.2 schema but unused by Collie: `events.wait`, `pane.send
 
 ## Scoped foundation health mapping
 
-The host adapter's existing `health()` boolean now calls the exact vendor `ping` with empty params through `HerdrClient.handshake()`. Only the expected `pong` discriminant, a nonempty version and uint32 protocol are accepted; an arbitrary successful response is unavailable. This replaces the previous workspace-list reachability surrogate. The handshake provides runtime identity, not inferred feature capabilities. The pinned 0.9.3/protocol22 schema and owned-socket fixture validate decoding; live disposable runtime capture remains acceptance evidence to obtain separately.
+The host adapter's existing `health()` boolean calls the exact vendor `ping` with empty params through `HerdrClient.handshake()`. Only the expected `pong` discriminant, a nonempty version and uint32 protocol are accepted; an arbitrary successful response is unavailable. This replaces the previous workspace-list reachability surrogate. The handshake provides runtime identity, not inferred feature capabilities. The pinned 0.9.3/protocol22 schema and owned-socket fixture validate decoding; live disposable runtime capture remains acceptance evidence to obtain separately.
+
+## Host integration administration (target contract: 0.9.3, protocol 22)
+
+The bridge's host-administration port uses only the versioned socket methods below after a runtime
+handshake confirms protocol 22 and Herdr 0.9.3 or newer. This is a target contract from the retained
+0.9.3 schema and source, not evidence about a currently running server. The native app reaches these
+methods only through paired Collie HTTP and the owning member's Crew routes; it never opens the
+Herdr socket.
+
+| Method | Parameters | Collie behavior |
+|---|---|---|
+| `integration.list` | `{}` | Paired host inventory: declared target, display label, command name, availability and state. Version detail comes from the bounded fixed-argv `herdr integration status` CLI and is shown only on the device-read status route. |
+| `integration.install` | `{ target: IntegrationTarget }` | One-shot explicit install after current host, capability, plan and receipt checks. |
+| `integration.uninstall` | `{ target: IntegrationTarget }` | One-shot explicit removal with the same owner checks. |
+| `server.agent_manifests` | `{}` | Active/cached manifest versions, source kind, warning and last update outcome. |
+| `server.reload_agent_manifests` | `{}` | Reloads already cached manifests; it does not fetch remote data. |
+
+The closed `IntegrationTarget` enum contains `pi`, `omp`, `claude`, `codex`, `copilot`, `devin`,
+`droid`, `kimi`, `opencode`, `kilo`, `hermes`, `qodercli`, `qwen`, `cursor`, `mastracode`,
+`antigravity_cli` and `grok`. Letta is deliberately absent from that socket enum; the adapter exposes
+it as a separate experimental operation using fixed argv (`herdr integration install|uninstall
+letta`) and never accepts a caller-provided command or path. Its install/uninstall plans bind to the
+current parsed `herdr integration status` Letta row; a missing or unparseable row refuses planning.
+Manifest refresh is also a separate
+planned egress action (`herdr server update-agent-manifests --json`).
+
+All admin writes revalidate the host's current inventory or manifest snapshot just before their
+single dispatch. A durable receipt records success, refusal or uncertainty; a timeout remains
+unknown and is never automatically resent. The bounded CLI runner discards raw paths/output from
+responses and does not log them. See [Herdr integrations](https://herdr.dev/docs/integrations/),
+[CLI reference](https://herdr.dev/docs/cli-reference/) and the pinned
+[0.9.3 integration handler](https://github.com/herdrdev/herdr/blob/v0.9.3/src/app/api/integrations.rs).

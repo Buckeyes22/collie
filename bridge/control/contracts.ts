@@ -4,6 +4,17 @@ import type { GateLevel } from "../crew/peer-gate.ts";
 
 /** Closed HTTP vocabulary. Feature owners add concrete entries; no vendor RPC crosses this seam. */
 export const CONTROL_ROUTES = [
+  { name: "host-integrations", method: "GET", pattern: /^\/api\/host\/integrations$/, gate: "read", scope: "host", capability: "integrations", maxBodyBytes: 0 },
+  { name: "host-integration-status", method: "GET", pattern: /^\/api\/host\/integrations\/status$/, gate: "device-read", scope: "host", capability: "integrations", maxBodyBytes: 0 },
+  { name: "host-agent-manifests", method: "GET", pattern: /^\/api\/host\/agent-manifests$/, gate: "device-read", scope: "host", capability: "agentManifests", maxBodyBytes: 0 },
+  { name: "host-letta-plan", method: "POST", pattern: /^\/api\/host\/integrations\/letta\/(?:install|uninstall)\/plan$/, gate: "read", scope: "host", capability: "experimentalLettaIntegration", maxBodyBytes: 0 },
+  { name: "host-letta-write", method: "POST", pattern: /^\/api\/host\/integrations\/letta\/(?:install|uninstall)$/, gate: "write", scope: "host", capability: "experimentalLettaIntegration", maxBodyBytes: 8 * 1024 },
+  { name: "host-integration-plan", method: "POST", pattern: /^\/api\/host\/integrations\/(?!letta\/)(?:[a-z_]+)\/(?:install|uninstall)\/plan$/, gate: "read", scope: "host", capability: "integrations", maxBodyBytes: 0 },
+  { name: "host-integration-write", method: "POST", pattern: /^\/api\/host\/integrations\/(?!letta\/)(?:[a-z_]+)\/(?:install|uninstall)$/, gate: "write", scope: "host", capability: "integrations", maxBodyBytes: 8 * 1024 },
+  { name: "host-manifest-reload-plan", method: "POST", pattern: /^\/api\/host\/agent-manifests\/reload\/plan$/, gate: "read", scope: "host", capability: "manifestReload", maxBodyBytes: 0 },
+  { name: "host-manifest-reload", method: "POST", pattern: /^\/api\/host\/agent-manifests\/reload$/, gate: "write", scope: "host", capability: "manifestReload", maxBodyBytes: 8 * 1024 },
+  { name: "host-manifest-refresh-plan", method: "POST", pattern: /^\/api\/host\/agent-manifests\/refresh\/plan$/, gate: "read", scope: "host", capability: "manifestRefresh", maxBodyBytes: 0 },
+  { name: "host-manifest-refresh", method: "POST", pattern: /^\/api\/host\/agent-manifests\/refresh$/, gate: "write", scope: "host", capability: "manifestRefresh", maxBodyBytes: 8 * 1024 },
   { name: "paneProcesses", method: "GET", pattern: /^\/api\/pane\/[^/]+\/processes$/, gate: "device-read", scope: "session", capability: "paneProcesses", maxBodyBytes: 0 },
   { name: "agentIdentity", method: "GET", pattern: /^\/api\/pane\/[^/]+\/agent$/, gate: "device-read", scope: "session", capability: "agentIdentity", maxBodyBytes: 0 },
   { name: "agentState", method: "POST", pattern: /^\/api\/pane\/[^/]+\/agent\/state$/, gate: "write", scope: "session", capability: "agentLifecycleWrites", maxBodyBytes: 16 * 1024 },

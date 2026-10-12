@@ -32,7 +32,8 @@ import { declareCapabilities } from "../capabilities.ts";
 import { herdrMachineCandidates } from "./machine-list.ts";
 import { herdrSessionSource } from "./sessions.ts";
 import { HERDR_LOGO_SVG } from "./logo.ts";
-import { herdrHostControl } from "../../host-control/herdr.ts";
+import { createHerdrHostControl } from "../../host-control/herdr.ts";
+import type { HostControlPort } from "../../host-control/types.ts";
 import type { MuxAdapterFactory, MuxTarget } from "../registry.ts";
 import {
   muxAck,
@@ -471,7 +472,7 @@ function toMuxWorktree(raw: WireWorktree): MuxWorktree {
 export class HerdrMux implements MuxAdapter {
   readonly mux = HERDR_MUX;
   readonly logo = HERDR_LOGO_SVG;
-  readonly hostControl = herdrHostControl;
+  readonly hostControl: HostControlPort;
   private paneLayoutReady = false;
   private layoutIdentity: string | null = null;
   private readonly legacyCapabilities = declareCapabilities({
@@ -513,7 +514,10 @@ export class HerdrMux implements MuxAdapter {
   constructor(
     private readonly client: HerdrRpc,
     private readonly sessions: () => readonly MuxSession[],
-  ) {}
+    socketPath = "",
+  ) {
+    this.hostControl = createHerdrHostControl(client, socketPath);
+  }
 
   /** Reachability for the connected/disconnected banner — one cheap list call. */
   async reachable(): Promise<boolean> {
@@ -526,13 +530,16 @@ export class HerdrMux implements MuxAdapter {
         const identity = supported ? sample.identity : null;
         this.paneLayoutReady = supported && identity !== null;
         this.layoutIdentity = this.paneLayoutReady ? identity : null;
+        try { await this.hostControl.prepare?.(); } catch { /* admin capability is separate from pane reachability */ }
         // Missing layout evidence may still describe a healthy older runtime. It cannot prove
         // ordinary reachability: the production sample also returns null on a failed ping.
         return sample !== null || await this.client.ping();
       }
       this.paneLayoutReady = false;
       this.layoutIdentity = null;
-      return await this.client.ping();
+      const reachable = await this.client.ping();
+      if (reachable) try { await this.hostControl.prepare?.(); } catch { /* keep the mux reachable */ }
+      return reachable;
     } catch {
       this.paneLayoutReady = false;
       this.layoutIdentity = null;
@@ -1564,6 +1571,7 @@ export const herdrMuxFactory: MuxAdapterFactory = {
     return new HerdrMux(
       new HerdrClient(target.endpoint, target.timeoutMs || DEFAULT_TIMEOUT_MS, dialModeOf(target.options)),
       herdrSessionSource(target.endpoint),
+      target.endpoint,
     );
   },
   describeTarget(endpoint: string) {

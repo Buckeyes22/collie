@@ -377,7 +377,7 @@ beside the skew it reports.
 
 ## Scoped control compatibility
 
-New control support requires a positive declaration in `/api/config.control.capabilities`; legacy mux absent-field compatibility applies only to existing actions. Crew negotiates the peer's independent `hello.controlCapabilities`. `hostControl` declares a separate typed host-management provider/capability/reason surface: current unsupported providers report every administration capability false and typed inspection returns unsupported. This is an interface for later workflows, not a claim that plugin/configuration/install actions exist.
+New control support requires a positive declaration in `/api/config.control.capabilities`; legacy mux absent-field compatibility applies only to existing actions. Crew negotiates the peer's independent `hello.controlCapabilities` and `hello.hostControlCapabilities`. Host integration administration remains a distinct typed port: supported Herdr targets use only the shipped integration/manifests methods after a compatible 0.9.3+ protocol-22 handshake, while Letta has a separately declared CLI adapter. Unsupported providers remain explicitly false; no generic RPC or arbitrary command crosses the boundary.
 
 Native request contexts bind the HTTPS origin including its mount, credential and leader generation, host/session and subject. Space Look now uses the owning session's read-gated POST refresh before snapshot; older 404 peers get a labeled ordinary reload. Captured media scope is checked before upload and before applying its result. Saved copies never authorize terminal or structural actions. Unknown/gateway 401/403 freezes actions while retaining pairing; only exact authoritative Collie pairing provenance retires it.
 

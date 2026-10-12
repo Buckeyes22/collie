@@ -1,4 +1,5 @@
 import { controlGate } from "../control/contracts.ts";
+import { INTEGRATION_TARGETS } from "../host-control/types.ts";
 import type { JsonObject } from "../json.ts";
 import { MASK_VERSION } from "../redact.ts";
 import { MAX_PROCESS_INFO_BODY_BYTES } from "../process-info-limits.ts";
@@ -100,6 +101,11 @@ const FORWARDABLE: readonly RegExp[] = [
   /^launch$/,
   /^launchers$/,
   /^agents\/capabilities$/,
+  // Host administration is an explicit paired HTTP surface. The peer invokes typed Herdr methods;
+  // the lead never turns these into a generic RPC envelope.
+  /^host\/integrations(?:\/status)?$/,
+  new RegExp(`^host/integrations/(?:${INTEGRATION_TARGETS.join("|")}|letta)/(?:install|uninstall)(?:/plan)?$`),
+  /^host\/agent-manifests(?:\/(?:reload|refresh)(?:\/plan)?)?$/,
   // The rows a phone adds, removes and renames (ADR 0094). Each machine keeps its own store, so a
   // `?host=` write lands in THAT member's `launchers-added.json` and nowhere else; no row is ever
   // copied between machines. `forget-device` is the lead's own call when it revokes a device; the
@@ -230,6 +236,15 @@ export function forwardPaneId(route: string): string | undefined {
 export function forwardAuditAction(route: string): string | null {
   if (route === "refresh" || route.startsWith("control/operations/")) return null;
   if (route.endsWith("/plan")) return null;
+  const hostIntegration = /^host\/integrations\/(letta|[a-z_]+)\/(install|uninstall)$/.exec(route);
+  if (hostIntegration) {
+    const target = hostIntegration[1]!;
+    const action = hostIntegration[2] === "install" ? "Install" : "Uninstall";
+    return target === "letta" ? `letta${action}` : `integration${action}`;
+  }
+  if (route === "host/agent-manifests/reload") return "manifestReload";
+  if (route === "host/agent-manifests/refresh") return "manifestRefresh";
+  if (route.startsWith("host/")) return null;
   if (route === "tab") return "tab.create";
   if (route === "workspace") return "workspace.create";
   // `launch` writes either `workspace.launch` or `tab.launch`, decided by the body a route string

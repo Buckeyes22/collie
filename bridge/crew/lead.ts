@@ -225,7 +225,7 @@ export interface CrewLeadDeps {
    */
   readonly hello?: (
     link: CrewLink,
-  ) => Promise<PeerOutcome<{ readonly version: string | null; readonly mux?: MuxConfig | null; readonly controlCapabilities?: Record<string, boolean> | null; readonly receiptContextBound?: boolean | null }>>;
+  ) => Promise<PeerOutcome<{ readonly version: string | null; readonly mux?: MuxConfig | null; readonly controlCapabilities?: Record<string, boolean> | null; readonly hostControlCapabilities?: Record<string, boolean> | null; readonly receiptContextBound?: boolean | null }>>;
   /** This collie's member id and label — the `servers[0]` entry (§9.2). */
   readonly self: { readonly id: string; readonly name: string };
   /**
@@ -398,6 +398,7 @@ export class CrewLead {
    */
   private readonly muxBlocks = new Map<string, MuxConfig>();
   private readonly controlBlocks = new Map<string, Record<string, boolean>>();
+  private readonly hostControlBlocks = new Map<string, Record<string, boolean>>();
   private readonly receiptContextBlocks = new Map<string, boolean>();
   /**
    * Members whose CURRENT link has already answered a hello, so their block is as fresh as the link.
@@ -499,6 +500,7 @@ export class CrewLead {
         // machine this lead no longer knows.
         this.muxBlocks.delete(id);
         this.controlBlocks.delete(id);
+        this.hostControlBlocks.delete(id);
         this.receiptContextBlocks.delete(id);
         this.muxAsked.delete(id);
         this.loggedState.delete(id);
@@ -995,6 +997,8 @@ export class CrewLead {
           this.setCapabilities(link.memberId, outcome.value.mux ?? null);
           if (outcome.value.controlCapabilities) this.controlBlocks.set(link.memberId, outcome.value.controlCapabilities);
           else this.controlBlocks.delete(link.memberId);
+          if (outcome.value.hostControlCapabilities) this.hostControlBlocks.set(link.memberId, outcome.value.hostControlCapabilities);
+          else this.hostControlBlocks.delete(link.memberId);
           if (outcome.value.receiptContextBound === true) this.receiptContextBlocks.set(link.memberId, true);
           else this.receiptContextBlocks.delete(link.memberId);
         }
@@ -1035,6 +1039,11 @@ export class CrewLead {
    */
   controlFor(memberId: string): Record<string, boolean> | null {
     return this.controlBlocks.get(memberId) ?? null;
+  }
+
+  /** Member-local host administration bits; absent or old peers remain unsupported. */
+  hostControlFor(memberId: string): Record<string, boolean> | null {
+    return this.hostControlBlocks.get(memberId) ?? null;
   }
 
   /** True only when the member explicitly advertised owner-bound receipt readiness. */

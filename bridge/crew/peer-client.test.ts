@@ -368,6 +368,7 @@ describe("PeerClient — the verdict matrix (§7, §10.2)", () => {
         warrantActiveGeneration: null,
         pairingDigest: null, pairingCollision: null,
         controlCapabilities: null,
+        hostControlCapabilities: null,
         receiptContextBound: null,
         mux: null,
       },

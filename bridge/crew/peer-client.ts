@@ -21,6 +21,7 @@ import type { CrewRequestInit, CrewTlsOptions } from "./transport.ts";
 import type { Warrant } from "./trust-store.ts";
 import { NARROW_VIEW, SESSIONS_ALL, SESSIONS_PARAM, SESSION_PARAM, type SnapshotView } from "../sessions.ts";
 import type { MuxConfig } from "../types.ts";
+import { HOST_CAPABILITIES } from "../host-control/types.ts";
 import { parseCollisionReport, parsePairingReport, type PairingSync } from "./standby-devices.ts";
 import type { TakeoverBody } from "./takeover.ts";
 import { parseWarrant, parseWarrantActiveReport, type WarrantPush } from "./warrant.ts";
@@ -471,6 +472,8 @@ export interface HelloResult {
    */
   readonly mux: MuxConfig | null;
   readonly controlCapabilities?: Record<string, boolean> | null;
+  /** This member's own positive host-administration declaration; absence never borrows the lead's. */
+  readonly hostControlCapabilities?: Record<string, boolean> | null;
   /** Optional receipt readiness; null/absence is closed for owner-bound replay. */
   readonly receiptContextBound?: boolean | null;
 }
@@ -666,6 +669,7 @@ export class PeerClient {
         pairingCollision,
         mux,
         controlCapabilities: parseControlCapabilities(outcome.value),
+        hostControlCapabilities: parseHostControlCapabilities(outcome.value),
         receiptContextBound: parseReceiptContextBound(outcome.value),
       },
     };
@@ -1473,6 +1477,20 @@ export function parseControlCapabilities(value: JsonValue): Record<string, boole
   if (!block || Object.keys(block).length > 128) return null;
   if (!Object.entries(block).every(([key, yes]) => /^[a-zA-Z][a-zA-Z0-9]{0,63}$/.test(key) && typeof yes === "boolean")) return null;
   return Object.fromEntries(Object.entries(block).map(([key, yes]) => [key, yes === true]));
+}
+
+/** Positive host control is host-local and separately negotiated from pane/session controls. */
+function isHostCapability(key: string): key is (typeof HOST_CAPABILITIES)[number] {
+  return HOST_CAPABILITIES.some((capability) => capability === key);
+}
+
+export function parseHostControlCapabilities(value: JsonValue): Record<string, boolean> | null {
+  const rec = asRecord(value);
+  const block = rec === null ? null : asRecord(rec.hostControlCapabilities);
+  if (!block || Object.keys(block).length !== HOST_CAPABILITIES.length ||
+      !Object.keys(block).every(isHostCapability) ||
+      !Object.values(block).every((answer) => typeof answer === "boolean")) return null;
+  return Object.fromEntries(Object.entries(block).map(([key, answer]) => [key, answer === true]));
 }
 
 /** Missing or malformed peer readiness is never borrowed from the lead. */

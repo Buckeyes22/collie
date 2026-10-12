@@ -1,5 +1,7 @@
 # 0096 — Control authority is scoped and positive
 
+Amended in scope by 0104.
+
 Trail: [B01 foundation brief](../android/acceptance/capability-work-items/B01.md), A00/C01/H01 rejects carrying legacy absent-capability support into new workflows, interpreting proxy prose as pairing revocation, and replaying ambiguous writes. Reaches native transport/repository/screens, Crew forwarding and the control receipt store.
 
 ## Context

@@ -1,7 +1,7 @@
 import { withNativeFinalAdmission } from "./native-access/final-effect.ts";
 import type { GatewayIngress, VerifiedIngressActor } from "./native-access/ingress.ts";
 import { gatewayRefusal } from "./native-access/ingress.ts";
-import { controlScope, refusal, refusalResponse } from "./control/contracts.ts";
+import { controlGate, controlScope, refusal, refusalResponse } from "./control/contracts.ts";
 import { OperationStore } from "./control/operations.ts";
 import { executeBoundIntent, ownerBoundCallerReady, ownerBoundOperationReady, type IntentOwnerContext } from "./intent-operation-binding.ts";
 import { PlanStore } from "./control/plans.ts";
@@ -13,9 +13,9 @@ import { serveWorktreeRemoveRoute } from "./control/worktree-remove.ts";
 import { servePaneProcesses } from "./control/processes.ts";
 import { servePaneAgentIdentity } from "./control/agent-identity.ts";
 import { AgentReporterRegistry, refuseUnsafeAgentMutation, type AgentMutationKind } from "./control/agent-authority.ts";
-import { hostControlForMux } from "./mux/registry.ts";
-import type { HostControlPort } from "./host-control/types.ts";
+import { HOST_CAPABILITIES, type HostControlPort } from "./host-control/types.ts";
 import { hostControlConfig } from "./host-control/registry.ts";
+import { serveHostIntegrationRoute } from "./host-control/integrations.ts";
 import { mkdir } from "node:fs/promises";
 import { isIP } from "node:net";
 import { homedir, networkInterfaces } from "node:os";
@@ -1597,6 +1597,26 @@ export async function startServer(opts: {
       return worktreeRemoveAnswer;
     }
 
+    const hostIntegrationAnswer = await serveHostIntegrationRoute(req, url, {
+      gate: (level) => caller.gate(level),
+      pairedIdentity: () => caller.pairedIdentity?.() ?? null,
+      audit: (action, target, host, outcome) => audit.record({
+        action, host, device: whois(req).device, detail: { target, outcome },
+      }),
+      resolve: async () => {
+        const runtime = await caller.resolve();
+        if (runtime instanceof Response) return runtime;
+        const port = opts.hostControl ?? runtime.herdr.hostControl;
+        return port ? { host: controlHostId, port } : refusalResponse(refusal(
+          "host.control_unsupported", "This host has no verified host-administration adapter", "capability",
+        ), 501);
+      },
+    }, controlPlans, controlOperations);
+    if (hostIntegrationAnswer) {
+      if (req.method === "POST") server.timeout(req, WORKTREE_ROUTE_BUDGET_S);
+      return hostIntegrationAnswer;
+    }
+
     const controlled = await serveControlRoute(req, url, {
       gate: (level) => caller.gate(level),
       device: () => caller.device(),
@@ -2043,6 +2063,10 @@ export async function startServer(opts: {
     // `/api/config` route below publishes to a browser — the primary session's adapter — so a peer
     // cannot report capabilities that differ from the ones it serves its own operator.
     controlCapabilities: () => ({ controlOperations: ownerBoundReady(), worktreeRemove: worktreeRemoveReady(), filesDiscovery: true }),
+    hostControlCapabilities: () => {
+      const port = opts.hostControl ?? registry.get()?.herdr.hostControl;
+      return Object.fromEntries(HOST_CAPABILITIES.map((name) => [name, port?.capabilities[name] === true]));
+    },
     receiptContextBound: ownerBoundReady,
     mux: () => {
       const active = registry.get();
@@ -2568,6 +2592,8 @@ export async function startServer(opts: {
         // is not a choice. `?.` only because `get()` is total over a Map — the primary is created
         // eagerly in the constructor and never disposed.
         const activeMux = registry.get();
+        const hostPort = opts.hostControl ?? activeMux?.herdr.hostControl;
+        await hostPort?.prepare?.();
         // ── `?host=<member>`: THIS MEMBER's capability declaration (M22/03) ──────────────────
         //
         // Answered from what the lead already holds, and never forwarded: `config` is on
@@ -2624,7 +2650,9 @@ export async function startServer(opts: {
             muxTabTransferReady: scoped?.kind === "peer" ? false : scopedControlCapabilities.controlOperations === true,
             // Peer support must be positively negotiated; the lead never lends its declarations.
             control: { capabilities: scopedControlCapabilities },
-            hostControl: scoped?.kind === "peer" ? undefined : hostControlConfig(opts.hostControl ?? hostControlForMux(cfg.mux)),
+            hostControl: scoped?.kind === "peer"
+              ? hostControlConfig(undefined, crewLead?.hostControlFor(scoped.link.memberId) ?? undefined)
+              : hostControlConfig(hostPort),
             // Assigned through `?? undefined` rather than conditionally, so the no-`host=` request
             // builds the byte-identical body it always did (CREW_PROTOCOL.md §11).
             muxWire,

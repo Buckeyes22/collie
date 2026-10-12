@@ -289,6 +289,8 @@ export interface CrewSurface {
   /** This collie's own capability declaration, for `hello`. See {@link MuxSource}. */
   readonly mux?: MuxSource;
   readonly controlCapabilities?: () => Record<string, boolean>;
+  /** Host-local administration bits, advertised independently of the session mux. */
+  readonly hostControlCapabilities?: () => Record<string, boolean>;
   /** Whether this peer has a durable owner-bound intent receipt key; absent is unsupported. */
   readonly receiptContextBound?: () => boolean;
 }
@@ -335,6 +337,8 @@ export interface CrewRouterDeps {
   /** Absent ⇒ `hello` carries no capability block, which reads as "use the lead's" (M22/03). */
   readonly mux?: MuxSource;
   readonly controlCapabilities?: () => Record<string, boolean>;
+  /** Host-local administration bits, independently declared and positively negotiated. */
+  readonly hostControlCapabilities?: () => Record<string, boolean>;
   /** Additive optional readiness; old peers omit it and therefore fail closed for new receipts. */
   readonly receiptContextBound?: () => boolean;
   /** Present only on a current pinned deputy; this endpoint never enters the generic forwarding allowlist. */
@@ -579,6 +583,7 @@ type HelloBody = {
   /** This peer's own capability declaration (§7.1's amendment of 2026-09-08). See {@link CREW_MUX_FIELD}. */
   mux?: MuxConfig;
   controlCapabilities?: Record<string, boolean>;
+  hostControlCapabilities?: Record<string, boolean>;
   receiptContextBound?: boolean;
   monitoringCheckpoint?: MonitoringCheckpointCapabilityReport;
 };
@@ -995,6 +1000,8 @@ export function createCrewRouter(deps: CrewRouterDeps): CrewHandler {
       // the header already renders as text alone.
       const control = deps.controlCapabilities?.();
       if (control !== undefined) hello.controlCapabilities = control;
+      const hostControl = deps.hostControlCapabilities?.();
+      if (hostControl !== undefined) hello.hostControlCapabilities = hostControl;
       const receiptContextBound = deps.receiptContextBound?.();
       if (receiptContextBound !== undefined) hello.receiptContextBound = receiptContextBound;
       const declared = deps.mux?.() ?? null;

@@ -3269,7 +3269,7 @@ describe("the host gate — `?host=` selects among enrolled members and nothing 
     // inventory workspace/tab organization and portable-layout export/plan/apply) reach
     // their runtime through the caller's resolver and nothing else.
     expect([...src.matchAll(/await caller\.resolve\(\);/g)]).toHaveLength(27);
-    // Exactly nine `registry.get(` calls remain, and each is a sanctioned one, named here rather
+    // Exactly ten `registry.get(` calls remain, and each is a sanctioned one, named here rather
     // than exempted: assembling THIS collie's own snapshot body; `localRuntime`, the single
     // "(session) → runtime, or 404" helper both callers share; `/api/config`, which reports THIS
     // collie's own multiplexer (M10/06) and is not session-scoped at all; `/api/mux/logo.svg`,
@@ -3286,9 +3286,10 @@ describe("the host gate — `?host=` selects among enrolled members and nothing 
     // and the hot intent after an input FORWARDED to a member, which tightens THIS collie's primary
     // engine because the sweep that brings the member's answer back rides its tick (CREW_PROTOCOL.md
     // §10.1). It runs after the forward has answered and writes nothing; and the removal-readiness
-    // helper reads the local runtime only to publish its already-negotiated capability in config.
-    // A TENTH would be a route reaching past the gate.
-    expect([...src.matchAll(/registry\.get\(/g)]).toHaveLength(9);
+    // helper reads the local runtime only to publish its already-negotiated capability in config;
+    // and the host-control capability in hello advertises only that same local owning port.
+    // An ELEVENTH would be a route reaching past the gate.
+    expect([...src.matchAll(/registry\.get\(/g)]).toHaveLength(10);
     // The mux read is a read of the LOCAL primary — never `?host=`, because a peer's capabilities
     // are its own business and reach the lead over the crew API, never out of this registry.
     expect(src).toContain("const activeMux = registry.get();");

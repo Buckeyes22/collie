@@ -4,6 +4,10 @@ import android.content.Context
 import android.util.Base64
 import androidx.test.core.app.ApplicationProvider
 import com.lateapex.collie.network.BridgeConfigResponse
+import com.lateapex.collie.network.HostControlResponse
+import com.lateapex.collie.network.HostIntegrationsResponse
+import com.lateapex.collie.network.AgentManifestStatusResponse
+import com.lateapex.collie.network.AgentManifestSnapshot
 import com.lateapex.collie.network.CreateResponse
 import com.lateapex.collie.network.CreatedPane
 import com.lateapex.collie.network.StartTarget
@@ -536,6 +540,39 @@ class CollieRepositoryTest {
         assertFalse(repository.writesAllowed())
         assertTrue(repository.startUpdate("1.6.0", major = false) is ApiResult.Failure)
         assertEquals(0, api.updateCalls)
+    }
+
+    @Test
+    fun pairedHostDiagnosticsUseDeviceReadAdmissionWithoutTerminalWriteAuthority() = runBlocking {
+        val readApi = FakeApi().apply {
+            snapshotDevice = DeviceAuthorization(enforced = true, device = "phone", authorized = false)
+            configResult = ApiResult.Success(BridgeConfigResponse(hostControl = HostControlResponse(capabilities = mapOf(
+                "integrations" to true, "agentManifests" to true,
+            ))), 200)
+        }
+        val readOnly = CollieRepository(readApi, FakeStore(connection), OriginValidator())
+        assertTrue(readOnly.snapshot() is ApiResult.Success)
+        assertFalse(readOnly.writesAllowed())
+
+        assertTrue(readOnly.hostIntegrationStatus() is ApiResult.Success)
+        assertTrue(readOnly.agentManifestStatus() is ApiResult.Success)
+        assertEquals(1, readApi.integrationStatusCalls)
+        assertEquals(1, readApi.manifestStatusCalls)
+
+        val unpairedConnection = Connection(connection.origin, "unpaired", null)
+        val unpairedApi = FakeApi().apply {
+            configResult = ApiResult.Success(BridgeConfigResponse(hostControl = HostControlResponse(capabilities = mapOf(
+                "integrations" to true, "agentManifests" to true,
+            ))), 200)
+        }
+        val unpaired = CollieRepository(unpairedApi, FakeStore(unpairedConnection), OriginValidator())
+        assertTrue(unpaired.snapshot() is ApiResult.Success)
+        val integrationDenied = unpaired.hostIntegrationStatus() as ApiResult.Failure
+        assertEquals("device.not_authorised", (integrationDenied.error as ApiFailure.Http).code)
+        val manifestDenied = unpaired.agentManifestStatus() as ApiResult.Failure
+        assertEquals("device.not_authorised", (manifestDenied.error as ApiFailure.Http).code)
+        assertEquals(0, unpairedApi.integrationStatusCalls)
+        assertEquals(0, unpairedApi.manifestStatusCalls)
     }
 
     @Test
@@ -1754,6 +1791,8 @@ class CollieRepositoryTest {
     }
 
     private class FakeApi : CollieApi {
+        var integrationStatusCalls = 0
+        var manifestStatusCalls = 0
         var machineHistoryCalls = 0
         val machineHistoryIds = mutableListOf<String>()
         var machineRuleCalls = 0
@@ -1838,6 +1877,14 @@ class CollieRepositoryTest {
             configEntered?.complete(Unit)
             configGate?.await()
             return configResult
+        }
+        override suspend fun hostIntegrationStatus(connection: Connection, scope: Scope): ApiResult<HostIntegrationsResponse> {
+            integrationStatusCalls++
+            return ApiResult.Success(HostIntegrationsResponse(true, emptyList(), "authoritative"), 200)
+        }
+        override suspend fun agentManifestStatus(connection: Connection, scope: Scope): ApiResult<AgentManifestStatusResponse> {
+            manifestStatusCalls++
+            return ApiResult.Success(AgentManifestStatusResponse(true, AgentManifestSnapshot(emptyList())), 200)
         }
         override suspend fun machineHistory(
             connection: Connection,

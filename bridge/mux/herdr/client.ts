@@ -8,6 +8,7 @@ import { WriteAdmissionRetired, dialHerdr, type DialMode, type SockHandle } from
 import { decodeReplyLine, decodeStreamLine, type EventData } from "../../wire.ts";
 import { redactText } from "../../redact.ts";
 import { randomUUID } from "node:crypto";
+import { INTEGRATION_TARGETS, type AgentManifestSnapshot, type AgentManifestSummary, type IntegrationTarget, type IntegrationSummary, type HostMutationResult } from "../../host-control/types.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The Herdr socket TRANSPORT. THIS IS THE ONLY FILE that knows Herdr's method
@@ -334,6 +335,126 @@ function wireText(row: JsonObject, field: string, optional = false): string | un
   return value;
 }
 
+function integrationTarget(value: JsonValue | undefined): IntegrationTarget | null {
+  if (value === undefined || value === null || Array.isArray(value)) return null;
+  return INTEGRATION_TARGETS.find((target) => target === value) ?? null;
+}
+
+function integrationRows(value: JsonValue | undefined): readonly IntegrationSummary[] {
+  if (!Array.isArray(value) || value.length > INTEGRATION_TARGETS.length) throw new Error("herdr integration.list: malformed integrations");
+  const seen = new Set<string>();
+  return value.map((item) => {
+    if (item === null || typeof item !== "object" || Array.isArray(item)) throw new Error("herdr integration.list: malformed integration");
+    // SAFETY: null and arrays were excluded; this value is one JSON object row.
+    const row = item as JsonObject;
+    const target = integrationTarget(row.target);
+    if (!target || seen.has(target)) throw new Error("herdr integration.list: invalid or duplicate target");
+    seen.add(target);
+    const label = wireText(row, "label");
+    const command = wireText(row, "command");
+    if (label.length > 256 || command.length > 512 || typeof row.available !== "boolean" ||
+        (row.state !== "not_installed" && row.state !== "current" && row.state !== "outdated")) {
+      throw new Error("herdr integration.list: malformed integration status");
+    }
+    const optionalVersion = (key: string): string | null | undefined => {
+      const raw = row[key];
+      if (raw === undefined) return undefined;
+      if (raw === null) return null;
+      if (typeof raw !== "string" || raw.length > 128) throw new Error(`herdr integration.list: malformed ${key}`);
+      return raw;
+    };
+    return { target, label, command, available: row.available, state: row.state,
+      installedVersion: optionalVersion("installed_version"), requiredVersion: optionalVersion("required_version") };
+  });
+}
+
+function manifestRows(value: JsonValue | undefined): readonly AgentManifestSummary[] {
+  if (!Array.isArray(value) || value.length > 256) throw new Error("herdr server.agent_manifests: malformed manifests");
+  const rows = value.map((item) => {
+    if (item === null || typeof item !== "object" || Array.isArray(item)) throw new Error("herdr server.agent_manifests: malformed manifest");
+    // SAFETY: null and arrays were excluded; this value is one JSON object row.
+    const row = item as JsonObject;
+    const agent = wireText(row, "agent");
+    const source = wireText(row, "source");
+    const sourceKind = wireText(row, "source_kind");
+    const nullableText = (key: string): string | null => {
+      const raw = row[key];
+      if (raw === undefined || raw === null) return null;
+      if (typeof raw !== "string" || raw.length > 2048) throw new Error(`herdr server.agent_manifests: malformed ${key}`);
+      return raw;
+    };
+    const nullableUnix = (key: string): string | null => {
+      const raw = row[key];
+      if (raw === undefined || raw === null) return null;
+      if (typeof raw === "string") {
+        const encoded = parseEncodedUint64(raw);
+        if (encoded !== null) return encoded;
+      }
+      if (typeof raw !== "number" || !Number.isSafeInteger(raw) || raw < 0) throw new Error(`herdr server.agent_manifests: malformed ${key}`);
+      return String(raw);
+    };
+    if (agent.length > 256 || source.length > 2048 || sourceKind.length > 128 || typeof row.local_override_shadowing_remote !== "boolean") {
+      throw new Error("herdr server.agent_manifests: malformed manifest status");
+    }
+    return {
+      agent, source, sourceKind,
+      activeVersion: nullableText("active_version"),
+      cachedRemoteVersion: nullableText("cached_remote_version"),
+      localOverrideShadowingRemote: row.local_override_shadowing_remote,
+      remoteLastCheckedUnix: nullableUnix("remote_last_checked_unix"),
+      remoteUpdateResult: nullableText("remote_update_result"),
+      remoteUpdateError: nullableText("remote_update_error"),
+      warning: nullableText("warning"),
+    };
+  });
+  const ids = rows.map((row) => row.agent);
+  if (new Set(ids).size !== ids.length) throw new Error("herdr server.agent_manifests: duplicate agent");
+  return rows;
+}
+
+function parseNullableText(value: JsonValue | undefined, field: string): string | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string" || value.length > 2048) throw new Error(`herdr server.agent_manifests: malformed ${field}`);
+  return value;
+}
+
+function parseNullableUint64(value: JsonValue | undefined, field: string): string | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value === "string") {
+    const encoded = parseEncodedUint64(value);
+    if (encoded !== null) return encoded;
+  }
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) throw new Error(`herdr server.agent_manifests: malformed ${field}`);
+  return String(value);
+}
+
+function parseEncodedUint64(value: string): string | null {
+  const parts = value.split(".");
+  if (parts.length !== 4 || parts[0] !== "\u0000collie" || parts[1] !== "uint64" || parts[2] === "") return null;
+  const digits = parts[3]!;
+  if (digits.length < 1 || digits.length > 20 || (digits.length > 1 && digits[0] === "0")) return null;
+  for (const digit of digits) {
+    const code = digit.charCodeAt(0);
+    if (code < 48 || code > 57) return null;
+  }
+  return digits;
+}
+
+function hostMutation(value: JsonValue, type: "integration_install" | "integration_uninstall", target: IntegrationTarget): HostMutationResult {
+  const row = wireObject(value, `${type} result`);
+  if (row.type !== type || integrationTarget(row.target) !== target) throw new Error(`herdr ${type}: result target mismatch`);
+  const details = wireObject(row.details, `${type} details`);
+  if (!Array.isArray(details.messages) || details.messages.length > 64 || !details.messages.every((message) => typeof message === "string" && message.length <= 2048)) {
+    throw new Error(`herdr ${type}: malformed messages`);
+  }
+  const messages: string[] = [];
+  for (const message of details.messages) {
+    if (typeof message !== "string" || message.length > 2048) throw new Error(`herdr ${type}: malformed messages`);
+    messages.push(message);
+  }
+  return { messages };
+}
+
 function wirePid(row: JsonObject, field: string): number | undefined {
   const value = row[field];
   if (value === undefined || value === null) return undefined;
@@ -490,6 +611,11 @@ export type HerdrRpc = Pick<
   | "exportLayout"
   | "applyLayout"
   | "setSplitRatio"
+  | "listIntegrations"
+  | "installIntegration"
+  | "uninstallIntegration"
+  | "agentManifests"
+  | "reloadAgentManifests"
 >>;
 
 let idCounter = 0;
@@ -824,6 +950,39 @@ export class HerdrClient {
     const agent = parseWireAgentInfo(result.agent, exactUint64Marker);
     if (agent.pane_id !== paneId) throw new Error("herdr agent.get: target identity mismatch");
     return agent;
+  }
+
+  /** Host administration methods are a fixed, closed set; never accepts a method name from callers. */
+  async listIntegrations(): Promise<readonly IntegrationSummary[]> {
+    const result = wireObject(await this.request<JsonValue>("integration.list"), "integration.list result");
+    if (result.type !== "integration_list") throw new Error("herdr integration.list: unexpected result type");
+    return integrationRows(result.integrations);
+  }
+
+  async installIntegration(target: IntegrationTarget, admission?: HerdrDispatchAdmission): Promise<HostMutationResult> {
+    if (!INTEGRATION_TARGETS.some((candidate) => candidate === target)) throw new Error("invalid integration target");
+    const result = await this.request<JsonValue>("integration.install", { target }, this.timeoutMs, undefined, undefined, admission);
+    return hostMutation(result, "integration_install", target);
+  }
+
+  async uninstallIntegration(target: IntegrationTarget, admission?: HerdrDispatchAdmission): Promise<HostMutationResult> {
+    if (!INTEGRATION_TARGETS.some((candidate) => candidate === target)) throw new Error("invalid integration target");
+    const result = await this.request<JsonValue>("integration.uninstall", { target }, this.timeoutMs, undefined, undefined, admission);
+    return hostMutation(result, "integration_uninstall", target);
+  }
+
+  async agentManifests(): Promise<AgentManifestSnapshot> {
+    const marker = randomUUID();
+    const result = wireObject(await this.request<JsonValue>("server.agent_manifests", {}, this.timeoutMs, 512 * 1024, marker), "server.agent_manifests result");
+    if (result.type !== "agent_manifest_status") throw new Error("herdr server.agent_manifests: unexpected result type");
+    return { manifests: manifestRows(result.manifests), lastCheckUnix: parseNullableUint64(result.last_check_unix, "last_check_unix"), lastResult: parseNullableText(result.last_result, "last_result") };
+  }
+
+  async reloadAgentManifests(admission?: HerdrDispatchAdmission): Promise<AgentManifestSnapshot> {
+    const marker = randomUUID();
+    const result = wireObject(await this.request<JsonValue>("server.reload_agent_manifests", {}, this.timeoutMs, 512 * 1024, marker, admission), "server.reload_agent_manifests result");
+    if (result.type !== "agent_manifest_reload") throw new Error("herdr server.reload_agent_manifests: unexpected result type");
+    return { manifests: manifestRows(result.manifests) };
   }
 
   /** Fetch sensitive process metadata for the explicit target; never asks Herdr to infer focus. */

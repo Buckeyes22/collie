@@ -91,6 +91,11 @@ interface CollieApi {
     suspend fun refresh(connection: Connection, scope: Scope = Scope()): ApiResult<ActionResponse>
     suspend fun pair(origin: CollieOrigin, code: String, label: String): ApiResult<PairResult>
     suspend fun controlOperation(connection: Connection, scope: Scope, requestId: String): ApiResult<ControlOperationResponse> = unavailable("Control operations")
+    suspend fun hostIntegrations(connection: Connection, scope: Scope): ApiResult<HostIntegrationsResponse> = unavailable("Host integrations")
+    suspend fun hostIntegrationStatus(connection: Connection, scope: Scope): ApiResult<HostIntegrationsResponse> = unavailable("Host integration status")
+    suspend fun agentManifestStatus(connection: Connection, scope: Scope): ApiResult<AgentManifestStatusResponse> = unavailable("Agent manifests")
+    suspend fun planHostOperation(connection: Connection, scope: Scope, intent: HostOperationIntent): ApiResult<HostOperationPlanResponse> = unavailable("Host operation plan")
+    suspend fun applyHostOperation(connection: Connection, scope: Scope, intent: HostOperationIntent, request: HostOperationRequest): ApiResult<HostOperationResponse> = unavailable("Host operation")
     suspend fun paneLayout(connection: Connection, address: PaneAddress): ApiResult<PaneLayoutReadResponse> = unavailable("Pane layout")
     suspend fun paneLayoutRead(connection: Connection, address: PaneAddress, kind: String, direction: String? = null): ApiResult<PaneLayoutReadResponse> = unavailable("Pane layout inspection")
     suspend fun planPaneLayout(connection: Connection, address: PaneAddress, action: kotlinx.serialization.json.JsonObject): ApiResult<PaneLayoutPlanResponse> = unavailable("Pane layout plan")
@@ -1656,6 +1661,34 @@ class CollieApiClient(
         require(requestId.matches(Regex("[a-zA-Z0-9_-]{1,128}")))
         val result = executeJson(request(connection, scopedUrl(connection.origin, listOf("api", "control", "operations", requestId), scope)), ControlOperationResponse.serializer(), READ_TIMEOUT_SECONDS)
         return requireContract(result, "Unknown or mismatched control operation") { it.ok && it.operation.validFor(requestId) }
+    }
+
+    override suspend fun hostIntegrations(connection: Connection, scope: Scope): ApiResult<HostIntegrationsResponse> {
+        val result = executeJson(request(connection, scopedUrl(connection.origin, path("host", "integrations"), scope)), HostIntegrationsResponse.serializer(), READ_TIMEOUT_SECONDS)
+        return requireContract(result, "Malformed host integration inventory") { it.valid() }
+    }
+
+    override suspend fun hostIntegrationStatus(connection: Connection, scope: Scope): ApiResult<HostIntegrationsResponse> {
+        val result = executeJson(request(connection, scopedUrl(connection.origin, path("host", "integrations", "status"), scope)), HostIntegrationsResponse.serializer(), READ_TIMEOUT_SECONDS)
+        return requireContract(result, "Malformed host integration status") { it.valid() }
+    }
+
+    override suspend fun agentManifestStatus(connection: Connection, scope: Scope): ApiResult<AgentManifestStatusResponse> {
+        val result = executeJson(request(connection, scopedUrl(connection.origin, path("host", "agent-manifests"), scope)), AgentManifestStatusResponse.serializer(), READ_TIMEOUT_SECONDS, maxResponseBytes = MAX_LAYOUT_RESPONSE_BYTES)
+        return requireContract(result, "Malformed agent manifest status") { it.ok && it.status.valid() }
+    }
+
+    override suspend fun planHostOperation(connection: Connection, scope: Scope, intent: HostOperationIntent): ApiResult<HostOperationPlanResponse> {
+        val result = executeJson(post(connection, scopedUrl(connection.origin, intent.path(plan = true), scope), ""), HostOperationPlanResponse.serializer(), READ_TIMEOUT_SECONDS, maxResponseBytes = MAX_LAYOUT_RESPONSE_BYTES)
+        return requireContract(result, "Malformed host operation plan") { response -> response.valid() && (response.plan == null || response.plan.targetIdentity == intent.targetIdentity) }
+    }
+
+    override suspend fun applyHostOperation(connection: Connection, scope: Scope, intent: HostOperationIntent, request: HostOperationRequest): ApiResult<HostOperationResponse> {
+        require(request.requestId.matches(Regex("[A-Za-z0-9_-]{1,128}")))
+        require(request.planToken.matches(Regex("[A-Za-z0-9_.:-]{1,128}")) && request.confirmed)
+        val body = json.encodeToString(HostOperationRequest.serializer(), request)
+        val result = executeJson(post(connection, scopedUrl(connection.origin, intent.path(plan = false), scope), body), HostOperationResponse.serializer(), MUTATION_TIMEOUT_SECONDS, maxResponseBytes = MAX_LAYOUT_RESPONSE_BYTES)
+        return requireContract(result, "Malformed host operation receipt") { it.validFor(request.requestId, intent.capability, intent.targetIdentity) }
     }
 
     override suspend fun paneLayout(connection: Connection, address: PaneAddress): ApiResult<PaneLayoutReadResponse> {

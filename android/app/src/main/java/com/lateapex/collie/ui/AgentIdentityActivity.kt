@@ -131,6 +131,11 @@ class AgentIdentityActivity : AppCompatActivity() {
                 viewModel.refresh()
             }
         }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        content.addView(Button(this).apply {
+            text = getString(R.string.agent_identity_manage_integrations)
+            contentDescription = text
+            setOnClickListener { startActivity(Intent(this@AgentIdentityActivity, IntegrationsActivity::class.java)) }
+        }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
     }
 
     private fun problemText(problem: AgentIdentityProblem?): String = when (problem) {

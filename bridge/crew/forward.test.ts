@@ -222,6 +222,30 @@ describe("which routes cross a link", () => {
     expect(crewRouteFor("/api/agents/capabilities/launch")).toBeNull();
   });
 
+  test("host integration routes cross Crew with the owning member's declared read gates", () => {
+    const cases = [
+      ["/api/host/integrations", "host/integrations", "GET", "read", null],
+      ["/api/host/integrations/status", "host/integrations/status", "GET", "device-read", null],
+      ["/api/host/agent-manifests", "host/agent-manifests", "GET", "device-read", null],
+      ["/api/host/integrations/claude/install/plan", "host/integrations/claude/install/plan", "POST", "read", null],
+      ["/api/host/integrations/claude/install", "host/integrations/claude/install", "POST", "write", "integrationInstall"],
+      ["/api/host/integrations/letta/uninstall/plan", "host/integrations/letta/uninstall/plan", "POST", "read", null],
+      ["/api/host/integrations/letta/uninstall", "host/integrations/letta/uninstall", "POST", "write", "lettaUninstall"],
+      ["/api/host/agent-manifests/reload", "host/agent-manifests/reload", "POST", "write", "manifestReload"],
+      ["/api/host/agent-manifests/refresh/plan", "host/agent-manifests/refresh/plan", "POST", "read", null],
+      ["/api/host/agent-manifests/refresh", "host/agent-manifests/refresh", "POST", "write", "manifestRefresh"],
+    ] as const;
+    for (const [path, route, method, gate, audit] of cases) {
+      expect(crewRouteFor(path)).toBe(route);
+      expect(apiPathFor(route)).toBe(path);
+      expect(forwardGate(route, method)).toBe(gate);
+      expect(forwardKind(route, method)).toBe(gate === "write" ? "write" : "read");
+      expect(forwardAuditAction(route)).toBe(audit);
+    }
+    expect(crewRouteFor("/api/host/integrations/claude/install/extra")).toBeNull();
+    expect(crewRouteFor("/api/host/integrations/unsafe_target/install")).toBeNull();
+  });
+
   test("the folder list and a star on it cross the link — folders live on the member that has them", () => {
     // #289: the new-space sheet's list is that member's own `folders.json`, so a `?host=` read or star
     // reaches the member, never the lead's file.

@@ -1,4 +1,3 @@
-import { herdrHostControl } from "../host-control/herdr.ts";
 import type { HostControlPort } from "../host-control/types.ts";
 // The mux registry — the SINGLE decision site for "which multiplexer is this collie driving".
 //
@@ -237,6 +236,8 @@ export function createMux(
 
 /** Provider selection stays at the mux registry seam; declaration never implies administration support. */
 export function hostControlForMux(name: string): HostControlPort | undefined {
-  const providers = new Map([["herdr", herdrHostControl]]);
-  return providers.get(name);
+  // Administration is bound to a runtime adapter instance and its verified endpoint witness.
+  // A mux name alone cannot establish which host/server would receive a write.
+  void name;
+  return undefined;
 }
