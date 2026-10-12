@@ -247,6 +247,16 @@ completed uploads do not persist the provider URI or its grant.
   even when notification coalesces and the same Connection object returns. Re-saving the exact live
   instance preserves its ID. Older encrypted records without an ID require deliberate reconnect;
   reading an old record does not mint new authority.
+- Machines reads the paired lead-owned census and per-machine 24-hour history. Short sparks occupy
+  their actual most recent minutes within a fixed 30-minute plot, with missing minutes left blank.
+  Gateway identity, gateway device and unclassified access failures retain their original explanation
+  when the read actor retires; refreshing that retired screen cannot borrow a replacement actor. Resource samples,
+  optional network/load/disk measurements, stale sample age, and missing minutes stay distinct from
+  zero; CPU and memory charts have a textual table, and polling stops whenever the screen leaves
+  the foreground. Long lead rosters remain complete and are shown in bounded pages. The fixed
+  24-hour chart/table names its time range and lists leading, internal, and trailing gaps. Access
+  refusals retain known pairing or gateway-factor meaning; unknown provenance is labeled neutrally.
+  It does not edit alert rules or provide background notification delivery.
 - The Keys drawer keeps primary keys and modifiers together, wrapping on narrow phones to retain
   48 dp touch targets. Its More sheet holds presets and function keys.
 - The worktree sheet lists a repository's linked worktrees that have no open space; selecting one

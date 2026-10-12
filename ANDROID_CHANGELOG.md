@@ -12,6 +12,9 @@ the first Android release from this fork.
 - Keep local acknowledged Codex input on a harmless current recommit and fence its production cache to the committed connection incarnation; replacement credentials cannot restore the old acknowledgement.
 
 - Native identity sign-in requests the operator profile's bounded additional API scopes and displays the complete scope list during import review, while preserving exact signed token audience and proof-key verification.
+- Keep original gateway identity/device refusals visible on Machines and align short resource sparks within the full 30-minute window.
+
+- Add a native Machines screen for lead-owned resource samples, accessible 30-minute sparks, and a fixed 24-hour chart/table with explicit gaps; long rosters remain reachable through pages.
 
 - Accept an exact OIDC root issuer without a trailing slash while preserving literal discovery, callback and signed-token issuer checks.
 

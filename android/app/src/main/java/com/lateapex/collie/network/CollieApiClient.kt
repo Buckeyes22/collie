@@ -100,6 +100,9 @@ interface CollieApi {
     suspend fun devices(connection: Connection): ApiResult<DevicesResponse>
     suspend fun revokeDevice(connection: Connection, label: String): ApiResult<DevicesResponse> = unavailable("Device revoke")
     suspend fun crew(connection: Connection): ApiResult<CrewStatusResponse> = unavailable("Crew status")
+    /** Lead-owned census. The machine id is response data, never a request origin or crew selector. */
+    suspend fun machines(connection: Connection, spark: Int = MAX_MACHINE_SPARK_MINUTES): ApiResult<MachinesResponse> = unavailable("Machine resources")
+    suspend fun machineHistory(connection: Connection, machineId: String, since: Long? = null): ApiResult<MachineHistoryResponse> = unavailable("Machine history")
     /** [etag] from the last answer to the same read: an unchanged page comes back as NotModified. */
     suspend fun history(
         connection: Connection,
@@ -574,6 +577,28 @@ class CollieApiClient(
             result.error.status == 404 && result.error.code != "crew.not_lead"
         ) return executeJson(request(connection, url(connection.origin, path("pack"))), CrewStatusResponse.serializer(), READ_TIMEOUT_SECONDS)
         return result
+    }
+
+    override suspend fun machines(connection: Connection, spark: Int): ApiResult<MachinesResponse> {
+        require(spark in 1..MAX_MACHINE_SPARK_MINUTES)
+        val url = url(connection.origin, path("machines")).newBuilder()
+            .addQueryParameter("spark", spark.toString()).build()
+        return requireContract(
+            executeJson(request(connection, url), MachinesResponse.serializer(), READ_TIMEOUT_SECONDS, maxResponseBytes = MAX_MACHINE_RESPONSE_BYTES),
+            "Malformed machine resources response",
+        ) { it.isValid() }
+    }
+
+    override suspend fun machineHistory(connection: Connection, machineId: String, since: Long?): ApiResult<MachineHistoryResponse> {
+        if (!isValidMachineId(machineId) || since?.let { it !in 0..9_007_199_254_740_991L } == true) {
+            return ApiResult.Failure(ApiFailure.Protocol("Machine history request is malformed"))
+        }
+        val leadingQuery = since?.let { listOf("since" to it.toString()) }.orEmpty()
+        val url = scopedUrl(connection.origin, path("machines", machineId, "history"), Scope(), leadingQuery)
+        return requireContract(
+            executeJson(request(connection, url), MachineHistoryResponse.serializer(), READ_TIMEOUT_SECONDS, maxResponseBytes = MAX_MACHINE_RESPONSE_BYTES),
+            "Malformed machine history response",
+        ) { it.isValid(since) }
     }
 
     override suspend fun history(
@@ -1892,6 +1917,7 @@ class CollieApiClient(
         private const val MAX_HISTORY_LIMIT = 5_000
         private const val MAX_PROCESS_INFO_TEXT_CHARS = 220 * 1024
         private const val MAX_PROCESS_INFO_BODY_BYTES = 1_000_000
+        internal const val MAX_MACHINE_RESPONSE_BYTES = 1_000_000
         internal const val MAX_LAYOUT_RESPONSE_BYTES = 1_000_000
         private const val MAX_CACHE_RULES_BODY_BYTES = 256_000
         private const val MAX_CACHE_WATCH_LIST_BODY_BYTES = 256_000

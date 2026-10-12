@@ -327,6 +327,21 @@
             android:textColor="@color/collie_on_background"
             android:textSize="13sp" />
 
+        <TextView
+            android:id="@+id/dashboard_machines_button"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/collie_touch_target"
+            android:background="?attr/selectableItemBackground"
+            android:clickable="true"
+            android:contentDescription="@string/machines_open_dashboard_accessibility"
+            android:focusable="true"
+            android:gravity="center_vertical"
+            android:minHeight="@dimen/collie_touch_target"
+            android:paddingHorizontal="16dp"
+            android:text="@string/machines_title"
+            android:textColor="@color/collie_on_background"
+            android:textSize="13sp" />
+
         <View
             android:layout_width="match_parent"
             android:layout_height="1dp"

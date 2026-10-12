@@ -29,6 +29,7 @@ import com.lateapex.collie.network.ChangesLookup
 import com.lateapex.collie.network.ChangesTarget
 import com.lateapex.collie.network.DevicesResponse
 import com.lateapex.collie.network.MuxConfigResponse
+import com.lateapex.collie.network.MachineHistoryResponse
 import com.lateapex.collie.network.DeviceAuthorization
 import com.lateapex.collie.network.HealthResponse
 import com.lateapex.collie.network.NotificationState
@@ -68,6 +69,23 @@ class CollieRepositoryTest {
     private val store = FakeStore(connection)
     private val api = FakeApi()
     private val repository = CollieRepository(api, store, OriginValidator())
+
+    @Test
+    fun machineHistoryRejectsMalformedMemberIdsBeforeApiDispatch() = runBlocking {
+        val context = repository.machineReadContext()!!
+        val invalidIds = listOf("peer east", "peer_1", "Upper", "høst", "peer\nhost", "../peer", "a".repeat(64))
+
+        invalidIds.forEach { id ->
+            val result = repository.machineHistory(context, id)
+            assertTrue("Invalid machine ID must be a local protocol refusal: $id", result is ApiResult.Failure)
+            assertEquals(ApiFailure.Protocol("Machine history request is malformed"), (result as ApiResult.Failure).error)
+        }
+        assertEquals("Malformed history IDs must not reach the API", 0, api.machineHistoryCalls)
+
+        val maximumId = "a" + "z".repeat(62)
+        assertTrue(repository.machineHistory(context, maximumId, since = 0) is ApiResult.Success)
+        assertEquals(listOf(maximumId), api.machineHistoryIds)
+    }
 
     @Test
     fun processInspectionRequiresPositiveScopedMuxCapability() = runBlocking {
@@ -1382,6 +1400,8 @@ class CollieRepositoryTest {
     }
 
     private class FakeApi : CollieApi {
+        var machineHistoryCalls = 0
+        val machineHistoryIds = mutableListOf<String>()
         val paneEtags = mutableListOf<String?>()
         val paneLines = mutableListOf<Int>()
         var replyCalls = 0
@@ -1455,6 +1475,15 @@ class CollieRepositoryTest {
             configEntered?.complete(Unit)
             configGate?.await()
             return configResult
+        }
+        override suspend fun machineHistory(
+            connection: Connection,
+            machineId: String,
+            since: Long?,
+        ): ApiResult<MachineHistoryResponse> {
+            machineHistoryCalls++
+            machineHistoryIds += machineId
+            return ApiResult.Success(MachineHistoryResponse(0, 60_000, emptyList()), 200)
         }
         override suspend fun launchers(connection: Connection, scope: Scope): ApiResult<LaunchersResponse> = launchersResult
         override suspend fun checkRun(connection: Connection, scope: Scope, run: String): ApiResult<LaunchCheckResponse> = launchCheckResult

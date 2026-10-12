@@ -193,6 +193,12 @@ class PackActivity : AppCompatActivity() {
             setTextColor(color(R.color.collie_foreground))
             setPadding(dp(8), 0, 0, 0)
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        addView(MaterialButton(this@PackActivity).apply {
+            setText(R.string.machines_title)
+            contentDescription = getString(R.string.machines_open_pack_accessibility)
+            minHeight = dp(48)
+            setOnClickListener { startActivity(Intent(this@PackActivity, MachinesActivity::class.java)) }
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)))
     }
 
     private fun emptyCard(): LinearLayout = LinearLayout(this).apply {

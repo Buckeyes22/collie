@@ -19,7 +19,7 @@ class ScopedReadContext internal constructor(
     override fun toString(): String = "ScopedReadContext(key=$key)"
 }
 
-/** No credentials/content are included in invalidation events. */
+/** Public retirement facts exclude credentials; the original Connection stays private for identity checks. */
 enum class AuthorityInvalidation { ACCESS_FROZEN, SCOPE_CHANGED, CONNECTION_CHANGED, LEAD_CHANGED, SAVED_COPY, PAIRING_RETIRED, DISCONNECTED }
 
 /** Durable local custody identity. It contains no bearer or copied server content. */

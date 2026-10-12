@@ -65,6 +65,175 @@ class CollieApiClientTest {
     }
 
 
+    @Test
+    fun machineReadsUseLeadOwnedMountedEndpointsAndDecodeTheHistoryTuple() = runBlocking {
+        val mounted = Connection(CollieOrigin(server.url("/nested/collie/").toString()), "phone", "token")
+        server.enqueue(MockResponse().setBody("""{"ts":120000,"machines":[{"id":"lead","name":"Lead","isLead":true,"health":"reachable","sample":{"cpu":0.25,"cores":4,"memUsed":2,"memTotal":8},"sampledAt":60000,"alerts":{},"firing":[],"spark":{"stepMs":60000,"cpu":[0.2,null],"mem":[0.5,null]}}]}"""))
+        val census = api.machines(mounted, spark = 30)
+        assertTrue(census is ApiResult.Success)
+        assertEquals(0.25, (census as ApiResult.Success).value.machines.single().sample?.cpu ?: -1.0, 0.0)
+        val censusRequest = server.takeRequest()
+        assertEquals("/nested/collie/api/machines?spark=30", censusRequest.path)
+        assertEquals("Bearer token", censusRequest.getHeader("Authorization"))
+
+        server.enqueue(MockResponse().setBody("""{"ts":180000,"stepMs":60000,"points":[[60000,0.2,0.4,0.5,null,12],[120000,0.3,0.5,0.6,13,14,0.7]]}"""))
+        val history = api.machineHistory(mounted, "peer-east", since = 60000)
+        assertTrue(history is ApiResult.Success)
+        val points = (history as ApiResult.Success).value.points
+        assertEquals(2, points.size)
+        assertEquals(60_000L, points.first().t)
+        assertNull(points.first().rxBps)
+        assertEquals(0.7, points.last().disk ?: -1.0, 0.0)
+        val historyRequest = server.takeRequest()
+        assertEquals("/nested/collie/api/machines/peer-east/history?since=60000", historyRequest.path)
+        assertEquals("Bearer token", historyRequest.getHeader("Authorization"))
+    }
+
+    @Test
+    fun machineHistoryRejectsMalformedIdsBeforeMakingAnyHttpsRequest() = runBlocking {
+        val mounted = Connection(CollieOrigin(server.url("/nested/collie/").toString()), "phone", "token")
+        val invalidIds = listOf(
+            "",
+            " ",
+            "peer east",
+            "peer_1",
+            "Upper",
+            "høst",
+            "peer\nhost",
+            "../peer",
+            "a".repeat(64),
+        )
+
+        invalidIds.forEach { id ->
+            val result = api.machineHistory(mounted, id)
+            assertTrue("Invalid machine ID should be a typed local refusal: $id", result is ApiResult.Failure)
+            assertEquals(ApiFailure.Protocol("Machine history request is malformed"), (result as ApiResult.Failure).error)
+        }
+        assertEquals("Malformed IDs must be refused before network dispatch", 0, server.requestCount)
+
+        val maximumId = "a" + "z".repeat(62)
+        server.enqueue(jsonResponse("""{"ts":120000,"stepMs":60000,"points":[]}"""))
+        val maximum = api.machineHistory(mounted, maximumId)
+        assertTrue("The declared 63-character member-ID boundary is valid", maximum is ApiResult.Success)
+        assertEquals("/nested/collie/api/machines/$maximumId/history", server.takeRequest().path)
+    }
+
+    @Test
+    fun machineCensusUsesProducerAsciiIdGrammarAndAcceptsSoloAndMaximumIds() = runBlocking {
+        val mounted = Connection(CollieOrigin(server.url("/mounted/").toString()), "phone", "token")
+        val validIds = listOf("local", "a", "0", "a" + "z".repeat(62))
+        val validRows = validIds.joinToString(",") { id ->
+            """{"id":${Json.encodeToString(id)},"name":"Host","isLead":false,"health":"unreachable"}"""
+        }
+        server.enqueue(jsonResponse("""{"ts":120000,"machines":[$validRows]}"""))
+
+        val accepted = api.machines(mounted, spark = 30)
+
+        assertTrue(accepted is ApiResult.Success)
+        assertEquals(validIds, (accepted as ApiResult.Success).value.machines.map { it.id })
+        assertEquals("/mounted/api/machines?spark=30", server.takeRequest().path)
+    }
+
+    @Test
+    fun machineCensusRejectsMalformedProducerIdsAtTheHttpsResponseBoundary() = runBlocking {
+        val mounted = Connection(CollieOrigin(server.url("/mounted/").toString()), "phone", "token")
+        val invalidIds = listOf(
+            "peer east",
+            "peer_1",
+            "Upper",
+            "høst",
+            "peer\nhost",
+            "../peer",
+            "-peer",
+            "a".repeat(64),
+        )
+
+        invalidIds.forEach { id ->
+            val row = """{"id":${Json.encodeToString(id)},"name":"Host","isLead":false,"health":"unreachable"}"""
+            server.enqueue(jsonResponse("""{"ts":120000,"machines":[$row]}"""))
+            val rejected = api.machines(mounted, spark = 30)
+            assertTrue("Producer-invalid identity must refuse the whole census: $id", rejected is ApiResult.Failure)
+            assertEquals(ApiFailure.Protocol("Malformed machine resources response"), (rejected as ApiResult.Failure).error)
+            assertEquals("/mounted/api/machines?spark=30", server.takeRequest().path)
+        }
+    }
+
+    @Test
+    fun machineHistoryRejectsSinceOrderDuplicateAndWindowViolationsOnMountedHttps() = runBlocking {
+        val mounted = Connection(CollieOrigin(server.url("/nested/collie/").toString()), "phone", "token")
+        val tooManyPoints = (0..MAX_MACHINE_HISTORY_POINTS).joinToString(",") { index ->
+            "[${index * 60_000L},0.2,0.3,0.4,null,null]"
+        }
+        val badResponses = listOf(
+            """{"ts":180000,"stepMs":60000,"points":[[60000,0.2,0.3,0.4,null,null]]}""",
+            """{"ts":240000,"stepMs":60000,"points":[[180000,0.2,0.3,0.4,null,null],[120000,0.2,0.3,0.4,null,null]]}""",
+            """{"ts":240000,"stepMs":60000,"points":[[120000,0.2,0.3,0.4,null,null],[120000,0.2,0.3,0.4,null,null]]}""",
+            """{"ts":180000,"stepMs":60000,"points":[[-60000,0.2,0.3,0.4,null,null]]}""",
+            """{"ts":86400000,"stepMs":60000,"points":[$tooManyPoints]}""",
+        )
+        badResponses.forEach { body ->
+            server.enqueue(MockResponse().setBody(body))
+            val rejected = api.machineHistory(mounted, "peer", since = 120000)
+            assertTrue("Every malformed/request-relative history response must be rejected", rejected is ApiResult.Failure)
+            assertTrue(((rejected as ApiResult.Failure).error) is ApiFailure.Protocol)
+            assertTrue(server.takeRequest().path!!.startsWith("/nested/collie/api/machines/peer/history?since=120000"))
+        }
+
+        server.enqueue(MockResponse().setBody("""{"ts":240000,"stepMs":60000,"points":[[120000,0.2,0.3,0.4,null,null],[180000,0.4,0.5,0.6,8,9,0.7]]}"""))
+        val accepted = api.machineHistory(mounted, "peer", since = 120000)
+        assertTrue(accepted is ApiResult.Success)
+        val acceptedValue = (accepted as ApiResult.Success).value
+        assertEquals(listOf(120000L, 180000L), acceptedValue.points.map { it.t })
+        assertNull(acceptedValue.points.first().rxBps)
+        assertEquals(0.7, acceptedValue.points.last().disk ?: -1.0, 0.0)
+        assertEquals("/nested/collie/api/machines/peer/history?since=120000", server.takeRequest().path)
+    }
+
+    @Test
+    fun machineCensusRetainsAll257ValidRowsAndLastMachineIsReachable() = runBlocking {
+        val rows = (0 until 257).joinToString(",") { index ->
+            """{"id":"host-$index","name":"Host $index","isLead":${index == 0},"health":"unreachable"}"""
+        }
+        server.enqueue(MockResponse().setBody("""{"ts":120000,"machines":[$rows]}"""))
+
+        val result = api.machines(Connection(CollieOrigin(server.url("/mounted/").toString()), "phone", "token"), spark = 30)
+
+        assertTrue(result is ApiResult.Success)
+        val machines = (result as ApiResult.Success).value.machines
+        assertEquals(257, machines.size)
+        assertEquals("host-256", machines.last().id)
+        assertEquals("/mounted/api/machines?spark=30", server.takeRequest().path)
+    }
+
+    @Test
+    fun machineRefusalsKeepLeadAndRemovedHostMeaningWithoutFallback() = runBlocking {
+        val paired = Connection(origin, "phone", "token")
+        server.enqueue(MockResponse().setResponseCode(404).setBody("""{"error":"not lead","code":"crew.not_lead"}"""))
+        val census = api.machines(paired, spark = 30)
+        assertEquals("crew.not_lead", ((census as ApiResult.Failure).error as ApiFailure.Http).code)
+        assertEquals("/api/machines?spark=30", server.takeRequest().path)
+        assertEquals("A non-lead machine read must not fall back to /api/crew or /api/pack", 1, server.requestCount)
+
+        server.enqueue(MockResponse().setResponseCode(404).setBody("""{"error":"unknown host","code":"host.unknown","host":"gone"}"""))
+        val history = api.machineHistory(paired, "gone")
+        assertEquals("host.unknown", ((history as ApiResult.Failure).error as ApiFailure.Http).code)
+        assertEquals("/api/machines/gone/history", server.takeRequest().path)
+        assertEquals(2, server.requestCount)
+    }
+
+    @Test
+    fun machineHistoryBoundsWireResponseBeforeJsonMaterialization() = runBlocking {
+        val huge = "{\"ts\":120000,\"stepMs\":60000,\"points\":[],\"padding\":\"${"x".repeat(CollieApiClient.MAX_MACHINE_RESPONSE_BYTES + 1)}\"}"
+        server.enqueue(MockResponse().setChunkedBody(huge, 4096))
+
+        val result = api.machineHistory(Connection(origin, "phone", "token"), "lead")
+
+        assertTrue(result is ApiResult.Failure)
+        val failure = (result as ApiResult.Failure).error
+        assertTrue(failure is ApiFailure.Protocol)
+        assertEquals("Response exceeded its size limit", (failure as ApiFailure.Protocol).message)
+    }
+
     private lateinit var server: MockWebServer
     private lateinit var api: CollieApiClient
     private lateinit var trustedHttpClient: OkHttpClient

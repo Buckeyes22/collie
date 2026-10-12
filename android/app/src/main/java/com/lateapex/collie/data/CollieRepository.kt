@@ -28,6 +28,8 @@ import com.lateapex.collie.network.NotifyPreferences
 import com.lateapex.collie.network.NotifyPreferencesPatch
 import com.lateapex.collie.network.OriginValidator
 import com.lateapex.collie.network.CrewStatusResponse
+import com.lateapex.collie.network.isValid
+import com.lateapex.collie.network.isValidMachineId
 import com.lateapex.collie.network.ChatAfter
 import com.lateapex.collie.network.ChatBefore
 import com.lateapex.collie.network.CacheRulesResponse
@@ -781,6 +783,42 @@ class CollieRepository(
     }
 
     suspend fun crew(): ApiResult<CrewStatusResponse> = withConnection(block = api::crew)
+
+    /** Machine telemetry is a lead-owned census; capture a deliberately unscoped, subject-free actor. */
+    fun machineReadContext(): ScopedReadContext? = readContext(Scope(), null)
+
+    suspend fun machines(
+        expectedContext: ScopedReadContext,
+        spark: Int = com.lateapex.collie.network.MAX_MACHINE_SPARK_MINUTES,
+    ): ApiResult<com.lateapex.collie.network.MachinesResponse> {
+        if (spark !in 1..com.lateapex.collie.network.MAX_MACHINE_SPARK_MINUTES) {
+            return ApiResult.Failure(ApiFailure.Protocol("Machine spark window is out of range"))
+        }
+        if (expectedContext.key.host != null || expectedContext.key.session != null || expectedContext.key.subjectIdentity != null || !isCurrent(expectedContext)) return staleScope()
+        val raw = withConnectionOf(expectedContext.connection, Scope(), null, expectedContext = expectedContext) {
+            api.machines(it, spark)
+        }
+        if (raw !is ApiResult.Success) return raw
+        return if (raw.status == 200 && raw.value.isValid()) raw
+        else ApiResult.Failure(ApiFailure.Protocol("Malformed machine resources response"))
+    }
+
+    suspend fun machineHistory(
+        expectedContext: ScopedReadContext,
+        machineId: String,
+        since: Long? = null,
+    ): ApiResult<com.lateapex.collie.network.MachineHistoryResponse> {
+        if (!isValidMachineId(machineId) || since?.let { it !in 0..9_007_199_254_740_991L } == true) {
+            return ApiResult.Failure(ApiFailure.Protocol("Machine history request is malformed"))
+        }
+        if (expectedContext.key.host != null || expectedContext.key.session != null || expectedContext.key.subjectIdentity != null || !isCurrent(expectedContext)) return staleScope()
+        val raw = withConnectionOf(expectedContext.connection, Scope(), null, expectedContext = expectedContext) {
+            api.machineHistory(it, machineId, since)
+        }
+        if (raw !is ApiResult.Success) return raw
+        return if (raw.status == 200 && raw.value.isValid()) raw
+        else ApiResult.Failure(ApiFailure.Protocol("Malformed machine history response"))
+    }
 
     suspend fun history(
         address: PaneAddress,
