@@ -3257,7 +3257,7 @@ describe("the host gate — `?host=` selects among enrolled members and nothing 
     // The load-bearing claim: `?h=laptop` + `w1:p1` must never be served the DESK's `w1:p1`, and
     // pane ids collide across machines, so a fall-through here is a cross-host write.
     //
-    // All TWENTY-EIGHT session-scoped route handlers (tab create, workspace create, launch, this host's launcher
+    // All scoped route handlers (tab create, workspace create, launch, this host's launcher
     // rows, this host's folder list and a star on it, one journal blob, a workspace's Changes list,
     // a workspace's Files view, the Files existence check by pane or workspace, the Files image read
     // by pane or workspace (ADR 0090), tab action, the pane family, "look now", the worktree listing,
@@ -3266,10 +3266,11 @@ describe("the host gate — `?host=` selects among enrolled members and nothing 
     // writes on this machine's one-off command history, served by one function (ADR 0095), and the
     // read that checks a typed line before it runs (ADR 0095, amendment), owning-runtime linked
     // worktree removal planning/execution, and the owning workspace's Source read, scoped agent
-    // inventory, workspace/tab organization, portable layouts and host integration actions) reach
+    // inventory, workspace/tab organization, portable layouts, host integration actions, and B32
+    // plugin list/config/install/link/uninstall/action/pane routes) reach
     // their runtime through the caller's resolver and nothing else.
     // All scoped routes, including host integrations, named agent operations and metadata/views, resolve only through the captured caller.
-    expect([...src.matchAll(/await caller\.resolve\(\);/g)]).toHaveLength(31);
+    expect([...src.matchAll(/await caller\.resolve\(\);/g)]).toHaveLength(32);
     // Thirteen registry reads retain the explicitly enumerated uses below.
     // than exempted: assembling THIS collie's own snapshot body; `localRuntime`, the single
     // "(session) → runtime, or 404" helper both callers share; `/api/config`, which reports THIS

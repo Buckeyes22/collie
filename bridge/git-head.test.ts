@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { chmodSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve as resolvePath } from "node:path";
+import { dirname, join, resolve as resolvePath } from "node:path";
 
 import {
   findGitDir,
@@ -18,6 +18,24 @@ import {
 
 const SHA1 = "abc1234def5678abc1234def5678abc1234def56";
 const SHA256 = "a".repeat(64);
+
+/** Make the real-disk fixture outside any checkout ancestor (some hosts have /tmp/.git). */
+function mkdtempOutsideGit(prefix: string): string {
+  const candidates = process.platform === "win32" ? [tmpdir()] : ["/var/tmp", "/dev/shm", tmpdir()];
+  for (const candidate of new Set(candidates)) {
+    let ancestor = resolvePath(candidate);
+    let underCheckout = false;
+    while (true) {
+      if (existsSync(join(ancestor, ".git"))) { underCheckout = true; break; }
+      const parent = dirname(ancestor);
+      if (parent === ancestor) break;
+      ancestor = parent;
+    }
+    if (underCheckout) continue;
+    try { return mkdtempSync(join(candidate, prefix)); } catch { /* Try another OS temporary directory. */ }
+  }
+  throw new Error("No writable temporary directory outside a Git checkout ancestor");
+}
 
 describe("parseHead", () => {
   test("a branch, with the refs/heads/ prefix gone", () => {
@@ -70,7 +88,7 @@ describe("parseGitFile", () => {
 describe("on a real disk", () => {
   let root = "";
   beforeAll(() => {
-    root = mkdtempSync(join(tmpdir(), "collie-git-head-"));
+    root = mkdtempOutsideGit("collie-git-head-");
     // A repo on a branch, with a nested folder.
     mkdirSync(join(root, "repo", ".git", "worktrees", "wt"), { recursive: true });
     mkdirSync(join(root, "repo", ".git", "modules", "sub"), { recursive: true });

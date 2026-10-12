@@ -1,5 +1,6 @@
 import { isAbsolute } from "node:path";
 import { redactText } from "../redact.ts";
+import { HOST } from "../host.ts";
 import type { JsonObject, JsonValue } from "../json.ts";
 import type { HostPluginActionDescriptor, HostPluginContext, HostPluginLinkSelection, HostPluginLog, HostPluginOwnerContext, HostPluginOwnerOperation, HostPluginPlatform, HostPluginSummary, HostPluginUninstallPlan, HostPluginUserDirsPrepared } from "./types.ts";
 
@@ -93,7 +94,7 @@ export function pluginRows(raw: JsonObject): readonly HostPluginSummary[] {
   });
 }
 function currentPluginPlatform(): HostPluginPlatform {
-  return process.platform === "win32" ? "windows" : process.platform === "darwin" ? "macos" : "linux";
+  return HOST.platform === "win32" ? "windows" : HOST.platform === "darwin" ? "macos" : "linux";
 }
 function parsePlatforms(value: JsonValue | undefined): readonly HostPluginPlatform[] | null {
   if (value === undefined || value === null) return null;

@@ -50,6 +50,7 @@ const EXEMPT = {
     "the Windows off switch for the access-list repair (bridge/owner-only.ts), documented in docs/security.md only, never a settings card",
   COLLIE_PACK_SECRET:
     "named only in the update runner's redaction list, so it is a name to scrub and not a value read",
+  COLLIE_REDACTED_SECRET__: "a fixed plugin-config display marker, not an environment variable or setting",
 } satisfies Record<string, string>;
 
 /** Just the names, so a lookup by a grepped string does not need an index signature. */

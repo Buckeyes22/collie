@@ -47,7 +47,7 @@ interface Allowed {
   readonly why: string;
 }
 
-/** Sites Windows never reaches: URLs and routes, tmux and zellij, systemd, test-only helpers. */
+/** Sites Windows never reaches, or spellings that denote logical slash-separated values rather than host paths. */
 const NOT_REACHED_BY_WINDOWS: readonly Allowed[] = [
   { file: "bridge/native-access/contracts.ts", pattern: "startsWithSlash", count: 1, why: "canonical public HTTP target path, never a host filesystem path" },
   { file: "bridge/native-access/gateway.ts", pattern: "urlPathname", count: 1, why: "configured public HTTPS mount, never a file URL" },
@@ -67,6 +67,12 @@ const NOT_REACHED_BY_WINDOWS: readonly Allowed[] = [
   { file: "bridge/files-view.ts", pattern: "startsWithSlash", count: 1, why: "the wire's relative path, `/`-separated on every host; joined with host.path" },
   { file: "bridge/files-view.ts", pattern: "splitOnSlash", count: 1, why: "the same wire path, cut into names before host.path.join" },
   { file: "bridge/crew/peer-client.ts", pattern: "urlPathname", count: 1, why: "an HTTP route, never a file" },
+  { file: "bridge/host-control/plugin-config.ts", pattern: "splitOnSlash", count: 3, why: "canonical slash-separated plugin config file IDs from the bridge API, not host paths" },
+  { file: "bridge/host-control/plugin-config.ts", pattern: "startsWithSlash", count: 1, why: "rejects absolute-looking logical config IDs; host filesystem paths use path.isAbsolute" },
+  { file: "bridge/host-control/plugins.ts", pattern: "startsWithSlash", count: 2, why: "rejects absolute-looking API subdirectory and plugin config IDs; host paths are resolved separately" },
+  { file: "bridge/host-control/plugins.ts", pattern: "splitOnSlash", count: 4, why: "parses slash-separated plugin route IDs and source subdirectories, not host paths" },
+  { file: "bridge/mux/herdr/client.ts", pattern: "startsWithSlash", count: 1, why: "validates a GitHub source subdirectory in the Herdr wire format, not a host path" },
+  { file: "bridge/mux/herdr/client.ts", pattern: "splitOnSlash", count: 1, why: "validates slash-separated GitHub source subdirectory components in the Herdr wire format" },
   { file: "cli/install-kind.ts", pattern: "splitOnSlash", count: 2, why: "git remote URLs, always slashes" },
   { file: "cli/update.ts", pattern: "splitOnSlash", count: 2, why: "a literal list of payload names, joined by path.join; and a systemd unit path" },
   { file: "cli/fakes.ts", pattern: "splitOnSlash", count: 2, why: "test-only fake filesystem, keys are POSIX by design" },

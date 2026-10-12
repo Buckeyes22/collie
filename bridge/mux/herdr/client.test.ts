@@ -149,12 +149,12 @@ describe("HerdrClient per-call timeout", () => {
 describe("HerdrClient exact ping mapping", () => {
   test("one-shot ping returns validated vendor identity without listing or mutating panes", async () => {
     const client = new HerdrClient(await lateHerdr({ type: "pong", version: "0.9.3", protocol: 22 }), 1000);
-    expect(await client.handshake()).toEqual({ version: "0.9.3", protocol: 22, paneOriginalMetadataV1: false, agentViewReadV1: false });
+    expect(await client.handshake()).toEqual({ version: "0.9.3", protocol: 22, paneOriginalMetadataV1: false, agentViewReadV1: false, pluginUserDirsV1: false, pluginOwnerOperationsV1: false });
     expect(lastRequest).toEqual({ method: "ping", params: {} });
   });
   test("advertises only positive additive metadata capabilities from ping", async () => {
     const client = new HerdrClient(await lateHerdr({ type: "pong", version: "0.9.3", protocol: 22, capabilities: { pane_original_metadata_v1: true, agent_view_read_v1: true } }), 1000);
-    expect(await client.handshake()).toEqual({ version: "0.9.3", protocol: 22, paneOriginalMetadataV1: true, agentViewReadV1: true });
+    expect(await client.handshake()).toEqual({ version: "0.9.3", protocol: 22, paneOriginalMetadataV1: true, agentViewReadV1: true, pluginUserDirsV1: false, pluginOwnerOperationsV1: false });
   });
   test("ignores unnegotiated top-level flags and refuses malformed nested flags", async () => {
     const top = new HerdrClient(await lateHerdr({ type: "pong", version: "0.9.3", protocol: 22, pane_original_metadata_v1: true, agent_view_read_v1: true }), 1000);

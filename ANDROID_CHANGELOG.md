@@ -8,6 +8,8 @@ the first Android release from this fork.
 
 ## Unreleased
 
+- Send explicit plugin confirmations even when default fields are omitted from other requests.
+
 - Add native Herdr plugin inventory, details, manifest actions, logs, pane navigation, secret-redacted configuration, and reviewed install/link/uninstall controls with durable operation receipts.
 
 - Keep saved-pane status compact and show the complete saved-copy provenance without clipping.

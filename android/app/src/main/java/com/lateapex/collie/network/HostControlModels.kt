@@ -1,6 +1,9 @@
+@file:OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+
 package com.lateapex.collie.network
 
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.EncodeDefault
 
 enum class IntegrationAction { INSTALL, UNINSTALL }
 @Serializable
@@ -52,8 +55,8 @@ data class HostPluginActionResponse(val ok: Boolean, val action: HostPluginActio
 @Serializable data class HostPluginConfigOperation(val schema: Int, val requestId: String, val state: String, val capability: String, val targetIdentity: String, val at: Long, val updatedAt: Long, val code: String? = null, val result: kotlinx.serialization.json.JsonElement? = null) { fun valid() = schema == 1 && requestId.matches(Regex("[A-Za-z0-9_-]{1,128}")) && state in setOf("pending", "succeeded", "refused", "unknown") && capability in setOf("plugins", "pluginOwnerOperations", "configuration") && targetIdentity.matches(Regex("[a-f0-9]{64}")) && at >= 0 && updatedAt >= at && (code == null || code.length <= 128) }
 @Serializable data class HostPluginConfigOperationResponse(val ok: Boolean, val operation: HostPluginConfigOperation, val effect: String? = null) { fun valid() = operation.valid() && (ok == (operation.state == "succeeded")) && (operation.state != "refused" || !operation.code.isNullOrBlank()) && listOfNotNull(effect).all { it.length <= 2048 && it.none(Char::isISOControl) } }
 @Serializable data class HostPluginConfigFileRequest(val requestId: String, val file: String, val content: String)
-@Serializable data class HostPluginConfigApplyRequest(val requestId: String, val planToken: String, val file: String, val content: String, val confirmed: Boolean = true)
-@Serializable data class HostPluginConfigPrepareRequest(val requestId: String, val planToken: String, val confirmed: Boolean = true)
+@Serializable data class HostPluginConfigApplyRequest(val requestId: String, val planToken: String, val file: String, val content: String, @EncodeDefault val confirmed: Boolean = true)
+@Serializable data class HostPluginConfigPrepareRequest(val requestId: String, val planToken: String, @EncodeDefault val confirmed: Boolean = true)
 @Serializable data class HostPluginLinkSelection(val id: String, val pluginId: String, val name: String, val version: String)
 @Serializable data class HostPluginLinkSelectionsResponse(val ok: Boolean, val selections: List<HostPluginLinkSelection>) { fun valid() = ok && selections.size <= 256 && selections.all { it.id.matches(Regex("[a-f0-9]{64}")) && it.pluginId.matches(Regex("[A-Za-z0-9][A-Za-z0-9:._-]{0,119}")) && it.name.length <= 256 && it.version.length <= 128 } }
 @Serializable data class HostPluginInstallSource(val owner: String, val repo: String, val subdir: String? = null, val ref: String? = null, val commit: String)
@@ -70,9 +73,9 @@ data class HostPluginActionResponse(val ok: Boolean, val action: HostPluginActio
     fun validFor(id: String) = token.matches(Regex("[A-Fa-f0-9-]{36}")) && expiresAt in (System.currentTimeMillis() + 1)..(System.currentTimeMillis() + 60_000) && pluginId == id && preservesConfigState && effect.length in 1..2048 && effect.none(Char::isISOControl)
 }
 @Serializable data class HostPluginUninstallPlanResponse(val ok: Boolean, val plan: HostPluginUninstallPlan)
-@Serializable data class HostPluginInstallRequest(val requestId: String, val planToken: String, val checksum: String, val confirmed: Boolean = true)
-@Serializable data class HostPluginLinkRequest(val requestId: String, val planToken: String, val confirmed: Boolean = true)
-@Serializable data class HostPluginUninstallRequest(val requestId: String, val planToken: String, val confirmed: Boolean = true)
+@Serializable data class HostPluginInstallRequest(val requestId: String, val planToken: String, val checksum: String, @EncodeDefault val confirmed: Boolean = true)
+@Serializable data class HostPluginLinkRequest(val requestId: String, val planToken: String, @EncodeDefault val confirmed: Boolean = true)
+@Serializable data class HostPluginUninstallRequest(val requestId: String, val planToken: String, @EncodeDefault val confirmed: Boolean = true)
 @Serializable data class HostPluginMutationResponse(val ok: Boolean, val operation: HostPluginConfigOperation, val effect: String? = null, val plugin: HostPlugin? = null) { fun validFor(requestId: String): Boolean = operation.valid() && operation.capability == "pluginOwnerOperations" && operation.requestId == requestId && (ok == (operation.state == "succeeded")) && (plugin == null || plugin.valid()) && listOfNotNull(effect).all { it.length <= 2048 && it.none(Char::isISOControl) } }
 @Serializable data class HostPluginOwnerOperationResult(val requestId: String, val state: String, val plugin: HostPlugin? = null, val removed: Boolean, val code: String? = null)
 @Serializable data class HostPluginOwnerOperationResponse(val ok: Boolean, val operation: HostPluginConfigOperation, val ownerOperation: HostPluginOwnerOperationResult) { fun validFor(requestId: String): Boolean = ok && operation.valid() && operation.requestId == requestId && operation.capability == "pluginOwnerOperations" && ownerOperation.requestId == requestId && ownerOperation.state in setOf("running", "succeeded", "refused", "unknown") && (ownerOperation.plugin == null || ownerOperation.plugin.valid()) && (ownerOperation.code == null || ownerOperation.code.length <= 128) && (ownerOperation.state != "succeeded" || ownerOperation.plugin != null || ownerOperation.removed) }
