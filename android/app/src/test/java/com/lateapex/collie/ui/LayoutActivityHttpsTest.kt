@@ -18,7 +18,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.*
 import okhttp3.OkHttpClient
-import okhttp3.mockwebserver.*
+import mockwebserver3.*
 import okhttp3.tls.HandshakeCertificates
 import okhttp3.tls.HeldCertificate
 import org.junit.Assert.*
@@ -63,8 +63,8 @@ class LayoutActivityHttpsTest {
                     }
                     assertEquals(1, f.effects.size)
                     assertEquals(1, f.plans.size)
-                    assertTrue(f.requests.all { it.getHeader("Authorization") == "Bearer fixture-token" })
-                    assertTrue(f.requests.filter { it.method == "POST" }.all { it.requestUrl!!.encodedPath.startsWith("/nested/api/pane/pane-1/layout/") })
+                    assertTrue(f.requests.all { it.headers["Authorization"] == "Bearer fixture-token" })
+                    assertTrue(f.requests.filter { it.method == "POST" }.all { it.url!!.encodedPath.startsWith("/nested/api/pane/pane-1/layout/") })
                 } finally { controller.pause().stop().destroy() }
             }
         }
@@ -88,11 +88,11 @@ class LayoutActivityHttpsTest {
             val controller = Robolectric.buildActivity(LayoutActivity::class.java, target).create().start().resume()
             try {
                 awaitUi(diagnostic = {
-                    "paths=${f.requests.map { it.requestUrl!!.encodedPath }}; " +
+                    "paths=${f.requests.map { it.url!!.encodedPath }}; " +
                         "source=${f.repository.readSource.value.javaClass.simpleName}; " +
                         "failure=${f.repository.accessFailure?.javaClass?.simpleName}; " +
                         "ui=${descendants(controller.get().window.decorView).filterIsInstance<TextView>().map { it.text.toString() }.take(12)}"
-                }) { f.requests.any { it.requestUrl!!.encodedPath == "/nested/api/pane/pane-1/layout/edges" } }
+                }) { f.requests.any { it.url!!.encodedPath == "/nested/api/pane/pane-1/layout/edges" } }
                 assertFalse(f.repository.writesAllowed(Scope(), "pane-1"))
                 val controls = descendants(controller.get().window.decorView).filterIsInstance<TextView>()
                 assertTrue(controls.any { it.text == controller.get().getString(R.string.pane_layout_move_new_workspace) && !it.isEnabled })
@@ -390,16 +390,16 @@ class LayoutActivityHttpsTest {
         init {
             app.getSharedPreferences("collie_layout_intents", Context.MODE_PRIVATE).edit().clear().commit()
             val cert = HeldCertificate.Builder().commonName("localhost").addSubjectAlternativeName("localhost").build()
-            server.useHttps(HandshakeCertificates.Builder().heldCertificate(cert).build().sslSocketFactory(), false)
+            server.useHttps(HandshakeCertificates.Builder().heldCertificate(cert).build().sslSocketFactory())
             server.dispatcher = object : Dispatcher() {
                 override fun dispatch(request: RecordedRequest): MockResponse {
                     requests.add(request)
-                    val path = request.requestUrl!!.encodedPath
+                    val path = request.url!!.encodedPath
                     if (holdFirstLayout && path.endsWith("/layout") && layoutHeld.compareAndSet(false, true)) {
                         oldLayoutEntered.countDown()
                         check(releaseOldLayout.await(10, java.util.concurrent.TimeUnit.SECONDS))
                         oldLayoutReturned.countDown()
-                        return MockResponse().setResponseCode(503).setBody("retired layout failure")
+                        return MockResponse.Builder().code(503).body("retired layout failure").build()
                     }
                     val response: String = when {
                         path.endsWith("/config") -> json.encodeToString(BridgeConfigResponse(mux = mux, control = ControlCapabilityResponse(mapOf("controlOperations" to true))))
@@ -411,7 +411,7 @@ class LayoutActivityHttpsTest {
                         // prerequisite would correctly freeze the actor before layout inspection.
                         path.endsWith("/launchers") -> json.encodeToString(LaunchersResponse(emptyList(), "/fixture"))
                         path.endsWith("/plan") -> {
-                            plans.add(request.path!!)
+                            plans.add(request.target!!)
                             if (holdFirstPlan && planHeld.compareAndSet(false, true)) {
                                 oldPlanEntered.countDown()
                                 check(releaseOldPlan.await(10, java.util.concurrent.TimeUnit.SECONDS))
@@ -421,18 +421,18 @@ class LayoutActivityHttpsTest {
                                 buildJsonObject { put("verb", "move"); put("sourcePaneId", "pane-1"); put("destination", "new_workspace"); put("focusChanges", false); put("mayCloseSourceTab", true) }, PaneLayoutRead("layout", geometry)))
                         }
                         path.endsWith("/move") -> {
-                            val id = json.parseToJsonElement(request.body.readUtf8()).jsonObject.getValue("requestId").jsonPrimitive.content
+                            val id = json.parseToJsonElement(request.body?.utf8().orEmpty()).jsonObject.getValue("requestId").jsonPrimitive.content
                             effects.add(id)
                             val move = PaneMoveResult("pane-move", "pane-new", "pane-1", if (variant == "wrong-tab") "wrong" else "tab", if (variant == "wrong-space") "wrong" else "space")
                             json.encodeToString(PaneLayoutOperationResponse(true, operation = ControlOperation(1, id, "succeeded", "paneMove", "a".repeat(64), 1, 2, result = move), move = move))
                         }
                         path.endsWith("/edges") -> json.encodeToString(PaneLayoutReadResponse(true, PaneLayoutRead("edges", geometry, "pane-1", left = false, right = false, up = false, down = false)))
-                        path.endsWith("/neighbor") -> json.encodeToString(PaneLayoutReadResponse(true, PaneLayoutRead("neighbor", geometry, "pane-1", request.requestUrl!!.queryParameter("direction"), null)))
+                        path.endsWith("/neighbor") -> json.encodeToString(PaneLayoutReadResponse(true, PaneLayoutRead("neighbor", geometry, "pane-1", request.url!!.queryParameter("direction"), null)))
                         path.endsWith("/layout") -> json.encodeToString(PaneLayoutReadResponse(true, PaneLayoutRead("layout", geometry)))
                         path.contains("/control/operations/") -> json.encodeToString(ControlOperationResponse(true, ControlOperation(1, path.substringAfterLast('/'), "unknown", "paneMove", "a".repeat(64), 1, 2)))
-                        else -> return MockResponse().setResponseCode(404)
+                        else -> return MockResponse.Builder().code(404).build()
                     }
-                    return MockResponse().setHeader("Content-Type", "application/json").setBody(response)
+                    return MockResponse.Builder().setHeader("Content-Type", "application/json").body(response).build()
                 }
             }
             server.start()
@@ -467,7 +467,7 @@ class LayoutActivityHttpsTest {
         override fun close() {
             repoField.set(app.container, oldRepository); storeField.set(app.container, oldJournal)
             releaseOldLayout.countDown(); releaseOldPlan.countDown()
-            server.shutdown()
+            server.close()
             app.getSharedPreferences("collie_layout_intents", Context.MODE_PRIVATE).edit().clear().commit()
         }
     }

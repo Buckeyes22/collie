@@ -13,7 +13,7 @@ import com.lateapex.collie.network.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.serialization.json.Json
-import okhttp3.mockwebserver.*
+import mockwebserver3.*
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -146,7 +146,7 @@ class ProxySignInActivityTest {
             val release = CountDownLatch(1)
             try {
                 f.https.server.dispatcher = object : Dispatcher() {
-                    override fun dispatch(request: RecordedRequest): MockResponse { check(release.await(5, TimeUnit.SECONDS)); return MockResponse().setBody(f.https.discovery()) }
+                    override fun dispatch(request: RecordedRequest): MockResponse { check(release.await(5, TimeUnit.SECONDS)); return MockResponse.Builder().body(f.https.discovery()).build() }
                 }
                 field<Button>(controller.get(), "signIn").performClick()
                 assertNotNull(f.https.server.takeRequest(5, TimeUnit.SECONDS)); controller.pause().stop(); release.countDown()
@@ -154,7 +154,7 @@ class ProxySignInActivityTest {
                 awaitMain { calls.isEmpty() }
                 assertEquals(1, f.https.server.requestCount); assertNull(shadowOf(controller.get()).nextStartedActivity); assertNull(f.https.store.record()!!.transaction)
                 f.https.server.dispatcher = QueueDispatcher()
-                f.https.server.enqueue(MockResponse().setBody(f.https.discovery())); f.https.server.enqueue(MockResponse().setBody(f.https.jwks()))
+                f.https.server.enqueue(MockResponse.Builder().body(f.https.discovery()).build()); f.https.server.enqueue(MockResponse.Builder().body(f.https.jwks()).build())
                 controller.start().resume(); field<Button>(controller.get(), "signIn").performClick()
                 assertNotNull(f.https.server.takeRequest(5, TimeUnit.SECONDS)); assertNotNull(f.https.server.takeRequest(5, TimeUnit.SECONDS))
                 var browser: Intent? = null
@@ -163,7 +163,7 @@ class ProxySignInActivityTest {
                 val transaction = f.https.store.record()!!.transaction!!
                 controller.pause().stop(); assertEquals(transaction.state, f.https.store.record()!!.transaction!!.state)
                 val raw = ProxyProfile.REDIRECT + "?state=" + transaction.state + "&code=owned-code&iss=" + java.net.URLEncoder.encode(f.https.server.url("/").toString(), "UTF-8")
-                f.https.server.enqueue(MockResponse().setBody(f.https.tokens(transaction.nonce)))
+                f.https.server.enqueue(MockResponse.Builder().body(f.https.tokens(transaction.nonce)).build())
                 returned = Robolectric.buildActivity(ProxySignInActivity::class.java, Intent().putExtra(ProxySignInActivity.EXTRA_CALLBACK_ID, ProxyCallbackHandoff.put(raw))).setup()
                 assertNotNull(f.https.server.takeRequest(5, TimeUnit.SECONDS))
                 awaitMain { f.https.store.record()?.tokens != null }

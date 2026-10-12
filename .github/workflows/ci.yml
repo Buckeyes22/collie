@@ -140,13 +140,24 @@ jobs:
           distribution: temurin
           java-version: "21"
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
-        # The default also installs the retired `tools` package, which sdkmanager 16 rejects.
-        with:
-          packages: platform-tools
+      - name: Install pinned Android CLI from Google's signed repository
+        run: |
+          set -euo pipefail
+          test "$(dpkg --print-architecture)" = amd64
+          sudo install -d -m 0755 /etc/apt/keyrings
+          curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | sudo tee /etc/apt/keyrings/google.asc >/dev/null
+          printf '%s\n' 'deb [arch=amd64 signed-by=/etc/apt/keyrings/google.asc] https://dl.google.com/android/cli/latest/debian/ stable main' | sudo tee /etc/apt/sources.list.d/android-cli.list >/dev/null
+          sudo apt-get update
+          sudo apt-get install -y android-cli=1.0.16500706
+          test "$(android --no-metrics --version)" = 1.0.16500706
 
-      - name: Install Android SDK 36
-        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+      - name: Install Android SDK 37.2
+        run: |
+          set -euo pipefail
+          : "${ANDROID_HOME:?Runner Android SDK path is required}"
+          # Accept SDK license prompts in CI; preserve the CLI exit status if yes gets SIGPIPE.
+          (set +o pipefail; yes | android --no-metrics --sdk="$ANDROID_HOME" sdk install platform-tools platforms/android-37.2@1 build-tools/37.0.0)
+          test -s "$ANDROID_HOME/licenses/android-sdk-license"
 
       - name: Validate native Android configuration
         run: |

@@ -65,7 +65,7 @@ must replace browser Web Push.
 Use these patterns:
 
 - Kotlin DSL Gradle project with exact plugin/dependency versions and dependency locking.
-- Java 17 bytecode, min SDK 26, AndroidX, View Binding, lifecycle-aware ViewModels, coroutines,
+- Java 17 bytecode, min SDK 37, AndroidX, View Binding, lifecycle-aware ViewModels, coroutines,
   OkHttp, Kotlin serialization, MockWebServer, Robolectric, and instrumented device tests.
 - `AndroidKeystoreCipher`-style non-exportable AES/GCM key for encrypted preferences.
 - Release-only HTTPS authority, debug fixture isolation, `allowBackup=false`, explicit exported
@@ -89,7 +89,12 @@ Do not copy StormLens's Capacitor/WebView foundation. Collie's Android client is
 
 ## 4. Compatibility and toolchain
 
-Initial pinned baseline:
+Current support follows the user's latest-only policy: Android 17 / API 37, stable compile SDK
+37.2, minimum/target API 37 and physical Pixel acceptance. Current build pins and pending
+validation are recorded in [android/TOOLCHAIN.md](android/TOOLCHAIN.md). The dated results and
+initial pins below are historical, not older-platform requirements or current acceptance.
+
+Historical initial pinned baseline:
 
 | Component | Decision |
 | --- | --- |

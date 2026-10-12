@@ -4,7 +4,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 sdk_root="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
-tools="$sdk_root/build-tools/36.0.0"
+tools="$sdk_root/build-tools/37.0.0"
 unsigned="$repo_root/android/app/build/outputs/apk/release/app-release-unsigned.apk"
 output="${COLLIE_ANDROID_RELEASE_DIR:-$repo_root/android/app/build/release-dist}"
 
@@ -14,7 +14,7 @@ for name in COLLIE_ANDROID_KEYSTORE COLLIE_ANDROID_KEY_ALIAS COLLIE_ANDROID_STOR
   [[ -n "${!name:-}" ]] || die "set $name before signing"
 done
 [[ -f "$COLLIE_ANDROID_KEYSTORE" ]] || die "release keystore file is missing"
-[[ -x "$tools/apksigner" && -x "$tools/aapt" ]] || die "set ANDROID_HOME to an SDK with Build Tools 36.0.0"
+[[ -x "$tools/apksigner" && -x "$tools/aapt" ]] || die "set ANDROID_HOME to an SDK with Build Tools 37.0.0"
 [[ -f "$unsigned" ]] || die "run android/gradlew assembleRelease first"
 manifest="$(dirname "$unsigned")/build-inputs.json"
 [[ -f "$manifest" ]] || die "run scripts/android-build-manifest.sh after assembleRelease"

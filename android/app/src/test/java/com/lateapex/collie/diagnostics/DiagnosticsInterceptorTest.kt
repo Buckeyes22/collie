@@ -16,8 +16,8 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okio.BufferedSource
 import okio.ForwardingSource
 import okio.buffer
-import okhttp3.mockwebserver.MockResponse
-import okhttp3.mockwebserver.MockWebServer
+import mockwebserver3.MockResponse
+import mockwebserver3.MockWebServer
 import okhttp3.tls.HandshakeCertificates
 import okhttp3.tls.HeldCertificate
 import org.junit.After
@@ -46,14 +46,14 @@ class DiagnosticsInterceptorTest {
 
     @After
     fun tearDown() {
-        server.shutdown()
+        server.close()
     }
 
     @Test fun mountedWorktreeRemovalAllMimeAndChunkedErrorsRemainBoundedWithActualDiagnosticsEnabled(): Unit = kotlinx.coroutines.runBlocking {
         val certificate = HeldCertificate.Builder().commonName("localhost").addSubjectAlternativeName("localhost").build()
         val certificates = HandshakeCertificates.Builder().heldCertificate(certificate).build()
         val trust = HandshakeCertificates.Builder().addTrustedCertificate(certificate.certificate).build()
-        server.useHttps(certificates.sslSocketFactory(), false)
+        server.useHttps(certificates.sslSocketFactory())
         val consumed = AtomicLong()
         val enabled = OkHttpClient.Builder().sslSocketFactory(trust.sslSocketFactory(), trust.trustManager)
             .addInterceptor(DiagnosticsInterceptor(RecordingDiagnosticsRecorder(recorded)))
@@ -73,9 +73,9 @@ class DiagnosticsInterceptorTest {
         val connection = Connection(CollieOrigin(server.url("/mount/").toString()), "phone", "token")
         for (mime in listOf(null, "text/plain", "application/json", "application/octet-stream")) {
             consumed.set(0)
-            val reply = MockResponse().setResponseCode(503).setChunkedBody("x".repeat(1024 * 1024), 4096)
+            val reply = MockResponse.Builder().code(503).chunkedBody("x".repeat(1024 * 1024), 4096)
             mime?.let { reply.setHeader("Content-Type", it) }
-            server.enqueue(reply)
+            server.enqueue(reply.build())
             val result = api.removeWorktree(connection, Scope(), "space", com.lateapex.collie.network.WorktreeRemoveRequest("remove", "plan", false))
             assertTrue(result is ApiResult.Failure && result.error is ApiFailure.Protocol)
             assertTrue(consumed.get() <= 64 * 1024L + 16 * 1024L)
@@ -89,24 +89,24 @@ class DiagnosticsInterceptorTest {
 
     @Test
     fun recordsMethodPathStatusAndAddsATraceIdHeaderTheServerReceives() {
-        server.enqueue(MockResponse().setResponseCode(200).setBody("{\"ok\":true}"))
+        server.enqueue(MockResponse.Builder().code(200).body("{\"ok\":true}").build())
         val request = Request.Builder().url(server.url("/api/health")).build()
         client.newCall(request).execute().use { it.body?.string() }
 
         val sent = server.takeRequest()
-        assertNotNull(sent.getHeader("X-Collie-Trace-Id"))
+        assertNotNull(sent.headers["X-Collie-Trace-Id"])
 
         val (category, fields) = recorded.single()
         assertEquals("network", category)
         assertEquals("GET", fields["method"])
         assertEquals("/api/health", fields["path"])
         assertEquals(200L, (fields["status"] as Number).toLong())
-        assertEquals(sent.getHeader("X-Collie-Trace-Id"), fields["traceId"])
+        assertEquals(sent.headers["X-Collie-Trace-Id"], fields["traceId"])
     }
 
     @Test
     fun neverRecordsTheAuthorizationHeaderValueOnlyThatOneWasPresent() {
-        server.enqueue(MockResponse().setResponseCode(200).setBody("{}"))
+        server.enqueue(MockResponse.Builder().code(200).body("{}").build())
         val request = Request.Builder()
             .url(server.url("/api/devices"))
             .header("Authorization", "Bearer super-secret-token")
@@ -123,7 +123,7 @@ class DiagnosticsInterceptorTest {
         for (path in listOf("/api/pair", "/collie/api/pair", "/nested/collie/api/pair")) {
             for (status in listOf(200, 400)) {
                 val body = "{\"token\":\"private-pairing-token\",\"label\":\"phone\"}"
-                server.enqueue(MockResponse().setResponseCode(status).setBody(body))
+                server.enqueue(MockResponse.Builder().code(status).body(body).build())
                 val request = Request.Builder()
                     .url(server.url(path))
                     .post("{\"code\":\"PRIVATE-CODE\"}".toRequestBody("application/json".toMediaType()))
@@ -143,7 +143,7 @@ class DiagnosticsInterceptorTest {
 
     @Test
     fun capturesJsonRequestAndResponseBodiesInFull() {
-        server.enqueue(MockResponse().setResponseCode(200).setBody("{\"label\":\"phone\"}"))
+        server.enqueue(MockResponse.Builder().code(200).body("{\"label\":\"phone\"}").build())
         val request = Request.Builder()
             .url(server.url("/api/pane/test/send"))
             .header("Content-Type", "application/json")
@@ -167,7 +167,7 @@ class DiagnosticsInterceptorTest {
         paths.forEach { path ->
             repeat(2) { // Initial POST and deliberate same-route replay share the same privacy rule.
                 val sentinel = "COMMAND-SECRET-SENTINEL"
-                server.enqueue(MockResponse().setResponseCode(200).setBody("{\"ok\":true,\"command\":\"$sentinel\"}"))
+                server.enqueue(MockResponse.Builder().code(200).body("{\"ok\":true,\"command\":\"$sentinel\"}").build())
                 val request = Request.Builder()
                     .url(server.url(path))
                     .post("{\"requestId\":\"request-1\",\"command\":\"$sentinel\"}".toRequestBody("application/octet-stream".toMediaType()))
@@ -188,7 +188,7 @@ class DiagnosticsInterceptorTest {
     @Test
     fun capturesBinaryBodiesAsSizeAndTypeOnlyNeverRawBytes() {
         val bytes = ByteArray(1024) { it.toByte() }
-        server.enqueue(MockResponse().setResponseCode(200).setHeader("Content-Type", "image/png").setBody(okio.Buffer().write(bytes)))
+        server.enqueue(MockResponse.Builder().code(200).setHeader("Content-Type", "image/png").body(okio.Buffer().write(bytes)).build())
         val request = Request.Builder()
             .url(server.url("/api/pane/x/upload"))
             .header("Content-Type", "image/png")
@@ -207,7 +207,7 @@ class DiagnosticsInterceptorTest {
     fun enabledDiagnosticsLeavesMountedBlobBodiesUntouchedForTheApiStreamingLimit() {
         // CollieOrigin intentionally rejects cleartext; exercise the production HTTPS API path
         // with a locally trusted fixture certificate rather than weakening that invariant.
-        server.shutdown()
+        server.close()
         val certificate = HeldCertificate.Builder()
             .commonName("localhost")
             .addSubjectAlternativeName("localhost")
@@ -215,7 +215,7 @@ class DiagnosticsInterceptorTest {
         val serverCertificates = HandshakeCertificates.Builder().heldCertificate(certificate).build()
         val clientCertificates = HandshakeCertificates.Builder().addTrustedCertificate(certificate.certificate).build()
         server = MockWebServer().apply {
-            useHttps(serverCertificates.sslSocketFactory(), false)
+            useHttps(serverCertificates.sslSocketFactory())
             start()
         }
         val oversized = ByteArray(ImageBlob.MAX_BYTES + 384 * 1024) { (it and 0xff).toByte() }
@@ -244,9 +244,9 @@ class DiagnosticsInterceptorTest {
                 }
                 .build()
             val api = CollieApiClient(diagnosticClient, Json { ignoreUnknownKeys = true })
-            val response = MockResponse().setChunkedBody(okio.Buffer().write(oversized), 16 * 1024)
+            val response = MockResponse.Builder().chunkedBody(okio.Buffer().write(oversized), 16 * 1024)
             if (mime != null) response.setHeader("Content-Type", mime)
-            server.enqueue(response)
+            server.enqueue(response.build())
 
             val result = kotlinx.coroutines.runBlocking {
                 api.imageBlob(
@@ -271,11 +271,11 @@ class DiagnosticsInterceptorTest {
 
     @Test
     fun enabledDiagnosticsLeavesMountedFilesResponsesStreamedForEachApiBound() {
-        server.shutdown()
+        server.close()
         val certificate = HeldCertificate.Builder().commonName("localhost").addSubjectAlternativeName("localhost").build()
         val serverCertificates = HandshakeCertificates.Builder().heldCertificate(certificate).build()
         val clientCertificates = HandshakeCertificates.Builder().addTrustedCertificate(certificate.certificate).build()
-        server = MockWebServer().apply { useHttps(serverCertificates.sslSocketFactory(), false); start() }
+        server = MockWebServer().apply { useHttps(serverCertificates.sslSocketFactory()); start() }
         val recorder = RecordingDiagnosticsRecorder(recorded)
         val counted = java.util.concurrent.atomic.AtomicLong()
         val http = CollieApiClient.defaultHttpClient(recorder).newBuilder()
@@ -309,7 +309,7 @@ class DiagnosticsInterceptorTest {
                 "existence" -> "{\"exists\":[\"a\"]}".toByteArray()
                 else -> smallImage
             }
-            server.enqueue(MockResponse().setResponseCode(200).setHeader("Content-Type", if (route == "image") "image/png" else "application/json").setBody(okio.Buffer().write(body)))
+            server.enqueue(MockResponse.Builder().code(200).setHeader("Content-Type", if (route == "image") "image/png" else "application/json").body(okio.Buffer().write(body)).build())
             val result = kotlinx.coroutines.runBlocking {
                 when (route) {
                     "listing" -> api.files(connection, target, Scope(), path = com.lateapex.collie.network.RelativeFilePath.parse("ok.txt"))
@@ -331,10 +331,10 @@ class DiagnosticsInterceptorTest {
                 else -> "{\"paneId\":\"w1:p1\",\"available\":true,\"root\":\"/repo\",\"path\":\"large.txt\",\"size\":0,\"mtimeMs\":null,\"binary\":false,\"truncated\":false,\"text\":\"" + "a".repeat(limit + 1024) + "\"}"
             }
             val bytes = if (route == "image") ByteArray(limit + 1024) { (it and 0xff).toByte() } else oversizedText.toByteArray()
-            val response = MockResponse().setResponseCode(200).setHeader("Content-Type", if (route == "image") "text/plain" else "application/json")
-                .setChunkedBody(okio.Buffer().write(bytes), 16 * 1024)
+            val response = MockResponse.Builder().code(200).setHeader("Content-Type", if (route == "image") "text/plain" else "application/json")
+                .chunkedBody(okio.Buffer().write(bytes), 16 * 1024)
             counted.set(0)
-            server.enqueue(response)
+            server.enqueue(response.build())
             val result = kotlinx.coroutines.runBlocking {
                 when (route) {
                     "listing" -> api.files(connection, target, Scope(), path = com.lateapex.collie.network.RelativeFilePath.parse("large.txt"))
@@ -348,7 +348,7 @@ class DiagnosticsInterceptorTest {
             assertTrue("the mounted API path is classified and never copied", fields["responseBodyStreaming"] == true)
             assertFalse(fields.containsKey("responseBody"))
             assertFalse(fields.containsKey("requestBody"))
-            val requestPath = server.takeRequest().path!!.substringBefore('?')
+            val requestPath = server.takeRequest().target!!.substringBefore('?')
             assertTrue(requestPath.endsWith(when (route) {
                 "listing" -> "/files"
                 "existence" -> "/files/exist"
@@ -361,9 +361,9 @@ class DiagnosticsInterceptorTest {
     fun aPollWhoseAnswerHasNotChangedIsNotRecordedAgain() {
         // S25 Ultra, 2026-09-18: 70% of a 20-minute trace was the same transcript page, re-read
         // every 2 seconds and stored whole each time.
-        repeat(3) { server.enqueue(MockResponse().setResponseCode(200).setBody("{\"entries\":[1]}")) }
-        server.enqueue(MockResponse().setResponseCode(200).setBody("{\"entries\":[1,2]}"))
-        server.enqueue(MockResponse().setResponseCode(503).setBody("{\"entries\":[1,2]}"))
+        repeat(3) { server.enqueue(MockResponse.Builder().code(200).body("{\"entries\":[1]}").build()) }
+        server.enqueue(MockResponse.Builder().code(200).body("{\"entries\":[1,2]}").build())
+        server.enqueue(MockResponse.Builder().code(503).body("{\"entries\":[1,2]}").build())
         repeat(5) {
             client.newCall(Request.Builder().url(server.url("/api/pane/w1/history")).build()).execute().use { it.body?.string() }
         }
@@ -385,7 +385,7 @@ class DiagnosticsInterceptorTest {
         val cLater = """{"uuid":"c","text":"three, and its tool result"}"""
         val d = """{"uuid":"d","text":"four"}"""
         listOf(page(a, b), page(a, b), page(a, b, c), page(b, c, d), page(b, cLater, d)).forEach {
-            server.enqueue(MockResponse().setResponseCode(200).setBody(it))
+            server.enqueue(MockResponse.Builder().code(200).body(it).build())
         }
         repeat(5) {
             val request = Request.Builder().url(server.url("/api/pane/w1/history?limit=60")).build()
@@ -409,9 +409,9 @@ class DiagnosticsInterceptorTest {
     fun aSnapshotThatOnlyMovedItsClocksIsNotRecordedAgain() {
         fun snapshot(ts: Int, seen: Int, status: String) =
             """{"ts":$ts,"agents":[{"paneId":"w1","status":"$status","lastSeenAt":$seen}]}"""
-        server.enqueue(MockResponse().setResponseCode(200).setBody(snapshot(1, 1, "working")))
-        server.enqueue(MockResponse().setResponseCode(200).setBody(snapshot(2, 2, "working")))
-        server.enqueue(MockResponse().setResponseCode(200).setBody(snapshot(3, 3, "blocked")))
+        server.enqueue(MockResponse.Builder().code(200).body(snapshot(1, 1, "working")).build())
+        server.enqueue(MockResponse.Builder().code(200).body(snapshot(2, 2, "working")).build())
+        server.enqueue(MockResponse.Builder().code(200).body(snapshot(3, 3, "blocked")).build())
         repeat(3) {
             client.newCall(Request.Builder().url(server.url("/api/snapshot")).build()).execute().use { it.body?.string() }
         }
@@ -424,7 +424,7 @@ class DiagnosticsInterceptorTest {
 
     @Test
     fun aRepeatedSendIsAlwaysRecorded() {
-        repeat(2) { server.enqueue(MockResponse().setResponseCode(200).setBody("{\"ok\":true}")) }
+        repeat(2) { server.enqueue(MockResponse.Builder().code(200).body("{\"ok\":true}").build()) }
         repeat(2) {
             val request = Request.Builder()
                 .url(server.url("/api/pane/w1/keys"))
@@ -438,7 +438,7 @@ class DiagnosticsInterceptorTest {
 
     @Test
     fun anUnchangedAnswerForADifferentPaneIsStillRecorded() {
-        repeat(2) { server.enqueue(MockResponse().setResponseCode(200).setBody("{\"text\":\"same\"}")) }
+        repeat(2) { server.enqueue(MockResponse.Builder().code(200).body("{\"text\":\"same\"}").build()) }
         client.newCall(Request.Builder().url(server.url("/api/pane/w1")).build()).execute().use { it.body?.string() }
         client.newCall(Request.Builder().url(server.url("/api/pane/w2")).build()).execute().use { it.body?.string() }
 
@@ -451,21 +451,21 @@ class DiagnosticsInterceptorTest {
             override val isEnabled = false
         }
         val offClient = OkHttpClient.Builder().addInterceptor(DiagnosticsInterceptor(off)).build()
-        server.enqueue(MockResponse().setResponseCode(200).setBody("{\"ok\":true}"))
+        server.enqueue(MockResponse.Builder().code(200).body("{\"ok\":true}").build())
         offClient.newCall(Request.Builder().url(server.url("/api/health")).build()).execute().use {
             assertEquals("{\"ok\":true}", it.body?.string())
         }
 
-        assertNotNull(server.takeRequest().getHeader("X-Collie-Trace-Id"))
+        assertNotNull(server.takeRequest().headers["X-Collie-Trace-Id"])
         assertTrue(recorded.isEmpty())
     }
     @Test
     fun enabledDiagnosticsDoesNotReadMountedIdentityBodiesBeforeTheNativeJsonBound() {
-        server.shutdown()
+        server.close()
         val certificate = HeldCertificate.Builder().commonName("localhost").addSubjectAlternativeName("localhost").build()
         val serverCertificates = HandshakeCertificates.Builder().heldCertificate(certificate).build()
         val clientCertificates = HandshakeCertificates.Builder().addTrustedCertificate(certificate.certificate).build()
-        server = MockWebServer().apply { useHttps(serverCertificates.sslSocketFactory(), false); start() }
+        server = MockWebServer().apply { useHttps(serverCertificates.sslSocketFactory()); start() }
         val payload = "{\"ok\":true,\"paneId\":\"w1:p1\",\"privateSession\":\"never-record-this\",\"padding\":\"${"x".repeat(80 * 1024)}\"}"
         for (mime in listOf(null, "text/plain", "application/octet-stream")) {
             val sourceBytesRead = AtomicLong()
@@ -489,9 +489,9 @@ class DiagnosticsInterceptorTest {
                     }).build()
                 }.build()
             val api = CollieApiClient(diagnosticClient, Json { ignoreUnknownKeys = true })
-            val response = MockResponse().setChunkedBody(payload, 1024)
+            val response = MockResponse.Builder().chunkedBody(payload, 1024)
             if (mime != null) response.setHeader("Content-Type", mime)
-            server.enqueue(response)
+            server.enqueue(response.build())
             val result = kotlinx.coroutines.runBlocking {
                 api.paneAgentIdentity(
                     Connection(CollieOrigin(server.url("/mounted/").toString()), "phone", "token"),
@@ -514,8 +514,8 @@ class DiagnosticsInterceptorTest {
             recorded.clear()
             val requestSecret = "private-report-session-credential"
             val responseSecret = "private-lifecycle-response-payload"
-            server.enqueue(MockResponse().setResponseCode(409).setHeader("Content-Type", "text/plain")
-                .setChunkedBody("$responseSecret ${"x".repeat(32 * 1024)}", 512))
+            server.enqueue(MockResponse.Builder().code(409).setHeader("Content-Type", "text/plain")
+                .chunkedBody("$responseSecret ${"x".repeat(32 * 1024)}", 512).build())
             val request = Request.Builder().url(server.url(path)).header("Content-Type", "application/json")
                 .post(object : okhttp3.RequestBody() {
                     override fun contentType() = "application/json".toMediaType()

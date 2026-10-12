@@ -10,17 +10,17 @@ release_dir="$work/repo/android/app/build/outputs/apk/release"
 setup() {
   rm -rf "$work/repo" "$work/out" "$work/sdk"
   mkdir -p "$work/repo/scripts" "$work/repo/android/app/src/main/res/raw" "$release_dir" \
-    "$work/sdk/build-tools/36.0.0"
+    "$work/sdk/build-tools/37.0.0"
   cp "$here"/scripts/android-{release.sh,build-manifest.sh,sbom.ts} "$work/repo/scripts/"
   cp "$here/LICENSE" "$work/repo/"; cp "$here/android/app/gradle.lockfile" "$work/repo/android/app/"
   cp "$here"/android/app/src/main/res/raw/*.txt "$work/repo/android/app/src/main/res/raw/"
   printf 'build/\n' > "$work/repo/android/app/.gitignore"
-  cat > "$work/sdk/build-tools/36.0.0/aapt" <<'EOF'
+  cat > "$work/sdk/build-tools/37.0.0/aapt" <<'EOF'
 #!/usr/bin/env bash
 echo "package: name='com.lateapex.collie' versionCode='3' versionName='1.5.2'"
 EOF
   # Stub apksigner: `sign ... --out <path> <input>` copies <input> to <path>; `verify` prints the signer.
-  cat > "$work/sdk/build-tools/36.0.0/apksigner" <<EOF
+  cat > "$work/sdk/build-tools/37.0.0/apksigner" <<EOF
 #!/usr/bin/env bash
 if [[ \$1 == sign ]]; then
   out=""; prev=""
@@ -31,7 +31,7 @@ if [[ \$1 == sign ]]; then
 fi
 echo "Signer #1 certificate SHA-256 digest: $cert"
 EOF
-  chmod +x "$work/sdk/build-tools/36.0.0/"*
+  chmod +x "$work/sdk/build-tools/37.0.0/"*
   git -C "$work/repo" init -q
   git -C "$work/repo" add -A
   git -C "$work/repo" -c user.email=t@t -c user.name=t commit -qm init
@@ -48,7 +48,7 @@ manifest() { bash "$work/repo/scripts/android-build-manifest.sh" >/dev/null; }
 
 # The stub must really copy its input, or every later case proves nothing.
 setup
-"$work/sdk/build-tools/36.0.0/apksigner" sign --ks k --out "$work/stub-out.apk" "$release_dir/app-release-unsigned.apk"
+"$work/sdk/build-tools/37.0.0/apksigner" sign --ks k --out "$work/stub-out.apk" "$release_dir/app-release-unsigned.apk"
 cmp -s "$work/stub-out.apk" "$release_dir/app-release-unsigned.apk" || fail "stub apksigner did not copy its input"
 
 setup; sign 2>/dev/null && fail "signed without a build-inputs manifest"

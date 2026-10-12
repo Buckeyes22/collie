@@ -11,10 +11,10 @@ import kotlinx.serialization.json.Json
 import okhttp3.CertificatePinner
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
-import okhttp3.mockwebserver.Dispatcher
-import okhttp3.mockwebserver.MockResponse
-import okhttp3.mockwebserver.MockWebServer
-import okhttp3.mockwebserver.RecordedRequest
+import mockwebserver3.Dispatcher
+import mockwebserver3.MockResponse
+import mockwebserver3.MockWebServer
+import mockwebserver3.RecordedRequest
 import okhttp3.tls.HandshakeCertificates
 import okhttp3.tls.HeldCertificate
 import org.junit.Assert.*
@@ -34,13 +34,13 @@ class OwnedRetirementBoundaryTest {
             val serverCertificates = HandshakeCertificates.Builder().heldCertificate(certificate).build()
             val clientCertificates = HandshakeCertificates.Builder().addTrustedCertificate(certificate.certificate).build()
             val server = MockWebServer()
-            server.useHttps(serverCertificates.sslSocketFactory(), false)
+            server.useHttps(serverCertificates.sslSocketFactory())
             server.protocols = listOf(Protocol.HTTP_1_1)
             val posts = java.util.concurrent.atomic.AtomicInteger()
             server.dispatcher = object : Dispatcher() {
                 override fun dispatch(request: RecordedRequest): MockResponse {
                     if (request.method == "POST") posts.incrementAndGet()
-                    return MockResponse().setHeader("Content-Type", "application/json").setBody("""{"ts":1,"bridge":"connected","agents":[],"shellPanes":[],"workspaces":[],"tabs":[],"device":{"enforced":true,"device":"fixture","authorized":true}}""")
+                    return MockResponse.Builder().setHeader("Content-Type", "application/json").body("""{"ts":1,"bridge":"connected","agents":[],"shellPanes":[],"workspaces":[],"tabs":[],"device":{"enforced":true,"device":"fixture","authorized":true}}""").build()
                 }
             }
             server.start()
@@ -105,7 +105,7 @@ class OwnedRetirementBoundaryTest {
                 assertEquals(0, posts.get())
                 assertTrue(repository.isCurrent(actorB))
                 assertEquals(1, server.requestCount)
-            } finally { release.countDown(); hold.close(); server.shutdown(); client.dispatcher.executorService.shutdownNow(); client.connectionPool.evictAll() }
+            } finally { release.countDown(); hold.close(); server.close(); client.dispatcher.executorService.shutdownNow(); client.connectionPool.evictAll() }
         }
     }
 

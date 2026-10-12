@@ -21,7 +21,7 @@ import org.robolectric.annotation.Config
 import org.robolectric.Shadows.shadowOf
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34])
+@Config(sdk = [37])
 class LicensesActivityTest {
     private val context: Context = ApplicationProvider.getApplicationContext()
 

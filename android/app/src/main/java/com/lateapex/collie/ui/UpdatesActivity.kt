@@ -167,7 +167,7 @@ class UpdatesActivity : AppCompatActivity() {
             preflightToggle = MaterialButton(
                 this@UpdatesActivity,
                 null,
-                com.google.android.material.R.attr.borderlessButtonStyle,
+                androidx.appcompat.R.attr.borderlessButtonStyle,
             ).apply {
                 id = R.id.updates_native_preflight_toggle
                 isAllCaps = false

@@ -6,9 +6,9 @@ import com.lateapex.collie.domain.Connection
 import com.lateapex.collie.domain.PaneAddress
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.*
-import okhttp3.mockwebserver.Dispatcher
-import okhttp3.mockwebserver.MockResponse
-import okhttp3.mockwebserver.RecordedRequest
+import mockwebserver3.Dispatcher
+import mockwebserver3.MockResponse
+import mockwebserver3.RecordedRequest
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -42,11 +42,11 @@ class NativeGatewayErrorTest {
             f.coordinator.bindingLifecycle.observe { events.add(it) }
             f.server.dispatcher = object : Dispatcher() {
                 override fun dispatch(request: RecordedRequest): MockResponse {
-                    if (request.path == "/.well-known/openid-configuration") return MockResponse().setBody(f.discovery())
-                    if (request.path == "/jwks") return MockResponse().setBody(f.jwks())
-                    val proof = request.getHeader("DPoP")?.let { ProxyJson.objectOf(ProxyJose.decode(it.split('.')[1]).toString(Charsets.UTF_8)) }
-                    if (proof != null && proof["nonce"] == null) return MockResponse().setResponseCode(401).setHeader("DPoP-Nonce", "owned-nonce").setBody("{}")
-                    val id = request.getHeader("X-Collie-Native-Request-Id")!!
+                    if (request.target == "/.well-known/openid-configuration") return MockResponse.Builder().body(f.discovery()).build()
+                    if (request.target == "/jwks") return MockResponse.Builder().body(f.jwks()).build()
+                    val proof = request.headers["DPoP"]?.let { ProxyJson.objectOf(ProxyJose.decode(it.split('.')[1]).toString(Charsets.UTF_8)) }
+                    if (proof != null && proof["nonce"] == null) return MockResponse.Builder().code(401).setHeader("DPoP-Nonce", "owned-nonce").body("{}").build()
+                    val id = request.headers["X-Collie-Native-Request-Id"]!!
                     val broken = bad.get()
                     val typed = genuine.get()
                     if (broken != null || typed != null) {
@@ -59,15 +59,15 @@ class NativeGatewayErrorTest {
                             put("source", "native_gateway"); put("factor", factor); put("code", code); put("requestId", id)
                             if (broken != null) put(broken.name, broken.value)
                         }
-                        return MockResponse().setResponseCode(403).setHeader("X-Collie-Response-Source", "native_gateway")
+                        return MockResponse.Builder().code(403).setHeader("X-Collie-Response-Source", "native_gateway")
                             .setHeader("X-Collie-Error-Source", "native_gateway").setHeader("X-Collie-Error-Factor", factor)
                             .setHeader("X-Collie-Error-Code", code).setHeader("X-Collie-Native-Request-Id", id)
                             .setHeader("X-Collie-Native-Binding-Id", "binding-fixture-id").setHeader("X-Collie-Native-Binding-Revision", "1")
-                            .setBody(body.toString())
+                            .body(body.toString()).build()
                     }
-                    return MockResponse().setHeader("X-Collie-Response-Source", "collie").setHeader("X-Collie-Native-Request-Id", id)
+                    return MockResponse.Builder().setHeader("X-Collie-Response-Source", "collie").setHeader("X-Collie-Native-Request-Id", id)
                         .setHeader("X-Collie-Native-Binding-Id", "binding-fixture-id").setHeader("X-Collie-Native-Binding-Revision", "1")
-                        .setBody("{\"ok\":true,\"version\":\"fixture\",\"deposed\":false,\"mode\":\"solo\"}")
+                        .body("{\"ok\":true,\"version\":\"fixture\",\"deposed\":false,\"mode\":\"solo\"}").build()
                 }
             }
             val interceptor = ProxyIdentityInterceptor(f.coordinator, { f.connection }, { original ->
@@ -81,7 +81,7 @@ class NativeGatewayErrorTest {
             assertEquals(listOf("GET", "GET"), (1..2).map { take().method })
             assertNotNull(f.store.record()!!.binding)
             f.coordinator.begin(f.actor)
-            assertEquals(listOf("/.well-known/openid-configuration", "/jwks"), (1..2).map { take().path })
+            assertEquals(listOf("/.well-known/openid-configuration", "/jwks"), (1..2).map { take().target })
             assertNotNull(f.store.record()!!.transaction)
         }
         fun take(): RecordedRequest = checkNotNull(f.server.takeRequest(5, TimeUnit.SECONDS))
@@ -128,7 +128,7 @@ class NativeGatewayErrorTest {
                     val read = transport.take(); val write = transport.take()
                     assertEquals("GET", read.method); assertEquals("POST", write.method)
                     for (request in listOf(read, write)) {
-                        assertEquals("Bearer pairing-secret", request.getHeader("Authorization")); assertNotNull(request.getHeader("DPoP"))
+                        assertEquals("Bearer pairing-secret", request.headers["Authorization"]); assertNotNull(request.headers["DPoP"])
                     }
                     transport.unchanged(hash, revision, original)
                 }
@@ -163,10 +163,10 @@ class NativeGatewayErrorTest {
                 assertEquals(label, before + 2, f.server.requestCount)
                 val health = transport.take(); val pair = transport.take()
                 assertEquals("GET", health.method); assertEquals("POST", pair.method)
-                assertEquals("/mount/api/health", health.path); assertEquals("/mount/api/pair", pair.path)
+                assertEquals("/mount/api/health", health.target); assertEquals("/mount/api/pair", pair.target)
                 for (request in listOf(health, pair)) {
-                    assertNull(request.getHeader("Authorization")); assertNull(request.getHeader("Collie-Proxy-Authorization"))
-                    assertNull(request.getHeader("DPoP")); assertNull(request.getHeader("Cookie"))
+                    assertNull(request.headers["Authorization"]); assertNull(request.headers["Collie-Proxy-Authorization"])
+                    assertNull(request.headers["DPoP"]); assertNull(request.headers["Cookie"])
                 }
                 transport.unchanged(hash, revision, original)
             }

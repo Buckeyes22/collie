@@ -12,7 +12,7 @@ import org.junit.runner.RunWith
 
 /** Production Android Keystore signing and encryption only. No live issuer/push acceptance claim. */
 @RunWith(AndroidJUnit4::class)
-@SdkSuppress(minSdkVersion = 26)
+@SdkSuppress(minSdkVersion = 37)
 class ProxyNativeCustodyTest {
     @Test fun productionP256ProofAndSeparateEncryptedIdentitySurviveStoreRecreation() {
         val app:Context=ApplicationProvider.getApplicationContext()

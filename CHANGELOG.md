@@ -72,6 +72,11 @@ Running a crew? Update the lead first; members follow on their own. Details:
 - **Worktree uncertainty survives retirement after bytes reach the socket.** Creation and removal receipts retain UNKNOWN after an accepted prefix, while zero-byte refusal stays refused and the same intent is never dispatched again.
 - **The CLI embeds the agent identity operator guide.** Packaged and binary installs can print the guide added with native identity inspection; Gemini doctor fixtures retain the full expanded integration and journal catalog.
 
+### Packaging
+
+- **Pin current Android tooling without weakening native checks.** Align the SDK, built-in Kotlin, wrapper checksum and release SDK references with the latest-only Android policy.
+- **Android builds use the current SDK command interface.** CI installs the age-eligible Android CLI from Google's signed repository with an explicit version pin and retains SDK license and failure checks.
+
 ## [1.19.0] - 2026-10-09
 
 ### Added

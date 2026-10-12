@@ -13,8 +13,8 @@ import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.ConnectionPool
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
-import okhttp3.mockwebserver.MockResponse
-import okhttp3.mockwebserver.MockWebServer
+import mockwebserver3.MockResponse
+import mockwebserver3.MockWebServer
 import okhttp3.tls.HandshakeCertificates
 import okhttp3.tls.HeldCertificate
 import okio.buffer
@@ -36,24 +36,24 @@ class CollieApiClientTest {
         val json = Json { encodeDefaults = true }
         val receipt = ControlOperation(1, "remove", "refused", "worktreeRemove", target, now, now, "worktree.dirty_worktree_requires_force")
         val value = WorktreeRemoveResponse(false, operation = receipt, code = receipt.code, error = "Review a separate force plan")
-        server.enqueue(MockResponse().setResponseCode(409).setBody(json.encodeToString(WorktreeRemoveResponse.serializer(), value))
-            .setHeader("x-collie-error-source", "collie").setHeader("x-collie-error-factor", "operation").setHeader("x-collie-error-code", receipt.code!!))
+        server.enqueue(MockResponse.Builder().code(409).body(json.encodeToString(WorktreeRemoveResponse.serializer(), value))
+            .setHeader("x-collie-error-source", "collie").setHeader("x-collie-error-factor", "operation").setHeader("x-collie-error-code", receipt.code!!).build())
         val result = api.removeWorktree(mounted, Scope(host = "peer", session = "work"), "space", WorktreeRemoveRequest("remove", "plan", false))
         assertTrue(result is ApiResult.Success && result.value.knownRefusalFor("space", "remove"))
         val request = server.takeRequest()
-        assertEquals("/nested/collie/api/workspace/space/worktree/remove?host=peer&session=work", request.path)
+        assertEquals("/nested/collie/api/workspace/space/worktree/remove?host=peer&session=work", request.target)
         assertEquals("POST", request.method)
-        assertEquals("Bearer token", request.getHeader("Authorization"))
+        assertEquals("Bearer token", request.headers["Authorization"])
         val succeeded = value.copy(ok = true, type = "worktree_removed", workspaceId = "space", path = "/repo/topic", branch = "topic", forced = false,
             operation = receipt.copy(state = "succeeded", code = null, result = WorktreeRemoveResult("worktree-remove", "space", "/repo/topic", "topic", false)), code = null, error = null)
         val good = json.encodeToString(WorktreeRemoveResponse.serializer(), succeeded)
         for (bad in listOf(good.replace("\"forced\":false", "\"forced\":\"false\""), good.replace("\"path\":\"/repo/topic\"", "\"path\":17"))) {
-            server.enqueue(MockResponse().setBody(bad))
+            server.enqueue(MockResponse.Builder().body(bad).build())
             val rejected = api.removeWorktree(mounted, Scope(), "space", WorktreeRemoveRequest("remove", "plan", false))
             assertTrue(rejected is ApiResult.Failure && rejected.error is ApiFailure.Protocol)
             server.takeRequest()
         }
-        server.enqueue(MockResponse().setBody(good))
+        server.enqueue(MockResponse.Builder().body(good).build())
         assertTrue(api.removeWorktree(mounted, Scope(), "space", WorktreeRemoveRequest("remove", "plan", false)) is ApiResult.Success)
         server.takeRequest()
     }
@@ -78,34 +78,34 @@ class CollieApiClientTest {
         assertEquals("1.2.3", value.rows.single().version)
         val request = server.takeRequest()
         assertEquals("GET", request.method)
-        assertEquals("/nested/collie/api/agents/capabilities?host=peer-1&session=session-2", request.path)
-        assertEquals("Bearer token", request.getHeader("Authorization"))
-        assertNull(request.getHeader("Origin"))
+        assertEquals("/nested/collie/api/agents/capabilities?host=peer-1&session=session-2", request.target)
+        assertEquals("Bearer token", request.headers["Authorization"])
+        assertNull(request.headers["Origin"])
 
-        server.enqueue(MockResponse().setResponseCode(404).setBody("not found"))
+        server.enqueue(MockResponse.Builder().code(404).body("not found").build())
         assertTrue(api.agentCapabilities(mounted, Scope()) is ApiResult.Failure)
-        assertEquals("/nested/collie/api/agents/capabilities", server.takeRequest().path)
+        assertEquals("/nested/collie/api/agents/capabilities", server.takeRequest().target)
 
         server.enqueue(jsonResponse("""{"schema":2,"mux":"herdr","rows":[],"note":"future"}"""))
         val unsupportedSchema = api.agentCapabilities(mounted, Scope())
         assertTrue(unsupportedSchema is ApiResult.Failure)
         assertTrue((unsupportedSchema as ApiResult.Failure).error is ApiFailure.Protocol)
-        assertEquals("/nested/collie/api/agents/capabilities", server.takeRequest().path)
+        assertEquals("/nested/collie/api/agents/capabilities", server.takeRequest().target)
     }
 
 
     @Test
     fun machineReadsUseLeadOwnedMountedEndpointsAndDecodeTheHistoryTuple() = runBlocking {
         val mounted = Connection(CollieOrigin(server.url("/nested/collie/").toString()), "phone", "token")
-        server.enqueue(MockResponse().setBody("""{"ts":120000,"machines":[{"id":"lead","name":"Lead","isLead":true,"health":"reachable","sample":{"cpu":0.25,"cores":4,"memUsed":2,"memTotal":8},"sampledAt":60000,"alerts":{},"firing":[],"spark":{"stepMs":60000,"cpu":[0.2,null],"mem":[0.5,null]}}]}"""))
+        server.enqueue(MockResponse.Builder().body("""{"ts":120000,"machines":[{"id":"lead","name":"Lead","isLead":true,"health":"reachable","sample":{"cpu":0.25,"cores":4,"memUsed":2,"memTotal":8},"sampledAt":60000,"alerts":{},"firing":[],"spark":{"stepMs":60000,"cpu":[0.2,null],"mem":[0.5,null]}}]}""").build())
         val census = api.machines(mounted, spark = 30)
         assertTrue(census is ApiResult.Success)
         assertEquals(0.25, (census as ApiResult.Success).value.machines.single().sample?.cpu ?: -1.0, 0.0)
         val censusRequest = server.takeRequest()
-        assertEquals("/nested/collie/api/machines?spark=30", censusRequest.path)
-        assertEquals("Bearer token", censusRequest.getHeader("Authorization"))
+        assertEquals("/nested/collie/api/machines?spark=30", censusRequest.target)
+        assertEquals("Bearer token", censusRequest.headers["Authorization"])
 
-        server.enqueue(MockResponse().setBody("""{"ts":180000,"stepMs":60000,"points":[[60000,0.2,0.4,0.5,null,12],[120000,0.3,0.5,0.6,13,14,0.7]]}"""))
+        server.enqueue(MockResponse.Builder().body("""{"ts":180000,"stepMs":60000,"points":[[60000,0.2,0.4,0.5,null,12],[120000,0.3,0.5,0.6,13,14,0.7]]}""").build())
         val history = api.machineHistory(mounted, "peer-east", since = 60000)
         assertTrue(history is ApiResult.Success)
         val points = (history as ApiResult.Success).value.points
@@ -114,8 +114,8 @@ class CollieApiClientTest {
         assertNull(points.first().rxBps)
         assertEquals(0.7, points.last().disk ?: -1.0, 0.0)
         val historyRequest = server.takeRequest()
-        assertEquals("/nested/collie/api/machines/peer-east/history?since=60000", historyRequest.path)
-        assertEquals("Bearer token", historyRequest.getHeader("Authorization"))
+        assertEquals("/nested/collie/api/machines/peer-east/history?since=60000", historyRequest.target)
+        assertEquals("Bearer token", historyRequest.headers["Authorization"])
     }
 
     @Test
@@ -144,7 +144,7 @@ class CollieApiClientTest {
         server.enqueue(jsonResponse("""{"ts":120000,"stepMs":60000,"points":[]}"""))
         val maximum = api.machineHistory(mounted, maximumId)
         assertTrue("The declared 63-character member-ID boundary is valid", maximum is ApiResult.Success)
-        assertEquals("/nested/collie/api/machines/$maximumId/history", server.takeRequest().path)
+        assertEquals("/nested/collie/api/machines/$maximumId/history", server.takeRequest().target)
     }
 
     @Test
@@ -160,7 +160,7 @@ class CollieApiClientTest {
 
         assertTrue(accepted is ApiResult.Success)
         assertEquals(validIds, (accepted as ApiResult.Success).value.machines.map { it.id })
-        assertEquals("/mounted/api/machines?spark=30", server.takeRequest().path)
+        assertEquals("/mounted/api/machines?spark=30", server.takeRequest().target)
     }
 
     @Test
@@ -183,7 +183,7 @@ class CollieApiClientTest {
             val rejected = api.machines(mounted, spark = 30)
             assertTrue("Producer-invalid identity must refuse the whole census: $id", rejected is ApiResult.Failure)
             assertEquals(ApiFailure.Protocol("Malformed machine resources response"), (rejected as ApiResult.Failure).error)
-            assertEquals("/mounted/api/machines?spark=30", server.takeRequest().path)
+            assertEquals("/mounted/api/machines?spark=30", server.takeRequest().target)
         }
     }
 
@@ -201,21 +201,21 @@ class CollieApiClientTest {
             """{"ts":86400000,"stepMs":60000,"points":[$tooManyPoints]}""",
         )
         badResponses.forEach { body ->
-            server.enqueue(MockResponse().setBody(body))
+            server.enqueue(MockResponse.Builder().body(body).build())
             val rejected = api.machineHistory(mounted, "peer", since = 120000)
             assertTrue("Every malformed/request-relative history response must be rejected", rejected is ApiResult.Failure)
             assertTrue(((rejected as ApiResult.Failure).error) is ApiFailure.Protocol)
-            assertTrue(server.takeRequest().path!!.startsWith("/nested/collie/api/machines/peer/history?since=120000"))
+            assertTrue(server.takeRequest().target!!.startsWith("/nested/collie/api/machines/peer/history?since=120000"))
         }
 
-        server.enqueue(MockResponse().setBody("""{"ts":240000,"stepMs":60000,"points":[[120000,0.2,0.3,0.4,null,null],[180000,0.4,0.5,0.6,8,9,0.7]]}"""))
+        server.enqueue(MockResponse.Builder().body("""{"ts":240000,"stepMs":60000,"points":[[120000,0.2,0.3,0.4,null,null],[180000,0.4,0.5,0.6,8,9,0.7]]}""").build())
         val accepted = api.machineHistory(mounted, "peer", since = 120000)
         assertTrue(accepted is ApiResult.Success)
         val acceptedValue = (accepted as ApiResult.Success).value
         assertEquals(listOf(120000L, 180000L), acceptedValue.points.map { it.t })
         assertNull(acceptedValue.points.first().rxBps)
         assertEquals(0.7, acceptedValue.points.last().disk ?: -1.0, 0.0)
-        assertEquals("/nested/collie/api/machines/peer/history?since=120000", server.takeRequest().path)
+        assertEquals("/nested/collie/api/machines/peer/history?since=120000", server.takeRequest().target)
     }
 
     @Test
@@ -223,7 +223,7 @@ class CollieApiClientTest {
         val rows = (0 until 257).joinToString(",") { index ->
             """{"id":"host-$index","name":"Host $index","isLead":${index == 0},"health":"unreachable"}"""
         }
-        server.enqueue(MockResponse().setBody("""{"ts":120000,"machines":[$rows]}"""))
+        server.enqueue(MockResponse.Builder().body("""{"ts":120000,"machines":[$rows]}""").build())
 
         val result = api.machines(Connection(CollieOrigin(server.url("/mounted/").toString()), "phone", "token"), spark = 30)
 
@@ -231,29 +231,29 @@ class CollieApiClientTest {
         val machines = (result as ApiResult.Success).value.machines
         assertEquals(257, machines.size)
         assertEquals("host-256", machines.last().id)
-        assertEquals("/mounted/api/machines?spark=30", server.takeRequest().path)
+        assertEquals("/mounted/api/machines?spark=30", server.takeRequest().target)
     }
 
     @Test
     fun machineRefusalsKeepLeadAndRemovedHostMeaningWithoutFallback() = runBlocking {
         val paired = Connection(origin, "phone", "token")
-        server.enqueue(MockResponse().setResponseCode(404).setBody("""{"error":"not lead","code":"crew.not_lead"}"""))
+        server.enqueue(MockResponse.Builder().code(404).body("""{"error":"not lead","code":"crew.not_lead"}""").build())
         val census = api.machines(paired, spark = 30)
         assertEquals("crew.not_lead", ((census as ApiResult.Failure).error as ApiFailure.Http).code)
-        assertEquals("/api/machines?spark=30", server.takeRequest().path)
+        assertEquals("/api/machines?spark=30", server.takeRequest().target)
         assertEquals("A non-lead machine read must not fall back to /api/crew or /api/pack", 1, server.requestCount)
 
-        server.enqueue(MockResponse().setResponseCode(404).setBody("""{"error":"unknown host","code":"host.unknown","host":"gone"}"""))
+        server.enqueue(MockResponse.Builder().code(404).body("""{"error":"unknown host","code":"host.unknown","host":"gone"}""").build())
         val history = api.machineHistory(paired, "gone")
         assertEquals("host.unknown", ((history as ApiResult.Failure).error as ApiFailure.Http).code)
-        assertEquals("/api/machines/gone/history", server.takeRequest().path)
+        assertEquals("/api/machines/gone/history", server.takeRequest().target)
         assertEquals(2, server.requestCount)
     }
 
     @Test
     fun machineHistoryBoundsWireResponseBeforeJsonMaterialization() = runBlocking {
         val huge = "{\"ts\":120000,\"stepMs\":60000,\"points\":[],\"padding\":\"${"x".repeat(CollieApiClient.MAX_MACHINE_RESPONSE_BYTES + 1)}\"}"
-        server.enqueue(MockResponse().setChunkedBody(huge, 4096))
+        server.enqueue(MockResponse.Builder().chunkedBody(huge, 4096).build())
 
         val result = api.machineHistory(Connection(origin, "phone", "token"), "lead")
 
@@ -283,7 +283,7 @@ class CollieApiClientTest {
             .addTrustedCertificate(certificate.certificate)
             .build()
         server = MockWebServer().apply {
-            useHttps(serverCertificates.sslSocketFactory(), false)
+            useHttps(serverCertificates.sslSocketFactory())
             start()
         }
         trustedHttpClient = CollieApiClient.defaultHttpClient().newBuilder()
@@ -300,20 +300,20 @@ class CollieApiClientTest {
 
     @After
     fun tearDown() {
-        server.shutdown()
+        server.close()
     }
 
     @Test
     fun controlReceiptUsesMountedReadAdmissionAndValidatesItsBoundSchema() = runBlocking {
         val mounted = Connection(CollieOrigin(server.url("/mount/").toString()), "phone", "token")
-        server.enqueue(MockResponse().setBody("{\"ok\":true,\"operation\":{\"schema\":1,\"requestId\":\"intent\",\"state\":\"unknown\",\"capability\":\"movePane\",\"targetIdentity\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"at\":1,\"updatedAt\":2}}"))
+        server.enqueue(MockResponse.Builder().body("{\"ok\":true,\"operation\":{\"schema\":1,\"requestId\":\"intent\",\"state\":\"unknown\",\"capability\":\"movePane\",\"targetIdentity\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"at\":1,\"updatedAt\":2}}").build())
         assertTrue(api.controlOperation(mounted, Scope(host = "peer", session = "work"), "intent") is ApiResult.Success)
         val request = server.takeRequest()
         assertEquals("GET", request.method)
-        assertEquals("/mount/api/control/operations/intent?host=peer&session=work", request.path)
-        assertEquals("Bearer token", request.getHeader("Authorization"))
-        assertEquals(null, request.getHeader("Origin"))
-        server.enqueue(MockResponse().setBody("{\"ok\":true,\"operation\":{\"schema\":2,\"requestId\":\"intent\",\"state\":\"retry\",\"capability\":\"movePane\",\"targetIdentity\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"at\":1,\"updatedAt\":2}}"))
+        assertEquals("/mount/api/control/operations/intent?host=peer&session=work", request.target)
+        assertEquals("Bearer token", request.headers["Authorization"])
+        assertEquals(null, request.headers["Origin"])
+        server.enqueue(MockResponse.Builder().body("{\"ok\":true,\"operation\":{\"schema\":2,\"requestId\":\"intent\",\"state\":\"retry\",\"capability\":\"movePane\",\"targetIdentity\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"at\":1,\"updatedAt\":2}}").build())
         assertTrue(api.controlOperation(mounted, Scope(), "intent") is ApiResult.Failure)
     }
 
@@ -321,15 +321,15 @@ class CollieApiClientTest {
     fun recipeAndOneOffRoutesKeepTheirExactScopedHttpContracts() = runBlocking {
         val connection = Connection(origin, "phone", "token")
         val scope = Scope(host = "builder", session = "review")
-        server.enqueue(MockResponse().setBody("""{"ok":true,"noPrompts":false}"""))
+        server.enqueue(MockResponse.Builder().body("""{"ok":true,"noPrompts":false}""").build())
         assertTrue(api.checkRun(connection, scope, "printf '%s' \"${'$'}HOME/a b\"") is ApiResult.Success)
         val check = server.takeRequest()
         assertEquals("POST", check.method)
-        assertEquals("/api/launch/check?host=builder&session=review", check.path)
-        assertEquals("""{"run":"printf '%s' \"${'$'}HOME/a b\""}""", check.body.readUtf8())
+        assertEquals("/api/launch/check?host=builder&session=review", check.target)
+        assertEquals("""{"run":"printf '%s' \"${'$'}HOME/a b\""}""", check.body?.utf8().orEmpty())
 
         val frozenRun = """{"requestId":"run-id","cwd":"/work tree","run":"printf '%s' \"${'$'}HOME/a b\""}"""
-        server.enqueue(MockResponse().setBody("""{"ok":false,"error":"run disabled","code":"launch.run_off"}"""))
+        server.enqueue(MockResponse.Builder().body("""{"ok":false,"error":"run disabled","code":"launch.run_off"}""").build())
         val refusedRun = api.startRunFrozen(connection, scope, frozenRun)
         assertTrue(refusedRun is ApiResult.Success)
         assertFalse((refusedRun as ApiResult.Success).value.ok)
@@ -338,53 +338,53 @@ class CollieApiClientTest {
         assertNull(refusedRun.value.pane)
         val run = server.takeRequest()
         assertEquals("POST", run.method)
-        assertEquals("/api/launch?host=builder&session=review", run.path)
-        assertEquals(frozenRun, run.body.readUtf8())
+        assertEquals("/api/launch?host=builder&session=review", run.target)
+        assertEquals(frozenRun, run.body?.utf8().orEmpty())
 
-        server.enqueue(MockResponse().setBody("""{"ok":false,"error":"not owned","code":"launcher.not_owned"}"""))
+        server.enqueue(MockResponse.Builder().body("""{"ok":false,"error":"not owned","code":"launcher.not_owned"}""").build())
         api.renameAddedLauncher(connection, scope, "row-1", "New label")
         val rename = server.takeRequest()
-        assertEquals("/api/launchers/added/rename?host=builder&session=review", rename.path)
-        assertEquals("""{"id":"row-1","label":"New label"}""", rename.body.readUtf8())
+        assertEquals("/api/launchers/added/rename?host=builder&session=review", rename.target)
+        assertEquals("""{"id":"row-1","label":"New label"}""", rename.body?.utf8().orEmpty())
 
-        server.enqueue(MockResponse().setBody("""{"ok":true,"removed":1}"""))
+        server.enqueue(MockResponse.Builder().body("""{"ok":true,"removed":1}""").build())
         assertTrue(api.removeAddedLauncher(connection, scope, "row-1") is ApiResult.Success)
         val remove = server.takeRequest()
-        assertEquals("/api/launchers/added/remove?host=builder&session=review", remove.path)
-        assertEquals("""{"id":"row-1"}""", remove.body.readUtf8())
+        assertEquals("/api/launchers/added/remove?host=builder&session=review", remove.target)
+        assertEquals("""{"id":"row-1"}""", remove.body?.utf8().orEmpty())
 
-        server.enqueue(MockResponse().setBody("""{"ok":true,"removed":1}"""))
+        server.enqueue(MockResponse.Builder().body("""{"ok":true,"removed":1}""").build())
         assertTrue(api.removeRecentRun(connection, scope, "printf ok") is ApiResult.Success)
         val recentRemove = server.takeRequest()
-        assertEquals("/api/launch/recent/remove?host=builder&session=review", recentRemove.path)
-        assertEquals("""{"line":"printf ok"}""", recentRemove.body.readUtf8())
-        server.enqueue(MockResponse().setBody("""{"ok":true,"removed":3}"""))
+        assertEquals("/api/launch/recent/remove?host=builder&session=review", recentRemove.target)
+        assertEquals("""{"line":"printf ok"}""", recentRemove.body?.utf8().orEmpty())
+        server.enqueue(MockResponse.Builder().body("""{"ok":true,"removed":3}""").build())
         assertTrue(api.clearRecentRuns(connection, scope) is ApiResult.Success)
         val recentClear = server.takeRequest()
-        assertEquals("/api/launch/recent/clear?host=builder&session=review", recentClear.path)
-        assertEquals("{}", recentClear.body.readUtf8())
+        assertEquals("/api/launch/recent/clear?host=builder&session=review", recentClear.target)
+        assertEquals("{}", recentClear.body?.utf8().orEmpty())
     }
 
     @Test
     fun launcherDiscoveryKeepsOldPeerCompatibilityButRejectsMalformedPolicyCaps() = runBlocking {
         val connection = Connection(origin, "phone", "token")
-        server.enqueue(MockResponse().setBody("""{"launchers":[],"home":"/home/operator"}"""))
+        server.enqueue(MockResponse.Builder().body("""{"launchers":[],"home":"/home/operator"}""").build())
         val legacy = api.launchers(connection, Scope())
         assertTrue(legacy is ApiResult.Success)
         assertNull((legacy as ApiResult.Success).value.adding)
 
-        server.enqueue(MockResponse().setBody("""{"launchers":[],"home":"/home/operator","adding":{"adds":true,"freeText":true,"run":true,"file":"launchers.toml","count":21,"max":20,"recipes":[],"off":[]}}"""))
+        server.enqueue(MockResponse.Builder().body("""{"launchers":[],"home":"/home/operator","adding":{"adds":true,"freeText":true,"run":true,"file":"launchers.toml","count":21,"max":20,"recipes":[],"off":[]}}""").build())
         assertTrue(api.launchers(connection, Scope()) is ApiResult.Failure)
     }
 
     @Test
     fun paneRequestUsesScopedIdentityHeadersAndEtag() = runBlocking {
         server.enqueue(
-            MockResponse()
-                .setResponseCode(200)
+            MockResponse.Builder()
+                .code(200)
                 .setHeader("Content-Type", "application/json")
                 .setHeader("ETag", "\"rev-7\"")
-                .setBody("""{"paneId":"w1:p1","text":"hello","truncated":false,"revision":7}"""),
+                .body("""{"paneId":"w1:p1","text":"hello","truncated":false,"revision":7}""").build(),
         )
         val connection = Connection(origin, "phone", "bearer-secret")
         val result = api.pane(
@@ -396,13 +396,13 @@ class CollieApiClientTest {
         assertTrue(result is ApiResult.Success)
         assertEquals("\"rev-7\"", (result as ApiResult.Success).etag)
         val request = server.takeRequest()
-        assertEquals("/api/pane/w1%3Ap1?lines=600&host=a%20b&session=work%20session", request.path)
-        assertEquals("application/json", request.getHeader("Accept"))
-        assertEquals("XMLHttpRequest", request.getHeader("X-Requested-With"))
-        assertEquals("Bearer bearer-secret", request.getHeader("Authorization"))
-        assertEquals("1", request.getHeader("X-Collie-Seen"))
-        assertEquals("\"rev-6\"", request.getHeader("If-None-Match"))
-        assertNull(request.getHeader("Origin"))
+        assertEquals("/api/pane/w1%3Ap1?lines=600&host=a%20b&session=work%20session", request.target)
+        assertEquals("application/json", request.headers["Accept"])
+        assertEquals("XMLHttpRequest", request.headers["X-Requested-With"])
+        assertEquals("Bearer bearer-secret", request.headers["Authorization"])
+        assertEquals("1", request.headers["X-Collie-Seen"])
+        assertEquals("\"rev-6\"", request.headers["If-None-Match"])
+        assertNull(request.headers["Origin"])
     }
 
     @Test
@@ -411,50 +411,50 @@ class CollieApiClientTest {
         val connection = Connection(mounted, "phone", "image-token")
         val hash = "ab".repeat(32)
         val png = byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)
-        server.enqueue(MockResponse()
+        server.enqueue(MockResponse.Builder()
             .setHeader("Content-Type", "image/png")
             .setHeader("X-Collie-Lead-Id", "new-lead")
             .setHeader("X-Collie-Lead-Epoch", "epoch-9")
-            .setBody(okio.Buffer().write(png)))
+            .body(okio.Buffer().write(png)).build())
         val result = api.imageBlob(connection, Scope("peer", "work"), hash)
         assertTrue(result is ApiResult.Success)
         assertEquals(png.toList(), (result as ApiResult.Success).value.bytes.toList())
         assertEquals(ControlAuthority("new-lead", "epoch-9"), (result as ApiResult.Success).controlAuthority)
         val request = server.takeRequest()
         assertEquals("GET", request.method)
-        assertEquals("/mount/api/blobs/$hash?host=peer&session=work", request.path)
-        assertEquals("Bearer image-token", request.getHeader("Authorization"))
-        assertEquals("image/png,image/jpeg,image/gif,image/webp", request.getHeader("Accept"))
-        server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", "https://outside.example/image.png"))
+        assertEquals("/mount/api/blobs/$hash?host=peer&session=work", request.target)
+        assertEquals("Bearer image-token", request.headers["Authorization"])
+        assertEquals("image/png,image/jpeg,image/gif,image/webp", request.headers["Accept"])
+        server.enqueue(MockResponse.Builder().code(302).setHeader("Location", "https://outside.example/image.png").build())
         assertTrue(api.imageBlob(connection, Scope(), hash) is ApiResult.Failure)
-        assertEquals("/mount/api/blobs/$hash", server.takeRequest().path)
+        assertEquals("/mount/api/blobs/$hash", server.takeRequest().target)
         val exactLimit = ByteArray(ImageBlob.MAX_BYTES) { 0x41 }
-        // MockResponse.setChunkedBody stores HTTP/1 chunk framing in its body. Keep that fixture
+        // MockResponse.Builder.chunkedBody stores HTTP/1 chunk framing in its body. Keep that fixture
         // on HTTP/1 so HTTP/2 DATA cannot accidentally carry the framing bytes as image payload.
-        server.enqueue(MockResponse().setChunkedBody(okio.Buffer().write(byteArrayOf(1, 2, 3)), 16 * 1024))
+        server.enqueue(MockResponse.Builder().chunkedBody(okio.Buffer().write(byteArrayOf(1, 2, 3)), 16 * 1024).build())
         boundaryHttp1Client.newCall(okhttp3.Request.Builder().url(server.url("/chunked-diagnostic")).build()).execute().use { response ->
             assertEquals(Protocol.HTTP_1_1, response.protocol)
             assertEquals(listOf<Byte>(1, 2, 3), response.body!!.bytes().toList())
         }
         server.takeRequest()
-        server.enqueue(MockResponse().setHeader("Content-Type", "image/png").setChunkedBody(okio.Buffer().write(exactLimit), 16 * 1024))
+        server.enqueue(MockResponse.Builder().setHeader("Content-Type", "image/png").chunkedBody(okio.Buffer().write(exactLimit), 16 * 1024).build())
         val atLimit = boundaryHttp1Api.imageBlob(connection, Scope(), hash)
         assertTrue("exact 10 MiB image response should stream successfully: $atLimit", atLimit is ApiResult.Success && (atLimit as ApiResult.Success).value.bytes.size == ImageBlob.MAX_BYTES)
-        assertEquals("/mount/api/blobs/$hash", server.takeRequest().path)
+        assertEquals("/mount/api/blobs/$hash", server.takeRequest().target)
         val oversized = ByteArray(ImageBlob.MAX_BYTES + 1) { 0x41 }
-        server.enqueue(MockResponse().setChunkedBody(okio.Buffer().write(oversized), 16 * 1024))
+        server.enqueue(MockResponse.Builder().chunkedBody(okio.Buffer().write(oversized), 16 * 1024).build())
         val tooLarge = boundaryHttp1Api.imageBlob(connection, Scope(), hash)
         assertTrue(tooLarge is ApiResult.Failure && (tooLarge as ApiResult.Failure).error is ApiFailure.Protocol)
-        assertEquals("/mount/api/blobs/$hash", server.takeRequest().path)
+        assertEquals("/mount/api/blobs/$hash", server.takeRequest().target)
         // HTTP/2 carries the payload in DATA frames without MockWebServer's HTTP/1 chunk bytes.
-        server.enqueue(MockResponse().setHeader("Content-Type", "image/png").setBody(okio.Buffer().write(exactLimit)))
+        server.enqueue(MockResponse.Builder().setHeader("Content-Type", "image/png").body(okio.Buffer().write(exactLimit)).build())
         val h2AtLimit = api.imageBlob(connection, Scope(), hash)
         assertTrue("exact HTTP/2 payload should stream successfully: $h2AtLimit", h2AtLimit is ApiResult.Success && (h2AtLimit as ApiResult.Success).value.bytes.size == ImageBlob.MAX_BYTES)
-        assertEquals("/mount/api/blobs/$hash", server.takeRequest().path)
-        server.enqueue(MockResponse().setBody(okio.Buffer().write(ByteArray(ImageBlob.MAX_BYTES + 1) { 0x41 })))
+        assertEquals("/mount/api/blobs/$hash", server.takeRequest().target)
+        server.enqueue(MockResponse.Builder().body(okio.Buffer().write(ByteArray(ImageBlob.MAX_BYTES + 1) { 0x41 })).build())
         val h2TooLarge = api.imageBlob(connection, Scope(), hash)
         assertTrue(h2TooLarge is ApiResult.Failure && (h2TooLarge as ApiResult.Failure).error is ApiFailure.Protocol)
-        assertEquals("/mount/api/blobs/$hash", server.takeRequest().path)
+        assertEquals("/mount/api/blobs/$hash", server.takeRequest().target)
     }
 
     @Test(expected = IllegalArgumentException::class)
@@ -466,25 +466,25 @@ class CollieApiClientTest {
 
     @Test
     fun paneProcessDetailsAreScopedAndUseTheExplicitDeviceReadRoute() = runBlocking {
-        server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody(
+        server.enqueue(MockResponse.Builder().setHeader("Content-Type", "application/json").body(
             """{"ok":true,"paneId":"w1:p1","shellPid":10,"foregroundProcessGroupId":12,"processes":[{"pid":12,"name":"node","argv":["node","app.js"],"cwd":"/repo"}]}""",
-        ))
+        ).build())
         val connection = Connection(origin, "phone", "bearer-secret")
         val result = api.paneProcesses(connection, PaneAddress(Scope(host = "desk", session = "work"), "w1:p1"))
         assertTrue(result is ApiResult.Success)
         assertEquals("node", (result as ApiResult.Success).value.processes.single().name)
         val request = server.takeRequest()
         assertEquals("GET", request.method)
-        assertEquals("/api/pane/w1%3Ap1/processes?host=desk&session=work", request.path)
-        assertEquals("Bearer bearer-secret", request.getHeader("Authorization"))
-        assertEquals("1", request.getHeader("X-Collie-Seen"))
+        assertEquals("/api/pane/w1%3Ap1/processes?host=desk&session=work", request.target)
+        assertEquals("Bearer bearer-secret", request.headers["Authorization"])
+        assertEquals("1", request.headers["X-Collie-Seen"])
     }
 
     @Test
     fun agentIdentityReadIsScopedAndDoesNotMarkThePaneSeen() = runBlocking {
-        server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody(
+        server.enqueue(MockResponse.Builder().setHeader("Content-Type", "application/json").body(
             """{"ok":true,"paneId":"w1:p1","agent":"codex","status":"working","session":{"source":"codex","agent":"codex","kind":"id","value":"session-42"},"stateAuthority":{"observed":false,"source":null},"interactiveReady":true,"launchPending":false,"stateChangeSeq":"9007199254740993","completionSeq":"18446744073709551615"}""",
-        ))
+        ).build())
         val address = PaneAddress(Scope(host = "desk", session = "work"), "w1:p1")
         val result = api.paneAgentIdentity(Connection(origin, "phone", "bearer-secret"), address)
         assertTrue(result is ApiResult.Success)
@@ -495,16 +495,16 @@ class CollieApiClientTest {
         assertEquals("18446744073709551615", identity.completionSeq)
         val request = server.takeRequest()
         assertEquals("GET", request.method)
-        assertEquals("/api/pane/w1%3Ap1/agent?host=desk&session=work", request.path)
-        assertEquals("Bearer bearer-secret", request.getHeader("Authorization"))
-        assertEquals(null, request.getHeader("X-Collie-Seen"))
+        assertEquals("/api/pane/w1%3Ap1/agent?host=desk&session=work", request.target)
+        assertEquals("Bearer bearer-secret", request.headers["Authorization"])
+        assertEquals(null, request.headers["X-Collie-Seen"])
     }
 
     @Test
     fun agentIdentityAcceptsKnownStatusWithAllOptionalFactsUnknown() = runBlocking<Unit> {
-        server.enqueue(MockResponse().setBody(
+        server.enqueue(MockResponse.Builder().body(
             """{"ok":true,"paneId":"w1:p1","agent":"codex","status":"working","stateAuthority":{"observed":false,"source":null},"session":null,"interactiveReady":null,"launchPending":null,"stateChangeSeq":null,"completionSeq":null}""",
-        ))
+        ).build())
         val result = api.paneAgentIdentity(Connection(origin, "phone", "token"), PaneAddress(Scope(), "w1:p1"))
         assertTrue(result is ApiResult.Success)
         val identity = (result as ApiResult.Success).value
@@ -520,18 +520,18 @@ class CollieApiClientTest {
     @Test
     fun agentIdentityRejectsAnotherPaneOrInferredAuthority() = runBlocking {
         val address = PaneAddress(Scope(), "w1:p1")
-        server.enqueue(MockResponse().setBody("""{"ok":true,"paneId":"w1:p2","status":"working","stateAuthority":{"observed":false,"source":null}}"""))
+        server.enqueue(MockResponse.Builder().body("""{"ok":true,"paneId":"w1:p2","status":"working","stateAuthority":{"observed":false,"source":null}}""").build())
         assertTrue(api.paneAgentIdentity(Connection(origin, "phone", "token"), address) is ApiResult.Failure)
         server.takeRequest()
-        server.enqueue(MockResponse().setBody("""{"ok":true,"paneId":"w1:p1","status":"working","stateAuthority":{"observed":true,"source":"codex"}}"""))
+        server.enqueue(MockResponse.Builder().body("""{"ok":true,"paneId":"w1:p1","status":"working","stateAuthority":{"observed":true,"source":"codex"}}""").build())
         assertTrue(api.paneAgentIdentity(Connection(origin, "phone", "token"), address) is ApiResult.Failure)
     }
 
     @Test
     fun agentIdentityRejectsSequenceAboveUint64Maximum() = runBlocking<Unit> {
-        server.enqueue(MockResponse().setBody(
+        server.enqueue(MockResponse.Builder().body(
             """{"ok":true,"paneId":"w1:p1","status":"working","stateAuthority":{"observed":false,"source":null},"stateChangeSeq":"18446744073709551616"}""",
-        ))
+        ).build())
         assertTrue(api.paneAgentIdentity(Connection(origin, "phone", "token"), PaneAddress(Scope(), "w1:p1")) is ApiResult.Failure)
         server.takeRequest()
     }
@@ -539,14 +539,14 @@ class CollieApiClientTest {
     @Test
     fun paneProcessDetailsRejectAnotherPaneAndUnboundedRows() = runBlocking {
         val address = PaneAddress(Scope(), "w1:p1")
-        server.enqueue(MockResponse().setBody("""{"ok":true,"paneId":"w1:p2","processes":[]}"""))
+        server.enqueue(MockResponse.Builder().body("""{"ok":true,"paneId":"w1:p2","processes":[]}""").build())
         assertTrue(api.paneProcesses(Connection(origin, "phone", "token"), address) is ApiResult.Failure)
         server.takeRequest()
         val tooMany = (0..64).joinToString(",") { "{\"pid\":$it,\"name\":\"proc\"}" }
-        server.enqueue(MockResponse().setBody("""{"ok":true,"paneId":"w1:p1","processes":[$tooMany]}"""))
+        server.enqueue(MockResponse.Builder().body("""{"ok":true,"paneId":"w1:p1","processes":[$tooMany]}""").build())
         assertTrue(api.paneProcesses(Connection(origin, "phone", "token"), address) is ApiResult.Failure)
         val tooLarge = "x".repeat(231 * 1024)
-        server.enqueue(MockResponse().setBody("""{"ok":true,"paneId":"w1:p1","processes":[{"pid":1,"name":"node","cmdline":"$tooLarge"}]}"""))
+        server.enqueue(MockResponse.Builder().body("""{"ok":true,"paneId":"w1:p1","processes":[{"pid":1,"name":"node","cmdline":"$tooLarge"}]}""").build())
         assertTrue(api.paneProcesses(Connection(origin, "phone", "token"), address) is ApiResult.Failure)
     }
 
@@ -554,7 +554,7 @@ class CollieApiClientTest {
     fun paneProcessDetailsRejectsAnOversizedChunkedWireBodyBeforeJsonDecoding(): Unit = runBlocking {
         val address = PaneAddress(Scope(), "w1:p1")
         val oversized = """{"ok":true,"paneId":"w1:p1","processes":[],"padding":"${"x".repeat(1_000_100)}"}"""
-        server.enqueue(MockResponse().setChunkedBody(oversized, 4096))
+        server.enqueue(MockResponse.Builder().chunkedBody(oversized, 4096).build())
         val result = api.paneProcesses(Connection(origin, "phone", "token"), address)
         assertTrue(result is ApiResult.Failure)
         assertTrue((result as ApiResult.Failure).error is ApiFailure.Protocol)
@@ -562,9 +562,9 @@ class CollieApiClientTest {
 
     @Test
     fun paneChangesListingUsesOrdinaryScopedReadAndParsesOpaqueNestedPaths(): Unit = runBlocking {
-        server.enqueue(MockResponse().setBody(
+        server.enqueue(MockResponse.Builder().body(
             """{"paneId":"w1:p1","workspaceId":"w1","workspaceLabel":"Project","paneRepo":"repo","available":true,"root":"/work/project","repos":[{"relPath":".","name":"repo","files":[{"path":"src/a b.kt","status":"M","added":2,"removed":1,"binary":false,"oldPath":null}]}],"truncated":false,"depthLimited":false,"clean":[]}""",
-        ))
+        ).build())
         val target = ChangesTarget.Pane("w1:p1")
         val result = api.changes(Connection(origin, "phone", "token"), target, Scope(host = "peer", session = "work"), ChangesLookup(4, false))
         val value = (result as ApiResult.Success).value
@@ -575,17 +575,17 @@ class CollieApiClientTest {
         assertEquals("src/a b.kt", listing.repos.single().files.single().path)
         val request = server.takeRequest()
         assertEquals("GET", request.method)
-        assertEquals("/api/pane/w1%3Ap1/changes?depth=4&nested=0&host=peer&session=work", request.path)
-        assertEquals("Bearer token", request.getHeader("Authorization"))
-        assertNull(request.getHeader("Origin"))
-        assertNull(request.getHeader("X-Collie-Seen"))
+        assertEquals("/api/pane/w1%3Ap1/changes?depth=4&nested=0&host=peer&session=work", request.target)
+        assertEquals("Bearer token", request.headers["Authorization"])
+        assertNull(request.headers["Origin"])
+        assertNull(request.headers["X-Collie-Seen"])
     }
 
     @Test
     fun chunkedOversizedChangesResponseIsRejectedBeforeJsonParsing(): Unit = runBlocking {
         val limit = 5 * 1024 * 1024
         val payload = "x".repeat(limit + 1)
-        server.enqueue(MockResponse().setChunkedBody(payload, 16 * 1024))
+        server.enqueue(MockResponse.Builder().chunkedBody(payload, 16 * 1024).build())
         val http1Client = trustedHttpClient.newBuilder()
             .protocols(listOf(Protocol.HTTP_1_1))
             .connectionPool(ConnectionPool())
@@ -604,16 +604,16 @@ class CollieApiClientTest {
             (result as ApiResult.Failure).error,
         )
         val request = server.takeRequest()
-        assertEquals("/api/workspace/w/changes?depth=2&nested=1", request.path)
-        assertEquals("Bearer token", request.getHeader("Authorization"))
+        assertEquals("/api/workspace/w/changes?depth=2&nested=1", request.target)
+        assertEquals("Bearer token", request.headers["Authorization"])
         assertEquals(1, server.requestCount)
     }
 
     @Test
     fun changesDiffAndCommitRoutesEncodeRepoAndPathWithoutChangingTheirIdentity(): Unit = runBlocking {
-        server.enqueue(MockResponse().setBody(
+        server.enqueue(MockResponse.Builder().body(
             """{"workspaceId":"work/1","workspaceLabel":"Work","available":true,"repo":"nested/repo","path":"dir/a b.kt","oldPath":"dir/old.kt","status":"R","binary":false,"directory":false,"truncated":false,"diff":"-old\n+new\n"}""",
-        ))
+        ).build())
         val target = ChangesTarget.Workspace("work/1")
         val connection = Connection(origin, "phone", "token")
         val diff = api.changeDiff(connection, target, Scope(), ChangesLookup(), "nested/repo", "dir/a b.kt")
@@ -623,16 +623,16 @@ class CollieApiClientTest {
         assertEquals("dir/old.kt", diffValue.oldPath)
         assertEquals(ChangeStatus.RENAMED, diffValue.status)
         val diffRequest = server.takeRequest()
-        assertEquals("/api/workspace/work%2F1/changes?depth=2&nested=1&repo=nested%2Frepo&path=dir%2Fa%20b.kt", diffRequest.path)
+        assertEquals("/api/workspace/work%2F1/changes?depth=2&nested=1&repo=nested%2Frepo&path=dir%2Fa%20b.kt", diffRequest.target)
 
-        server.enqueue(MockResponse().setBody(
+        server.enqueue(MockResponse.Builder().body(
             """{"workspaceId":"work/1","workspaceLabel":"Work","available":true,"repo":"nested/repo","path":"dir/a b.kt","oldPath":null,"status":"M","binary":false,"directory":false,"truncated":false,"hash":"0123456789abcdef0123456789abcdef01234567","diff":"+line\n"}""",
-        ))
+        ).build())
         val commit = api.changeCommitDiff(connection, target, Scope(), ChangesLookup(3, true), "nested/repo", "dir/a b.kt")
         val commitValue = ((commit as ApiResult.Success).value.state as ChangeDiffState.Available)
         assertEquals("0123456789abcdef0123456789abcdef01234567", commitValue.commitHash)
         val commitRequest = server.takeRequest()
-        assertEquals("/api/workspace/work%2F1/changes?depth=3&nested=1&repo=nested%2Frepo&path=dir%2Fa%20b.kt&view=commit", commitRequest.path)
+        assertEquals("/api/workspace/work%2F1/changes?depth=3&nested=1&repo=nested%2Frepo&path=dir%2Fa%20b.kt&view=commit", commitRequest.target)
     }
 
     @Test
@@ -640,31 +640,31 @@ class CollieApiClientTest {
         val firstHash = "0123456789abcdef0123456789abcdef01234567"
         val secondHash = "1123456789abcdef0123456789abcdef01234567"
         val pageOne = """{"workspaceId":"w","available":true,"repo":"nested/repo","name":"repo","headHash":"$firstHash","offset":0,"limit":2,"commits":[{"hash":"$firstHash","shortHash":"0123456","subject":"new","author":"A","time":1700000000},{"hash":"$secondHash","shortHash":"1123456","subject":"older","author":"B","time":1690000000}],"nextOffset":2,"truncated":false}"""
-        server.enqueue(MockResponse().setBody(pageOne))
+        server.enqueue(MockResponse.Builder().body(pageOne).build())
         val target = ChangesTarget.Workspace("w")
         val connection = Connection(origin, "phone", "token")
         val first = api.changeCommitHistory(connection, target, Scope(host = "peer", session = "work"), ChangesLookup(), "nested/repo", null, 0, 2)
         val firstPage = ((first as ApiResult.Success).value.state as ChangeCommitHistoryState.Available).page
         assertEquals(firstHash, firstPage.headHash)
         assertEquals(2, firstPage.nextOffset)
-        assertEquals("/api/workspace/w/changes?depth=2&nested=1&view=history&repo=nested%2Frepo&offset=0&limit=2&host=peer&session=work", server.takeRequest().path)
+        assertEquals("/api/workspace/w/changes?depth=2&nested=1&view=history&repo=nested%2Frepo&offset=0&limit=2&host=peer&session=work", server.takeRequest().target)
 
-        server.enqueue(MockResponse().setBody(
+        server.enqueue(MockResponse.Builder().body(
             """{"workspaceId":"w","available":true,"repo":"nested/repo","name":"repo","headHash":"$firstHash","offset":2,"limit":2,"commits":[{"hash":"2123456789abcdef0123456789abcdef01234567","shortHash":"2123456","subject":"oldest","author":"C","time":1680000000}],"nextOffset":null,"truncated":false}""",
-        ))
+        ).build())
         val next = api.changeCommitHistory(connection, target, Scope(), ChangesLookup(), "nested/repo", firstPage.headHash, firstPage.nextOffset!!, 2)
         val nextPage = ((next as ApiResult.Success).value.state as ChangeCommitHistoryState.Available).page
         assertEquals(firstPage.headHash, nextPage.headHash)
         assertEquals(2, nextPage.offset)
-        assertEquals("/api/workspace/w/changes?depth=2&nested=1&view=history&repo=nested%2Frepo&offset=2&limit=2&head=$firstHash", server.takeRequest().path)
+        assertEquals("/api/workspace/w/changes?depth=2&nested=1&view=history&repo=nested%2Frepo&offset=2&limit=2&head=$firstHash", server.takeRequest().target)
         assertTrue((firstPage.commits + nextPage.commits).map { it.hash }.toSet().size == 3)
 
-        server.enqueue(MockResponse().setBody(
+        server.enqueue(MockResponse.Builder().body(
             """{"workspaceId":"w","available":true,"repo":"nested/repo","name":"repo","commit":{"hash":"$secondHash","shortHash":"1123456","subject":"older","author":"B","time":1690000000},"files":[],"truncated":false}""",
-        ))
+        ).build())
         val detail = api.changeCommit(connection, target, Scope(), ChangesLookup(), "nested/repo", secondHash)
         assertTrue((detail as ApiResult.Success).value.state is ChangeCommitState.Available)
-        assertEquals("/api/workspace/w/changes?depth=2&nested=1&view=commit&repo=nested%2Frepo&commit=$secondHash", server.takeRequest().path)
+        assertEquals("/api/workspace/w/changes?depth=2&nested=1&view=commit&repo=nested%2Frepo&commit=$secondHash", server.takeRequest().target)
     }
 
     @Test
@@ -677,7 +677,7 @@ class CollieApiClientTest {
                 val hash = n.toString(16).padStart(40, '0')
                 """{"hash":"$hash","shortHash":"${hash.take(7)}","subject":"row$n","author":"A","time":1}"""
             }
-            server.enqueue(MockResponse().setBody("""{"workspaceId":"w","available":true,"repo":".","name":"r","headHash":"$head","offset":$offset,"limit":$limit,"commits":[$rows],"nextOffset":${next ?: "null"},"truncated":$truncated}"""))
+            server.enqueue(MockResponse.Builder().body("""{"workspaceId":"w","available":true,"repo":".","name":"r","headHash":"$head","offset":$offset,"limit":$limit,"commits":[$rows],"nextOffset":${next ?: "null"},"truncated":$truncated}""").build())
             val result = api.changeCommitHistory(connection, target, Scope(), ChangesLookup(), ".", head, offset, limit)
             server.takeRequest()
             return result
@@ -704,9 +704,9 @@ class CollieApiClientTest {
         assertTrue(rows.all { it.jsonObject.getValue("subject").jsonPrimitive.content.length == 500 })
         assertTrue(rows.all { it.jsonObject.getValue("author").jsonPrimitive.content.length == 1024 })
         assertTrue("Real bridge fixture failed direct typed parser", ChangesWire.history(tree, ChangesTarget.Workspace("w"), ".", null, 0, 50) != null)
-        // MockWebServer 4.12's setChunkedBody pre-encodes HTTP/1 chunk framing. Use the
+        // MockWebServer 3's chunkedBody pre-encodes HTTP/1 chunk framing. Use the
         // existing HTTP/1 fixture client for it; HTTP/2 DATA frames use setBody below.
-        server.enqueue(MockResponse().setChunkedBody(body, 4096))
+        server.enqueue(MockResponse.Builder().chunkedBody(body, 4096).build())
         val result = boundaryHttp1Api.changeCommitHistory(Connection(origin, "phone", "token"), ChangesTarget.Workspace("w"), Scope(), ChangesLookup(), ".", null, 0, 50)
         val failureKind = (result as? ApiResult.Failure)?.error?.let { error ->
             if (error is ApiFailure.Protocol) error.message else error.javaClass.simpleName
@@ -718,19 +718,19 @@ class CollieApiClientTest {
         assertEquals(50, page.commits.map { it.hash }.toSet().size)
         assertNull(page.nextOffset)
         assertFalse(page.truncated)
-        assertEquals("/api/workspace/w/changes?depth=2&nested=1&view=history&repo=.&offset=0&limit=50", server.takeRequest().path)
-        server.enqueue(MockResponse().setBody(body))
+        assertEquals("/api/workspace/w/changes?depth=2&nested=1&view=history&repo=.&offset=0&limit=50", server.takeRequest().target)
+        server.enqueue(MockResponse.Builder().body(body).build())
         val http2 = api.changeCommitHistory(Connection(origin, "phone", "token"), ChangesTarget.Workspace("w"), Scope(), ChangesLookup(), ".", null, 0, 50)
         assertTrue("Real bridge page must also pass native HTTP/2 transport", http2 is ApiResult.Success)
         assertEquals(page, ((http2 as ApiResult.Success).value.state as ChangeCommitHistoryState.Available).page)
-        assertEquals("/api/workspace/w/changes?depth=2&nested=1&view=history&repo=.&offset=0&limit=50", server.takeRequest().path)
+        assertEquals("/api/workspace/w/changes?depth=2&nested=1&view=history&repo=.&offset=0&limit=50", server.takeRequest().target)
     }
 
     @Test
     fun historyParserRejectsDuplicateRowsAndChangedPinnedHead(): Unit = runBlocking {
         val head = "0123456789abcdef0123456789abcdef01234567"
         val body = """{"workspaceId":"w","available":true,"repo":".","name":"r","headHash":"$head","offset":2,"limit":1,"commits":[{"hash":"$head","shortHash":"0123456","subject":"x","author":"A","time":1}],"nextOffset":3,"truncated":false}"""
-        server.enqueue(MockResponse().setBody(body))
+        server.enqueue(MockResponse.Builder().body(body).build())
         val result = api.changeCommitHistory(Connection(origin, "phone", "token"), ChangesTarget.Workspace("w"), Scope(), ChangesLookup(), ".", "1123456789abcdef0123456789abcdef01234567", 2, 1)
         assertEquals(ApiFailure.Protocol("Malformed Changes history response"), (result as ApiResult.Failure).error)
         server.takeRequest()
@@ -738,9 +738,9 @@ class CollieApiClientTest {
 
     @Test
     fun changesCommitAndUnavailableShapesAreTypedAndMalformedSuccessFailsClosed(): Unit = runBlocking {
-        server.enqueue(MockResponse().setBody(
+        server.enqueue(MockResponse.Builder().body(
             """{"workspaceId":"w","available":true,"repo":".","name":"root","commit":{"hash":"0123456789abcdef0123456789abcdef01234567","shortHash":"0123456","subject":"update","author":"A","time":1700000000},"files":[{"path":"a.txt","status":"A","added":3,"removed":0,"binary":false}],"truncated":false}""",
-        ))
+        ).build())
         val connection = Connection(origin, "phone", "token")
         val target = ChangesTarget.Workspace("w")
         val result = api.changeCommit(connection, target, Scope(), ChangesLookup(), ".")
@@ -749,16 +749,16 @@ class CollieApiClientTest {
         assertEquals(3L, commit.files.single().added)
         server.takeRequest()
 
-        server.enqueue(MockResponse().setBody("""{"workspaceId":"w","available":false,"reason":"no-git"}"""))
+        server.enqueue(MockResponse.Builder().body("""{"workspaceId":"w","available":false,"reason":"no-git"}""").build())
         assertEquals("no-git", ((api.changes(connection, target, Scope(), ChangesLookup()) as ApiResult.Success).value.state as ChangesListState.Unavailable).reason)
-        assertEquals("/api/workspace/w/changes?depth=2&nested=1", server.takeRequest().path)
+        assertEquals("/api/workspace/w/changes?depth=2&nested=1", server.takeRequest().target)
 
-        server.enqueue(MockResponse().setResponseCode(404).setBody("not found"))
+        server.enqueue(MockResponse.Builder().code(404).body("not found").build())
         val legacy = api.changes(connection, target, Scope(), ChangesLookup()) as ApiResult.Failure
         assertEquals(404, (legacy.error as ApiFailure.Http).status)
         server.takeRequest()
 
-        server.enqueue(MockResponse().setBody("""{"workspaceId":"w","available":true,"repo":"wrong","path":"a.txt","status":"M","binary":false,"directory":false,"truncated":false,"diff":"+bad"}"""))
+        server.enqueue(MockResponse.Builder().body("""{"workspaceId":"w","available":true,"repo":"wrong","path":"a.txt","status":"M","binary":false,"directory":false,"truncated":false,"diff":"+bad"}""").build())
         val malformed = api.changeDiff(connection, target, Scope(), ChangesLookup(), ".", "a.txt")
         assertEquals(ApiFailure.Protocol("Malformed Changes diff response"), (malformed as ApiResult.Failure).error)
         server.takeRequest()
@@ -767,7 +767,7 @@ class CollieApiClientTest {
 
     @Test
     fun guardedQueuedSendPostsOnlyDeclaredKeysAndOpaqueQueueIdentity() = runBlocking {
-        server.enqueue(MockResponse().setBody("{\"ok\":true}"))
+        server.enqueue(MockResponse.Builder().body("{\"ok\":true}").build())
         val connection = Connection(origin, "phone", "bearer-secret")
         val guard = QueuedSendGuard(7, 12, "a".repeat(64), "b".repeat(64))
         assertTrue(api.queuedSendNow(
@@ -779,10 +779,10 @@ class CollieApiClientTest {
         ) is ApiResult.Success)
         val request = server.takeRequest()
         assertEquals("POST", request.method)
-        assertEquals("/api/pane/w1%3Ap1/keys?host=peer&session=work", request.path)
-        assertEquals("Bearer bearer-secret", request.getHeader("Authorization"))
-        assertEquals("XMLHttpRequest", request.getHeader("X-Requested-With"))
-        val body = request.body.readUtf8()
+        assertEquals("/api/pane/w1%3Ap1/keys?host=peer&session=work", request.target)
+        assertEquals("Bearer bearer-secret", request.headers["Authorization"])
+        assertEquals("XMLHttpRequest", request.headers["X-Requested-With"])
+        val body = request.body?.utf8().orEmpty()
         assertTrue(body.contains("\"queued_send\""))
         assertTrue(body.contains("\"queue_digest\":\"${"a".repeat(64)}\""))
         assertTrue(body.contains("\"occupant\":\"${"b".repeat(64)}\""))
@@ -792,9 +792,9 @@ class CollieApiClientTest {
 
     @Test
     fun changesDiffPreservesBinaryAndTruncatedAvailabilityFlags(): Unit = runBlocking {
-        server.enqueue(MockResponse().setBody(
+        server.enqueue(MockResponse.Builder().body(
             """{"paneId":"p","available":true,"repo":".","path":"archive.bin","oldPath":null,"status":"M","binary":true,"directory":false,"truncated":true,"diff":""}""",
-        ))
+        ).build())
         val result = api.changeDiff(
             Connection(origin, "phone", "token"),
             ChangesTarget.Pane("p"),
@@ -814,27 +814,27 @@ class CollieApiClientTest {
     @Test
     fun configReadsMuxDisplayNameForTheSharedHeader() = runBlocking {
         server.enqueue(
-            MockResponse()
-                .setResponseCode(200)
+            MockResponse.Builder()
+                .code(200)
                 .setHeader("Content-Type", "application/json")
-                .setBody(
+                .body(
                     """{"push":false,"vapidPublicKey":"","mux":{"name":"reference","capabilities":{},"unsupportedKeys":[],"notes":{}}}""",
-                ),
+                ).build(),
         )
 
         val result = api.config(Connection(origin, "phone", "token"))
 
         assertEquals("reference", (result as ApiResult.Success).value.mux?.name)
-        assertEquals("/api/config", server.takeRequest().path)
+        assertEquals("/api/config", server.takeRequest().target)
     }
 
     @Test
     fun mutationCarriesOriginAndPreservesPartialDeliveryFailure() = runBlocking {
         server.enqueue(
-            MockResponse()
-                .setResponseCode(502)
+            MockResponse.Builder()
+                .code(502)
                 .setHeader("Content-Type", "application/json")
-                .setBody("""{"error":"submit failed","code":"reply.not_submitted","textDelivered":true}"""),
+                .body("""{"error":"submit failed","code":"reply.not_submitted","textDelivered":true}""").build(),
         )
         val result = api.reply(
             Connection(origin, "phone", "token"),
@@ -846,14 +846,14 @@ class CollieApiClientTest {
         assertEquals(502, failure.status)
         assertTrue(failure.textDelivered)
         val request = server.takeRequest()
-        assertEquals(origin.headerValue, request.getHeader("Origin"))
-        assertEquals("/api/pane/w1%3Ap1/reply?host=desk&session=default", request.path)
+        assertEquals(origin.headerValue, request.headers["Origin"])
+        assertEquals("/api/pane/w1%3Ap1/reply?host=desk&session=default", request.target)
         assertEquals(1, server.requestCount)
     }
 
     @Test
     fun redirectIsReturnedWithoutFollowingOrCredentialForwarding() = runBlocking {
-        server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", "https://elsewhere.invalid/login"))
+        server.enqueue(MockResponse.Builder().code(302).setHeader("Location", "https://elsewhere.invalid/login").build())
         val result = api.snapshot(Connection(origin, "phone", "token"))
 
         assertEquals(ApiFailure.Redirect(302), (result as ApiResult.Failure).error)
@@ -863,34 +863,34 @@ class CollieApiClientTest {
     @Test
     fun widenedSnapshotUsesSessionsAllWithoutLeakingBreadthIntoOtherScopedCalls() = runBlocking {
         server.enqueue(
-            MockResponse().setResponseCode(200).setHeader("Content-Type", "application/json")
-                .setBody("""{"bridge":"connected","agents":[],"shellPanes":[],"workspaces":[],"tabs":[],"ts":1}"""),
+            MockResponse.Builder().code(200).setHeader("Content-Type", "application/json")
+                .body("""{"bridge":"connected","agents":[],"shellPanes":[],"workspaces":[],"tabs":[],"ts":1}""").build(),
         )
         val connection = Connection(origin, "phone", "token")
         api.snapshot(connection, Scope(host = "desk", viewAll = true))
 
-        assertEquals("/api/snapshot?sessions=all&host=desk", server.takeRequest().path)
+        assertEquals("/api/snapshot?sessions=all&host=desk", server.takeRequest().target)
     }
 
     @Test
     fun pairingRefusalIsTypedAndNeverStoredByTransport() = runBlocking {
         server.enqueue(
-            MockResponse().setResponseCode(400).setHeader("Content-Type", "application/json")
-                .setBody("""{"error":"bad-code","code":"pairing.bad_code"}"""),
+            MockResponse.Builder().code(400).setHeader("Content-Type", "application/json")
+                .body("""{"error":"bad-code","code":"pairing.bad_code"}""").build(),
         )
         val result = api.pair(origin, "123456", "phone")
 
         assertEquals(PairResult.Refused("bad-code"), (result as ApiResult.Success).value)
         val request = server.takeRequest()
-        assertNull(request.getHeader("Authorization"))
-        assertEquals(origin.headerValue, request.getHeader("Origin"))
+        assertNull(request.headers["Authorization"])
+        assertEquals(origin.headerValue, request.headers["Origin"])
     }
 
     @Test
     fun plainTextAuthorizationFailureIsPreservedForRecovery() = runBlocking {
         server.enqueue(
-            MockResponse().setResponseCode(403).setHeader("Content-Type", "text/plain")
-                .setBody("device not paired"),
+            MockResponse.Builder().code(403).setHeader("Content-Type", "text/plain")
+                .body("device not paired").build(),
         )
 
         val result = api.snapshot(Connection(origin, "phone", "revoked-token"))
@@ -903,8 +903,8 @@ class CollieApiClientTest {
     @Test
     fun nonJsonPairingFailureIsAnHttpFailureNotAMalformedSuccess() = runBlocking {
         server.enqueue(
-            MockResponse().setResponseCode(503).setHeader("Content-Type", "text/plain")
-                .setBody("pairing temporarily unavailable"),
+            MockResponse.Builder().code(503).setHeader("Content-Type", "text/plain")
+                .body("pairing temporarily unavailable").build(),
         )
 
         val result = api.pair(origin, "123456", "phone")
@@ -926,8 +926,8 @@ class CollieApiClientTest {
     fun structuralRoutesPreserveScopeAndExactJsonContracts() = runBlocking {
         repeat(4) {
             server.enqueue(
-                MockResponse().setResponseCode(200).setHeader("Content-Type", "application/json")
-                    .setBody(if (it == 1) createdPaneResponse() else """{"ok":true}"""),
+                MockResponse.Builder().code(200).setHeader("Content-Type", "application/json")
+                    .body(if (it == 1) createdPaneResponse() else """{"ok":true}""").build(),
             )
         }
         val connection = Connection(origin, "phone", "token")
@@ -939,27 +939,27 @@ class CollieApiClientTest {
         api.closeTab(connection, scope, "w1:t2")
 
         server.takeRequest().also { request ->
-            assertEquals("/api/pane/w1%3Ap1/rename?host=desk&session=work", request.path)
-            assertEquals("{\"label\":\"Review\"}", request.body.readUtf8())
-            assertEquals(origin.headerValue, request.getHeader("Origin"))
+            assertEquals("/api/pane/w1%3Ap1/rename?host=desk&session=work", request.target)
+            assertEquals("{\"label\":\"Review\"}", request.body?.utf8().orEmpty())
+            assertEquals(origin.headerValue, request.headers["Origin"])
         }
         server.takeRequest().also { request ->
-            assertEquals("/api/tab?host=desk&session=work", request.path)
-            assertEquals("{\"workspaceId\":\"w1\",\"label\":\"Tests\",\"cwd\":\"/repo\"}", request.body.readUtf8())
+            assertEquals("/api/tab?host=desk&session=work", request.target)
+            assertEquals("{\"workspaceId\":\"w1\",\"label\":\"Tests\",\"cwd\":\"/repo\"}", request.body?.utf8().orEmpty())
         }
         server.takeRequest().also { request ->
-            assertEquals("/api/workspace/w1/worktree?host=desk&session=work", request.path)
-            val body = Json.parseToJsonElement(request.body.readUtf8()) as kotlinx.serialization.json.JsonObject
+            assertEquals("/api/workspace/w1/worktree?host=desk&session=work", request.target)
+            val body = Json.parseToJsonElement(request.body?.utf8().orEmpty()) as kotlinx.serialization.json.JsonObject
             assertEquals("feature/native", (body["branch"] as kotlinx.serialization.json.JsonPrimitive).content)
             assertTrue((body["requestId"] as kotlinx.serialization.json.JsonPrimitive).content.isNotBlank())
             assertEquals(setOf("branch", "requestId"), body.keys)
         }
-        assertEquals("/api/tab/w1%3At2/close?host=desk&session=work", server.takeRequest().path)
+        assertEquals("/api/tab/w1%3At2/close?host=desk&session=work", server.takeRequest().target)
     }
 
     @Test
     fun frozenWorkspaceWorktreePreservesCallerBodyAndTargetRoute() = runBlocking {
-        server.enqueue(MockResponse().setResponseCode(200).setHeader("Content-Type", "application/json").setBody(createdPaneResponse()))
+        server.enqueue(MockResponse.Builder().code(200).setHeader("Content-Type", "application/json").body(createdPaneResponse()).build())
         val connection = Connection(origin, "phone", "token")
         val scope = Scope(host = "desk", session = "work")
         val frozen = "{\"branch\":\"feature/native\",\"requestId\":\"55555555-5555-4555-8555-555555555555\"}"
@@ -967,9 +967,9 @@ class CollieApiClientTest {
         api.createWorktreeFrozen(connection, scope, "w1", frozen)
 
         server.takeRequest().also { request ->
-            assertEquals("/api/workspace/w1/worktree?host=desk&session=work", request.path)
-            assertEquals(frozen, request.body.readUtf8())
-            assertEquals("Bearer token", request.getHeader("Authorization"))
+            assertEquals("/api/workspace/w1/worktree?host=desk&session=work", request.target)
+            assertEquals(frozen, request.body?.utf8().orEmpty())
+            assertEquals("Bearer token", request.headers["Authorization"])
         }
         Unit
     }
@@ -977,8 +977,8 @@ class CollieApiClientTest {
     @Test
     fun historyUsesSeenHeaderAndOrdersPaginationBeforeScope() = runBlocking {
         server.enqueue(
-            MockResponse().setResponseCode(200).setHeader("Content-Type", "application/json")
-                .setBody("""{"paneId":"w1:p1","available":false,"reason":"no-log"}"""),
+            MockResponse.Builder().code(200).setHeader("Content-Type", "application/json")
+                .body("""{"paneId":"w1:p1","available":false,"reason":"no-log"}""").build(),
         )
 
         val result = api.history(
@@ -990,16 +990,16 @@ class CollieApiClientTest {
 
         assertFalse((result as ApiResult.Success).value.available)
         server.takeRequest().also { request ->
-            assertEquals("/api/pane/w1%3Ap1/history?limit=25&before=turn-7&host=desk&session=work", request.path)
-            assertEquals("1", request.getHeader("X-Collie-Seen"))
-            assertNull(request.getHeader("Origin"))
+            assertEquals("/api/pane/w1%3Ap1/history?limit=25&before=turn-7&host=desk&session=work", request.target)
+            assertEquals("1", request.headers["X-Collie-Seen"])
+            assertNull(request.headers["Origin"])
         }
         Unit
     }
 
     @Test
     fun anUnchangedTranscriptPageComesBackAsNotModified() = runBlocking {
-        server.enqueue(MockResponse().setResponseCode(304).setHeader("ETag", "\"page-1\""))
+        server.enqueue(MockResponse.Builder().code(304).setHeader("ETag", "\"page-1\"").build())
 
         val result = api.history(
             Connection(origin, "phone", "token"),
@@ -1009,20 +1009,20 @@ class CollieApiClientTest {
         )
 
         assertEquals("\"page-1\"", (result as ApiResult.NotModified).etag)
-        assertEquals("\"page-1\"", server.takeRequest().getHeader("If-None-Match"))
+        assertEquals("\"page-1\"", server.takeRequest().headers["If-None-Match"])
     }
 
     @Test
     fun aTranscriptReadWithoutAnETagSendsNoValidator() = runBlocking {
         server.enqueue(
-            MockResponse().setResponseCode(200).setHeader("Content-Type", "application/json").setHeader("ETag", "\"page-2\"")
-                .setBody("""{"paneId":"w1:p1","available":true,"entries":[]}"""),
+            MockResponse.Builder().code(200).setHeader("Content-Type", "application/json").setHeader("ETag", "\"page-2\"")
+                .body("""{"paneId":"w1:p1","available":true,"entries":[]}""").build(),
         )
 
         val result = api.history(Connection(origin, "phone", "token"), PaneAddress(paneId = "w1:p1"), limit = 60)
 
         assertEquals("\"page-2\"", (result as ApiResult.Success).etag)
-        assertNull(server.takeRequest().getHeader("If-None-Match"))
+        assertNull(server.takeRequest().headers["If-None-Match"])
     }
 
     @Test
@@ -1036,12 +1036,12 @@ class CollieApiClientTest {
         api.setNotificationSnooze(connection, null)
         api.startUpdate(connection, "1.6.0", major = false)
 
-        assertEquals("{\"blocked\":false}", server.takeRequest().body.readUtf8())
-        assertEquals("{\"snoozedUntil\":null}", server.takeRequest().body.readUtf8())
+        assertEquals("{\"blocked\":false}", server.takeRequest().body?.utf8().orEmpty())
+        assertEquals("{\"snoozedUntil\":null}", server.takeRequest().body?.utf8().orEmpty())
         server.takeRequest().also { request ->
-            assertEquals("/api/update", request.path)
-            assertEquals("{\"confirm\":true,\"target\":\"1.6.0\",\"major\":false}", request.body.readUtf8())
-            assertEquals("Bearer token", request.getHeader("Authorization"))
+            assertEquals("/api/update", request.target)
+            assertEquals("{\"confirm\":true,\"target\":\"1.6.0\",\"major\":false}", request.body?.utf8().orEmpty())
+            assertEquals("Bearer token", request.headers["Authorization"])
         }
         Unit
     }
@@ -1049,48 +1049,48 @@ class CollieApiClientTest {
     @Test
     fun cacheCatalogUsesItsEtagAndWatchCallsKeepTheExactHostSessionPaneAddress() = runBlocking<Unit> {
         val mounted = Connection(CollieOrigin(server.url("/base/").toString()), "phone", "token")
-        server.enqueue(jsonResponse("""{"rules":[]}""").setHeader("ETag", "\"cache-v1\""))
+        server.enqueue(jsonResponse("""{"rules":[]}""").newBuilder().setHeader("ETag", "\"cache-v1\"").build())
         val catalog = api.cacheRules(mounted)
         assertEquals("\"cache-v1\"", (catalog as ApiResult.Success).etag)
-        assertEquals("/base/api/cache-rules", server.takeRequest().path)
+        assertEquals("/base/api/cache-rules", server.takeRequest().target)
 
-        server.enqueue(MockResponse().setResponseCode(304).setHeader("ETag", "\"cache-v1\""))
+        server.enqueue(MockResponse.Builder().code(304).setHeader("ETag", "\"cache-v1\"").build())
         assertEquals("\"cache-v1\"", (api.cacheRules(mounted, "\"cache-v1\"") as ApiResult.NotModified).etag)
-        assertEquals("\"cache-v1\"", server.takeRequest().getHeader("If-None-Match"))
+        assertEquals("\"cache-v1\"", server.takeRequest().headers["If-None-Match"])
 
         val address = PaneAddress(Scope(host = "peer-east", session = "work"), "w2:p7")
         server.enqueue(jsonResponse("""{"on":false,"global":true,"watchable":true,"warnSeconds":120}"""))
         assertTrue(api.cacheWatch(mounted, address) is ApiResult.Success)
         server.takeRequest().also { request ->
             assertEquals("GET", request.method)
-            assertEquals("/base/api/notifications/cache-watch", request.requestUrl?.encodedPath)
-            assertEquals("w2:p7", request.requestUrl?.queryParameter("pane"))
-            assertEquals("peer-east", request.requestUrl?.queryParameter("host"))
-            assertEquals("work", request.requestUrl?.queryParameter("session"))
-            assertEquals("Bearer token", request.getHeader("Authorization"))
+            assertEquals("/base/api/notifications/cache-watch", request.url?.encodedPath)
+            assertEquals("w2:p7", request.url?.queryParameter("pane"))
+            assertEquals("peer-east", request.url?.queryParameter("host"))
+            assertEquals("work", request.url?.queryParameter("session"))
+            assertEquals("Bearer token", request.headers["Authorization"])
         }
 
         server.enqueue(jsonResponse("""{"on":true,"global":false,"watchable":true,"warnSeconds":120}"""))
         assertTrue(api.setCacheWatch(mounted, address, true) is ApiResult.Success)
         server.takeRequest().also { request ->
             assertEquals("POST", request.method)
-            assertEquals("/base/api/notifications/cache-watch", request.requestUrl?.encodedPath)
-            assertEquals("w2:p7", request.requestUrl?.queryParameter("pane"))
-            assertEquals("peer-east", request.requestUrl?.queryParameter("host"))
-            assertEquals("work", request.requestUrl?.queryParameter("session"))
-            assertEquals("{\"on\":true}", request.body.readUtf8())
-            assertEquals(mounted.origin.headerValue, request.getHeader("Origin"))
+            assertEquals("/base/api/notifications/cache-watch", request.url?.encodedPath)
+            assertEquals("w2:p7", request.url?.queryParameter("pane"))
+            assertEquals("peer-east", request.url?.queryParameter("host"))
+            assertEquals("work", request.url?.queryParameter("session"))
+            assertEquals("{\"on\":true}", request.body?.utf8().orEmpty())
+            assertEquals(mounted.origin.headerValue, request.headers["Origin"])
         }
 
         server.enqueue(jsonResponse("""{"entries":[{"id":"opaque","label":"agent","host":"peer-east","session":"work","paneId":"w2:p7"}]}"""))
         assertTrue(api.cacheWatchList(mounted) is ApiResult.Success)
-        assertEquals("/base/api/notifications/cache-watch/list", server.takeRequest().path)
+        assertEquals("/base/api/notifications/cache-watch/list", server.takeRequest().target)
 
         server.enqueue(jsonResponse("""{"entries":[]}"""))
         assertTrue(api.forgetCacheWatch(mounted, "opaque") is ApiResult.Success)
         server.takeRequest().also { request ->
-            assertEquals("/base/api/notifications/cache-watch/forget", request.path)
-            assertEquals("{\"id\":\"opaque\"}", request.body.readUtf8())
+            assertEquals("/base/api/notifications/cache-watch/forget", request.target)
+            assertEquals("{\"id\":\"opaque\"}", request.body?.utf8().orEmpty())
         }
     }
 
@@ -1121,8 +1121,8 @@ class CollieApiClientTest {
         assertEquals(false, (result as ApiResult.Success).value.machines)
         assertEquals(true, result.value.cache)
         server.takeRequest().also { request ->
-            assertEquals("/api/notifications/prefs", request.path)
-            assertEquals("{\"cache\":true,\"machines\":false}", request.body.readUtf8())
+            assertEquals("/api/notifications/prefs", request.target)
+            assertEquals("{\"cache\":true,\"machines\":false}", request.body?.utf8().orEmpty())
         }
     }
 
@@ -1137,15 +1137,15 @@ class CollieApiClientTest {
 
         server.takeRequest().also { request ->
             assertEquals("POST", request.method)
-            assertEquals("/mount/api/update/dismiss", request.path)
-            assertEquals("{\"version\":\"1.6.0\",\"scope\":\"offer\"}", request.body.readUtf8())
-            assertEquals("Bearer token", request.getHeader("Authorization"))
-            assertEquals(mounted.origin.headerValue, request.getHeader("Origin"))
+            assertEquals("/mount/api/update/dismiss", request.target)
+            assertEquals("{\"version\":\"1.6.0\",\"scope\":\"offer\"}", request.body?.utf8().orEmpty())
+            assertEquals("Bearer token", request.headers["Authorization"])
+            assertEquals(mounted.origin.headerValue, request.headers["Origin"])
         }
         server.takeRequest().also { request ->
-            assertEquals("/mount/api/update/dismiss", request.path)
-            assertEquals("{\"version\":\"1.7.0\",\"scope\":\"crew\"}", request.body.readUtf8())
-            assertEquals(mounted.origin.headerValue, request.getHeader("Origin"))
+            assertEquals("/mount/api/update/dismiss", request.target)
+            assertEquals("{\"version\":\"1.7.0\",\"scope\":\"crew\"}", request.body?.utf8().orEmpty())
+            assertEquals(mounted.origin.headerValue, request.headers["Origin"])
         }
         Unit
     }
@@ -1158,9 +1158,9 @@ class CollieApiClientTest {
 
         assertEquals("restarting", (result as ApiResult.Success).value.state)
         server.takeRequest().also { request ->
-            assertEquals("/standby/update", request.path)
-            assertNull(request.getHeader("Authorization"))
-            assertNull(request.getHeader("Origin"))
+            assertEquals("/standby/update", request.target)
+            assertNull(request.headers["Authorization"])
+            assertNull(request.headers["Origin"])
         }
         Unit
     }
@@ -1191,17 +1191,17 @@ class CollieApiClientTest {
 
         assertEquals("/tmp/collie.png", (result as ApiResult.Success).value.path)
         server.takeRequest().also { request ->
-            assertEquals("/api/pane/w1%3Ap1/upload?host=desk", request.path)
-            assertTrue(request.getHeader("Content-Type")?.startsWith("multipart/form-data; boundary=") == true)
-            assertEquals(origin.headerValue, request.getHeader("Origin"))
-            assertTrue(request.body.readUtf8().contains("shot.png"))
+            assertEquals("/api/pane/w1%3Ap1/upload?host=desk", request.target)
+            assertTrue(request.headers["Content-Type"]?.startsWith("multipart/form-data; boundary=") == true)
+            assertEquals(origin.headerValue, request.headers["Origin"])
+            assertTrue(request.body?.utf8().orEmpty().contains("shot.png"))
         }
         Unit
     }
 
     @Test
     fun documentUploadIsScopedOneShotAndDeletesItsPrivateSpoolAfter413() = runBlocking {
-        server.enqueue(okhttp3.mockwebserver.MockResponse().setResponseCode(413).setBody("too large"))
+        server.enqueue(mockwebserver3.MockResponse.Builder().code(413).body("too large").build())
         val spool = java.io.File.createTempFile("collie-upload-test-", ".part").apply { writeText("safe brief") }
         val source = UploadSource.Document("brief.txt", "text/plain", spool, spool.length())
 
@@ -1218,9 +1218,12 @@ class CollieApiClientTest {
             fail("refused request must not become replayable")
         } catch (_: IllegalStateException) { }
         server.takeRequest().also { request ->
-            assertEquals("/api/pane/w1%3Ap1/upload?host=desk&session=main", request.path)
-            assertTrue(request.body.readUtf8().contains("brief.txt"))
-            assertTrue(request.body.readUtf8().isEmpty())
+            assertEquals("/api/pane/w1%3Ap1/upload?host=desk&session=main", request.target)
+            // RecordedRequest now owns immutable bytes. Keep the original consuming-reader
+            // assertions against one local Buffer containing those exact captured bytes.
+            val capturedBody = okio.Buffer().apply { request.body?.let { write(it) } }
+            assertTrue(capturedBody.readUtf8().contains("brief.txt"))
+            assertTrue(capturedBody.readUtf8().isEmpty())
         }
         assertEquals(1, server.requestCount)
     }
@@ -1237,11 +1240,11 @@ class CollieApiClientTest {
 
         assertEquals("review before sending", (result as ApiResult.Success).value.text)
         server.takeRequest().also { request ->
-            assertEquals("/api/stt", request.path)
-            assertEquals("audio/mp4", request.getHeader("Content-Type"))
-            assertEquals("Bearer token", request.getHeader("Authorization"))
-            assertEquals(origin.headerValue, request.getHeader("Origin"))
-            assertTrue(request.body.readByteArray().contentEquals(audio))
+            assertEquals("/api/stt", request.target)
+            assertEquals("audio/mp4", request.headers["Content-Type"])
+            assertEquals("Bearer token", request.headers["Authorization"])
+            assertEquals(origin.headerValue, request.headers["Origin"])
+            assertTrue(request.body?.toByteArray().contentEquals(audio))
         }
         Unit
     }
@@ -1272,7 +1275,7 @@ class CollieApiClientTest {
         server.enqueue(jsonResponse("""{"crew":{"id":"c","name":"Lab","secretGeneration":1,"rotatedAt":0},"self":{"id":"lead","name":"Lead","version":"1.19.0"},"deputy":null,"members":[],"ts":1}"""))
         val result = api.crew(Connection(origin, "phone", "token")) as ApiResult.Success
         assertEquals("Lab", result.value.crew.name)
-        assertEquals("/api/crew", server.takeRequest().path)
+        assertEquals("/api/crew", server.takeRequest().target)
     }
 
     @Test
@@ -1282,38 +1285,38 @@ class CollieApiClientTest {
         val config = api.config(mounted, Scope(host = "peer", session = "work")) as ApiResult.Success
         assertEquals(false, config.value.mux?.supports("createWorktree"))
         val read = server.takeRequest()
-        assertEquals("/tools/collie/api/config?host=peer&session=work", read.path)
-        assertEquals("Bearer token", read.getHeader("Authorization"))
-        assertEquals("XMLHttpRequest", read.getHeader("X-Requested-With"))
+        assertEquals("/tools/collie/api/config?host=peer&session=work", read.target)
+        assertEquals("Bearer token", read.headers["Authorization"])
+        assertEquals("XMLHttpRequest", read.headers["X-Requested-With"])
         server.enqueue(jsonResponse("""{"ok":true}"""))
         api.reply(mounted, PaneAddress(paneId = "p"), "hi")
         val write = server.takeRequest()
-        assertEquals("/tools/collie/api/pane/p/reply", write.path)
-        assertEquals(origin.headerValue, write.getHeader("Origin"))
+        assertEquals("/tools/collie/api/pane/p/reply", write.target)
+        assertEquals(origin.headerValue, write.headers["Origin"])
     }
 
     @Test
     fun liveChatUsesGenerationAndRevisionWhileOlderPagesUseTheTurnCursor() = runBlocking {
         val connection = Connection(origin, "phone", "token")
         val pane = PaneAddress(Scope(host = "peer", session = "work"), "p")
-        server.enqueue(jsonResponse("""{"paneId":"p","available":true,"page":"live","gen":2,"rev":3,"head":1,"oldest":1,"hasOlder":false,"upserts":[{"uuid":"u","ts":"","role":"assistant","seq":1,"parts":[]}],"queued":["pending"],"sendQueuedNow":["ctrl+Enter"],"queuedDigest":"${"a".repeat(64)}","queuedSendOccupant":"${"b".repeat(64)}"}""").setHeader("ETag", "live-3"))
+        server.enqueue(jsonResponse("""{"paneId":"p","available":true,"page":"live","gen":2,"rev":3,"head":1,"oldest":1,"hasOlder":false,"upserts":[{"uuid":"u","ts":"","role":"assistant","seq":1,"parts":[]}],"queued":["pending"],"sendQueuedNow":["ctrl+Enter"],"queuedDigest":"${"a".repeat(64)}","queuedSendOccupant":"${"b".repeat(64)}"}""").newBuilder().setHeader("ETag", "live-3").build())
         val first = api.chat(connection, pane, etag = "must-not-send") as ApiResult.Success
         assertEquals(listOf("ctrl+Enter"), first.value.sendQueuedNow)
         assertEquals("a".repeat(64), first.value.queuedDigest)
         assertEquals("b".repeat(64), first.value.queuedSendOccupant)
         val initial = server.takeRequest()
-        assertNull(initial.getHeader("If-None-Match"))
-        assertEquals("1", initial.getHeader("X-Collie-Seen"))
-        server.enqueue(MockResponse().setResponseCode(304).setHeader("ETag", "live-3"))
+        assertNull(initial.headers["If-None-Match"])
+        assertEquals("1", initial.headers["X-Collie-Seen"])
+        server.enqueue(MockResponse.Builder().code(304).setHeader("ETag", "live-3").build())
         assertTrue(api.chat(connection, pane, after = ChatAfter(2, 3), etag = first.etag) is ApiResult.NotModified)
         val poll = server.takeRequest()
-        assertEquals("/api/pane/p/chat?limit=200&after=2%3A3&host=peer&session=work", poll.path)
-        assertEquals("live-3", poll.getHeader("If-None-Match"))
+        assertEquals("/api/pane/p/chat?limit=200&after=2%3A3&host=peer&session=work", poll.target)
+        assertEquals("live-3", poll.headers["If-None-Match"])
         server.enqueue(jsonResponse("""{"paneId":"p","available":true,"page":"older","gen":2,"hasOlder":false,"upserts":[]}"""))
         api.chat(connection, pane, before = ChatBefore(1, "u:a"), etag = "must-not-send")
         val older = server.takeRequest()
-        assertEquals("/api/pane/p/chat?limit=200&before=1%3Au%3Aa&host=peer&session=work", older.path)
-        assertNull(older.getHeader("If-None-Match"))
+        assertEquals("/api/pane/p/chat?limit=200&before=1%3Au%3Aa&host=peer&session=work", older.target)
+        assertNull(older.headers["If-None-Match"])
     }
 
     @Test
@@ -1334,11 +1337,11 @@ class CollieApiClientTest {
     fun actualLegacyLiveChatWithoutRevisionRemainsDisplayOnlyAndClearsTheCursor(): Unit = runBlocking {
         val connection = Connection(CollieOrigin(server.url("/tools/collie/").toString()), "phone", "token")
         val pane = PaneAddress(Scope(host = "peer", session = "work"), "p")
-        server.enqueue(jsonResponse("""{"paneId":"p","available":true,"page":"live","gen":2,"head":1,"oldest":1,"upserts":[{"uuid":"legacy","ts":"","role":"assistant","seq":1,"parts":[]}],"queued":["pending"],"sendQueuedNow":["ctrl+Enter"],"queuedDigest":"${"a".repeat(64)}","queuedSendOccupant":"${"b".repeat(64)}"}""").setHeader("ETag", "legacy"))
+        server.enqueue(jsonResponse("""{"paneId":"p","available":true,"page":"live","gen":2,"head":1,"oldest":1,"upserts":[{"uuid":"legacy","ts":"","role":"assistant","seq":1,"parts":[]}],"queued":["pending"],"sendQueuedNow":["ctrl+Enter"],"queuedDigest":"${"a".repeat(64)}","queuedSendOccupant":"${"b".repeat(64)}"}""").newBuilder().setHeader("ETag", "legacy").build())
         val result = api.chat(connection, pane, after = ChatAfter(2, 3), etag = "accepted") as ApiResult.Success
         val request = server.takeRequest()
-        assertEquals("/tools/collie/api/pane/p/chat?limit=200&after=2%3A3&host=peer&session=work", request.path)
-        assertEquals("Bearer token", request.getHeader("Authorization"))
+        assertEquals("/tools/collie/api/pane/p/chat?limit=200&after=2%3A3&host=peer&session=work", request.target)
+        assertEquals("Bearer token", request.headers["Authorization"])
         assertNull(result.value.rev)
         val window = com.lateapex.collie.ui.LiveChatWindow()
         assertTrue(window.merge(result.value))
@@ -1350,8 +1353,8 @@ class CollieApiClientTest {
         server.enqueue(jsonResponse("""{"paneId":"p","available":true,"page":"live","gen":2,"rev":4,"head":1,"oldest":1,"upserts":[]}"""))
         assertTrue(api.chat(connection, pane, after = window.after, etag = result.etag) is ApiResult.Success)
         val next = server.takeRequest()
-        assertFalse(next.path!!.contains("after="))
-        assertNull(next.getHeader("If-None-Match"))
+        assertFalse(next.target!!.contains("after="))
+        assertNull(next.headers["If-None-Match"])
         Unit
     }
 
@@ -1389,8 +1392,8 @@ class CollieApiClientTest {
         server.enqueue(jsonResponse(createdPaneResponse()))
         api.startLaunch(Connection(origin, "phone", "token"), Scope(host = "peer"), StartTarget(harness = "codex"), "intent-1", "/repo")
         val request = server.takeRequest()
-        assertEquals("/api/launch?host=peer", request.path)
-        val body = Json.parseToJsonElement(request.body.readUtf8()).toString()
+        assertEquals("/api/launch?host=peer", request.target)
+        val body = Json.parseToJsonElement(request.body?.utf8().orEmpty()).toString()
         assertTrue(body.contains("\"harness\":\"codex\""))
         assertTrue(body.contains("\"requestId\":\"intent-1\""))
         assertFalse(body.contains("command"))
@@ -1403,15 +1406,15 @@ class CollieApiClientTest {
         server.enqueue(jsonResponse("""{"home":"/srv/peer","recent":["/srv/peer/project"],"favourites":[]}"""))
         val folders = api.folders(connection, Scope(host = "peer", session = "work")) as ApiResult.Success
         assertEquals("/srv/peer", folders.value.home)
-        assertEquals("/api/folders?host=peer&session=work", server.takeRequest().path)
+        assertEquals("/api/folders?host=peer&session=work", server.takeRequest().target)
 
         server.enqueue(jsonResponse("""{"home":"/srv/peer","recent":[],"favourites":["/srv/peer/project"]}"""))
         assertTrue(api.starFolder(connection, Scope(host = "peer"), "/srv/peer/project", true) is ApiResult.Success)
         val star = server.takeRequest()
         assertEquals("POST", star.method)
-        assertEquals("/api/folders/star?host=peer", star.path)
-        assertEquals(origin.headerValue, star.getHeader("Origin"))
-        assertEquals("{\"folder\":\"/srv/peer/project\",\"starred\":true}", Json.parseToJsonElement(star.body.readUtf8()).toString())
+        assertEquals("/api/folders/star?host=peer", star.target)
+        assertEquals(origin.headerValue, star.headers["Origin"])
+        assertEquals("{\"folder\":\"/srv/peer/project\",\"starred\":true}", Json.parseToJsonElement(star.body?.utf8().orEmpty()).toString())
 
         server.enqueue(jsonResponse("""{"home":"/srv/peer","recent":["/same"],"favourites":["/same"]}"""))
         assertTrue(api.folders(connection, Scope(host = "peer")) is ApiResult.Failure)
@@ -1420,14 +1423,14 @@ class CollieApiClientTest {
     @Test
     fun legacyCrewFallbackIsReadOnlyAndDoesNotHideCurrentRoleRefusals() = runBlocking {
         val connection = Connection(origin, "phone", "token")
-        server.enqueue(MockResponse().setResponseCode(404).setBody("not found"))
+        server.enqueue(MockResponse.Builder().code(404).body("not found").build())
         server.enqueue(jsonResponse("""{"pack":{"id":"c","name":"Legacy","secretGeneration":1,"rotatedAt":0},"self":{"id":"lead","name":"Lead","version":"1.5.0"},"deputy":null,"members":[],"ts":1}"""))
         assertEquals("Legacy", (api.crew(connection) as ApiResult.Success).value.crew.name)
-        assertEquals("/api/crew", server.takeRequest().path)
-        assertEquals("/api/pack", server.takeRequest().path)
-        server.enqueue(MockResponse().setResponseCode(404).setHeader("Content-Type", "application/json").setBody("""{"error":"not lead","code":"crew.not_lead"}"""))
+        assertEquals("/api/crew", server.takeRequest().target)
+        assertEquals("/api/pack", server.takeRequest().target)
+        server.enqueue(MockResponse.Builder().code(404).setHeader("Content-Type", "application/json").body("""{"error":"not lead","code":"crew.not_lead"}""").build())
         assertTrue(api.crew(connection) is ApiResult.Failure)
-        assertEquals("/api/crew", server.takeRequest().path)
+        assertEquals("/api/crew", server.takeRequest().target)
         assertEquals(3, server.requestCount)
     }
 
@@ -1437,15 +1440,15 @@ class CollieApiClientTest {
         server.enqueue(jsonResponse("""{"ok":true,"repoRoot":"/repo","currentBranch":"topic","defaultBranch":"main","branchValid":true,"remembered":{"base":"current","folder":"parent","parent":"/trees"},"defaultTarget":{"path":"/default/topic","exists":false},"parentTarget":{"ok":true,"path":"/trees/topic"}}"""))
         val plan = api.planWorktree(connection, Scope(session = "work"), "/repo/sub", "next", "/trees") as ApiResult.Success
         assertEquals("topic", plan.value.currentBranch)
-        assertEquals("/api/worktree/plan?cwd=%2Frepo%2Fsub&branch=next&parent=%2Ftrees&session=work", server.takeRequest().path)
+        assertEquals("/api/worktree/plan?cwd=%2Frepo%2Fsub&branch=next&parent=%2Ftrees&session=work", server.takeRequest().target)
         server.enqueue(jsonResponse("""{"ok":true,"pane":{"paneId":"p","workspaceId":"w","workspaceLabel":"next","tabId":"t","cwd":"/trees/next"},"launcherStarted":true,"replayed":false}"""))
         api.createWorktreeAt(connection, Scope(), "/repo/sub", "next", StartTarget(shell = true), "intent-tree", WorktreeBase("ref", "topic"), WorktreeFolder("parent", "/trees"))
         val created = server.takeRequest()
-        assertEquals("/api/worktree", created.path)
-        assertEquals(Json.parseToJsonElement("""{"cwd":"/repo/sub","branch":"next","base":{"kind":"ref","ref":"topic"},"folder":{"kind":"parent","parent":"/trees"},"requestId":"intent-tree","shell":true}"""), Json.parseToJsonElement(created.body.readUtf8()))
+        assertEquals("/api/worktree", created.target)
+        assertEquals(Json.parseToJsonElement("""{"cwd":"/repo/sub","branch":"next","base":{"kind":"ref","ref":"topic"},"folder":{"kind":"parent","parent":"/trees"},"requestId":"intent-tree","shell":true}"""), Json.parseToJsonElement(created.body?.utf8().orEmpty()))
         server.enqueue(jsonResponse("""{"ok":true,"pane":{"paneId":"p","workspaceId":"w","workspaceLabel":"next","tabId":"t","cwd":"/default/next"}}"""))
         api.createWorktreeAt(connection, Scope(), "/repo", "next", StartTarget(shell = true), "intent-default")
-        val defaultBody = server.takeRequest().body.readUtf8()
+        val defaultBody = server.takeRequest().body?.utf8().orEmpty()
         assertTrue(defaultBody.contains("\"base\":{\"kind\":\"default\"}"))
         assertTrue(defaultBody.contains("\"folder\":{\"kind\":\"default\"}"))
         assertEquals(3, server.requestCount)
@@ -1461,8 +1464,8 @@ class CollieApiClientTest {
         ))
         assertTrue(api.addLauncherFrozen(connection, Scope(), recipeBody) is ApiResult.Success)
         val recipeRequest = server.takeRequest()
-        assertEquals("/api/launchers/added", recipeRequest.path)
-        assertEquals(recipeBody, recipeRequest.body.readUtf8())
+        assertEquals("/api/launchers/added", recipeRequest.target)
+        assertEquals(recipeBody, recipeRequest.body?.utf8().orEmpty())
 
         val textId = "22222222-2222-4222-8222-222222222222"
         val textBody = """{"requestId":"$textId","text":"python app.py","kind":"command"}"""
@@ -1471,8 +1474,8 @@ class CollieApiClientTest {
         ))
         assertTrue(api.addLauncherFrozen(connection, Scope(), textBody) is ApiResult.Success)
         val textRequest = server.takeRequest()
-        assertEquals("/api/launchers/added", textRequest.path)
-        assertEquals(textBody, textRequest.body.readUtf8())
+        assertEquals("/api/launchers/added", textRequest.target)
+        assertEquals(textBody, textRequest.body?.utf8().orEmpty())
 
         val agentId = "22222222-2222-4222-8222-222222222223"
         val agentBody = """{"requestId":"$agentId","text":"claude --continue","kind":"agent","harness":"claude"}"""
@@ -1481,8 +1484,8 @@ class CollieApiClientTest {
         ))
         assertTrue(api.addLauncherFrozen(connection, Scope(), agentBody) is ApiResult.Success)
         val agentRequest = server.takeRequest()
-        assertEquals("/api/launchers/added", agentRequest.path)
-        assertEquals(agentBody, agentRequest.body.readUtf8())
+        assertEquals("/api/launchers/added", agentRequest.target)
+        assertEquals(agentBody, agentRequest.body?.utf8().orEmpty())
 
         val recipeBinaries = linkedMapOf(
             "claude" to "claude", "codex" to "codex", "opencode" to "opencode",
@@ -1588,21 +1591,21 @@ class CollieApiClientTest {
         assertTrue(result is ApiResult.Success)
         val request = server.takeRequest()
         assertEquals("GET", request.method)
-        assertEquals("/mounted/api/pane/w1%3Ap1/files?dir=src%20dir&ignored=1&host=a%20b&session=work", request.path)
-        assertEquals("Bearer bearer-secret", request.getHeader("Authorization"))
-        assertNull(request.getHeader("Origin"))
+        assertEquals("/mounted/api/pane/w1%3Ap1/files?dir=src%20dir&ignored=1&host=a%20b&session=work", request.target)
+        assertEquals("Bearer bearer-secret", request.headers["Authorization"])
+        assertNull(request.headers["Origin"])
 
         server.enqueue(jsonResponse("""{"paneId":"w1:p1","available":true,"root":"/repo","path":"src dir/Main λ.kt","size":3,"mtimeMs":8,"binary":false,"truncated":false,"text":"fun"}"""))
         val read = api.files(connection, target, Scope(), path = RelativeFilePath.parse("src dir/Main λ.kt")) as ApiResult.Success
         assertEquals("fun", (read.value as FilesAnswer.Source).text)
-        assertEquals("/mounted/api/pane/w1%3Ap1/files?path=src%20dir%2FMain%20%CE%BB.kt", server.takeRequest().path)
+        assertEquals("/mounted/api/pane/w1%3Ap1/files?path=src%20dir%2FMain%20%CE%BB.kt", server.takeRequest().target)
     }
 
     @Test
     fun filesRejectsNonCanonicalSuccessfulStatusBeforePublishingAnswer() = runBlocking {
         val connection = Connection(CollieOrigin(server.url("/mounted/").toString()), "phone", "token")
-        server.enqueue(MockResponse().setResponseCode(201).setHeader("Content-Type", "application/json")
-            .setBody("""{"paneId":"w1:p1","available":true,"root":"/repo","dir":"","entries":[{"name":"private","kind":"file"}],"truncated":false}"""))
+        server.enqueue(MockResponse.Builder().code(201).setHeader("Content-Type", "application/json")
+            .body("""{"paneId":"w1:p1","available":true,"root":"/repo","dir":"","entries":[{"name":"private","kind":"file"}],"truncated":false}""").build())
         val result = api.files(connection, FilesTarget.Pane("w1:p1"), Scope(), dir = RelativeFilePath.parse("", allowRoot = true))
         assertTrue(result is ApiResult.Failure && result.error is ApiFailure.Protocol)
         assertEquals("GET", server.takeRequest().method)
@@ -1618,30 +1621,30 @@ class CollieApiClientTest {
         assertEquals(setOf("src/Main.kt"), (result as ApiResult.Success).value.exists)
         val request = server.takeRequest()
         assertEquals("POST", request.method)
-        assertEquals("/api/workspace/ws-1/files/exist?host=peer&session=s%201", request.path)
-        assertEquals("Bearer token", request.getHeader("Authorization"))
-        assertEquals("{\"paths\":[\"src/Main.kt\",\"docs/read me.md\"]}", request.body.readUtf8())
+        assertEquals("/api/workspace/ws-1/files/exist?host=peer&session=s%201", request.target)
+        assertEquals("Bearer token", request.headers["Authorization"])
+        assertEquals("{\"paths\":[\"src/Main.kt\",\"docs/read me.md\"]}", request.body?.utf8().orEmpty())
         assertFalse(request.body.toString().contains("/repo"))
     }
 
     @Test
     fun filesImageUsesTheMountedScopedRouteAndPreservesExactVersionHeaders() = runBlocking {
         val connection = Connection(CollieOrigin(server.url("/mount/").toString()), "phone", "secret")
-        server.enqueue(MockResponse().setResponseCode(200).setHeader("Content-Type", "image/png").setHeader("X-Collie-File-Size", "3").setHeader("X-Collie-File-Mtime", "1234.5").setBody(okio.Buffer().write(byteArrayOf(1, 2, 3))))
+        server.enqueue(MockResponse.Builder().code(200).setHeader("Content-Type", "image/png").setHeader("X-Collie-File-Size", "3").setHeader("X-Collie-File-Mtime", "1234.5").body(okio.Buffer().write(byteArrayOf(1, 2, 3))).build())
         val result = api.fileImage(connection, FilesTarget.Workspace("ws1"), Scope(host = "peer", session = "work"), RelativeFilePath.parse("images/diagram.png")!!) as ApiResult.Success
         assertEquals(byteArrayOf(1, 2, 3).toList(), result.value.bytes.toList())
         assertEquals(3L, result.value.size)
         assertEquals(1234.5, result.value.mtimeMs!!, 0.0)
         val request = server.takeRequest()
         assertEquals("GET", request.method)
-        assertEquals("/mount/api/workspace/ws1/files/image?path=images%2Fdiagram.png&host=peer&session=work", request.path)
-        assertEquals("Bearer secret", request.getHeader("Authorization"))
-        assertNull(request.getHeader("Origin"))
-        assertFalse(request.getHeader("Accept")?.contains("svg") == true)
+        assertEquals("/mount/api/workspace/ws1/files/image?path=images%2Fdiagram.png&host=peer&session=work", request.target)
+        assertEquals("Bearer secret", request.headers["Authorization"])
+        assertNull(request.headers["Origin"])
+        assertFalse(request.headers["Accept"]?.contains("svg") == true)
     }
 
     private fun jsonResponse(body: String): MockResponse =
-        MockResponse().setResponseCode(200).setHeader("Content-Type", "application/json").setBody(body)
+        MockResponse.Builder().code(200).setHeader("Content-Type", "application/json").body(body).build()
 
     private fun createdPaneResponse(): String =
         """{"ok":true,"pane":{"paneId":"w1:p2","workspaceId":"w1","workspaceLabel":"Collie","tabId":"w1:t2","cwd":"/repo"}}"""
@@ -1672,26 +1675,26 @@ class CollieApiClientTest {
     fun layoutPlanAndMutationUseMountedScopedRoutesAndPreserveUnknownAsNonSuccess() = runBlocking {
         val mounted = Connection(CollieOrigin(server.url("/nested/mount/").toString()), "phone", "token")
         val address = PaneAddress(Scope(host = "peer", session = "work"), "pane:one")
-        server.enqueue(MockResponse().setBody("""{"ok":true,"result":{"kind":"layout","layout":{"workspaceId":"space","tabId":"tab","zoomed":false,"area":{"x":0,"y":0,"width":80,"height":24},"focusedPaneId":"pane:one","panes":[{"paneId":"pane:one","focused":true,"rect":{"x":0,"y":0,"width":80,"height":24}}],"splits":[]}}}"""))
+        server.enqueue(MockResponse.Builder().body("""{"ok":true,"result":{"kind":"layout","layout":{"workspaceId":"space","tabId":"tab","zoomed":false,"area":{"x":0,"y":0,"width":80,"height":24},"focusedPaneId":"pane:one","panes":[{"paneId":"pane:one","focused":true,"rect":{"x":0,"y":0,"width":80,"height":24}}],"splits":[]}}}""").build())
         assertTrue(api.paneLayout(mounted, address) is ApiResult.Success)
-        assertEquals("/nested/mount/api/pane/pane%3Aone/layout?host=peer&session=work", server.takeRequest().path)
+        assertEquals("/nested/mount/api/pane/pane%3Aone/layout?host=peer&session=work", server.takeRequest().target)
 
         val future = System.currentTimeMillis() + 30_000
-        server.enqueue(MockResponse().setBody("""{"ok":true,"planToken":"plan-token","expiresAt":$future,"action":"split","effects":{"verb":"split","targetPaneId":"pane:one","direction":"right","ratio":0.5,"focusChanges":false},"layout":{"kind":"layout","layout":{"workspaceId":"space","tabId":"tab","zoomed":false,"area":{"x":0,"y":0,"width":80,"height":24},"focusedPaneId":"pane:one","panes":[{"paneId":"pane:one","focused":true,"rect":{"x":0,"y":0,"width":80,"height":24}}],"splits":[]}}}"""))
+        server.enqueue(MockResponse.Builder().body("""{"ok":true,"planToken":"plan-token","expiresAt":$future,"action":"split","effects":{"verb":"split","targetPaneId":"pane:one","direction":"right","ratio":0.5,"focusChanges":false},"layout":{"kind":"layout","layout":{"workspaceId":"space","tabId":"tab","zoomed":false,"area":{"x":0,"y":0,"width":80,"height":24},"focusedPaneId":"pane:one","panes":[{"paneId":"pane:one","focused":true,"rect":{"x":0,"y":0,"width":80,"height":24}}],"splits":[]}}}""").build())
         val action = kotlinx.serialization.json.buildJsonObject { put("kind", "split"); put("direction", "right"); put("ratio", 0.5); put("workspaceId", "space") }
         assertTrue(api.planPaneLayout(mounted, address, action) is ApiResult.Success)
         val plan = server.takeRequest()
         assertEquals("POST", plan.method)
-        assertEquals("/nested/mount/api/pane/pane%3Aone/layout/plan?host=peer&session=work", plan.path)
-        assertEquals("Bearer token", plan.getHeader("Authorization"))
+        assertEquals("/nested/mount/api/pane/pane%3Aone/layout/plan?host=peer&session=work", plan.target)
+        assertEquals("Bearer token", plan.headers["Authorization"])
 
-        server.enqueue(MockResponse().setResponseCode(202).setBody("""{"ok":false,"code":"layout.outcome_unknown","operation":{"schema":1,"requestId":"same-id","state":"unknown","capability":"paneSplit","targetIdentity":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","at":1,"updatedAt":2,"code":"layout.outcome_unknown"}}"""))
+        server.enqueue(MockResponse.Builder().code(202).body("""{"ok":false,"code":"layout.outcome_unknown","operation":{"schema":1,"requestId":"same-id","state":"unknown","capability":"paneSplit","targetIdentity":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","at":1,"updatedAt":2,"code":"layout.outcome_unknown"}}""").build())
         val unknown = api.applyPaneLayout(mounted, address, "same-id", "plan-token", action)
         assertTrue(unknown is ApiResult.Success && !(unknown as ApiResult.Success).value.ok)
         val write = server.takeRequest()
         assertEquals("POST", write.method)
-        assertEquals("/nested/mount/api/pane/pane%3Aone/layout/split?host=peer&session=work", write.path)
-        assertEquals("same-id", Json.parseToJsonElement(write.body.readUtf8()).jsonObject["requestId"]?.toString()?.trim('"'))
+        assertEquals("/nested/mount/api/pane/pane%3Aone/layout/split?host=peer&session=work", write.target)
+        assertEquals("same-id", Json.parseToJsonElement(write.body?.utf8().orEmpty()).jsonObject["requestId"]?.toString()?.trim('"'))
     }
 
     @Test
@@ -1707,14 +1710,14 @@ class CollieApiClientTest {
         for ((kind, body, effect) in families) {
             val action = Json.parseToJsonElement(body).jsonObject
             for (value in listOf("null", "true", "{}", "[]", "\"bad\"", "\"0.5\"")) {
-                server.enqueue(MockResponse().setBody("""{"ok":true,"planToken":"plan-token","expiresAt":${System.currentTimeMillis() + 30_000},"action":"$kind","effects":${effect.replace("VALUE", value)},"layout":{"kind":"layout","layout":$layout}}"""))
+                server.enqueue(MockResponse.Builder().body("""{"ok":true,"planToken":"plan-token","expiresAt":${System.currentTimeMillis() + 30_000},"action":"$kind","effects":${effect.replace("VALUE", value)},"layout":{"kind":"layout","layout":$layout}}""").build())
                 val result = api.planPaneLayout(mounted, address, action)
                 if (value == "null") assertTrue(result is ApiResult.Success)
                 else assertTrue(result is ApiResult.Failure && result.error is ApiFailure.Protocol)
                 val request = server.takeRequest()
                 assertEquals("POST", request.method)
-                assertEquals("/nested/mount/api/pane/pane%3Aone/layout/plan", request.requestUrl!!.encodedPath)
-                assertEquals("Bearer token", request.getHeader("Authorization"))
+                assertEquals("/nested/mount/api/pane/pane%3Aone/layout/plan", request.url!!.encodedPath)
+                assertEquals("Bearer token", request.headers["Authorization"])
             }
         }
         assertEquals(18, server.requestCount) // All are read-classified plans, zero apply dispatch.
@@ -1725,17 +1728,17 @@ class CollieApiClientTest {
         val mounted = Connection(CollieOrigin(server.url("/nested/mount/").toString()), "phone", "token")
         val address = PaneAddress(Scope(host = "peer", session = "work"), "pane:one")
         val layout = """{"workspaceId":"space","tabId":"tab","zoomed":false,"area":{"x":0,"y":0,"width":80,"height":24},"focusedPaneId":"pane:one","panes":[{"paneId":"pane:one","focused":true,"rect":{"x":0,"y":0,"width":80,"height":24}}],"splits":[]}"""
-        server.enqueue(MockResponse().setBody("""{"ok":true,"result":{"kind":"edges","paneId":"pane:one","left":true,"right":false,"up":true,"down":false,"layout":$layout}}"""))
+        server.enqueue(MockResponse.Builder().body("""{"ok":true,"result":{"kind":"edges","paneId":"pane:one","left":true,"right":false,"up":true,"down":false,"layout":$layout}}""").build())
         assertTrue(api.paneLayoutRead(mounted, address, "edges") is ApiResult.Success)
-        assertEquals("/nested/mount/api/pane/pane%3Aone/layout/edges?host=peer&session=work", server.takeRequest().path)
+        assertEquals("/nested/mount/api/pane/pane%3Aone/layout/edges?host=peer&session=work", server.takeRequest().target)
         for (direction in listOf("left", "right", "up", "down")) {
-            server.enqueue(MockResponse().setBody("""{"ok":true,"result":{"kind":"neighbor","paneId":"pane:one","direction":"$direction","neighborPaneId":null,"layout":$layout}}"""))
+            server.enqueue(MockResponse.Builder().body("""{"ok":true,"result":{"kind":"neighbor","paneId":"pane:one","direction":"$direction","neighborPaneId":null,"layout":$layout}}""").build())
             assertTrue(api.paneLayoutRead(mounted, address, "neighbor", direction) is ApiResult.Success)
             val read = server.takeRequest()
-            assertEquals("/nested/mount/api/pane/pane%3Aone/layout/neighbor", read.requestUrl!!.encodedPath)
-            assertEquals("peer", read.requestUrl!!.queryParameter("host"))
-            assertEquals("work", read.requestUrl!!.queryParameter("session"))
-            assertEquals(direction, read.requestUrl!!.queryParameter("direction"))
+            assertEquals("/nested/mount/api/pane/pane%3Aone/layout/neighbor", read.url!!.encodedPath)
+            assertEquals("peer", read.url!!.queryParameter("host"))
+            assertEquals("work", read.url!!.queryParameter("session"))
+            assertEquals(direction, read.url!!.queryParameter("direction"))
         }
     }
 
@@ -1771,9 +1774,9 @@ class CollieApiClientTest {
         for (mime in listOf(null, "application/json", "text/plain", "application/octet-stream")) {
           for (kind in listOf("layout", "edges", "neighbor", "plan", "apply")) {
             readBytes.set(0)
-            val reply = MockResponse().setChunkedBody(huge, 4096)
+            val reply = MockResponse.Builder().chunkedBody(huge, 4096)
             if (mime != null) reply.setHeader("Content-Type", mime)
-            server.enqueue(reply)
+            server.enqueue(reply.build())
             val result = when (kind) {
                 "layout" -> diagnosticApi.paneLayout(mounted, address)
                 "edges" -> diagnosticApi.paneLayoutRead(mounted, address, "edges")
@@ -1796,11 +1799,11 @@ class CollieApiClientTest {
                 assertFalse(fields.containsKey("requestBody"))
             }
             val suffix = when (kind) { "layout" -> ""; "apply" -> "/split"; else -> "/$kind" }
-            assertEquals("/nested/mount/api/pane/pane%3Aone/layout$suffix", server.takeRequest().requestUrl!!.encodedPath)
+            assertEquals("/nested/mount/api/pane/pane%3Aone/layout$suffix", server.takeRequest().url!!.encodedPath)
           }
         }
         // The metadata-only branch also preserves a valid body for the real typed consumer.
-        server.enqueue(MockResponse().setChunkedBody("""{"ok":true,"result":{"kind":"layout","layout":{"workspaceId":"space","tabId":"tab","zoomed":false,"area":{"x":0,"y":0,"width":80,"height":24},"focusedPaneId":"pane:one","panes":[{"paneId":"pane:one","focused":true,"rect":{"x":0,"y":0,"width":80,"height":24}}],"splits":[]}}}""", 64))
+        server.enqueue(MockResponse.Builder().chunkedBody("""{"ok":true,"result":{"kind":"layout","layout":{"workspaceId":"space","tabId":"tab","zoomed":false,"area":{"x":0,"y":0,"width":80,"height":24},"focusedPaneId":"pane:one","panes":[{"paneId":"pane:one","focused":true,"rect":{"x":0,"y":0,"width":80,"height":24}}],"splits":[]}}}""", 64).build())
         assertTrue(diagnosticApi.paneLayout(mounted, address) is ApiResult.Success)
         server.takeRequest()
     }

@@ -2,7 +2,7 @@ package com.lateapex.collie.auth
 
 import com.lateapex.collie.data.*
 import okhttp3.HttpUrl.Companion.toHttpUrl
-import okhttp3.mockwebserver.MockResponse
+import mockwebserver3.MockResponse
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -14,7 +14,7 @@ import java.util.concurrent.TimeUnit
 @RunWith(RobolectricTestRunner::class)
 class ProxyCustodyPublicationTest {
     private fun begin(f: ProxyHttpsFixture): okhttp3.HttpUrl {
-        f.server.enqueue(MockResponse().setBody(f.discovery())); f.server.enqueue(MockResponse().setBody(f.jwks()))
+        f.server.enqueue(MockResponse.Builder().body(f.discovery()).build()); f.server.enqueue(MockResponse.Builder().body(f.jwks()).build())
         return f.coordinator.begin(f.actor).toHttpUrl()
     }
     private fun callback(f: ProxyHttpsFixture, url: okhttp3.HttpUrl) = ProxyProfile.REDIRECT + "?state=" + url.queryParameter("state") +
@@ -22,7 +22,7 @@ class ProxyCustodyPublicationTest {
 
     @Test fun consumedCallbackCannotPublishAfterCompletedRetirementEvenWithoutReplacement() {
         ProxyHttpsFixture().use { f ->
-            val url = begin(f); f.server.enqueue(MockResponse().setBody(f.tokens(url.queryParameter("nonce")!!)))
+            val url = begin(f); f.server.enqueue(MockResponse.Builder().body(f.tokens(url.queryParameter("nonce")!!)).build())
             val entered = CountDownLatch(1); val release = CountDownLatch(1)
             f.coordinator.beforePublicationForTesting = { entered.countDown(); check(release.await(5, TimeUnit.SECONDS)) }
             val executor = Executors.newSingleThreadExecutor()
@@ -58,11 +58,11 @@ class ProxyCustodyPublicationTest {
 
     @Test fun beginAndRefreshLastCheckPublicationsRefuseAfterRetirementAndReplacement() {
         for (operation in listOf("begin", "refresh")) ProxyHttpsFixture().use { f ->
-            if (operation == "begin") { f.server.enqueue(MockResponse().setBody(f.discovery())); f.server.enqueue(MockResponse().setBody(f.jwks())) }
+            if (operation == "begin") { f.server.enqueue(MockResponse.Builder().body(f.discovery()).build()); f.server.enqueue(MockResponse.Builder().body(f.jwks()).build()) }
             else {
                 f.readyTokens(); val r = f.store.record()!!; val prior = r.tokens!!
                 f.store.write(r.copyCustody(tokens = ProxyTokens(prior.accessToken, prior.refreshToken, prior.subject, 1, prior.thumbprint, prior.nonce)))
-                f.server.enqueue(MockResponse().setBody(f.tokens(prior.nonce)))
+                f.server.enqueue(MockResponse.Builder().body(f.tokens(prior.nonce)).build())
             }
             val entered = CountDownLatch(1); val release = CountDownLatch(1)
             f.coordinator.beforePublicationForTesting = { entered.countDown(); check(release.await(5, TimeUnit.SECONDS)) }
@@ -86,12 +86,12 @@ class ProxyCustodyPublicationTest {
             f.coordinator.acceptBinding(f.connection, access, "binding-fixture-id", 7)
             val accepted = f.store.record()!!; val token = accepted.tokens!!
             f.store.write(accepted.copyCustody(tokens = ProxyTokens(token.accessToken, "refresh", token.subject, 1, token.thumbprint, token.nonce)))
-            f.server.enqueue(MockResponse().setBody(f.tokens(token.nonce)))
+            f.server.enqueue(MockResponse.Builder().body(f.tokens(token.nonce)).build())
             access = f.coordinator.credentials(f.connection)!!.second.accessToken
             assertEquals("binding-fixture-id", f.store.record()!!.binding!!.bindingId); assertTrue(events.isEmpty())
             f.coordinator.identityFailed(f.connection, access); assertNull(f.store.record()!!.tokens)
             assertEquals(7L, f.store.record()!!.binding!!.revision); assertTrue(events.isEmpty())
-            val url = begin(f); f.server.enqueue(MockResponse().setBody(f.tokens(url.queryParameter("nonce")!!)))
+            val url = begin(f); f.server.enqueue(MockResponse.Builder().body(f.tokens(url.queryParameter("nonce")!!)).build())
             assertTrue(f.coordinator.consumeCallback(callback(f, url))); access = f.store.record()!!.tokens!!.accessToken
             f.coordinator.bindingRetired(f.connection, access, "unrelated-binding-id", 7); assertTrue(events.isEmpty())
             f.coordinator.bindingRetired(f.connection, access, "binding-fixture-id", 8); assertTrue(events.isEmpty())
@@ -115,7 +115,7 @@ class ProxyCustodyPublicationTest {
             f.coordinator.acceptBinding(f.connection, access, "binding-fixture-id", 1)
             val r = f.store.record()!!; val token = r.tokens!!
             f.store.write(r.copyCustody(tokens = ProxyTokens(token.accessToken, "refresh", token.subject, 1, token.thumbprint, token.nonce)))
-            f.server.enqueue(MockResponse().setBody(f.tokens(token.nonce)))
+            f.server.enqueue(MockResponse.Builder().body(f.tokens(token.nonce)).build())
             val refreshed = f.coordinator.credentials(f.connection)!!.second.accessToken
             f.coordinator.acceptBinding(f.connection, refreshed, "binding-replacement-id", 2)
             f.coordinator.acceptBinding(f.connection, refreshed, "binding-replacement-id", 2)

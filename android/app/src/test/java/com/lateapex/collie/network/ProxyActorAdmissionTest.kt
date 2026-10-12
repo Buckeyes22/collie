@@ -8,7 +8,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.serialization.json.Json
-import okhttp3.mockwebserver.*
+import mockwebserver3.*
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -34,14 +34,14 @@ class ProxyActorAdmissionTest {
             val field = CollieApiClient::class.java.getDeclaredField("client").apply { isAccessible = true }
             field.set(app.api, client)
             f.store.clear()
-            f.server.enqueue(MockResponse().setBody("{\"ok\":true,\"version\":\"fixture\",\"deposed\":false,\"mode\":\"solo\"}"))
+            f.server.enqueue(MockResponse.Builder().body("{\"ok\":true,\"version\":\"fixture\",\"deposed\":false,\"mode\":\"solo\"}").build())
             assertTrue(app.repository.probe(f.connection.origin.value) is ApiResult.Success)
-            f.server.enqueue(MockResponse().setResponseCode(400).setBody("{\"ok\":false,\"error\":\"fixture-code-refused\"}"))
+            f.server.enqueue(MockResponse.Builder().code(400).body("{\"ok\":false,\"error\":\"fixture-code-refused\"}").build())
             val pair = app.repository.pair(f.connection.origin.value, "phone", "owned-code") as ApiResult.Success
             assertTrue(pair.value is PairResult.Refused)
             for (request in listOf(f.server.takeRequest(), f.server.takeRequest())) {
-                assertNull(request.getHeader("Authorization")); assertNull(request.getHeader("Collie-Proxy-Authorization")); assertNull(request.getHeader("DPoP")); assertNull(request.getHeader("Cookie"))
-                assertTrue(request.path in listOf("/mount/api/health", "/mount/api/pair"))
+                assertNull(request.headers["Authorization"]); assertNull(request.headers["Collie-Proxy-Authorization"]); assertNull(request.headers["DPoP"]); assertNull(request.headers["Cookie"])
+                assertTrue(request.target in listOf("/mount/api/health", "/mount/api/pair"))
             }
             assertEquals(2, f.server.requestCount)
             // Presence of configured identity custody must still reach the configured gateway's
@@ -49,11 +49,11 @@ class ProxyActorAdmissionTest {
             f.context.getSharedPreferences("collie_proxy_identity_v1", android.content.Context.MODE_PRIVATE).edit().putString("record", "configured-custody-unavailable-to-bootstrap").commit()
             f.server.dispatcher = object : Dispatcher() {
                 override fun dispatch(request: RecordedRequest): MockResponse {
-                    val id = request.getHeader("X-Collie-Native-Request-Id")!!
-                    return MockResponse().setResponseCode(401).setHeader("X-Collie-Response-Source", "native_gateway")
+                    val id = request.headers["X-Collie-Native-Request-Id"]!!
+                    return MockResponse.Builder().code(401).setHeader("X-Collie-Response-Source", "native_gateway")
                         .setHeader("X-Collie-Error-Source", "native_gateway").setHeader("X-Collie-Error-Factor", "identity")
                         .setHeader("X-Collie-Error-Code", "identity.required").setHeader("X-Collie-Native-Request-Id", id)
-                        .setBody("{\"source\":\"native_gateway\",\"factor\":\"identity\",\"code\":\"identity.required\",\"requestId\":\"$id\"}")
+                        .body("{\"source\":\"native_gateway\",\"factor\":\"identity\",\"code\":\"identity.required\",\"requestId\":\"$id\"}").build()
                 }
             }
             for (answer in listOf(app.repository.probe(f.connection.origin.value), app.repository.pair(f.connection.origin.value, "phone", "owned-code"))) {
@@ -61,7 +61,7 @@ class ProxyActorAdmissionTest {
                 assertEquals(FailureSource.GATEWAY, failure.source); assertEquals(FailureFactor.IDENTITY, failure.factor); assertEquals("identity.required", failure.code)
             }
             assertEquals(4, f.server.requestCount)
-            for (request in listOf(f.server.takeRequest(), f.server.takeRequest())) { assertNull(request.getHeader("Authorization")); assertNull(request.getHeader("Collie-Proxy-Authorization")); assertNull(request.getHeader("DPoP")) }
+            for (request in listOf(f.server.takeRequest(), f.server.takeRequest())) { assertNull(request.headers["Authorization"]); assertNull(request.headers["Collie-Proxy-Authorization"]); assertNull(request.headers["DPoP"]) }
             val candidate = Connection(f.connection.origin, "candidate", null)
             val bad = okhttp3.Request.Builder().url(candidate.origin.value + "api/config").tag(Connection::class.java, candidate)
                 .tag(NativeBootstrapAdmission::class.java, NativeBootstrapAdmission(candidate, "GET", candidate.origin.value + "api/health")).build()
@@ -96,9 +96,9 @@ class ProxyActorAdmissionTest {
             val entered = CountDownLatch(1); val release = CountDownLatch(1)
             f.server.dispatcher = object : Dispatcher() {
                 override fun dispatch(request: RecordedRequest): MockResponse {
-                    if (request.method == "GET" && request.path!!.substringBefore('?').endsWith("/health")) { entered.countDown(); check(release.await(5, TimeUnit.SECONDS)); return MockResponse().setResponseCode(401).setHeader("DPoP-Nonce", "gateway-nonce").setBody("{}") }
-                    val body = if (request.path!!.substringBefore('?').endsWith("/config")) "{}" else if (request.path!!.substringBefore('?').endsWith("/folders")) "{\"home\":\"/owned-fixture-home\",\"favourites\":[],\"recent\":[]}" else if (request.method == "GET") "{\"bridge\":\"connected\",\"device\":{\"enforced\":true,\"device\":\"writer\",\"authorized\":true},\"agents\":[],\"shellPanes\":[],\"workspaces\":[],\"tabs\":[],\"ts\":1}" else "{\"ok\":true}"
-                    return MockResponse().setHeader("X-Collie-Response-Source", "collie").setHeader("X-Collie-Native-Request-Id", request.getHeader("X-Collie-Native-Request-Id")!!).setBody(body)
+                    if (request.method == "GET" && request.target!!.substringBefore('?').endsWith("/health")) { entered.countDown(); check(release.await(5, TimeUnit.SECONDS)); return MockResponse.Builder().code(401).setHeader("DPoP-Nonce", "gateway-nonce").body("{}").build() }
+                    val body = if (request.target!!.substringBefore('?').endsWith("/config")) "{}" else if (request.target!!.substringBefore('?').endsWith("/folders")) "{\"home\":\"/owned-fixture-home\",\"favourites\":[],\"recent\":[]}" else if (request.method == "GET") "{\"bridge\":\"connected\",\"device\":{\"enforced\":true,\"device\":\"writer\",\"authorized\":true},\"agents\":[],\"shellPanes\":[],\"workspaces\":[],\"tabs\":[],\"ts\":1}" else "{\"ok\":true}"
+                    return MockResponse.Builder().setHeader("X-Collie-Response-Source", "collie").setHeader("X-Collie-Native-Request-Id", request.headers["X-Collie-Native-Request-Id"]!!).body(body).build()
                 }
             }
             val original = repository.readContext()!!
@@ -132,17 +132,17 @@ class ProxyActorAdmissionTest {
                 assertTrue(withContext(Dispatchers.Default) { repository.snapshot(wide, explicit) } is ApiResult.Success)
                 assertEquals(4, f.server.requestCount)
                 val wideRequest = f.server.takeRequest()
-                assertTrue(wideRequest.path!!.contains("sessions=all")); assertFalse(wideRequest.path!!.contains("host=")); assertFalse(wideRequest.path!!.contains("session="))
+                assertTrue(wideRequest.target!!.contains("sessions=all")); assertFalse(wideRequest.target!!.contains("host=")); assertFalse(wideRequest.target!!.contains("session="))
                 assertTrue(withContext(Dispatchers.Default) { repository.config(wide, explicit) } is ApiResult.Success)
                 assertEquals(5, f.server.requestCount)
                 val configRequest = f.server.takeRequest()
-                assertTrue(configRequest.path!!.startsWith("/mount/api/config")); assertFalse(configRequest.path!!.contains("host=")); assertFalse(configRequest.path!!.contains("session="))
+                assertTrue(configRequest.target!!.startsWith("/mount/api/config")); assertFalse(configRequest.target!!.contains("host=")); assertFalse(configRequest.target!!.contains("session="))
                 // The same explicit null survives the shared folders helper as well. Its request
                 // reaches the exact transport even though the selected default subject is a pane.
                 assertTrue(withContext(Dispatchers.Default) { repository.folders(wide, explicit) } is ApiResult.Success)
                 assertEquals(6, f.server.requestCount)
                 val foldersRequest = f.server.takeRequest()
-                assertTrue(foldersRequest.path!!.startsWith("/mount/api/folders")); assertFalse(foldersRequest.path!!.contains("host=")); assertFalse(foldersRequest.path!!.contains("session="))
+                assertTrue(foldersRequest.target!!.startsWith("/mount/api/folders")); assertFalse(foldersRequest.target!!.contains("host=")); assertFalse(foldersRequest.target!!.contains("session="))
             } finally { release.countDown(); pending.cancel() }
         }
     }

@@ -37,7 +37,7 @@ interactive shell prompts. Never commit their values or pass passwords directly 
 
 | Variable | Purpose |
 | --- | --- |
-| `ANDROID_HOME` | SDK with Build Tools 36.0.0 |
+| `ANDROID_HOME` | SDK with Build Tools 37.0.0 |
 | `COLLIE_ANDROID_KEYSTORE` | Absolute path to the release keystore outside the worktree |
 | `COLLIE_ANDROID_KEY_ALIAS` | Alias of the private key |
 | `COLLIE_ANDROID_STORE_PASSWORD` | Keystore password |
@@ -148,13 +148,13 @@ database, or the scan step failed.
 
 ## Device acceptance
 
-Smoke-test the signed artifact before publication; keep the extended matrix as follow-up coverage.
+Smoke-test the signed artifact and complete the current physical-device checks before publication.
 
-Use a dedicated test device or emulator and synthetic terminal content. Do not run uninstalling
-instrumentation against a personal phone as a routine release check: the runner may reinstall the
-app and erase its local connection. The existing API 26/API 36 emulator checks provide broad
-regression coverage; they do not need to be repeated on every physical-device configuration before
-an initial release.
+Current Android acceptance uses the owned physical Pixel running Android 17 / API 37 on
+dell-7680 and synthetic terminal content. Do not run uninstalling instrumentation against another
+personal app namespace: the runner may reinstall the app and erase its local connection.
+Older API/emulator results are historical evidence, not current release acceptance.
+The [toolchain record](TOOLCHAIN.md) describes the stable SDK and build pins.
 
 Initial artifact smoke check:
 
@@ -163,7 +163,7 @@ Initial artifact smoke check:
 - [ ] Checksums, bundled license notices and release notes match the reviewed artifact.
 - [ ] Public screenshots and attachments contain no unapproved private content.
 
-Extended follow-up matrix:
+Required current-device checks:
 
 - Fresh HTTPS pairing, authorization refusal, device revocation and harmless exactly-once replies.
 - Prompts, Keys, history, attachments and configured STT against a disposable live server.
@@ -176,7 +176,7 @@ Record which checks actually ran, with APK checksum, certificate fingerprint, so
 app/server versions, device/API and date. Disclose material known limitations in release notes.
 Untested extended scenarios are coverage gaps; an observed regression affecting basic use, credential
 protection or terminal write safety requires a fix. Historical
-[acceptance records](README.md#emulator-and-physical-device-acceptance) remain regression evidence.
+[acceptance records](README.md#current-physical-device-acceptance-and-historical-results) remain regression evidence.
 
 ## Cut and review a release
 

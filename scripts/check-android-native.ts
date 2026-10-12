@@ -5,12 +5,15 @@ const EXPECTED_APPLICATION_ID = "com.lateapex.collie";
 const EXPECTED_ACTIVITY = "com.lateapex.collie.ui.MainActivity";
 const EXPECTED_VERSION_NAME = "1.5.2";
 const EXPECTED_VERSION_CODE = 3;
-const EXPECTED_COMPILE_SDK = 36;
-const EXPECTED_TARGET_SDK = 36;
-const EXPECTED_MIN_SDK = 26;
-const EXPECTED_GRADLE = "8.11.1";
-const EXPECTED_AGP = "8.10.1";
-const EXPECTED_KOTLIN = "2.2.21";
+const EXPECTED_COMPILE_SDK = 37;
+const EXPECTED_COMPILE_SDK_MINOR = 2;
+const EXPECTED_BUILD_TOOLS = "37.0.0";
+const EXPECTED_GRADLE_SHA256 = "bafd5ce9cfaea0fbccfdc8439a1ac42fbd4cd9c89dc9a988228d8a2639a58e6c";
+const EXPECTED_TARGET_SDK = 37;
+const EXPECTED_MIN_SDK = 37;
+const EXPECTED_GRADLE = "9.8.0";
+const EXPECTED_AGP = "9.4.1";
+const EXPECTED_KOTLIN = "2.4.20";
 const EXPECTED_DEFAULT_ORIGIN = "";
 
 const FORBIDDEN_ANDROID_PATTERN =
@@ -25,6 +28,7 @@ export interface AndroidNativeSourceFile {
 
 export interface AndroidNativeValidationInput {
   settingsGradleText: string;
+  gradlePropertiesText: string;
   rootGradleText: string;
   appGradleText: string;
   wrapperPropertiesText: string;
@@ -104,7 +108,16 @@ function requirePluginVersion(
 
 function validateBuildConfiguration(input: AndroidNativeValidationInput, errors: string[]): void {
   requirePluginVersion(input.rootGradleText, "com.android.application", EXPECTED_AGP, errors);
-  requirePluginVersion(input.rootGradleText, "org.jetbrains.kotlin.android", EXPECTED_KOTLIN, errors);
+  if (!input.rootGradleText.includes(`classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:${EXPECTED_KOTLIN}")`)) {
+    errors.push(`AGP built-in Kotlin compiler must pin org.jetbrains.kotlin:kotlin-gradle-plugin:${EXPECTED_KOTLIN}`);
+  }
+  const kotlinBuild = `${input.rootGradleText}\n${input.appGradleText}`;
+  if (/id\(\s*["']org\.jetbrains\.kotlin\.android["']\s*\)/.test(kotlinBuild) || /\bkotlinOptions\s*\{/.test(kotlinBuild)) {
+    errors.push("Android must use AGP built-in Kotlin and kotlin.compilerOptions, without the retired kotlin-android plugin or kotlinOptions");
+  }
+  if (/android\.(?:builtInKotlin|newDsl)\s*=\s*false/.test(`${kotlinBuild}\n${input.gradlePropertiesText}`)) {
+    errors.push("Android must not opt out of built-in Kotlin or the current AGP DSL");
+  }
   requirePluginVersion(
     input.rootGradleText,
     "org.jetbrains.kotlin.plugin.serialization",
@@ -117,12 +130,20 @@ function validateBuildConfiguration(input: AndroidNativeValidationInput, errors:
     errors.push(`Gradle wrapper must resolve to ${EXPECTED_GRADLE}`);
   }
 
+  if (!new RegExp(`^distributionSha256Sum=${EXPECTED_GRADLE_SHA256}$`, "m").test(input.wrapperPropertiesText)) {
+    errors.push("Gradle wrapper must pin the official distribution SHA256");
+  }
+
   const app = input.appGradleText;
   requireExactStrings(app, "namespace", EXPECTED_APPLICATION_ID, "Android namespace", errors);
   requireExactStrings(app, "applicationId", EXPECTED_APPLICATION_ID, "Android applicationId", errors);
   requireExactStrings(app, "versionName", EXPECTED_VERSION_NAME, "Android versionName", errors);
   requireExactNumbers(app, "versionCode", EXPECTED_VERSION_CODE, "Android versionCode", errors);
-  requireExactNumbers(app, "compileSdk", EXPECTED_COMPILE_SDK, "Android compileSdk", errors);
+  const compileSdk = app.match(/\bcompileSdk\s*\{\s*version\s*=\s*release\(\s*(\d+)\s*\)\s*\{\s*minorApiLevel\s*=\s*(\d+)\s*}\s*}/);
+  if (Number(compileSdk?.[1]) !== EXPECTED_COMPILE_SDK || Number(compileSdk?.[2]) !== EXPECTED_COMPILE_SDK_MINOR || /\bcompileSdk\s*=/.test(app)) {
+    errors.push(`Android compileSdk must be release(${EXPECTED_COMPILE_SDK}) with minorApiLevel = ${EXPECTED_COMPILE_SDK_MINOR}`);
+  }
+  requireExactStrings(app, "buildToolsVersion", EXPECTED_BUILD_TOOLS, "Android Build Tools", errors);
   requireExactNumbers(app, "targetSdk", EXPECTED_TARGET_SDK, "Android targetSdk", errors);
   requireExactNumbers(app, "minSdk", EXPECTED_MIN_SDK, "Android minSdk", errors);
   const defaultOrigin = app.match(
@@ -141,6 +162,9 @@ function validateBuildConfiguration(input: AndroidNativeValidationInput, errors:
   const java17Count = app.match(/JavaVersion\.VERSION_17/g)?.length ?? 0;
   if (java17Count < 2 || !/(?:JvmTarget\.JVM_17|jvmTarget\s*=\s*["']17["'])/.test(app)) {
     errors.push("Android Java and Kotlin bytecode targets must both be 17");
+  }
+  if (!/\bcompilerOptions\s*\{/.test(app) || !/\bjvmDefault\.set\(\s*(?:org\.jetbrains\.kotlin\.gradle\.dsl\.)?JvmDefaultMode\.NO_COMPATIBILITY\s*\)/.test(app)) {
+    errors.push("Android must configure JVM defaults through the current Kotlin compilerOptions DSL");
   }
   if (!/\bisMinifyEnabled\s*=\s*true\b/.test(app)) {
     errors.push("Android release builds must enable minification");
@@ -162,14 +186,16 @@ function validateBuildConfiguration(input: AndroidNativeValidationInput, errors:
 
   const requiredDependencies = [
     `org.jetbrains.kotlin:kotlin-bom:${EXPECTED_KOTLIN}`,
-    "com.squareup.okhttp3:okhttp:4.12.0",
-    "org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3",
-    "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2",
-    "androidx.lifecycle:lifecycle-runtime-ktx:2.8.7",
-    "androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.7",
-    "androidx.appcompat:appcompat",
-    "com.google.android.material:material",
-    "androidx.recyclerview:recyclerview",
+    "com.squareup.okhttp3:okhttp:5.5.0",
+    "com.squareup.okhttp3:mockwebserver3:5.5.0",
+    "org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0",
+    "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0",
+    "androidx.lifecycle:lifecycle-runtime-ktx:2.11.0",
+    "androidx.lifecycle:lifecycle-viewmodel-ktx:2.11.0",
+    "androidx.core:core-ktx:1.19.1",
+    "androidx.appcompat:appcompat:1.8.0",
+    "com.google.android.material:material:1.14.0",
+    "androidx.recyclerview:recyclerview:1.4.0",
     "androidx.test.espresso:espresso-core:3.7.0",
   ];
   for (const dependency of requiredDependencies) {
@@ -425,6 +451,7 @@ function runCli(): number {
   ].filter((path) => existsSync(join(root, path)));
   const input: AndroidNativeValidationInput = {
     settingsGradleText: readRequired(join(root, "android/settings.gradle.kts"), readErrors),
+    gradlePropertiesText: readRequired(join(root, "android/gradle.properties"), readErrors),
     rootGradleText: readRequired(join(root, "android/build.gradle.kts"), readErrors),
     appGradleText: readRequired(join(appRoot, "build.gradle.kts"), readErrors),
     wrapperPropertiesText: readRequired(

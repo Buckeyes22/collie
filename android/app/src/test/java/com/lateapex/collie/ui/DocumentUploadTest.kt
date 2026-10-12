@@ -24,7 +24,7 @@ class DocumentUploadTest {
     private val policy = UploadCapability(1024, listOf("png", "jpg", "gif", "webp"), listOf("txt", "md", "json"))
 
     @Test fun providerMimeIsAdvisoryButConfiguredExtensionAndBytesControlAdmission() {
-        val dir = createTempDir(prefix = "collie-upload-policy-")
+        val dir = kotlin.io.path.createTempDirectory(prefix = "collie-upload-policy-").toFile()
         try {
             val accepted = DocumentAttachment.importStream("notes.txt", "image/jpeg", "safe notes\n".byteInputStream(), dir, policy)
             assertTrue(accepted is DocumentSelection.Ready)
@@ -37,7 +37,7 @@ class DocumentUploadTest {
     }
 
     @Test fun revokedProviderAndBinaryRenamedAsTextAreRefusedWithoutSpoolLeak() {
-        val dir = createTempDir(prefix = "collie-upload-policy-")
+        val dir = kotlin.io.path.createTempDirectory(prefix = "collie-upload-policy-").toFile()
         try {
             assertTrue(DocumentAttachment.importStream("notes.txt", null, null, dir, policy) is DocumentSelection.Rejected)
             assertTrue(DocumentAttachment.importStream("notes.txt", "text/plain", byteArrayOf(0, 1, 2).inputStream(), dir, policy) is DocumentSelection.Rejected)
@@ -46,7 +46,7 @@ class DocumentUploadTest {
     }
 
     @Test fun svgIsAlwaysRefusedEvenWhenConfiguredAsAnExtraTextType() {
-        val dir = createTempDir(prefix = "collie-upload-policy-")
+        val dir = kotlin.io.path.createTempDirectory(prefix = "collie-upload-policy-").toFile()
         try {
             val extra = policy.copy(textTypes = policy.textTypes + "svg")
             assertTrue(DocumentAttachment.importStream("vector.svg", "image/svg+xml", "<svg/>".byteInputStream(), dir, extra) is DocumentSelection.Rejected)
@@ -55,7 +55,7 @@ class DocumentUploadTest {
     }
 
     @Test fun operatorEnabledExtraExtensionUsesSameTextValidation() {
-        val dir = createTempDir(prefix = "collie-upload-policy-")
+        val dir = kotlin.io.path.createTempDirectory(prefix = "collie-upload-policy-").toFile()
         try {
             val extra = policy.copy(textTypes = policy.textTypes + "trace")
             val result = DocumentAttachment.importStream("session.trace", "application/octet-stream", "trace line\n".byteInputStream(), dir, extra)
@@ -97,7 +97,7 @@ class DocumentUploadTest {
     }
 
     @Test fun serverLimitBelowNativeLimitIsEnforcedAndPartialSpoolIsRemoved() {
-        val dir = createTempDir(prefix = "collie-upload-policy-")
+        val dir = kotlin.io.path.createTempDirectory(prefix = "collie-upload-policy-").toFile()
         try {
             val limited = policy.copy(maxBytes = 3)
             val result = DocumentAttachment.importStream("notes.txt", null, "four".byteInputStream(), dir, limited)
@@ -107,7 +107,7 @@ class DocumentUploadTest {
     }
 
     @Test fun interruptedProviderReadRefusesAndDeletesPartialSpool() {
-        val dir = createTempDir(prefix = "collie-upload-policy-")
+        val dir = kotlin.io.path.createTempDirectory(prefix = "collie-upload-policy-").toFile()
         val input = object : java.io.InputStream() {
             override fun read(): Int = 1
             override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
@@ -126,7 +126,7 @@ class DocumentUploadTest {
     }
 
     @Test fun stalledNonseekableProviderIsClosedAtDeadlineAndItsPartialSpoolIsRemoved() {
-        val dir = createTempDir(prefix = "collie-upload-timeout-")
+        val dir = kotlin.io.path.createTempDirectory(prefix = "collie-upload-timeout-").toFile()
         val enteredRead = CountDownLatch(1)
         val released = CountDownLatch(1)
         val workerFinished = CountDownLatch(1)
@@ -160,7 +160,7 @@ class DocumentUploadTest {
     }
 
     @Test fun callerCancellationClosesOwnedProviderStreamAndWaitsForNoAutomaticRetry() {
-        val dir = createTempDir(prefix = "collie-upload-cancel-")
+        val dir = kotlin.io.path.createTempDirectory(prefix = "collie-upload-cancel-").toFile()
         val enteredRead = CountDownLatch(1)
         val released = CountDownLatch(1)
         val workerFinished = CountDownLatch(1)
@@ -195,7 +195,7 @@ class DocumentUploadTest {
     }
 
     @Test fun stalledCancelAndCloseReturnAtDeadlineKeepWorkerBudgetAndUnlinkPartialSpools() {
-        val dir = createTempDir(prefix = "collie-upload-stalled-close-")
+        val dir = kotlin.io.path.createTempDirectory(prefix = "collie-upload-stalled-close-").toFile()
         val cancelEntered = CountDownLatch(DocumentAttachment.MAX_PROVIDER_WORKERS)
         val closeEntered = CountDownLatch(DocumentAttachment.MAX_PROVIDER_WORKERS)
         val readEntered = CountDownLatch(DocumentAttachment.MAX_PROVIDER_WORKERS)
@@ -253,7 +253,7 @@ class DocumentUploadTest {
     }
 
     @Test fun interruptedCallerDisposesReadyPublishedBeforeWorkerCloseCompletes() {
-        val dir = createTempDir(prefix = "collie-upload-published-ready-")
+        val dir = kotlin.io.path.createTempDirectory(prefix = "collie-upload-published-ready-").toFile()
         val closeEntered = CountDownLatch(1)
         val releaseClose = CountDownLatch(1)
         val source = AtomicReference<UploadSource.Document>()
@@ -283,7 +283,7 @@ class DocumentUploadTest {
     }
 
     @Test fun lateReadyAfterDeadlineIsDestroyedWithoutAnyOwnershipTransfer() {
-        val dir = createTempDir(prefix = "collie-upload-late-ready-")
+        val dir = kotlin.io.path.createTempDirectory(prefix = "collie-upload-late-ready-").toFile()
         val entered = CountDownLatch(1)
         val release = CountDownLatch(1)
         val lateSource = AtomicReference<UploadSource.Document>()
@@ -304,7 +304,7 @@ class DocumentUploadTest {
     }
 
     @Test fun cancelledDispatcherHandoffDisposesReadyBeforeAnyActorConsumption() = runTest {
-        val dir = createTempDir(prefix = "collie-upload-handoff-")
+        val dir = kotlin.io.path.createTempDirectory(prefix = "collie-upload-handoff-").toFile()
         val readReady = CountDownLatch(1)
         val mayReturn = CountDownLatch(1)
         var consumed = 0
@@ -356,7 +356,7 @@ class DocumentUploadTest {
     }
 
     @Test fun processStartCleanupImmediatelyRemovesOnlyPrivateUploadNamespace() {
-        val dir = createTempDir(prefix = "collie-upload-cache-")
+        val dir = kotlin.io.path.createTempDirectory(prefix = "collie-upload-cache-").toFile()
         try {
             val orphan = File(dir, "collie-upload-abcd.part").apply { writeText("secret") }
             val unrelated = File(dir, "other-cache-entry").apply { writeText("keep") }

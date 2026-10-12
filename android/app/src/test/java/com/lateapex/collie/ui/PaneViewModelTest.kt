@@ -295,20 +295,20 @@ class PaneViewModelTest {
             .addSubjectAlternativeName("localhost").build()
         val serverCertificates = okhttp3.tls.HandshakeCertificates.Builder().heldCertificate(certificate).build()
         val trust = okhttp3.tls.HandshakeCertificates.Builder().addTrustedCertificate(certificate.certificate).build()
-        val server = okhttp3.mockwebserver.MockWebServer()
-        server.useHttps(serverCertificates.sslSocketFactory(), false)
+        val server = mockwebserver3.MockWebServer()
+        server.useHttps(serverCertificates.sslSocketFactory())
         server.start()
         try {
             val client = com.lateapex.collie.network.CollieApiClient.defaultHttpClient().newBuilder()
                 .sslSocketFactory(trust.sslSocketFactory(), trust.trustManager).build()
             val actual = com.lateapex.collie.network.CollieApiClient(client, kotlinx.serialization.json.Json { ignoreUnknownKeys = true })
             fun page(gen: Long = 7, rev: Long = 12) = """{"paneId":"w1:p1","available":true,"page":"live","gen":$gen,"rev":$rev,"head":1,"oldest":1,"hasOlder":false,"upserts":[{"uuid":"retained","ts":"","role":"assistant","seq":1,"parts":[]}],"queued":["queued message"],"sendQueuedNow":["ctrl+Enter"],"queuedDigest":"${"a".repeat(64)}","queuedSendOccupant":"${"b".repeat(64)}"}"""
-            fun response(body: String) = okhttp3.mockwebserver.MockResponse()
-                .setHeader("Content-Type", "application/json").setHeader("ETag", "\"accepted-page\"").setBody(body)
+            fun response(body: String) = mockwebserver3.MockResponse.Builder()
+                .setHeader("Content-Type", "application/json").setHeader("ETag", "\"accepted-page\"").body(body).build()
             for (failure in listOf(response(page(gen = -1)), response(page(rev = -1)),
-                okhttp3.mockwebserver.MockResponse().setResponseCode(503),
-                okhttp3.mockwebserver.MockResponse().setResponseCode(401),
-                okhttp3.mockwebserver.MockResponse().setResponseCode(403))) {
+                mockwebserver3.MockResponse.Builder().code(503).build(),
+                mockwebserver3.MockResponse.Builder().code(401).build(),
+                mockwebserver3.MockResponse.Builder().code(403).build())) {
                 val requestCountBefore = server.requestCount
                 val f = fixture(ApiResult.Success(ActionResponse(ok = true), 200), agent = "claude")
                 f.store.save(Connection(CollieOrigin(server.url("/mount/").toString()), "phone", "token"))
@@ -321,7 +321,7 @@ class PaneViewModelTest {
                 val action = f.viewModel.state.value.transcriptSendNow!!
                 val first = server.takeRequest()
                 assertEquals("GET", first.method)
-                assertEquals("Bearer token", first.getHeader("Authorization"))
+                assertEquals("Bearer token", first.headers["Authorization"])
 
                 server.enqueue(failure)
                 f.viewModel.refresh(); advanceUntilIdle()
@@ -329,21 +329,21 @@ class PaneViewModelTest {
                 assertEquals(listOf("retained"), f.viewModel.state.value.transcript.map { it.uuid })
                 assertEquals(listOf("queued message"), f.viewModel.state.value.transcriptQueued)
                 val failed = server.takeRequest()
-                assertTrue(failed.path!!.contains("after="))
-                assertEquals("\"accepted-page\"", failed.getHeader("If-None-Match"))
+                assertTrue(failed.target!!.contains("after="))
+                assertEquals("\"accepted-page\"", failed.headers["If-None-Match"])
 
-                server.enqueue(okhttp3.mockwebserver.MockResponse().setResponseCode(304))
+                server.enqueue(mockwebserver3.MockResponse.Builder().code(304).build())
                 f.viewModel.refresh(); advanceUntilIdle()
                 assertNull("supporting snapshot and 304 must not restore retired queue authority", f.viewModel.state.value.transcriptSendNow)
                 val unchanged = server.takeRequest()
-                assertEquals(failed.path, unchanged.path)
+                assertEquals(failed.target, unchanged.target)
                 if (failure.status.contains(" 401 ") || failure.status.contains(" 403 ")) {
                     // Access refusal retires the B04 image actor and its validator. Supporting
                     // config recovery may read again, but a 304 still cannot re-admit old pixels.
-                    assertNull(unchanged.getHeader("If-None-Match"))
+                    assertNull(unchanged.headers["If-None-Match"])
                     assertNull(f.viewModel.state.value.transcriptReadContext)
                 } else {
-                    assertEquals("\"accepted-page\"", unchanged.getHeader("If-None-Match"))
+                    assertEquals("\"accepted-page\"", unchanged.headers["If-None-Match"])
                 }
                 f.viewModel.sendQueuedNow(action); advanceUntilIdle()
                 assertTrue(f.api.queuedKeysCalls.isEmpty())
@@ -355,15 +355,15 @@ class PaneViewModelTest {
                 assertEquals("GET", server.takeRequest().method)
 
                 val restoredAction = f.viewModel.state.value.transcriptSendNow!!
-                server.enqueue(okhttp3.mockwebserver.MockResponse().setResponseCode(304))
+                server.enqueue(mockwebserver3.MockResponse.Builder().code(304).build())
                 f.viewModel.sendQueuedNow(restoredAction); advanceUntilIdle()
                 assertNull("a no-validator fresh verification cannot authorize a 304", f.viewModel.state.value.transcriptSendNow)
                 assertNull("no reservation or dispatch occurred during failed preflight", f.viewModel.state.value.transcriptSendAttempt)
                 val verification = server.takeRequest()
                 assertEquals("GET", verification.method)
-                assertNull(verification.getHeader("If-None-Match"))
+                assertNull(verification.headers["If-None-Match"])
                 assertTrue(f.api.queuedKeysCalls.isEmpty())
-                server.enqueue(okhttp3.mockwebserver.MockResponse().setResponseCode(304))
+                server.enqueue(mockwebserver3.MockResponse.Builder().code(304).build())
                 f.viewModel.refresh(); advanceUntilIdle()
                 assertNull(f.viewModel.state.value.transcriptSendNow)
                 assertEquals("GET", server.takeRequest().method)
@@ -377,15 +377,15 @@ class PaneViewModelTest {
                 server.enqueue(response(page(rev = 14)))
                 server.enqueue(response(page(rev = 14)))
                 server.enqueue(response("{\"ok\":true}"))
-                server.enqueue(okhttp3.mockwebserver.MockResponse().setResponseCode(304))
+                server.enqueue(mockwebserver3.MockResponse.Builder().code(304).build())
                 f.viewModel.sendQueuedNow(recovered); advanceUntilIdle()
                 assertEquals("GET", server.takeRequest().method)
                 assertEquals("GET", server.takeRequest().method)
                 val dispatch = server.takeRequest()
                 assertEquals("POST", dispatch.method)
-                assertTrue(dispatch.path!!.contains("/api/pane/w1%3Ap1/keys"))
-                assertEquals("Bearer token", dispatch.getHeader("Authorization"))
-                assertTrue(dispatch.body.readUtf8().contains("\"queued_send\""))
+                assertTrue(dispatch.target!!.contains("/api/pane/w1%3Ap1/keys"))
+                assertEquals("Bearer token", dispatch.headers["Authorization"])
+                assertTrue(dispatch.body?.utf8().orEmpty().contains("\"queued_send\""))
                 assertEquals("GET", server.takeRequest().method)
                 assertEquals(listOf(recovered.keys), f.api.queuedKeysCalls)
                 assertEquals(recovered, f.viewModel.state.value.transcriptSendAttempt)
@@ -393,18 +393,18 @@ class PaneViewModelTest {
                 f.viewModel.sendQueuedNow(recovered); advanceUntilIdle()
                 assertEquals("a dispatched queue never repeats automatically or on a second tap", countAfterDispatch, server.requestCount)
 
-                server.enqueue(okhttp3.mockwebserver.MockResponse().setResponseCode(503))
+                server.enqueue(mockwebserver3.MockResponse.Builder().code(503).build())
                 f.viewModel.loadOlderTranscript(); advanceUntilIdle()
                 assertNull("a failed current older-page read also retires queue authority", f.viewModel.state.value.transcriptSendNow)
                 val older = server.takeRequest()
                 assertEquals("GET", older.method)
-                assertTrue(older.path!!.contains("before="))
+                assertTrue(older.target!!.contains("before="))
                 assertEquals(listOf("retained"), f.viewModel.state.value.transcript.map { it.uuid })
                 assertEquals(listOf("queued message"), f.viewModel.state.value.transcriptQueued)
                 assertEquals(listOf(recovered.keys), f.api.queuedKeysCalls)
                 assertEquals("durable attempted-send latch survives read disarm", recovered, f.viewModel.state.value.transcriptSendAttempt)
             }
-        } finally { server.shutdown() }
+        } finally { server.close() }
         Unit
     }
 
@@ -1069,8 +1069,8 @@ class PaneViewModelTest {
             .addSubjectAlternativeName("localhost").build()
         val certificates = okhttp3.tls.HandshakeCertificates.Builder().heldCertificate(certificate).build()
         val trust = okhttp3.tls.HandshakeCertificates.Builder().addTrustedCertificate(certificate.certificate).build()
-        val server = okhttp3.mockwebserver.MockWebServer()
-        server.useHttps(certificates.sslSocketFactory(), false)
+        val server = mockwebserver3.MockWebServer()
+        server.useHttps(certificates.sslSocketFactory())
         server.start()
         try {
             val client = com.lateapex.collie.network.CollieApiClient.defaultHttpClient().newBuilder()
@@ -1082,24 +1082,24 @@ class PaneViewModelTest {
             runCurrent()
             f.api.paneTransport = actual
             f.api.config = BridgeConfigResponse(control = com.lateapex.collie.network.ControlCapabilityResponse(mapOf("filesDiscovery" to true)))
-            fun body() = okhttp3.mockwebserver.MockResponse().setHeader("Content-Type", "application/json")
+            fun body() = mockwebserver3.MockResponse.Builder().setHeader("Content-Type", "application/json")
                 .setHeader("ETag", "\"fixture7\"")
-                .setBody("""{"paneId":"w1:p1","text":"See src/source.txt:3\n","truncated":false,"revision":7,"filesReadReady":true}""")
-            fun request(): okhttp3.mockwebserver.RecordedRequest {
+                .body("""{"paneId":"w1:p1","text":"See src/source.txt:3\n","truncated":false,"revision":7,"filesReadReady":true}""").build()
+            fun request(): mockwebserver3.RecordedRequest {
                 val request = requireNotNull(server.takeRequest(2, java.util.concurrent.TimeUnit.SECONDS))
                 assertEquals("GET", request.method)
-                assertEquals("/mount/api/pane/w1%3Ap1", request.requestUrl?.encodedPath)
-                assertEquals("Bearer token", request.getHeader("Authorization"))
+                assertEquals("/mount/api/pane/w1%3Ap1", request.url?.encodedPath)
+                assertEquals("Bearer token", request.headers["Authorization"])
                 return request
             }
             server.enqueue(body())
             assertTrue(f.repository.readPane(address) is ApiResult.Success)
-            assertNull(request().getHeader("If-None-Match"))
-            server.enqueue(okhttp3.mockwebserver.MockResponse().setResponseCode(304))
+            assertNull(request().headers["If-None-Match"])
+            server.enqueue(mockwebserver3.MockResponse.Builder().code(304).build())
             val cached = f.repository.readPane(address) as ApiResult.Success
             assertEquals(304, cached.status)
             assertTrue(cached.value.notModified)
-            assertEquals("\"fixture7\"", request().getHeader("If-None-Match"))
+            assertEquals("\"fixture7\"", request().headers["If-None-Match"])
 
             // Same repository/cache as the previous consumer; this new ViewModel owns no body.
             val fresh = PaneViewModel(ApplicationProvider.getApplicationContext<Application>(), address, "shell", f.repository,
@@ -1123,37 +1123,37 @@ class PaneViewModelTest {
             }
             server.enqueue(body())
             refreshAndAwaitResponse()
-            assertNull("new consumer must request its own fresh body", request().getHeader("If-None-Match"))
+            assertNull("new consumer must request its own fresh body", request().headers["If-None-Match"])
             val accepted = requireNotNull(fresh.state.value.paneReadContext)
             assertTrue(f.repository.isCurrent(accepted))
             assertTrue(fresh.state.value.pane?.filesReadReady == true)
             assertTrue(fresh.state.value.pane?.text?.contains("src/source.txt:3") == true)
             assertNotNull(fresh.state.value.filesConfigContext)
 
-            server.enqueue(okhttp3.mockwebserver.MockResponse().setResponseCode(304))
+            server.enqueue(mockwebserver3.MockResponse.Builder().code(304).build())
             refreshAndAwaitResponse()
-            assertEquals("\"fixture7\"", request().getHeader("If-None-Match"))
+            assertEquals("\"fixture7\"", request().headers["If-None-Match"])
             assertTrue("same current consumer retains its original accepted actor", accepted === fresh.state.value.paneReadContext)
 
             f.repository.showSavedCopy(1L)
             assertNull(fresh.state.value.paneReadContext)
             assertFalse(f.repository.isCurrent(accepted))
-            server.enqueue(okhttp3.mockwebserver.MockResponse().setResponseCode(304))
+            server.enqueue(mockwebserver3.MockResponse.Builder().code(304).build())
             refreshAndAwaitResponse()
-            assertNull(request().getHeader("If-None-Match"))
+            assertNull(request().headers["If-None-Match"])
             assertNull("unsolicited304 must never admit a new or retired body actor", fresh.state.value.paneReadContext)
             assertNotNull(fresh.state.value.error)
 
             server.enqueue(body())
             refreshAndAwaitResponse()
-            assertNull(request().getHeader("If-None-Match"))
+            assertNull(request().headers["If-None-Match"])
             val recovered = requireNotNull(fresh.state.value.paneReadContext)
             assertTrue(f.repository.isCurrent(recovered))
             assertTrue(recovered.navigationGeneration != accepted.navigationGeneration)
             assertEquals(cached.value.pane.text, fresh.state.value.pane?.text)
             assertEquals(6, server.requestCount)
         } finally {
-            server.shutdown()
+            server.close()
         }
     }
 

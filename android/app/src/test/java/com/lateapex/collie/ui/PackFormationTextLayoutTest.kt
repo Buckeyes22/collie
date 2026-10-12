@@ -14,7 +14,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [35])
+@Config(sdk = [37])
 class PackFormationTextLayoutTest {
     @Test
     fun `200 percent text keeps name below node and within measured height at narrow width`() {

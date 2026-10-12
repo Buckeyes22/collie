@@ -32,7 +32,7 @@ You need a reachable Collie HTTPS server as well as an Android phone.
 
 | Requirement | Details |
 | --- | --- |
-| Android | Android 8.0 / API 26 or newer |
+| Android | Current Android 17 / API 37 |
 | Server | A self-hosted Collie deployment; the current development baseline is server 1.19.0 |
 | Network | Usually Tailscale on the host and phone, with access to the same tailnet |
 | Device access | A short-lived pairing code generated on the host with `collie pair` |
@@ -61,7 +61,7 @@ cd collie/android
 ./gradlew --no-daemon assembleDebug
 ```
 
-Use JDK 21 and an Android SDK containing platform 36 and Build Tools 36.0.0. Set `ANDROID_HOME`
+Use JDK 21 and an Android SDK containing stable platform 37.2 and Build Tools 37.0.0. Set `ANDROID_HOME`
 to your SDK directory. The APK appears under `app/build/outputs/apk/debug/app-debug.apk`;
 it installs as `com.lateapex.collie.debug` and can coexist with the release app.
 

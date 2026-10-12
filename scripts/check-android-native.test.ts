@@ -5,26 +5,26 @@ import {
   validateAndroidNative,
 } from "./check-android-native.ts";
 
-const validRootGradle = `plugins {
-  id("com.android.application") version "8.10.1" apply false
-  id("org.jetbrains.kotlin.android") version "2.2.21" apply false
-  id("org.jetbrains.kotlin.plugin.serialization") version "2.2.21" apply false
+const validRootGradle = `buildscript { dependencies { classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.4.20") } }
+plugins {
+  id("com.android.application") version "9.4.1" apply false
+  id("org.jetbrains.kotlin.plugin.serialization") version "2.4.20" apply false
 }
 dependencyLocking { lockAllConfigurations() }
 `;
 
 const validAppGradle = `plugins {
   id("com.android.application")
-  id("org.jetbrains.kotlin.android")
   id("org.jetbrains.kotlin.plugin.serialization")
 }
 android {
   namespace = "com.lateapex.collie"
-  compileSdk = 36
+  compileSdk { version = release(37) { minorApiLevel = 2 } }
+  buildToolsVersion = "37.0.0"
   defaultConfig {
     applicationId = "com.lateapex.collie"
-    minSdk = 26
-    targetSdk = 36
+    minSdk = 37
+    targetSdk = 37
     versionCode = 3
     versionName = "1.5.2"
     buildConfigField("String", "DEFAULT_ORIGIN", "\\"\\"")
@@ -36,17 +36,19 @@ android {
     targetCompatibility = JavaVersion.VERSION_17
   }
 }
-kotlin { jvmToolchain(21); compilerOptions { jvmTarget = JvmTarget.JVM_17 } }
+kotlin { jvmToolchain(21); compilerOptions { jvmTarget = JvmTarget.JVM_17; jvmDefault.set(JvmDefaultMode.NO_COMPATIBILITY) } }
 dependencies {
-  implementation(platform("org.jetbrains.kotlin:kotlin-bom:2.2.21"))
-  implementation("com.squareup.okhttp3:okhttp:4.12.0")
-  implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
-  implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
-  implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
-  implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.7")
-  implementation("androidx.appcompat:appcompat:1.7.0")
-  implementation("com.google.android.material:material:1.12.0")
-  implementation("androidx.recyclerview:recyclerview:1.3.2")
+  implementation(platform("org.jetbrains.kotlin:kotlin-bom:2.4.20"))
+  implementation("androidx.core:core-ktx:1.19.1")
+  implementation("com.squareup.okhttp3:okhttp:5.5.0")
+  testImplementation("com.squareup.okhttp3:mockwebserver3:5.5.0")
+  implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
+  implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
+  implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.11.0")
+  implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.11.0")
+  implementation("androidx.appcompat:appcompat:1.8.0")
+  implementation("com.google.android.material:material:1.14.0")
+  implementation("androidx.recyclerview:recyclerview:1.4.0")
   androidTestImplementation("androidx.test.espresso:espresso-core:3.7.0")
 }
 `;
@@ -82,10 +84,11 @@ const validExtractionRules = `<data-extraction-rules>
 function validInput(overrides: Partial<AndroidNativeValidationInput> = {}): AndroidNativeValidationInput {
   return {
     settingsGradleText: 'rootProject.name = "CollieAndroid"\ninclude(":app")',
+    gradlePropertiesText: "android.useAndroidX=true",
     rootGradleText: validRootGradle,
     appGradleText: validAppGradle,
     wrapperPropertiesText:
-      "distributionUrl=https\\://services.gradle.org/distributions/gradle-8.11.1-bin.zip",
+      "distributionUrl=https\\://services.gradle.org/distributions/gradle-9.8.0-bin.zip\ndistributionSha256Sum=bafd5ce9cfaea0fbccfdc8439a1ac42fbd4cd9c89dc9a988228d8a2639a58e6c",
     androidManifestText: validManifest,
     dataExtractionRulesText: validExtractionRules,
     kotlinSources: [
@@ -94,7 +97,7 @@ function validInput(overrides: Partial<AndroidNativeValidationInput> = {}): Andr
     ],
     javaSources: [],
     dependencyLockfiles: [
-      { path: "android/app/gradle.lockfile", text: "com.squareup.okhttp3:okhttp:4.12.0=debugRuntimeClasspath" },
+      { path: "android/app/gradle.lockfile", text: "com.squareup.okhttp3:okhttp:5.5.0=debugRuntimeClasspath" },
     ],
     ...overrides,
   };
@@ -105,6 +108,21 @@ function messages(overrides: Partial<AndroidNativeValidationInput> = {}): string
 }
 
 describe("check-android-native validation", () => {
+  test("rejects retired Kotlin integration and DSL opt-outs", () => {
+    expect(messages({ rootGradleText: `${validRootGradle}\nplugins { id("org.jetbrains.kotlin.android") }` })).toContain("AGP built-in Kotlin");
+    expect(messages({ appGradleText: `${validAppGradle}\nandroid { kotlinOptions { jvmTarget = "17" } }` })).toContain("AGP built-in Kotlin");
+    for (const property of ["android.builtInKotlin=false", "android.newDsl=false"]) {
+      expect(messages({ gradlePropertiesText: property })).toContain("must not opt out");
+    }
+    expect(messages({ appGradleText: validAppGradle.replace("jvmDefault.set(JvmDefaultMode.NO_COMPATIBILITY)", "") })).toContain("compilerOptions DSL");
+  });
+
+  test("requires the current stable SDK minor and verified wrapper checksum", () => {
+    expect(messages({ appGradleText: validAppGradle.replace("minorApiLevel = 2", "minorApiLevel = 1") })).toContain("minorApiLevel = 2");
+    expect(messages({ appGradleText: validAppGradle.replace('buildToolsVersion = "37.0.0"', 'buildToolsVersion = "36.0.0"') })).toContain("Build Tools");
+    expect(messages({ wrapperPropertiesText: "distributionUrl=gradle-9.8.0-bin.zip\ndistributionSha256Sum=wrong" })).toContain("official distribution SHA256");
+  });
+
   test("accepts the pinned native Android configuration", () => {
     expect(validateAndroidNative(validInput())).toEqual({ errors: [], checkedMergedManifest: false });
     expect(validateAndroidNative(validInput({ mergedAndroidManifestText: validManifest }))).toEqual({
@@ -123,29 +141,33 @@ describe("check-android-native validation", () => {
   test("requires the single app module and pinned plugin/wrapper versions", () => {
     const output = messages({
       settingsGradleText: 'include(":app", ":browser")',
-      rootGradleText: validRootGradle.replace("8.10.1", "8.8.0").replaceAll("2.2.21", "2.1.0"),
+      rootGradleText: validRootGradle.replace("9.4.1", "8.8.0").replaceAll("2.4.20", "2.1.0"),
       wrapperPropertiesText: "distributionUrl=gradle-8.10-bin.zip",
     });
     expect(output).toContain("include only :app");
-    expect(output).toContain("com.android.application 8.10.1");
-    expect(output).toContain("org.jetbrains.kotlin.android 2.2.21");
-    expect(output).toContain("serialization 2.2.21");
-    expect(output).toContain("Gradle wrapper must resolve to 8.11.1");
+    expect(output).toContain("com.android.application 9.4.1");
+    expect(output).toContain("org.jetbrains.kotlin:kotlin-gradle-plugin:2.4.20");
+    expect(output).toContain("serialization 2.4.20");
+    expect(output).toContain("Gradle wrapper must resolve to 9.8.0");
   });
 
   test("rejects Kotlin runtime BOM drift from the compiler pin", () => {
     const output = messages({
-      appGradleText: validAppGradle.replace("kotlin-bom:2.2.21", "kotlin-bom:2.1.0"),
+      appGradleText: validAppGradle.replace("kotlin-bom:2.4.20", "kotlin-bom:2.1.0"),
     });
-    expect(output).toContain("org.jetbrains.kotlin:kotlin-bom:2.2.21");
+    expect(output).toContain("org.jetbrains.kotlin:kotlin-bom:2.4.20");
+  });
+
+  test("requires the current MockWebServer artifact", () => {
+    expect(messages({ appGradleText: validAppGradle.replace("mockwebserver3:5.5.0", "mockwebserver:5.5.0") })).toContain("com.squareup.okhttp3:mockwebserver3:5.5.0");
   });
 
   test("rejects application, SDK, and version drift", () => {
     const appGradle = validAppGradle
       .replaceAll("com.lateapex.collie", "com.example.other")
-      .replace("compileSdk = 36", "compileSdk = 35")
-      .replace("minSdk = 26", "minSdk = 24")
-      .replace("targetSdk = 36", "targetSdk = 35")
+      .replace("release(37)", "release(36)")
+      .replace("minSdk = 37", "minSdk = 36")
+      .replace("targetSdk = 37", "targetSdk = 36")
       .replace("versionCode = 3", "versionCode = 4")
       .replace('versionName = "1.5.2"', 'versionName = "1.5.3"');
     const output = messages({ appGradleText: appGradle });
@@ -192,8 +214,8 @@ describe("check-android-native validation", () => {
   });
 
   test("requires the approved native dependency baseline", () => {
-    const output = messages({ appGradleText: validAppGradle.replace("com.squareup.okhttp3:okhttp:4.12.0", "com.squareup.okhttp3:okhttp:4.11.0") });
-    expect(output).toContain("com.squareup.okhttp3:okhttp:4.12.0");
+    const output = messages({ appGradleText: validAppGradle.replace("com.squareup.okhttp3:okhttp:5.5.0", "com.squareup.okhttp3:okhttp:4.11.0") });
+    expect(output).toContain("com.squareup.okhttp3:okhttp:5.5.0");
   });
 
   test("rejects TWA, WebView, Capacitor, and Firebase build dependencies", () => {

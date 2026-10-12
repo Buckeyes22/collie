@@ -11,8 +11,8 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
-import okhttp3.mockwebserver.MockResponse
-import okhttp3.mockwebserver.MockWebServer
+import mockwebserver3.MockResponse
+import mockwebserver3.MockWebServer
 import okhttp3.tls.HandshakeCertificates
 import okhttp3.tls.HeldCertificate
 import org.junit.Assert.*
@@ -223,7 +223,7 @@ class CommittedConnectionStoreTest {
             val hold = AtomicBoolean(true)
             val result = AtomicReference<ApiResult<BridgeConfigResponse>?>()
             val failure = AtomicReference<Throwable?>()
-            val server = MockWebServer().apply { useHttps(serverCertificates.sslSocketFactory(), false); start() }
+            val server = MockWebServer().apply { useHttps(serverCertificates.sslSocketFactory()); start() }
             val client = OkHttpClient.Builder().sslSocketFactory(trusted.sslSocketFactory(), trusted.trustManager)
                 .protocols(listOf(Protocol.HTTP_1_1)).retryOnConnectionFailure(false).addInterceptor { chain ->
                     if (hold.compareAndSet(true, false)) { entered.countDown(); assertTrue(release.await(2, TimeUnit.SECONDS)) }
@@ -243,11 +243,11 @@ class CommittedConnectionStoreTest {
                 assertNull(failure.get())
                 assertTrue(result.get() is ApiResult.Failure)
                 assertEquals(0, server.requestCount)
-                server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody("{}"))
+                server.enqueue(MockResponse.Builder().setHeader("Content-Type", "application/json").body("{}").build())
                 assertTrue(runBlocking { repository.config() } is ApiResult.Success)
                 assertEquals(1, server.requestCount)
-                assertEquals("/mount/api/config", server.takeRequest(2, TimeUnit.SECONDS)!!.path)
-            } finally { release.countDown(); client.dispatcher.executorService.shutdown(); client.connectionPool.evictAll(); server.shutdown() }
+                assertEquals("/mount/api/config", server.takeRequest(2, TimeUnit.SECONDS)!!.target)
+            } finally { release.countDown(); client.dispatcher.executorService.shutdown(); client.connectionPool.evictAll(); server.close() }
         }
     }
 

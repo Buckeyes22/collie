@@ -17,8 +17,8 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.mockwebserver.MockResponse
-import okhttp3.mockwebserver.MockWebServer
+import mockwebserver3.MockResponse
+import mockwebserver3.MockWebServer
 import org.junit.Assert.assertFalse
 
 @RunWith(RobolectricTestRunner::class)
@@ -91,7 +91,7 @@ class DiagnosticsExportTest {
         val server = MockWebServer().apply { start() }
         try {
             val sentinel = "B02-ARTIFICIAL-COMMAND-SECRET-77e2"
-            server.enqueue(MockResponse().setResponseCode(200).setBody("{\"ok\":true,\"command\":\"$sentinel\"}"))
+            server.enqueue(MockResponse.Builder().code(200).body("{\"ok\":true,\"command\":\"$sentinel\"}").build())
             val client = OkHttpClient.Builder().addInterceptor(DiagnosticsInterceptor(recorder)).build()
             val request = Request.Builder()
                 .url(server.url("/mounted/api/launch"))
@@ -114,7 +114,7 @@ class DiagnosticsExportTest {
                 assertTrue(exported.contains(sentinel).not())
             }
         } finally {
-            server.shutdown()
+            server.close()
             executor.shutdownNow()
         }
     }
@@ -133,7 +133,7 @@ class DiagnosticsExportTest {
         val server = MockWebServer()
         server.start()
         try {
-            server.enqueue(MockResponse().setResponseCode(200).setBody("{\"ok\":true}"))
+            server.enqueue(MockResponse.Builder().code(200).body("{\"ok\":true}").build())
             val recorder = DiagnosticsRecorder(writer, { true }, executor = executor)
             val client = OkHttpClient.Builder().addInterceptor(DiagnosticsInterceptor(recorder)).build()
             val sentinel = "B12_LAYOUT_SECRET_SENTINEL"
@@ -155,7 +155,7 @@ class DiagnosticsExportTest {
                 assertFalse(exported.contains(sentinel))
             }
         } finally {
-            server.shutdown()
+            server.close()
             executor.shutdownNow()
         }
     }

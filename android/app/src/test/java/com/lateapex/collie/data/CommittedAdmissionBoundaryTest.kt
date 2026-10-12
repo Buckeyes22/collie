@@ -10,10 +10,10 @@ import kotlinx.serialization.json.Json
 import okhttp3.CertificatePinner
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
-import okhttp3.mockwebserver.Dispatcher
-import okhttp3.mockwebserver.MockResponse
-import okhttp3.mockwebserver.MockWebServer
-import okhttp3.mockwebserver.RecordedRequest
+import mockwebserver3.Dispatcher
+import mockwebserver3.MockResponse
+import mockwebserver3.MockWebServer
+import mockwebserver3.RecordedRequest
 import okhttp3.tls.HandshakeCertificates
 import okhttp3.tls.HeldCertificate
 import org.junit.Assert.*
@@ -182,10 +182,10 @@ class CommittedAdmissionBoundaryTest {
             assertTrue(runBlocking { f.repository.snapshot(expectedContext = actor) } is ApiResult.Success)
             assertTrue(runBlocking { f.repository.renamePane(f.address, "fresh-one-shot") } is ApiResult.Success)
             assertEquals(1, f.posts.size)
-            assertEquals("/mount/api/pane/pane/rename", f.posts.single().path)
-            assertEquals("{\"label\":\"fresh-one-shot\"}", f.posts.single().body.readUtf8())
-            assertEquals("Bearer pinned-fixture", f.posts.single().getHeader("Authorization"))
-            assertEquals(f.connection.origin.headerValue, f.posts.single().getHeader("Origin"))
+            assertEquals("/mount/api/pane/pane/rename", f.posts.single().target)
+            assertEquals("{\"label\":\"fresh-one-shot\"}", f.posts.single().body?.utf8().orEmpty())
+            assertEquals("Bearer pinned-fixture", f.posts.single().headers["Authorization"])
+            assertEquals(f.connection.origin.headerValue, f.posts.single().headers["Origin"])
         }
     }
 
@@ -211,9 +211,9 @@ class CommittedAdmissionBoundaryTest {
             assertNull(failure.get())
             assertTrue(result.get() is ApiResult.Success)
             assertEquals(1, f.posts.size)
-            assertEquals("/mount/api/notifications/prefs", f.posts.single().path)
-            assertEquals("Bearer pinned-fixture", f.posts.single().getHeader("Authorization"))
-            assertEquals("{\"blocked\":false}", f.posts.single().body.readUtf8())
+            assertEquals("/mount/api/notifications/prefs", f.posts.single().target)
+            assertEquals("Bearer pinned-fixture", f.posts.single().headers["Authorization"])
+            assertEquals("{\"blocked\":false}", f.posts.single().body?.utf8().orEmpty())
         }
     }
 
@@ -298,17 +298,17 @@ class CommittedAdmissionBoundaryTest {
         private val serverCertificates = HandshakeCertificates.Builder().heldCertificate(certificate).build()
         private val trusted = HandshakeCertificates.Builder().addTrustedCertificate(certificate.certificate).build()
         private val server = MockWebServer().apply {
-            useHttps(serverCertificates.sslSocketFactory(), false)
+            useHttps(serverCertificates.sslSocketFactory())
             dispatcher = object : Dispatcher() {
                 override fun dispatch(request: RecordedRequest): MockResponse {
                     if (request.method == "POST") posts.add(request)
-                    val body = when (request.requestUrl!!.encodedPath) {
+                    val body = when (request.url!!.encodedPath) {
                         "/mount/api/snapshot" -> """{"bridge":"connected","agents":[],"shellPanes":[],"workspaces":[],"tabs":[],"device":{"enforced":true,"device":"fixture","authorized":${authorized.get()}},"ts":1}"""
                         "/mount/api/notifications/prefs" -> """{"blocked":false,"done":false,"updates":true}"""
                         "/mount/api/pane/pane/rename" -> """{"ok":true}"""
-                        else -> return MockResponse().setResponseCode(404)
+                        else -> return MockResponse.Builder().code(404).build()
                     }
-                    return MockResponse().setHeader("Content-Type", "application/json").setBody(body)
+                    return MockResponse.Builder().setHeader("Content-Type", "application/json").body(body).build()
                 }
             }
             start()
@@ -334,7 +334,7 @@ class CommittedAdmissionBoundaryTest {
             release.countDown()
             client.dispatcher.executorService.shutdown()
             client.connectionPool.evictAll()
-            server.shutdown()
+            server.close()
             ownedStore.close()
         }
     }

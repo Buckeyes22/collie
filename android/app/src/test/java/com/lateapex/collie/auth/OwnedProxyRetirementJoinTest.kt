@@ -11,9 +11,9 @@ import com.lateapex.collie.ui.ProxyCallbackHandoff
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import okhttp3.*
-import okhttp3.mockwebserver.Dispatcher
-import okhttp3.mockwebserver.MockResponse
-import okhttp3.mockwebserver.RecordedRequest
+import mockwebserver3.Dispatcher
+import mockwebserver3.MockResponse
+import mockwebserver3.RecordedRequest
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -98,9 +98,9 @@ class OwnedProxyRetirementJoinTest {
                 assertEquals(healthBefore, f.health.get())
                 assertEquals(1, f.requests.count { it.method == "POST" })
                 val post = f.requests.single { it.method == "POST" }
-                assertNotNull(post.getHeader("DPoP"))
-                assertEquals("Bearer paired-b", post.getHeader("Authorization"))
-                assertTrue(post.getHeader("Collie-Proxy-Authorization")!!.startsWith("DPoP "))
+                assertNotNull(post.headers["DPoP"])
+                assertEquals("Bearer paired-b", post.headers["Authorization"])
+                assertTrue(post.headers["Collie-Proxy-Authorization"]!!.startsWith("DPoP "))
                 assertFalse(f.app.proxyIdentityStore.retireOwned(captured.get(), removeRecord = true))
                 assertTrue(f.app.repository.isCurrent(b))
             } finally { release.countDown(); nonceRelease.countDown(); hold.close(); oldThread.join(5000) }
@@ -145,8 +145,8 @@ class OwnedProxyRetirementJoinTest {
                 assertEquals(b.custodyVersion, f.app.proxyIdentityStore.record()!!.transaction!!.custody)
                 assertTrue(f.app.repository.isCurrent(b))
                 assertEquals(0, f.posts.get())
-                assertTrue(f.requests.filter { it.path!!.contains("openid-configuration") || it.path == "/jwks" }
-                    .all { it.getHeader("Authorization") == null && it.getHeader("Collie-Proxy-Authorization") == null && it.getHeader("Cookie") == null })
+                assertTrue(f.requests.filter { it.target!!.contains("openid-configuration") || it.target == "/jwks" }
+                    .all { it.headers["Authorization"] == null && it.headers["Collie-Proxy-Authorization"] == null && it.headers["Cookie"] == null })
             } finally { release.countDown(); aRelease.countDown(); bRelease.countDown(); hold.close(); oldThread.join(5000); freshThread?.join(5000) }
         }
     }
@@ -359,7 +359,7 @@ class OwnedProxyRetirementJoinTest {
         val b: Connection
         val client: OkHttpClient
         init {
-            crypto.server.enqueue(MockResponse().setBody("{}"))
+            crypto.server.enqueue(MockResponse.Builder().body("{}").build())
             val certificate = crypto.client.newCall(Request.Builder().url(crypto.server.url("/fixture-certificate")).build()).execute().use {
                 it.handshake!!.peerCertificates.first()
             }
@@ -389,11 +389,11 @@ class OwnedProxyRetirementJoinTest {
                 override fun dispatch(request: RecordedRequest): MockResponse {
                     requests.add(request)
                     if (request.method == "POST") posts.incrementAndGet()
-                    val path = request.requestUrl!!.encodedPath
+                    val path = request.url!!.encodedPath
                     if (path.endsWith("api/health")) {
                         health.incrementAndGet()
                         holdHealth?.let { hold -> holdHealth = null; hold.first.countDown(); assertTrue(hold.second.await(5, TimeUnit.SECONDS)) }
-                        return MockResponse().setHeader("DPoP-Nonce", "fresh-fixture-nonce").setBody("{}")
+                        return MockResponse.Builder().setHeader("DPoP-Nonce", "fresh-fixture-nonce").body("{}").build()
                     }
                     val body = when {
                         path.endsWith("openid-configuration") -> {
@@ -404,7 +404,7 @@ class OwnedProxyRetirementJoinTest {
                         path.endsWith("api/snapshot") -> """{"ts":1,"bridge":"connected","agents":[],"shellPanes":[],"workspaces":[],"tabs":[],"device":{"enforced":true,"device":"fixture","authorized":true}}"""
                         else -> """{"ok":true}"""
                     }
-                    return MockResponse().setHeader("Content-Type", "application/json").setBody(body)
+                    return MockResponse.Builder().setHeader("Content-Type", "application/json").body(body).build()
                 }
             }
             val a = Connection(crypto.connection.origin, "A", "paired-a")

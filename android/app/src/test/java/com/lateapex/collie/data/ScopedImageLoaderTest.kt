@@ -26,7 +26,7 @@ import java.util.zip.CRC32
 import java.util.zip.DeflaterOutputStream
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [26, 35])
+@Config(sdk = [37])
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class ScopedImageLoaderTest {
     private val connection = Connection(CollieOrigin("https://collie.example/mount/"), "phone", "private")

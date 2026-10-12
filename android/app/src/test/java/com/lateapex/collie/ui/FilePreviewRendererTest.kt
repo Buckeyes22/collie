@@ -16,7 +16,7 @@ import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [26, 35])
+@Config(sdk = [37])
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class FilePreviewRendererTest {
     @Test fun jsonProjectionIsIterativeAndBoundsDepthNodesAndOutput() {

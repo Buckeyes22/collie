@@ -7,7 +7,7 @@ import com.lateapex.collie.domain.CollieOrigin
 import com.lateapex.collie.domain.Connection
 import kotlinx.serialization.json.*
 import okhttp3.OkHttpClient
-import okhttp3.mockwebserver.MockWebServer
+import mockwebserver3.MockWebServer
 import okhttp3.tls.HeldCertificate
 import okhttp3.tls.HandshakeCertificates
 import java.security.KeyPairGenerator
@@ -50,7 +50,7 @@ internal class ProxyHttpsFixture(private val issuerWithoutSlash: Boolean = false
         val certificate=HeldCertificate.Builder().commonName("localhost").addSubjectAlternativeName("localhost").build()
         val serverCertificates=HandshakeCertificates.Builder().heldCertificate(certificate).build()
         val trust=HandshakeCertificates.Builder().addTrustedCertificate(certificate.certificate).build()
-        server.useHttps(serverCertificates.sslSocketFactory(),false);server.start()
+        server.useHttps(serverCertificates.sslSocketFactory());server.start()
         client=OkHttpClient.Builder().sslSocketFactory(trust.sslSocketFactory(),trust.trustManager).followRedirects(false).followSslRedirects(false).retryOnConnectionFailure(false).build()
         context.getSharedPreferences("collie_proxy_identity_v1",Context.MODE_PRIVATE).edit().clear().commit()
         val cipher=object: SecretCipher {
@@ -87,5 +87,5 @@ internal class ProxyHttpsFixture(private val issuerWithoutSlash: Boolean = false
         val r=store.record()!!
         store.write(ProxyRecord(origin=r.origin,connectionIdentity=r.connectionIdentity,profile=r.profile,tokens=ProxyTokens(access(),"refresh","operator",System.currentTimeMillis()+120_000,key.thumbprint,"nonce")))
     }
-    override fun close() { client.dispatcher.executorService.shutdown();client.connectionPool.evictAll();server.shutdown();store.clear() }
+    override fun close() { client.dispatcher.executorService.shutdown();client.connectionPool.evictAll();server.close();store.clear() }
 }

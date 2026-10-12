@@ -22,8 +22,8 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.serialization.json.Json
 import okhttp3.Protocol
-import okhttp3.mockwebserver.MockResponse
-import okhttp3.mockwebserver.MockWebServer
+import mockwebserver3.MockResponse
+import mockwebserver3.MockWebServer
 import okhttp3.tls.HandshakeCertificates
 import okhttp3.tls.HeldCertificate
 import org.junit.Assert.*
@@ -261,16 +261,16 @@ class ChangesSourceNavigationTest {
         val certificate = HeldCertificate.Builder().commonName("localhost").addSubjectAlternativeName("localhost").build()
         val serverTls = HandshakeCertificates.Builder().heldCertificate(certificate).build()
         val clientTls = HandshakeCertificates.Builder().addTrustedCertificate(certificate.certificate).build()
-        val server = MockWebServer().apply { useHttps(serverTls.sslSocketFactory(), false); start() }
+        val server = MockWebServer().apply { useHttps(serverTls.sslSocketFactory()); start() }
         val original = app.container.repository
         val field = app.container.javaClass.getDeclaredField("repository").apply { isAccessible = true }
         val store = Store(Connection(CollieOrigin(server.url("/mount/").toString()), "phone", "mounted-private-token"))
         val http = CollieApiClient.defaultHttpClient().newBuilder().sslSocketFactory(clientTls.sslSocketFactory(), clientTls.trustManager).protocols(listOf(Protocol.HTTP_1_1)).build()
         val repository = CollieRepository(CollieApiClient(http, Json { ignoreUnknownKeys = true }), store, app.container.originValidator)
         field.set(app.container, repository)
-        server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody("""{"paneId":"pane","available":true,"root":"/server-only/root","repos":[{"relPath":".","name":"repo","files":[{"path":"src/file.kt","status":"M","added":1,"removed":0,"binary":false}]}],"truncated":false,"depthLimited":false,"clean":[]}"""))
-        server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody("""{"paneId":"pane","available":true,"repo":".","path":"src/file.kt","status":"M","binary":false,"directory":false,"truncated":false,"diff":"+HTTPS diff"}"""))
-        server.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody("""{"paneId":"pane","available":true,"root":"/server-only/root","path":"src/file.kt","size":12,"mtimeMs":1,"binary":false,"truncated":false,"text":"HTTPS source"}"""))
+        server.enqueue(MockResponse.Builder().setHeader("Content-Type", "application/json").body("""{"paneId":"pane","available":true,"root":"/server-only/root","repos":[{"relPath":".","name":"repo","files":[{"path":"src/file.kt","status":"M","added":1,"removed":0,"binary":false}]}],"truncated":false,"depthLimited":false,"clean":[]}""").build())
+        server.enqueue(MockResponse.Builder().setHeader("Content-Type", "application/json").body("""{"paneId":"pane","available":true,"repo":".","path":"src/file.kt","status":"M","binary":false,"directory":false,"truncated":false,"diff":"+HTTPS diff"}""").build())
+        server.enqueue(MockResponse.Builder().setHeader("Content-Type", "application/json").body("""{"paneId":"pane","available":true,"root":"/server-only/root","path":"src/file.kt","size":12,"mtimeMs":1,"binary":false,"truncated":false,"text":"HTTPS source"}""").build())
         val changes = Robolectric.buildActivity(ChangesActivity::class.java, ChangesActivity.intentForPane(app, "pane", Scope("peer", "work"), "Pane")).create().start().resume().visible()
         var files: ActivityController<FilesActivity>? = null
         try {
@@ -283,16 +283,16 @@ class ChangesSourceNavigationTest {
             files = filesController
             awaitUi { text(filesController.get().window.decorView, "HTTPS source") != null }
             val requests = (0 until 3).map { requireNotNull(server.takeRequest(1, TimeUnit.SECONDS)) }
-            assertEquals(listOf("/mount/api/pane/pane/changes", "/mount/api/pane/pane/changes", "/mount/api/pane/pane/files"), requests.map { it.requestUrl!!.encodedPath })
+            assertEquals(listOf("/mount/api/pane/pane/changes", "/mount/api/pane/pane/changes", "/mount/api/pane/pane/files"), requests.map { it.url!!.encodedPath })
             for (request in requests) {
-                assertEquals("Bearer mounted-private-token", request.getHeader("Authorization"))
-                assertEquals("peer", request.requestUrl!!.queryParameter("host"))
-                assertEquals("work", request.requestUrl!!.queryParameter("session"))
+                assertEquals("Bearer mounted-private-token", request.headers["Authorization"])
+                assertEquals("peer", request.url!!.queryParameter("host"))
+                assertEquals("work", request.url!!.queryParameter("session"))
             }
-            assertEquals(".", requests[1].requestUrl!!.queryParameter("repo"))
-            assertEquals("src/file.kt", requests[1].requestUrl!!.queryParameter("path"))
-            assertEquals("src/file.kt", requests.last().requestUrl!!.queryParameter("path"))
-            assertNull(requests.last().requestUrl!!.queryParameter("root"))
+            assertEquals(".", requests[1].url!!.queryParameter("repo"))
+            assertEquals("src/file.kt", requests[1].url!!.queryParameter("path"))
+            assertEquals("src/file.kt", requests.last().url!!.queryParameter("path"))
+            assertNull(requests.last().url!!.queryParameter("root"))
             assertEquals(3, server.requestCount)
         } finally {
             files?.pause()?.stop()?.destroy()
@@ -300,7 +300,7 @@ class ChangesSourceNavigationTest {
             field.set(app.container, original)
             http.dispatcher.executorService.shutdownNow()
             http.connectionPool.evictAll()
-            server.shutdown()
+            server.close()
         }
     }
 

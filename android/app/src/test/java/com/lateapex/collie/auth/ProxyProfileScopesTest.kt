@@ -2,7 +2,7 @@ package com.lateapex.collie.auth
 
 import kotlinx.serialization.json.*
 import okhttp3.HttpUrl.Companion.toHttpUrl
-import okhttp3.mockwebserver.MockResponse
+import mockwebserver3.MockResponse
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -18,14 +18,14 @@ class ProxyProfileScopesTest {
             assertEquals("openid offline_access", ProxyProfile.parse(f.rawProfile).authorizationScope)
             val raw = profile(f, buildJsonArray { add("collie.native"); add("Resource:Read") })
             f.coordinator.importProfile(raw, f.actor)
-            f.server.enqueue(MockResponse().setBody(f.discovery()))
-            f.server.enqueue(MockResponse().setBody(f.jwks()))
+            f.server.enqueue(MockResponse.Builder().body(f.discovery()).build())
+            f.server.enqueue(MockResponse.Builder().body(f.jwks()).build())
             val authorization = f.coordinator.begin(f.actor).toHttpUrl()
             assertEquals("openid offline_access collie.native Resource:Read", authorization.queryParameter("scope"))
             assertEquals("gateway", authorization.queryParameter("audience"))
             assertEquals("S256", authorization.queryParameter("code_challenge_method"))
             assertEquals(f.key.thumbprint, authorization.queryParameter("dpop_jkt"))
-            f.server.enqueue(MockResponse().setBody(f.tokens(authorization.queryParameter("nonce")!!)))
+            f.server.enqueue(MockResponse.Builder().body(f.tokens(authorization.queryParameter("nonce")!!)).build())
             val callback = ProxyProfile.REDIRECT + "?state=" + authorization.queryParameter("state") +
                 "&code=one-code&iss=" + java.net.URLEncoder.encode(f.issuer, "UTF-8")
             assertTrue(f.coordinator.consumeCallback(callback, f.actor))
@@ -35,9 +35,9 @@ class ProxyProfileScopesTest {
             assertEquals(3, f.server.requestCount)
             repeat(3) {
                 val request = f.server.takeRequest()
-                assertNull(request.getHeader("Authorization"))
-                assertNull(request.getHeader("Collie-Proxy-Authorization"))
-                assertNull(request.getHeader("Cookie"))
+                assertNull(request.headers["Authorization"])
+                assertNull(request.headers["Collie-Proxy-Authorization"])
+                assertNull(request.headers["Cookie"])
             }
         }
     }

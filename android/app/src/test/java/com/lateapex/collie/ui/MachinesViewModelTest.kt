@@ -47,8 +47,8 @@ class MachinesViewModelTest {
         val app = ApplicationProvider.getApplicationContext<CollieApplication>()
         val certificate = okhttp3.tls.HeldCertificate.Builder().commonName("localhost").addSubjectAlternativeName("localhost").build()
         val trust = okhttp3.tls.HandshakeCertificates.Builder().addTrustedCertificate(certificate.certificate).build()
-        val server = okhttp3.mockwebserver.MockWebServer().apply {
-            useHttps(okhttp3.tls.HandshakeCertificates.Builder().heldCertificate(certificate).build().sslSocketFactory(), false)
+        val server = mockwebserver3.MockWebServer().apply {
+            useHttps(okhttp3.tls.HandshakeCertificates.Builder().heldCertificate(certificate).build().sslSocketFactory())
             start()
         }
         try {
@@ -75,15 +75,15 @@ class MachinesViewModelTest {
                 val delivered = CompletableDeferred<AuthorityRetirement>()
                 val subscription = repo.onReadContextRetired { delivered.complete(it) }
                 val vm = MachinesViewModel(app, repo)
-                val response = okhttp3.mockwebserver.MockResponse().setResponseCode(status)
+                val response = mockwebserver3.MockResponse.Builder().code(status)
                 if (factor != "unknown") {
                     response.setHeader("X-Collie-Error-Source", "native_gateway")
                         .setHeader("X-Collie-Response-Source", "native_gateway")
                         .setHeader("X-Collie-Native-Request-Id", requestId)
                         .setHeader("X-Collie-Error-Factor", factor).setHeader("X-Collie-Error-Code", code)
-                        .setBody("""{"source":"native_gateway","factor":"$factor","code":"$code","requestId":"$requestId"}""")
-                } else response.setBody("unclassified access refusal")
-                server.enqueue(response)
+                        .body("""{"source":"native_gateway","factor":"$factor","code":"$code","requestId":"$requestId"}""")
+                } else response.body("unclassified access refusal")
+                server.enqueue(response.build())
                 vm.refresh()
                 val event = delivered.await()
                 advanceUntilIdle()
@@ -102,15 +102,15 @@ class MachinesViewModelTest {
                 assertFalse(event.toString().contains("original-pairing"))
                 val request = server.takeRequest()
                 assertEquals("GET", request.method)
-                assertEquals("/mount/api/machines?spark=30", request.path)
-                assertEquals("Bearer original-pairing", request.getHeader("Authorization"))
+                assertEquals("/mount/api/machines?spark=30", request.target)
+                assertEquals("Bearer original-pairing", request.headers["Authorization"])
                 val count = server.requestCount
                 vm.refresh(); advanceUntilIdle()
                 assertEquals("Retired original VM cannot reacquire an actor", count, server.requestCount)
                 assertEquals("Refusal provenance survives an inert refresh", expected, vm.state.value.error)
                 subscription.close()
             }
-        } finally { server.shutdown() }
+        } finally { server.close() }
     }
 
     @Test

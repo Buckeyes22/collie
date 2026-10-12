@@ -13,7 +13,7 @@ import org.junit.runner.RunWith
 
 /** Exercises the production Keystore cipher and encrypted SharedPreferences on API 26+. */
 @RunWith(AndroidJUnit4::class)
-@SdkSuppress(minSdkVersion = 26)
+@SdkSuppress(minSdkVersion = 37)
 class LaunchIntentStoreInstrumentedTest {
     private val context: Context = ApplicationProvider.getApplicationContext()
 

@@ -39,7 +39,7 @@ import org.robolectric.shadows.ShadowDialog
 import java.io.ByteArrayOutputStream
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [26, 35])
+@Config(sdk = [37])
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class AuthenticatedImageViewTest {
     @Test fun unchangedLiveTurnRecreatesItsImageCardAfterNavigationOnlyRetirement() {

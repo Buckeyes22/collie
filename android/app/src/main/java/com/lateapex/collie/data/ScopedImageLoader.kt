@@ -3,7 +3,6 @@ package com.lateapex.collie.data
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageDecoder
-import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import com.lateapex.collie.network.ApiResult
@@ -384,19 +383,13 @@ class ScopedImageLoader(
     }
 
     private fun decode(bytes: ByteArray, mime: String, sample: Int): Bitmap? {
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-        if (Build.VERSION.SDK_INT >= 28) {
-            val source = ImageDecoder.createSource(ByteBuffer.wrap(bytes))
-            return ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
-                if (info.size.width.toLong() * info.size.height > MAX_PIXELS) throw UnsupportedImage()
-                if (info.mimeType.lowercase() != mime) throw UnsupportedImage()
-                decoder.setTargetSampleSize(sample)
-                decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
-            }
+        val source = ImageDecoder.createSource(ByteBuffer.wrap(bytes))
+        return ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
+            if (info.size.width.toLong() * info.size.height > MAX_PIXELS) throw UnsupportedImage()
+            if (info.mimeType.lowercase() != mime) throw UnsupportedImage()
+            decoder.setTargetSampleSize(sample)
+            decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
         }
-        if (bounds.outMimeType?.lowercase() != mime) throw UnsupportedImage()
-        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample; inPreferredConfig = Bitmap.Config.ARGB_8888 })
     }
 
     private fun sampleSize(sourceWidth: Int, sourceHeight: Int, targetWidth: Int, targetHeight: Int): Int {

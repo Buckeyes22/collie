@@ -34,8 +34,8 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.shadows.ShadowDialog
 import org.robolectric.annotation.GraphicsMode
 import okhttp3.Protocol
-import okhttp3.mockwebserver.MockResponse
-import okhttp3.mockwebserver.MockWebServer
+import mockwebserver3.MockResponse
+import mockwebserver3.MockWebServer
 import okhttp3.tls.HandshakeCertificates
 import okhttp3.tls.HeldCertificate
 import kotlinx.serialization.json.Json
@@ -46,7 +46,7 @@ class FilesActivityTest {
         val certificate = HeldCertificate.Builder().commonName("localhost").addSubjectAlternativeName("localhost").build()
         val serverTls = HandshakeCertificates.Builder().heldCertificate(certificate).build()
         val clientTls = HandshakeCertificates.Builder().addTrustedCertificate(certificate.certificate).build()
-        val server = MockWebServer().apply { useHttps(serverTls.sslSocketFactory(), false); start() }
+        val server = MockWebServer().apply { useHttps(serverTls.sslSocketFactory()); start() }
         val app = ApplicationProvider.getApplicationContext<CollieApplication>()
         val originalRepository = app.container.repository
         val originalLoader = app.container.imageLoader
@@ -62,8 +62,8 @@ class FilesActivityTest {
         repositoryField.set(app.container, repository)
         loaderField.set(app.container, testLoader)
         val sourceText = "mounted-native-source-content"
-        server.enqueue(MockResponse().setResponseCode(200).setHeader("Content-Type", "application/json")
-            .setBody("""{"paneId":"w1:p1","available":true,"root":"/repo","path":"src/Main.kt","size":${sourceText.length},"mtimeMs":12.5,"binary":false,"truncated":false,"text":"$sourceText"}"""))
+        server.enqueue(MockResponse.Builder().code(200).setHeader("Content-Type", "application/json")
+            .body("""{"paneId":"w1:p1","available":true,"root":"/repo","path":"src/Main.kt","size":${sourceText.length},"mtimeMs":12.5,"binary":false,"truncated":false,"text":"$sourceText"}""").build())
         val controller = Robolectric.buildActivity(
             FilesActivity::class.java,
             FilesActivity.intent(app, FilesTarget.Pane("w1:p1"), Scope("peer", "work"), path = "src/Main.kt"),
@@ -74,12 +74,12 @@ class FilesActivityTest {
             assertTrue(activity.findViewById<ViewGroup>(R.id.files_source_content).descendants().filterIsInstance<TextView>().any { it.text.toString().contains(sourceText) })
             val request = server.takeRequest()
             assertEquals("GET", request.method)
-            assertEquals("/mount/api/pane/w1%3Ap1/files?path=src%2FMain.kt&host=peer&session=work", request.path)
-            assertEquals("Bearer mounted-token", request.getHeader("Authorization"))
-            assertNull(request.getHeader("Origin"))
+            assertEquals("/mount/api/pane/w1%3Ap1/files?path=src%2FMain.kt&host=peer&session=work", request.target)
+            assertEquals("Bearer mounted-token", request.headers["Authorization"])
+            assertNull(request.headers["Origin"])
         } finally {
             controller.pause().stop().destroy()
-            server.shutdown()
+            server.close()
             testLoader.close()
             repositoryField.set(app.container, originalRepository)
             loaderField.set(app.container, originalLoader)
@@ -96,16 +96,16 @@ class FilesActivityTest {
         val certificate = HeldCertificate.Builder().commonName("localhost").addSubjectAlternativeName("localhost").build()
         val serverTls = HandshakeCertificates.Builder().heldCertificate(certificate).build()
         val clientTls = HandshakeCertificates.Builder().addTrustedCertificate(certificate.certificate).build()
-        val server = MockWebServer().apply { useHttps(serverTls.sslSocketFactory(), false); start() }
+        val server = MockWebServer().apply { useHttps(serverTls.sslSocketFactory()); start() }
         val http = CollieApiClient.defaultHttpClient().newBuilder()
             .sslSocketFactory(clientTls.sslSocketFactory(), clientTls.trustManager)
             .protocols(listOf(Protocol.HTTP_1_1)).build()
         val imageApi = CollieApiClient(http, Json { ignoreUnknownKeys = true })
         val store = TestStore(Connection(CollieOrigin(server.url("/files-mount/").toString()), "phone", "token"))
         val png = ByteArrayOutputStream().also { Bitmap.createBitmap(4, 4, Bitmap.Config.ARGB_8888).compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
-        server.enqueue(MockResponse().setResponseCode(200).setHeader("Content-Type", "image/png")
+        server.enqueue(MockResponse.Builder().code(200).setHeader("Content-Type", "image/png")
             .setHeader("X-Collie-File-Size", png.size).setHeader("X-Collie-File-Mtime", "8.0")
-            .setBody(okio.Buffer().write(png)))
+            .body(okio.Buffer().write(png)).build())
         var fileCalls = 0
         var imageCalls = 0
         var failNextRead = false
@@ -152,8 +152,8 @@ class FilesActivityTest {
             }
             assertEquals("response byte sniff admits an extensionless-looking local image reference", 1, imageCalls)
             val imageRequest = server.takeRequest()
-            assertEquals("actual mounted HTTPS bytes reach the attached decoder", "/files-mount/api/pane/w1%3Ap1/files/image?path=docs%2Fimages%2Fa%20diagram.bin", imageRequest.path)
-            assertEquals("Bearer token", imageRequest.getHeader("Authorization"))
+            assertEquals("actual mounted HTTPS bytes reach the attached decoder", "/files-mount/api/pane/w1%3Ap1/files/image?path=docs%2Fimages%2Fa%20diagram.bin", imageRequest.target)
+            assertEquals("Bearer token", imageRequest.headers["Authorization"])
             assertEquals("markdown image path is resolved relative to the source file", 1, sourceContent.descendants().filterIsInstance<AuthenticatedImageView>().size)
             val imageCard = sourceContent.descendants().filterIsInstance<AuthenticatedImageView>().single()
             assertTrue("attached ready card opens its native viewer", imageCard.performClick())
@@ -194,7 +194,7 @@ class FilesActivityTest {
             assertTrue("a fresh authorized read restores the source page", sourceContent.descendants().filterIsInstance<TextView>().any { it.text.toString().contains("# Guide") })
         } finally {
             controller.pause().stop().destroy()
-            server.shutdown()
+            server.close()
             testLoader.close()
             repositoryField.set(app.container, originalRepository)
             loaderField.set(app.container, originalLoader)

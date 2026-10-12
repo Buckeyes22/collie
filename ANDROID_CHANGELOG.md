@@ -6,6 +6,10 @@ the first Android release from this fork.
 
 ## Unreleased
 
+
+- Use current Android APIs and MockWebServer 3 fixtures, and install a version-pinned Android CLI for CI SDK setup. Resolve the update preflight button style through its owning AppCompat resources.
+- Support the current Android 17 release only, with stable SDK 37.2, AGP built-in Kotlin and age-eligible build/runtime dependencies; preserve security and lifecycle tests on SDK 37.
+
 - Return directly opened file references to their calling pane on Back, including after recreation; retain folder hierarchy after deliberate breadcrumb or listing navigation.
 
 - Fetch a fresh pane body for a new or retired pane screen before admitting file-reference links; keep conditional reads only for a current body accepted by that screen.

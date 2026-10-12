@@ -127,11 +127,17 @@ joins remain required before the optional workflow can be considered complete.
 | --- | --- |
 | JDK toolchain | 21 |
 | Java/Kotlin bytecode | 17 |
-| Compile and target SDK | 36 |
-| Minimum SDK | 26 |
-| Gradle wrapper | 8.11.1 |
-| Android Gradle Plugin | 8.10.1 |
-| Kotlin and serialization plugins | 2.2.21 |
+| Compile SDK | Stable 37.2 |
+| Minimum and target SDK | 37 |
+| Gradle wrapper | 9.8.0 |
+| Android Gradle Plugin | 9.4.1, built-in Kotlin |
+| Kotlin compiler, serialization plugin and runtime BOM | 2.4.20 |
+| SDK Build Tools | 37.0.0 |
+| Robolectric | 4.17, SDK 37 |
+
+The current policy supports Android 17 / API 37 only. Stable tooling and dependencies must be
+at least seven days old before adoption. See [the toolchain migration record](TOOLCHAIN.md)
+for pinned versions, pending lock resolution and validation limits.
 
 The committed Gradle wrapper is the only supported build entry point. A global Gradle install is
 not required. Android dependencies stay under this directory; the root Bun install and Collie
@@ -283,20 +289,25 @@ completed uploads do not persist the provider URI or its grant.
   server version separately from the Android app build.
 - The interface uses English base resources only. Static tests reject new visible hardcoded strings.
 
-## Emulator and physical-device acceptance
+## Current physical-device acceptance and historical results
 
 The [2026-09-10 functional audit](acceptance/2026-09-10-functional-audit.md) records the newer
 Gboard/device-event regression and emulator coverage. Its initial note that the S25 Ultra was
 unavailable describes that day's ADB state; the [2026-09-11 UX walk](acceptance/2026-09-11-ux-walk.md)
-later records a 193-step physical-device walk and additional checks. Run the emulator interaction
-audit from the repository root with `scripts/android-interaction-test.sh emulator-PORT`.
+later records a 193-step physical-device walk and additional checks. The emulator interaction
+script is historical tooling; it is not part of the current acceptance policy.
 
-Compilation is not acceptance. Install the debug APK on an API 26+ emulator or the target device:
+Compilation is not acceptance. Current acceptance uses the owned physical Pixel running Android 17
+on dell-7680. Run against its explicitly selected serial; do not reinstall another app namespace:
 
 ```bash
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 adb shell am start -n com.lateapex.collie.debug/com.lateapex.collie.ui.MainActivity
 ```
+
+The following dated device and emulator results are historical. They do not establish current
+Android 17 acceptance or require an older-platform matrix. Current functional, security,
+lifecycle, large-font and TalkBack checks remain required on the physical Pixel.
 
 A partial physical-device pass was recorded on 2026-09-04 against an upgrade-installed debug APK on
 the paired Samsung Galaxy S25 Ultra (`SM-S938U1`, Android/API 36). Native launch/live reads, one
@@ -342,7 +353,7 @@ accessibility/view bounds, direct interaction, and logcat instead. The flag was 
 2026-09-10; `adb exec-out screencap -p` now captures every screen.
 
 Before publishing an APK, smoke-test the signed artifact and record its identity. Track the extended
-device matrix as follow-up coverage. The local release preparation recorded on 2026-10-07 passed 521
+current-device lifecycle, large-font and TalkBack checks as required acceptance. The local release preparation recorded on 2026-10-07 passed 521
 native tests, native debug/release lint and builds, and signing-helper checks with a disposable test
 key; it did not complete production signing setup or device acceptance. See
 [`RELEASE_READINESS.md`](../RELEASE_READINESS.md) for the current preparation evidence and remaining
@@ -376,7 +387,7 @@ must be configured before that workflow can complete. The signing helper also su
 preparation. See [Releasing](RELEASING.md) for versioning, signing, acceptance and publication.
 
 Unsigned and debug APKs are development artifacts. A public APK needs release signing, passing build checks and a basic artifact smoke check.
-The extended device matrix is follow-up work; disclose its untested scope accurately.
+Current physical Pixel security, lifecycle, large-font and TalkBack acceptance remains required; disclose untested scope accurately.
 
 The current package is `versionName=1.5.2`, `versionCode=3`. Android `versionCode` is monotonic and
 independent of the Collie server release mechanism; every APK distributed as an update must use a

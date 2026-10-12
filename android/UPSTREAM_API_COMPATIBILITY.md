@@ -6,6 +6,15 @@ TLS verification, encrypted bearer storage, English-only UI and conservative ter
 The Codex composer audit also examines openai/codex
 `c3d3b142d10f4316b46e35aad7e5317e7e506cb7` from a shallow clone fetched on 2026-10-10.
 
+## Current Android support
+
+The supported platform is the current Android 17 / API 37 release. Compile SDK 37.2,
+minimum/target API 37 and the age-eligible stable toolchain are recorded in
+[TOOLCHAIN.md](TOOLCHAIN.md). Historical older-platform and older-vendor evidence remains
+archived; it is not a fresh acceptance matrix. Raising these pins does not establish native,
+shared-custody, issuer, Crew or vendor acceptance; original functional and security requirements
+remain in scope. SDK-specific implementation cleanup is a separately reviewed phase.
+
 ## Existing native calls
 
 The audit covers every method in `CollieApi`; additive fields remain optional for mixed-version
@@ -34,7 +43,7 @@ publisher thread and at most one queued drain per store deliver conflated curren
 outside mutation locks; obsolete queued versions cannot republish an earlier credential. The store
 does not depend on an Android Looper. Canonical retirement events and captured-owner checks still
 retire private custody even when intermediate connection notifications are conflated. The small
-StateFlow projection explicitly opts into the pinned kotlinx.coroutines 1.10.2 inheritance contract;
+StateFlow projection explicitly opts into the pinned kotlinx.coroutines 1.11.0 inheritance contract;
 dependency upgrades require its notification/conflation/current-value regression checks.
 
 `isActorRetired` describes a permanent captured connection/navigation/lead change independently of
