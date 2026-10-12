@@ -68,6 +68,8 @@ const FORWARDABLE: readonly RegExp[] = [
   /^control\/operations\/[a-zA-Z0-9_-]{1,128}$/,
   /^pane\/[^/]+(?:\/(?:reply|keys|upload|close|rename|history|chat|changes|files|focus|processes|agent|agent\/(?:state|session|release|authority\/clear)))?$/,
   /^pane\/[^/]+\/layout(?:\/(?:neighbor|edges|plan|split|resize|zoom|swap|move|focus-direction))?$/,
+  /^tab\/[^/]+\/layout\/(?:export|split-ratio)$/,
+  /^layout\/(?:plan|apply)$/,
   // One picture under the Files root, as bytes (ADR 0090): off the disk of the member that owns the
   // pane or the space, like the Files read it sits beside. Mirrors `PANE_FILES_IMAGE_ROUTE` and
   // `WORKSPACE_FILES_IMAGE_ROUTE` in bridge/server.ts one-for-one. Additive-optional (§7.1).
@@ -805,4 +807,16 @@ export function forwardGate(route: string, method: string): "read" | "device-rea
   if (/^(?:pane|workspace)\/[^/]+\/files(?:\/(?:image|exist))?$/.test(route)) return "device-read";
   if (/^pane\/[^/]+\/(?:processes|agent)$/.test(route)) return "device-read";
   return forwardKind(route);
+}
+
+/** Apply the lead's route-specific caller gate immediately before its one peer dispatch. */
+export async function admitCrewForward(
+  pathname: string,
+  method: string,
+  gate: (level: "read" | "device-read" | "write") => Response | null,
+  forward: () => Promise<Response>,
+): Promise<Response> {
+  const route = pathname.startsWith("/api/") ? pathname.slice("/api/".length) : pathname;
+  const denied = gate(forwardGate(route, method));
+  return denied ?? await forward();
 }

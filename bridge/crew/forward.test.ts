@@ -3,8 +3,11 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { computeEtag } from "../http-cache.ts";
+import { loadConfig } from "../config.ts";
+import { guard } from "../server.ts";
 import { DEFAULT_MAX_UPLOAD_BYTES } from "../uploads.ts";
 import {
+  admitCrewForward,
   apiPathFor,
   forwardAuditAction,
   forwardGate,
@@ -19,7 +22,7 @@ import {
   type ForwardErrorCode,
   type ForwardTransport,
 } from "./forward.ts";
-import { crewDeviceOf, crewPairedIdentityOf } from "./peer-gate.ts";
+import { crewDeviceOf, crewGate, crewPairedIdentityOf } from "./peer-gate.ts";
 import { maskForwardedAnswer } from "./mask.ts";
 import { crewTimeoutBudget, WRITE_BUDGET_MS, type CrewLink, type PeerOutcome } from "./peer-client.ts";
 import type { PeerState } from "./registry.ts";
@@ -120,6 +123,47 @@ async function failureBody(res: Response): Promise<ForwardFailure> {
 }
 
 describe("which routes cross a link", () => {
+  test("the production lead admission forwards a device-read plan without terminal-write authority", async () => {
+    const source = readFileSync(join(import.meta.dir, "../server.ts"), "utf8");
+    expect(source).toContain("admitCrewForward(pathname, req.method, currentCallerGate");
+    expect(source).toContain("() => crewLead!.forward(req, url, resolved");
+    const dispatchStart = source.indexOf("const forwarded = secure(", source.indexOf("const input = isPaneInput(pathname, req.method)"));
+    const dispatch = source.slice(dispatchStart, source.indexOf("// The PRIMARY engine", dispatchStart));
+    expect(dispatch).not.toContain('currentCallerGate("write")');
+
+    const { transport, calls } = transportOf((init) => {
+      const peerRequest = new Request("https://peer/crew/v1/layout/plan", { headers: init.headers });
+      const peerAdmission = crewGate("device-read", { deviceHeader: "x-device", deviceAllowlist: ["phone"] }, crewDeviceOf(peerRequest));
+      expect(peerAdmission).toEqual({ ok: true });
+      return ok(new Response('{"ok":true,"planToken":"p"}', { status: 200, headers: { "content-type": "application/json" } }));
+    });
+    const [request, url] = post("/api/layout/plan?host=laptop", '{"root":{"type":"pane"}}', {
+      authorization: "Bearer paired-token", "x-device": "phone",
+    });
+    let leadLevel: string | undefined;
+    const leadConfig = loadConfig({ COLLIE_ALLOW_ANY_HOST: "1", COLLIE_DEVICE_HEADER: "x-device",
+      COLLIE_DEVICE_ALLOWLIST: "phone", COLLIE_SKIP_SERVE: "1", COLLIE_TRUSTED_USER_OPTIONAL: "1" });
+    const pairing = { resolve: (token: string | null) => token === "paired-token" ? { label: "phone" } : null };
+    const response = await admitCrewForward(url.pathname, request.method, (level) => {
+      leadLevel = level;
+      return guard(request, leadConfig, level, pairing);
+    }, () => forward(request, url, { transport, device: "phone", pairedIdentity: "a".repeat(64) }));
+    expect(leadLevel).toBe("device-read");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, planToken: "p" });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.route).toBe("layout/plan");
+
+    let missingFactorDials = 0;
+    const missingDevice = new Request(url, { method: "POST", headers: { authorization: "Bearer paired-token" }, body: '{"root":{}}' });
+    const denied = await admitCrewForward(url.pathname, request.method, (level) => {
+      expect(level).toBe("device-read");
+      return guard(missingDevice, leadConfig, level, pairing);
+    }, async () => { missingFactorDials++; return new Response("should not dispatch"); });
+    expect(denied.status).toBe(403);
+    expect(missingFactorDials).toBe(0);
+  });
+
   test("the pane family, tabs and workspace map 1:1 onto the crew prefix", () => {
     expect(crewRouteFor("/api/pane/w1:p1")).toBe("pane/w1:p1");
     for (const action of ["reply", "keys", "upload", "close", "rename", "history"]) {
@@ -1131,13 +1175,17 @@ describe("scoped foundation Crew reads", () => {
     expect(calls).toEqual([{ route: "refresh", params: { session: "work" } }, { route: "control/operations/intent", params: { session: "work" } }]);
   });
 
-  test("pane layout contracts are additive across Crew with read plans and write-only execution", () => {
+  test("pane and portable layout contracts are additive across Crew with read plans and write-only execution", () => {
     const routes = [
       ["pane/w1:p1/layout", "GET", "read"],
       ["pane/w1:p1/layout/neighbor", "GET", "read"],
       ["pane/w1:p1/layout/edges", "GET", "read"],
       ["pane/w1:p1/layout/plan", "POST", "read"],
       ["tab/t1/transfer/plan", "POST", "read"],
+      ["tab/t1/layout/export", "GET", "device-read"],
+      ["layout/plan", "POST", "device-read"],
+      ["layout/apply", "POST", "write"],
+      ["tab/t1/layout/split-ratio", "POST", "write"],
       ["pane/w1:p1/layout/split", "POST", "write"],
       ["pane/w1:p1/layout/resize", "POST", "write"],
       ["pane/w1:p1/layout/zoom", "POST", "write"],
@@ -1147,10 +1195,11 @@ describe("scoped foundation Crew reads", () => {
     ] as const;
     for (const [route, method, gate] of routes) {
       expect(crewRouteFor(`/api/${route}`)).toBe(route);
-      expect(forwardKind(route, method)).toBe(gate);
+      expect(forwardKind(route, method)).toBe(gate === "device-read" ? "read" : gate);
       expect(forwardGate(route, method)).toBe(gate);
     }
     expect(crewRouteFor("/api/pane/w1:p1/layout/arbitrary")).toBeNull();
+    expect(crewRouteFor("/api/layout/arbitrary")).toBeNull();
   });
 
   test("owning-peer removal has its own read plan and write route over Crew", () => {

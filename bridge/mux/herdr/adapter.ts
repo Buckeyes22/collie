@@ -55,6 +55,11 @@ import {
   type MuxLayoutRead,
   type MuxLayoutReadRequest,
   type MuxLayoutSnapshot,
+  type MuxPortableLayout,
+  type MuxPortableLayoutNode,
+  type MuxLayoutApplyRequest,
+  type MuxLayoutCreated,
+  type MuxSplitRatioRequest,
   type MuxMoveDestination,
   type MuxOutcome,
   type MuxPane,
@@ -82,6 +87,7 @@ import {
   paneAgentSession,
   type CreatedShell,
   type HerdrRpc,
+  type HerdrLayoutNode,
   type HerdrSplitPaneParams,
   type HerdrMoveDestination,
   type HerdrWorktreeCreate,
@@ -155,7 +161,7 @@ const HERDR_CAPABILITIES = declareCapabilities({
   supports: [
     ...HERDR_BASE_CAPABILITIES,
     "removeWorktree",
-    "paneLayout", "tabTransfer", "paneSplit", "paneResize", "paneZoom", "paneSwap", "paneMove", "paneDirectionalFocus",
+    "paneLayout", "portableLayouts", "tabTransfer", "paneSplit", "paneResize", "paneZoom", "paneSwap", "paneMove", "paneDirectionalFocus",
     "workspaceRename", "workspaceClose", "workspaceMove", "workspaceMoveBlock", "workspaceFocus", "tabMove", "tabFocus",
   ],
   unsupportedKeys: HERDR_UNSENDABLE_KEYS,
@@ -243,10 +249,81 @@ function neutralLayout(raw: JsonValue): MuxLayoutSnapshot {
   if (!panes.some((pane) => pane.paneId === focusedPaneId) || new Set(panes.map((pane) => pane.paneId)).size !== panes.length) throw new Error("layout.protocol: inconsistent focused pane");
   return { workspaceId, tabId, zoomed: booleanField(value, "zoomed"), area: neutralRect(field(value, "area")), focusedPaneId, panes, splits };
 }
+function portableNode(raw: JsonValue, depth = 0, count = { value: 0 }): MuxPortableLayoutNode {
+  if (depth > 12 || ++count.value > 64) throw new Error("layout.protocol: layout exceeds bounds");
+  const value = object(raw);
+  if (field(value, "type") === "pane") {
+    if (!Object.keys(value).every((key) => ["type", "label", "cwd", "pane_id", "command", "env"].includes(key))) throw new Error("layout.protocol: unexpected pane field");
+    const optionalText = (key: string, max: number): string | null => {
+      const item = value[key];
+      if (item === undefined || item === null) return null;
+      if (typeof item !== "string" || item.length > max || Array.from(item).some((char) => char.charCodeAt(0) < 32)) throw new Error(`layout.protocol: invalid ${key}`);
+      return item;
+    };
+    const paneId = optionalText("pane_id", 128);
+    if (paneId !== null && !/^[A-Za-z0-9_.:-]{1,128}$/.test(paneId)) throw new Error("layout.protocol: invalid pane_id");
+    let command: readonly string[] | null = null;
+    if (value.command !== undefined && value.command !== null) {
+      if (!Array.isArray(value.command) || value.command.length < 1 || value.command.length > 64 || value.command.some((arg) => typeof arg !== "string" || arg.length > 2048 || arg.includes("\u0000"))) throw new Error("layout.protocol: invalid command");
+      // SAFETY: The guarded array contains only bounded, NUL-free strings.
+      command = value.command as string[];
+    }
+    const envRaw = value.env === undefined ? {} : object(value.env);
+    if (Object.keys(envRaw).length > 32) throw new Error("layout.protocol: invalid env");
+    // SAFETY: A null-prototype record prevents decoded environment keys from mutating prototypes.
+    const env: Record<string, string> = Object.create(null) as Record<string, string>;
+    for (const [key, item] of Object.entries(envRaw)) {
+      if (!/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(key) || ["__proto__", "prototype", "constructor", "HERDR_SOCKET_PATH", "HERDR_ENV", "HERDR_WORKSPACE_ID", "HERDR_TAB_ID", "HERDR_PANE_ID"].includes(key) || typeof item !== "string" || item.length > 1024 || item.includes("\u0000")) throw new Error("layout.protocol: invalid env");
+      env[key] = item;
+    }
+    return { type: "pane", label: optionalText("label", 128), cwd: optionalText("cwd", 4096), paneId, command, env: Object.freeze(env) };
+  }
+  if (field(value, "type") !== "split" || !Object.keys(value).every((key) => ["type", "direction", "ratio", "first", "second"].includes(key))) throw new Error("layout.protocol: invalid node");
+  const direction = field(value, "direction");
+  const splitRatio = field(value, "ratio");
+  if ((direction !== "right" && direction !== "down") || typeof splitRatio !== "number" || !Number.isFinite(splitRatio) || splitRatio <= 0 || splitRatio >= 1 || Math.fround(splitRatio) <= 0 || Math.fround(splitRatio) >= 1) throw new Error("layout.protocol: invalid ratio");
+  return { type: "split", direction, ratio: splitRatio, first: portableNode(field(value, "first"), depth + 1, count), second: portableNode(field(value, "second"), depth + 1, count) };
+}
+function portableLayout(raw: JsonValue): MuxPortableLayout {
+  const value = object(raw);
+  const workspaceId = paneIdField(value, "workspace_id");
+  const tabId = paneIdField(value, "tab_id");
+  const focusedPaneId = paneIdField(value, "focused_pane_id");
+  const zoomed = booleanField(value, "zoomed");
+  const root = portableNode(field(value, "root"));
+  return { workspaceId, tabId, focusedPaneId, zoomed, root };
+}
+interface OptionalApplyParams { workspace_id?: string; tab_id?: string; tab_label?: string }
+interface OptionalRatioParams { pane_id?: string }
+function portableNodeWire(node: MuxPortableLayoutNode): HerdrLayoutNode {
+  if (node.type === "split") return { type: "split", direction: node.direction, ratio: node.ratio, first: portableNodeWire(node.first), second: portableNodeWire(node.second) };
+  return { type: "pane", label: node.label, cwd: node.cwd, pane_id: node.paneId, command: node.command, env: node.env };
+}
+function portablePaneIds(node: MuxPortableLayoutNode): string[] {
+  return node.type === "pane" ? (node.paneId === null ? [] : [node.paneId]) : [...portablePaneIds(node.first), ...portablePaneIds(node.second)];
+}
+function portableTreeMatches(actual: MuxPortableLayoutNode, expected: MuxPortableLayoutNode): boolean {
+  if (actual.type !== expected.type) return false;
+  if (actual.type === "split" && expected.type === "split") return actual.direction === expected.direction && actual.ratio === expected.ratio &&
+    portableTreeMatches(actual.first, expected.first) && portableTreeMatches(actual.second, expected.second);
+  if (actual.type !== "pane" || expected.type !== "pane") return false;
+  const actualEnv = Object.entries(actual.env).toSorted(([a], [b]) => a.localeCompare(b));
+  const expectedEnv = Object.entries(expected.env).toSorted(([a], [b]) => a.localeCompare(b));
+  return actual.label === expected.label && actual.cwd === expected.cwd && JSON.stringify(actual.command) === JSON.stringify(expected.command) &&
+    JSON.stringify(actualEnv) === JSON.stringify(expectedEnv);
+}
+function portableSplitRatio(root: MuxPortableLayoutNode, path: readonly boolean[]): number | null {
+  let node = root;
+  for (const bit of path) {
+    if (node.type !== "split") return null;
+    node = bit ? node.second : node.first;
+  }
+  return node.type === "split" ? node.ratio : null;
+}
 function layoutRefusal(error: unknown): MuxRefusalOutcome {
   const detail = reason(error);
-  if (GONE_CODES.some((code) => detail.includes(code)) || detail.includes("target_pane_not_found")) return muxGone(detail);
-  if (["invalid_pane_swap", "pane_layout_unavailable", "pane_move_failed", "confirmation_required", "unknown variant"].some((code) => detail.includes(code))) return muxRefused(detail);
+  if (GONE_CODES.some((code) => detail.includes(code)) || ["target_pane_not_found", "tab_not_found", "workspace_not_found"].some((code) => detail.includes(code))) return muxGone(detail);
+  if (["invalid_layout", "invalid_ratio", "invalid_target", "split_not_found", "invalid_pane_swap", "pane_layout_unavailable", "pane_move_failed", "confirmation_required", "unknown variant"].some((code) => detail.includes(code))) return muxRefused(detail);
   return muxUnreachable(detail);
 }
 function moveDestinationWire(destination: MuxMoveDestination): HerdrMoveDestination {
@@ -535,6 +612,62 @@ export class HerdrMux implements MuxAdapter {
       return muxOk(value);
     }
     catch (err) { this.paneLayoutReady = false; this.layoutIdentity = null; return layoutRefusal(err); }
+  }
+
+  async exportPortableLayout(target: { readonly tabId: string } | { readonly paneId: string }): Promise<MuxOutcome<MuxPortableLayout>> {
+    const identity = await this.layoutRuntimeIdentity();
+    if (!identity || !this.client.exportLayout) return muxUnsupported("portableLayouts", "This Herdr runtime does not declare portable layouts.");
+    try {
+      const raw = await this.client.exportLayout("tabId" in target ? { tab_id: target.tabId } : { pane_id: target.paneId });
+      const response = object(raw);
+      if (response.type !== "layout_export") throw new Error("layout.protocol: invalid export response");
+      const value = portableLayout(field(response, "layout"));
+      if (("tabId" in target && target.tabId !== value.tabId) || ("paneId" in target && !portablePaneIds(value.root).includes(target.paneId)) ||
+          await this.layoutRuntimeIdentity() !== identity) throw new Error("layout.protocol: export target or runtime changed");
+      return muxOk(value);
+    } catch (error) { return layoutRefusal(error); }
+  }
+
+  async applyPortableLayout(request: MuxLayoutApplyRequest, finalAdmission: (runtimeIdentity: string, snapshot: MuxSnapshot) => boolean | Promise<boolean>): Promise<MuxOutcome<MuxLayoutCreated>> {
+    const identity = await this.layoutRuntimeIdentity();
+    if (!identity || !this.client.applyLayout) return muxUnsupported("portableLayouts", "This Herdr runtime does not declare portable layouts.");
+    try {
+      const before = await this.snapshot();
+      if (await this.layoutRuntimeIdentity() !== identity || !await finalAdmission(identity, before)) return muxRefused("Layout plan or runtime changed before apply.");
+      const optional: OptionalApplyParams = {};
+      if (request.workspaceId !== null) optional.workspace_id = request.workspaceId;
+      if (request.tabId !== null) optional.tab_id = request.tabId;
+      if (request.tabLabel !== null) optional.tab_label = request.tabLabel;
+      const params: Parameters<NonNullable<HerdrRpc["applyLayout"]>>[0] = { root: portableNodeWire(request.root), focus: false, ...optional };
+      const response = object(await this.client.applyLayout(params));
+      if (response.type !== "layout_apply") throw new Error("layout.protocol: invalid apply response");
+      const layout = portableLayout(field(response, "layout"));
+      const paneIds = portablePaneIds(layout.root);
+      if (!paneIds.includes(layout.focusedPaneId) || paneIds.length < 1 || paneIds.length > 64 || new Set(paneIds).size !== paneIds.length ||
+          layout.workspaceId !== request.workspaceId || (request.tabId !== null && layout.tabId !== request.tabId) ||
+          !portableTreeMatches(layout.root, request.root)) throw new Error("layout.protocol: apply result does not match requested layout");
+      if (await this.layoutRuntimeIdentity() !== identity) throw new Error("layout runtime changed after apply");
+      return muxOk({ workspaceId: layout.workspaceId, tabId: layout.tabId, paneIds, focusedPaneId: layout.focusedPaneId });
+    } catch (error) { return layoutRefusal(error); }
+  }
+
+  async setSplitRatio(request: MuxSplitRatioRequest, finalAdmission: (runtimeIdentity: string, snapshot: MuxSnapshot) => boolean | Promise<boolean>): Promise<MuxOutcome<MuxPortableLayout>> {
+    const identity = await this.layoutRuntimeIdentity();
+    if (!identity || !this.client.setSplitRatio) return muxUnsupported("portableLayouts", "This Herdr runtime does not declare split-ratio control.");
+    try {
+      const before = await this.snapshot();
+      if (await this.layoutRuntimeIdentity() !== identity || !await finalAdmission(identity, before)) return muxRefused("Layout plan or runtime changed before ratio change.");
+      const optional: OptionalRatioParams = {};
+      if (request.paneId !== null) optional.pane_id = request.paneId;
+      const params: Parameters<NonNullable<HerdrRpc["setSplitRatio"]>>[0] = {
+        tab_id: request.tabId, path: request.path, ratio: request.ratio, ...optional,
+      };
+      const response = object(await this.client.setSplitRatio(params));
+      if (response.type !== "layout_split_ratio_set") throw new Error("layout.protocol: invalid ratio response");
+      const layout = portableLayout(field(response, "layout"));
+      if (layout.tabId !== request.tabId || portableSplitRatio(layout.root, request.path) !== request.ratio || await this.layoutRuntimeIdentity() !== identity) throw new Error("layout.protocol: ratio target or requested effect does not match");
+      return muxOk(layout);
+    } catch (error) { return layoutRefusal(error); }
   }
 
   /** Read the exact mutation source/destination after async adapter preflight and before admission. */

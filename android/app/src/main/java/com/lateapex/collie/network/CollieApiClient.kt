@@ -96,6 +96,10 @@ interface CollieApi {
     suspend fun planPaneLayout(connection: Connection, address: PaneAddress, action: kotlinx.serialization.json.JsonObject): ApiResult<PaneLayoutPlanResponse> = unavailable("Pane layout plan")
     suspend fun planTabTransfer(connection: Connection, scope: Scope, tabId: String, body: kotlinx.serialization.json.JsonObject): ApiResult<PaneTransferPlanResponse> = unavailable("Whole-tab transfer plan")
     suspend fun applyPaneLayout(connection: Connection, address: PaneAddress, requestId: String, planToken: String, action: kotlinx.serialization.json.JsonObject): ApiResult<PaneLayoutOperationResponse> = unavailable("Pane layout action")
+    suspend fun exportPortableLayout(connection: Connection, scope: Scope, tabId: String): ApiResult<PortableLayoutExportResponse> = unavailable("Portable layout export")
+    suspend fun planPortableLayout(connection: Connection, scope: Scope, body: kotlinx.serialization.json.JsonObject): ApiResult<PortableLayoutPlanResponse> = unavailable("Portable layout plan")
+    suspend fun applyPortableLayout(connection: Connection, scope: Scope, body: kotlinx.serialization.json.JsonObject): ApiResult<PortableLayoutApplyResponse> = unavailable("Portable layout apply")
+    suspend fun setSplitRatio(connection: Connection, scope: Scope, tabId: String, body: kotlinx.serialization.json.JsonObject): ApiResult<PortableLayoutApplyResponse> = unavailable("Split ratio change")
     suspend fun planOrganization(connection: Connection, scope: Scope, action: OrganizationAction): ApiResult<OrganizationPlanResponse> = unavailable("Workspace organization plan")
     suspend fun applyOrganization(connection: Connection, scope: Scope, requestId: String, planToken: String, action: OrganizationAction): ApiResult<OrganizationOperationResponse> = unavailable("Workspace organization action")
     suspend fun devices(connection: Connection): ApiResult<DevicesResponse>
@@ -1705,6 +1709,43 @@ class CollieApiClient(
         }
     }
 
+    override suspend fun exportPortableLayout(connection: Connection, scope: Scope, tabId: String): ApiResult<PortableLayoutExportResponse> {
+        require(tabId.matches(Regex("[A-Za-z0-9_.:-]{1,128}")))
+        val url = scopedUrl(connection.origin, path("tab", tabId, "layout", "export"), scope)
+        val result = executeJson(request(connection, url), PortableLayoutExportResponse.serializer(), READ_TIMEOUT_SECONDS, maxResponseBytes = MAX_PORTABLE_LAYOUT_BYTES)
+        // The request targets `tabId`; the exported document intentionally contains no live selection IDs.
+        return requireContract(result, "Malformed portable layout export") { it.ok && it.schema == 1 && it.layout.valid() }
+    }
+
+    override suspend fun planPortableLayout(connection: Connection, scope: Scope, body: kotlinx.serialization.json.JsonObject): ApiResult<PortableLayoutPlanResponse> {
+        val encoded = json.encodeToString(kotlinx.serialization.json.JsonObject.serializer(), body)
+        if (encoded.toByteArray(Charsets.UTF_8).size > MAX_PORTABLE_LAYOUT_BYTES) return ApiResult.Failure(ApiFailure.Protocol("Portable layout plan exceeds the supported size"))
+        val result = executeJson(post(connection, scopedUrl(connection.origin, path("layout", "plan"), scope), encoded), PortableLayoutPlanResponse.serializer(), READ_TIMEOUT_SECONDS, maxResponseBytes = MAX_PORTABLE_LAYOUT_BYTES)
+        return requireContract(result, "Malformed portable layout plan") { it.valid() }
+    }
+
+    override suspend fun applyPortableLayout(connection: Connection, scope: Scope, body: kotlinx.serialization.json.JsonObject): ApiResult<PortableLayoutApplyResponse> {
+        val requestId = (body["requestId"] as? JsonPrimitive)?.takeIf { it.isString }?.content ?: return ApiResult.Failure(ApiFailure.Protocol("Layout request is malformed"))
+        val encoded = json.encodeToString(kotlinx.serialization.json.JsonObject.serializer(), body)
+        if (encoded.toByteArray(Charsets.UTF_8).size > MAX_PORTABLE_LAYOUT_BYTES) return ApiResult.Failure(ApiFailure.Protocol("Portable layout apply exceeds the supported size"))
+        val result = executeJson(post(connection, scopedUrl(connection.origin, path("layout", "apply"), scope), encoded), PortableLayoutApplyResponse.serializer(), MUTATION_TIMEOUT_SECONDS, maxResponseBytes = MAX_PORTABLE_LAYOUT_BYTES)
+        return requireContract(result, "Malformed portable layout operation") { response -> response.operation.validFor(requestId) && response.operation.capability == "portableLayouts" &&
+            if (response.ok) response.operation.state == "succeeded" && response.operation.result?.kind == "portable-layout"
+            else response.operation.state in setOf("unknown", "pending") }
+    }
+
+    override suspend fun setSplitRatio(connection: Connection, scope: Scope, tabId: String, body: kotlinx.serialization.json.JsonObject): ApiResult<PortableLayoutApplyResponse> {
+        require(tabId.matches(Regex("[A-Za-z0-9_.:-]{1,128}")))
+        val requestId = (body["requestId"] as? JsonPrimitive)?.takeIf { it.isString }?.content ?: return ApiResult.Failure(ApiFailure.Protocol("Ratio request is malformed"))
+        val encoded = json.encodeToString(kotlinx.serialization.json.JsonObject.serializer(), body)
+        if (encoded.toByteArray(Charsets.UTF_8).size > MAX_PORTABLE_LAYOUT_BYTES) return ApiResult.Failure(ApiFailure.Protocol("Split ratio request exceeds the supported size"))
+        val url = scopedUrl(connection.origin, path("tab", tabId, "layout", "split-ratio"), scope)
+        val result = executeJson(post(connection, url, encoded), PortableLayoutApplyResponse.serializer(), MUTATION_TIMEOUT_SECONDS, maxResponseBytes = MAX_PORTABLE_LAYOUT_BYTES)
+        return requireContract(result, "Malformed split ratio operation") { response -> response.operation.validFor(requestId) && response.operation.capability == "portableLayouts" &&
+            if (response.ok) response.operation.state == "succeeded" && (response.operation.result as? SplitRatioResult)?.tabId == tabId
+            else response.operation.state in setOf("unknown", "pending") }
+    }
+
     override suspend fun planOrganization(connection: Connection, scope: Scope, action: OrganizationAction): ApiResult<OrganizationPlanResponse> {
         require(action.path.size in 2..3 && action.path.all { it.isNotBlank() && it.length <= 128 })
         val url = scopedUrl(connection.origin, path(*(action.path + "plan").toTypedArray()), scope)
@@ -2001,6 +2042,7 @@ class CollieApiClient(
         private const val MAX_MACHINE_RULE_RESPONSE_BYTES = 16_384
         private const val MAX_MACHINE_RULE_EXTENSIONS_BYTES = 4_096
         internal const val MAX_LAYOUT_RESPONSE_BYTES = 1_000_000
+        private const val MAX_PORTABLE_LAYOUT_BYTES = 64 * 1024
         private const val MAX_CACHE_RULES_BODY_BYTES = 256_000
         private const val MAX_CACHE_WATCH_LIST_BODY_BYTES = 256_000
         private const val MAX_CACHE_RULES = 128

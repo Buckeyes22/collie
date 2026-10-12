@@ -3208,6 +3208,12 @@ Under §7.1, an owning bridge may advertise `controlCapabilities.filesDiscovery=
 
 ## Workspace and tab organization control routes
 
+## Portable layout control routes
+
+B29 adds `GET /api/tab/:id/layout/export`, `POST /api/layout/plan`, `POST /api/layout/apply`, and `POST /api/tab/:id/layout/split-ratio` to the same allowlisted host/session forwarding contract. The peer owns the mux capability, launcher declaration, current workspace folder, exact plan evidence and durable receipt. The lead forwards only the closed recipe DTO, opaque plan token and request ID; vendor RPC names stay inside the member's local adapter. Layout requests use ordinary device read/write gates and the existing `controlOperations` readiness, and old peers fail closed.
+
+The split path remains `boolean[]` end to end. A plan binds owner, host/session, runtime incarnation, target workspace/tab and current exported tree; apply revalidates immediately before its one upstream effect. Pending or unknown results are inspectable and never retried automatically. The API response can expose only redacted preview effects and bounded created-pane identities. No process transcript, environment secret or raw layout RPC is forwarded. Plugin-backed imports remain disabled pending B32's resolver; schema and source records alone do not establish runtime acceptance.
+
 The B13 organization family crosses the existing allowlist under `workspace/:id/{rename,close,move,focus}`,
 `workspaces/reorder`, `tab/:id/{rename,close,move,focus}`, and `POST tab/:id/transfer/plan`.
 Plans are POST requests classified and admitted as reads; final requests are writes and retain the

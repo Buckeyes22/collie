@@ -16,6 +16,8 @@ the first Android release from this fork.
 
 - Restore opted encrypted, scoped and expiring Dashboard, pane and Chat saved copies as read-only content; add independent encrypted draft retention, explicit legacy draft migration, usage and clear-now controls.
 
+- Add a native portable-layout share/import screen with bounded JSON, host previews, one-shot ratio edits and encrypted unknown-operation recovery.
+
 
 - Use current Android APIs and MockWebServer 3 fixtures, and install a version-pinned Android CLI for CI SDK setup. Resolve the update preflight button style through its owning AppCompat resources.
 - Support the current Android 17 release only, with stable SDK 37.2, AGP built-in Kotlin and age-eligible build/runtime dependencies; preserve security and lifecycle tests on SDK 37.

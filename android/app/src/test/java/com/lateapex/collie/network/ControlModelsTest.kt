@@ -43,6 +43,52 @@ class ControlModelsTest {
         val json = Json { ignoreUnknownKeys = true }
         assertEquals(result, json.decodeFromString<ControlOperation>(json.encodeToString(ControlOperation.serializer(), move)).result)
     }
+    @Test fun portableLayoutDtosAndOperationReceiptsKeepOnlyPortableGeometryAndCreatedIds() {
+        val leaf = PortableLayoutNode("pane", label = "Shell", cwd = ".")
+        val document = PortableLayout("", "", "", false,
+            PortableLayoutNode("split", direction = "right", ratio = 0.5, first = leaf, second = leaf.copy(label = "Agent")))
+        assertTrue(document.valid())
+        assertFalse(document.copy(workspaceId = "live-workspace").valid())
+        assertFalse(document.copy(tabId = "live-tab").valid())
+        assertFalse(document.copy(focusedPaneId = "live-pane-id").valid())
+        assertFalse(document.copy(root = leaf.copy(paneId = "live-pane-id")).valid())
+        assertFalse(document.copy(root = document.root.copy(ratio = 1.0)).valid())
+
+        val result = PortableLayoutResult("portable-layout", "space", "new-tab", listOf("new-one", "new-two"), "new-one")
+        val operation = ControlOperation(1, "layout-once", "succeeded", "portableLayouts", "c".repeat(64), 1, 2, result = result)
+        assertTrue(operation.validFor("layout-once"))
+        assertFalse(operation.copy(result = result.copy(focusedPaneId = "missing")).validFor("layout-once"))
+        assertFalse(operation.copy(result = result.copy(paneIds = listOf("duplicate", "duplicate"))).validFor("layout-once"))
+        assertFalse(operation.copy(result = result.copy(kind = "split-ratio")).validFor("layout-once"))
+        val ratio = SplitRatioResult("split-ratio", "tab")
+        assertTrue(operation.copy(result = ratio).validFor("layout-once"))
+        assertFalse(operation.copy(result = ratio.copy(tabId = "../other")).validFor("layout-once"))
+        val json = Json { ignoreUnknownKeys = true }
+        assertEquals(result, json.decodeFromString<ControlOperation>(json.encodeToString(ControlOperation.serializer(), operation)).result)
+        assertEquals(ratio, json.decodeFromString<ControlOperation>(json.encodeToString(ControlOperation.serializer(), operation.copy(result = ratio))).result)
+        assertFalse(operation.copy(capability = "paneMove", result = result).validFor("layout-once"))
+    }
+
+    @Test fun portablePlanResponseAcceptsRedactedWorkspaceAndTabSelection() {
+        val effects = Json.parseToJsonElement(
+            """{"starts":[{"label":"Shell","command":"bash","cwd":"."}],"stops":[{"label":"Pane"}],"replacementClosesOldTabAfterCreation":true,"focusChanges":false}""",
+        ).jsonObject
+        val plan = PortableLayoutPlanResponse(true, "plan-one", System.currentTimeMillis() + 10_000, "", null, effects)
+        assertTrue(plan.valid())
+        assertFalse(plan.copy(workspaceId = "workspace-secret").valid())
+        assertFalse(plan.copy(tabId = "tab-secret").valid())
+    }
+
+    @Test fun succeededPaneMoveStillRequiresItsOriginalNonNullableIdentityWitness() {
+        val result = PaneMoveResult("pane-move", "pane_new", "pane_old", "tab_old", "space_old")
+        val operation = ControlOperation(1, "move-1", "succeeded", "paneMove", "b".repeat(64), 10, 11, result = result)
+        assertTrue(operation.validFor("move-1"))
+        val json = Json { ignoreUnknownKeys = true }
+        val encoded = json.encodeToString(ControlOperation.serializer(), operation)
+        assertTrue(encoded.contains("\"paneId\":\"pane_new\""))
+        assertEquals(result, json.decodeFromString<ControlOperation>(encoded).result)
+        assertFalse(operation.copy(result = null).validFor("move-1"))
+    }
 
     @Test fun removalReceiptBindsTheExactWorkspaceRequestForceAndOwnerTarget() {
         val workspace = "space-7"

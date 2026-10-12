@@ -27,6 +27,8 @@ Running a crew? Update the lead first; members follow on their own. Details:
 
 
 
+- **Share portable pane layouts with a reviewed preview.** Add bounded JSON export/import and exact boolean-path split-ratio controls through capability-gated Herdr routes and Crew; apply plans accept only declared launcher commands and keep plugin-backed commands unavailable pending B32 resolution.
+
 - **Opt in to native identity through a configured DPoP gateway.** Add an operator-owned public OIDC profile, independent pairing/device enrollment, bounded replay-protected loopback ingress, final binding/role/access-expiry dispatch fences and durable exact binding-retirement custody. Preserve visible pane read intent without trusting injected phone identity headers. Preserve authenticated browser routing on a separate retained mount; actual issuer/device/Crew and signed retirement acceptance remain pending. Keep ordinary startup unchanged when the optional gateway configuration is absent.
 
 - **Plan and safely remove linked worktrees from New.** Show the chosen branch-capable target, default or explicit base, and server-resolved folder before owner-bound creation; preserve lead-local create/list/open routes and add a separate owner-scoped removal plan across Crew. Clean removal is the default, dirty changes need an explicit force choice, and durable receipts keep lost replies from dispatching twice. Herdr does not expose an atomic expected-state check, which remains stated by the contract.

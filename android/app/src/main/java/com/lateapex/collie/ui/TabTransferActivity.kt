@@ -31,6 +31,7 @@ import com.lateapex.collie.data.ScopedReadContext
 import com.lateapex.collie.domain.PaneAddress
 import com.lateapex.collie.domain.Scope
 import com.lateapex.collie.network.ApiResult
+import com.lateapex.collie.network.PaneMoveResult
 import com.lateapex.collie.network.PaneTransferDestinationGuardDto
 import com.lateapex.collie.network.PaneTransferMemberDto
 import com.lateapex.collie.network.PaneTransferPlanResponse
@@ -439,7 +440,7 @@ class TabTransferActivity : AppCompatActivity() {
             when (result) {
                 is ApiResult.Success -> {
                     val operation = result.value.operation
-                    val moveResult = operation?.paneMoveResult()
+                    val moveResult = operation?.result as? PaneMoveResult
                     val receipt = moveResult?.transfer
                     if (!repository.isCurrent(captured) || operation == null || moveResult == null || !operation.validFor(requestId) || operation.state != "succeeded" || receipt == null || !receipt.changed || receipt.processWitness != member.witness) {
                         journal.markTransferUnknown(currentParent.owner, currentParent.transferId, requestId)
@@ -479,8 +480,8 @@ class TabTransferActivity : AppCompatActivity() {
                 is ApiResult.Success -> {
                     val operation = outcome.value.operation
                     if (!repository.isCurrent(captured) || !operation.validFor(child.requestId)) notice.text = getString(R.string.tab_transfer_unknown_notice)
-                    else if (operation.state == "succeeded" && operation.paneMoveResult()?.transfer?.let { it.changed && it.processWitness == currentParent.sourceMembers.firstOrNull { member -> member.originalPaneId == child.owner.paneId }?.witness } == true) {
-                        val moveResult = operation.paneMoveResult() ?: run { notice.text = getString(R.string.tab_transfer_unknown_notice); busy = false; render(); return@launch }
+                    else if (operation.state == "succeeded" && (operation.result as? PaneMoveResult)?.transfer?.let { it.changed && it.processWitness == currentParent.sourceMembers.firstOrNull { member -> member.originalPaneId == child.owner.paneId }?.witness } == true) {
+                        val moveResult = operation.result as? PaneMoveResult ?: run { notice.text = getString(R.string.tab_transfer_unknown_notice); busy = false; render(); return@launch }
                         val transfer = moveResult.transfer ?: run { notice.text = getString(R.string.tab_transfer_unknown_notice); busy = false; render(); return@launch }
                         val saved = journal.completeTransferChild(currentParent.owner, currentParent.transferId, child.requestId,
                             PaneTransferStepResult(transfer.changed, moveResult.paneId, transfer.targetWorkspaceId, transfer.targetTabId, transfer.processWitness,

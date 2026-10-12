@@ -167,6 +167,10 @@ Document preparation admits the picker-captured scope/credential actor for confi
 ## Pane layout control (B12)
 
 The native client adds bounded layout, neighbor and edge reads plus a dedicated layout screen. New layout actions require positive mux declarations and `controlOperations` durable receipt readiness. Actions use the mounted Collie HTTP API with exact scoped targets, a plan token and caller-held request ID; the client never calls a mux socket or forwards vendor RPC. Unknown mutation outcomes remain visible for operation inspection and are not automatically repeated. A successful move returns a new pane ID; native navigation discards the old pane state before opening the new ID. Unsupported/mixed-version peers hide the actions or return a typed unavailable result.
+
+## Portable layouts and recipes (B29)
+
+The native client uses `GET /api/tab/:id/layout/export`, `POST /api/layout/plan`, `POST /api/layout/apply`, and `POST /api/tab/:id/layout/split-ratio`. JSON is bounded and closed; ratio paths remain boolean arrays. Plan/apply requires positive `portableLayouts` plus durable `controlOperations`; commands must match a current host-declared launcher, workspace directories are containment-checked, and focus remains off. Existing Herdr schema 22 names the matching `layout.export`, `layout.apply`, and `layout.set_split_ratio` operations, but this source mapping does not prove a live server's exact behavior. Plugin-backed recipe commands are withheld pending B32 resolver acceptance. Native compilation, local/Crew runtime behavior and physical Pixel round trips remain separate acceptance gates.
 B20 watch authority correction: peer watch keys bind the advertised host/session/pane. An older
 untagged snapshot proves only a unique default pane or its single advertised session; ambiguous
 selectors refuse. Previously unscoped peer watches remain nonlinkable with Forget available,

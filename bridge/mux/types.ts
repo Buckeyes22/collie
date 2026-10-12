@@ -331,6 +331,37 @@ export interface MuxLayoutSnapshot {
   readonly panes: readonly { readonly paneId: string; readonly focused: boolean; readonly rect: MuxLayoutRect }[];
   readonly splits: readonly { readonly id: string; readonly direction: "right" | "down"; readonly ratio: number; readonly rect: MuxLayoutRect }[];
 }
+/** Portable, process-free layout data. Pane IDs are observations and are stripped on export. */
+export type MuxPortableLayoutNode =
+  | { readonly type: "pane"; readonly label: string | null; readonly cwd: string | null; readonly paneId: string | null; readonly command: readonly string[] | null; readonly env: Readonly<Record<string, string>> }
+  | { readonly type: "split"; readonly direction: MuxSplitDirection; readonly ratio: number; readonly first: MuxPortableLayoutNode; readonly second: MuxPortableLayoutNode };
+export interface MuxPortableLayout {
+  readonly workspaceId: string;
+  readonly tabId: string;
+  readonly focusedPaneId: string;
+  readonly zoomed: boolean;
+  readonly root: MuxPortableLayoutNode;
+}
+export interface MuxLayoutApplyRequest {
+  readonly root: MuxPortableLayoutNode;
+  readonly workspaceId: string | null;
+  readonly tabId: string | null;
+  readonly tabLabel: string | null;
+  readonly focus: false;
+}
+export interface MuxLayoutCreated {
+  readonly workspaceId: string;
+  readonly tabId: string;
+  readonly paneIds: readonly string[];
+  readonly focusedPaneId: string;
+}
+export interface MuxSplitRatioRequest {
+  readonly tabId: string;
+  readonly paneId: string | null;
+  /** Herdr's boolean-path direction bits: false follows first, true follows second. */
+  readonly path: readonly boolean[];
+  readonly ratio: number;
+}
 export type MuxPaneDirection = "left" | "right" | "up" | "down";
 export type MuxSplitDirection = "right" | "down";
 export type MuxSplitCwdChoice = null | { readonly kind: "source-pane" } | { readonly kind: "workspace"; readonly workspaceId: string } | { readonly kind: "advertised-folder"; readonly path: string };
@@ -750,6 +781,9 @@ export interface MuxAdapter {
   /** Optional layout facts and operations; each is backed by its own fail-closed capability. */
   readLayout?(paneId: string, request?: MuxLayoutReadRequest): Promise<MuxOutcome<MuxLayoutRead>>;
   applyLayout?(action: MuxLayoutAction, finalAdmission: MuxLayoutFinalAdmission): Promise<MuxOutcome<MuxLayoutMutation>>;
+  exportPortableLayout?(target: { readonly tabId: string } | { readonly paneId: string }): Promise<MuxOutcome<MuxPortableLayout>>;
+  applyPortableLayout?(request: MuxLayoutApplyRequest, finalAdmission: (runtimeIdentity: string, snapshot: MuxSnapshot) => boolean | Promise<boolean>): Promise<MuxOutcome<MuxLayoutCreated>>;
+  setSplitRatio?(request: MuxSplitRatioRequest, finalAdmission: (runtimeIdentity: string, snapshot: MuxSnapshot) => boolean | Promise<boolean>): Promise<MuxOutcome<MuxPortableLayout>>;
   /** Opaque current mux process incarnation; absent means planned mutations fail closed. */
   layoutRuntimeIdentity?(): Promise<string | null> | string | null;
 
@@ -882,7 +916,7 @@ export function muxDataFields(adapter: MuxAdapter): Pick<MuxAdapter, "logo" | "h
  * unwrap (tmux) never comes out of a decorator appearing to offer the read: absent stays absent.
  */
 type MuxOptionalMethodFields = Pick<MuxAdapter,
-  | "readLogicalText" | "processInfo" | "readLayout" | "applyLayout" | "layoutRuntimeIdentity" | "agentIdentity"
+  | "readLogicalText" | "processInfo" | "readLayout" | "applyLayout" | "exportPortableLayout" | "applyPortableLayout" | "setSplitRatio" | "layoutRuntimeIdentity" | "agentIdentity"
   | "removeWorktree"
   | "renameSpace" | "closeSpace" | "moveSpace" | "moveSpaceBlock" | "focusSpace" | "moveTab" | "focusTab"
 >;
@@ -891,6 +925,9 @@ export function muxOptionalMethods(adapter: MuxAdapter): MuxOptionalMethodFields
   const processInfo = adapter.processInfo?.bind(adapter);
   const readLayout = adapter.readLayout?.bind(adapter);
   const applyLayout = adapter.applyLayout?.bind(adapter);
+  const exportPortableLayout = adapter.exportPortableLayout?.bind(adapter);
+  const applyPortableLayout = adapter.applyPortableLayout?.bind(adapter);
+  const setSplitRatio = adapter.setSplitRatio?.bind(adapter);
   const layoutRuntimeIdentity = adapter.layoutRuntimeIdentity?.bind(adapter);
   const removeWorktree = adapter.removeWorktree?.bind(adapter);
   const renameSpace = adapter.renameSpace?.bind(adapter);
@@ -906,6 +943,9 @@ export function muxOptionalMethods(adapter: MuxAdapter): MuxOptionalMethodFields
   if (processInfo !== undefined) methods.processInfo = processInfo;
   if (readLayout !== undefined) methods.readLayout = readLayout;
   if (applyLayout !== undefined) methods.applyLayout = applyLayout;
+  if (exportPortableLayout !== undefined) methods.exportPortableLayout = exportPortableLayout;
+  if (applyPortableLayout !== undefined) methods.applyPortableLayout = applyPortableLayout;
+  if (setSplitRatio !== undefined) methods.setSplitRatio = setSplitRatio;
   if (layoutRuntimeIdentity !== undefined) methods.layoutRuntimeIdentity = layoutRuntimeIdentity;
   if (removeWorktree !== undefined) methods.removeWorktree = removeWorktree;
   if (renameSpace !== undefined) methods.renameSpace = renameSpace;

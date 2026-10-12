@@ -41,6 +41,10 @@
             android:exported="false"
             android:parentActivityName=".ui.PaneActivity" />
         <activity
+            android:name=".ui.LayoutRecipesActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.PaneActivity" />
+        <activity
             android:name=".ui.HistoryActivity"
             android:exported="false"
             android:parentActivityName=".ui.PaneActivity" />

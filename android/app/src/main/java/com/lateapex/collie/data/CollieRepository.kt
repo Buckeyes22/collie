@@ -886,6 +886,52 @@ class CollieRepository(
         return withScopedLayoutWrite(address.scope, subject, context) { api.applyPaneLayout(it, address, requestId, planToken, action) }
     }
 
+    suspend fun exportPortableLayout(scope: Scope, tabId: String, expectedContext: ScopedReadContext? = null): ApiResult<com.lateapex.collie.network.PortableLayoutExportResponse> {
+        val subject = expectedContext?.key?.subjectIdentity ?: activeSubject
+        val context = expectedContext ?: readContext(scope, subject) ?: return notConnected()
+        if (!isCurrent(context) || context.key.host != scope.host || context.key.session != scope.session || context.key.subjectIdentity != subject) return staleScope()
+        val config = config(scope, context)
+        if (!isCurrent(context)) return staleScope()
+        if (config !is ApiResult.Success) return configFailure(config)
+        if (config.value.mux?.supportsNew("portableLayouts") != true) return ApiResult.Failure(ApiFailure.Http(404, "Portable layouts are unsupported on this server", "capability.unsupported"))
+        return withScopedDeviceRead(scope, context) { api.exportPortableLayout(it, scope, tabId) }
+    }
+
+    suspend fun planPortableLayout(scope: Scope, body: kotlinx.serialization.json.JsonObject, expectedContext: ScopedReadContext? = null): ApiResult<com.lateapex.collie.network.PortableLayoutPlanResponse> {
+        val subject = expectedContext?.key?.subjectIdentity ?: activeSubject
+        val context = expectedContext ?: readContext(scope, subject) ?: return notConnected()
+        if (!isCurrent(context) || context.key.host != scope.host || context.key.session != scope.session || context.key.subjectIdentity != subject) return staleScope()
+        val config = config(scope, context)
+        if (!isCurrent(context)) return staleScope()
+        if (config !is ApiResult.Success) return configFailure(config)
+        if (config.value.control?.supportsNew("controlOperations") != true || config.value.mux?.supportsNew("portableLayouts") != true) return ApiResult.Failure(ApiFailure.Http(404, "Portable layouts are unsupported on this server", "capability.unsupported"))
+        return withScopedDeviceRead(scope, context) { api.planPortableLayout(it, scope, body) }
+    }
+
+    suspend fun applyPortableLayout(scope: Scope, body: kotlinx.serialization.json.JsonObject, expectedContext: ScopedReadContext? = null): ApiResult<com.lateapex.collie.network.PortableLayoutApplyResponse> {
+        val subject = expectedContext?.key?.subjectIdentity ?: activeSubject
+        val context = expectedContext ?: readContext(scope, subject) ?: return notConnected()
+        if (!isCurrent(context) || context.key.host != scope.host || context.key.session != scope.session || context.key.subjectIdentity != subject) return staleScope()
+        val config = config(scope, context)
+        if (!isCurrent(context)) return staleScope()
+        if (config !is ApiResult.Success) return configFailure(config)
+        if (!writesAllowed(scope, subject)) return ApiResult.Failure(ApiFailure.Http(403, "device not authorised", "device.not_authorised"))
+        if (config.value.control?.supportsNew("controlOperations") != true || config.value.mux?.supportsNew("portableLayouts") != true) return ApiResult.Failure(ApiFailure.Http(404, "Portable layouts are unsupported on this server", "capability.unsupported"))
+        return withScopedLayoutWrite(scope, subject, context) { api.applyPortableLayout(it, scope, body) }
+    }
+
+    suspend fun setSplitRatio(scope: Scope, tabId: String, body: kotlinx.serialization.json.JsonObject, expectedContext: ScopedReadContext? = null): ApiResult<com.lateapex.collie.network.PortableLayoutApplyResponse> {
+        val subject = expectedContext?.key?.subjectIdentity ?: activeSubject
+        val context = expectedContext ?: readContext(scope, subject) ?: return notConnected()
+        if (!isCurrent(context) || context.key.host != scope.host || context.key.session != scope.session || context.key.subjectIdentity != subject) return staleScope()
+        val config = config(scope, context)
+        if (!isCurrent(context)) return staleScope()
+        if (config !is ApiResult.Success) return configFailure(config)
+        if (!writesAllowed(scope, subject)) return ApiResult.Failure(ApiFailure.Http(403, "device not authorised", "device.not_authorised"))
+        if (config.value.control?.supportsNew("controlOperations") != true || config.value.mux?.supportsNew("portableLayouts") != true) return ApiResult.Failure(ApiFailure.Http(404, "Split ratio control is unsupported on this server", "capability.unsupported"))
+        return withScopedLayoutWrite(scope, subject, context) { api.setSplitRatio(it, scope, tabId, body) }
+    }
+
     suspend fun devices(): ApiResult<DevicesResponse> = withConnection(block = api::devices)
 
     suspend fun revokeDevice(label: String): ApiResult<DevicesResponse> {
@@ -2379,6 +2425,21 @@ class CollieRepository(
         return withConnection(scope, subject, context, block)
     }
 
+    /** Portable recipes disclose executable commands and paths, so they require device-read admission. */
+    private suspend fun <T> withScopedDeviceRead(
+        scope: Scope,
+        expectedContext: ScopedReadContext?,
+        block: suspend (Connection) -> ApiResult<T>,
+    ): ApiResult<T> {
+        val subject = (if (expectedContext != null) expectedContext.key.subjectIdentity else activeSubject)
+        val context = expectedContext ?: readContext(scope, subject) ?: return notConnected()
+        if (!isCurrent(context) || context.key.host != scope.host || context.key.session != scope.session || context.key.subjectIdentity != subject) return staleScope()
+        if (!deviceOwnedAdmission()) return ApiResult.Failure(ApiFailure.Http(403, "device not authorised for sensitive layout data", "device.not_authorised"))
+        // `mutation=true` with the device-owned actor branch rechecks this factor immediately before
+        // transport, without requiring the separate terminal write grant.
+        return withConnectionOf(context.connection, scope, subject, mutation = true, expectedContext = context, deviceRead = true, block = block)
+    }
+
     private suspend fun <T> withScopedLayoutWrite(
         scope: Scope,
         subject: String?,
@@ -2398,9 +2459,10 @@ class CollieRepository(
         scope: Scope? = null,
         mutation: Boolean = false,
         expectedContext: ScopedReadContext? = null,
+        deviceRead: Boolean = false,
         block: suspend (Connection) -> ApiResult<T>,
     ): ApiResult<T> = withConnectionOfTarget(
-        configured, readTarget(scope, expectedContext = expectedContext), mutation, expectedContext != null, block,
+        configured, readTarget(scope, expectedContext = expectedContext), mutation, expectedContext != null && !deviceRead, deviceRead, block,
     )
 
     private suspend fun <T> withConnectionOf(
@@ -2409,10 +2471,11 @@ class CollieRepository(
         subjectIdentity: String?,
         mutation: Boolean = false,
         expectedContext: ScopedReadContext? = null,
+        deviceRead: Boolean = false,
         block: suspend (Connection) -> ApiResult<T>,
     ): ApiResult<T> = withConnectionOfTarget(
         configured, readTarget(scope, subjectIdentity, expectedContext, useSelectedSubject = false),
-        mutation, expectedContext != null, block,
+        mutation, expectedContext != null && !deviceRead, deviceRead, block,
     )
 
     /** Child jobs cancel reads; writes discard stale replies without claiming dispatch failed. */
@@ -2421,6 +2484,7 @@ class CollieRepository(
         target: ReadTarget?,
         mutation: Boolean,
         checkWriteAuthority: Boolean,
+        deviceRead: Boolean,
         block: suspend (Connection) -> ApiResult<T>,
     ): ApiResult<T> = try { coroutineScope {
         target ?: return@coroutineScope notConnected()
@@ -2441,6 +2505,9 @@ class CollieRepository(
             return@coroutineScope accessFailure?.let { ApiResult.Failure(it) }
                 ?: ApiResult.Failure(ApiFailure.Http(403, "device not authorised", "device.not_authorised"))
         }
+        if (deviceRead && !deviceOwnedAdmission()) {
+            return@coroutineScope ApiResult.Failure(ApiFailure.Http(403, "device not authorised for sensitive layout data", "device.not_authorised"))
+        }
         val coroutineContext = currentCoroutineContext()
         val job = coroutineContext[Job]!!
         if (!mutation) {
@@ -2458,7 +2525,7 @@ class CollieRepository(
             val result = com.lateapex.collie.network.RequestActorCustody.withActor(context) {
                 kotlinx.coroutines.withContext(OriginalReadActor {
                     // Both the immutable request actor and declared operation survive every wait.
-                    isCurrent(context) && (!mutation || if (checkWriteAuthority) writesAllowed(requestScope, requestSubject) else deviceOwnedAdmission())
+                    isCurrent(context) && if (deviceRead) deviceOwnedAdmission() else (!mutation || if (checkWriteAuthority) writesAllowed(requestScope, requestSubject) else deviceOwnedAdmission())
                 }) { block(configured) }
             }
             if (!isCurrent(context)) return@coroutineScope staleScope()

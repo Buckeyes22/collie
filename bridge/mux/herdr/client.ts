@@ -478,12 +478,18 @@ export type HerdrRpc = Pick<
   | "readPaneLayout"
   | "readPaneNeighbor"
   | "readPaneEdges"
+  | "exportLayout"
+  | "applyLayout"
+  | "setSplitRatio"
   | "focusPaneDirection"
   | "splitPane"
   | "resizePane"
   | "zoomPane"
   | "swapPanes"
   | "movePane"
+  | "exportLayout"
+  | "applyLayout"
+  | "setSplitRatio"
 >>;
 
 let idCounter = 0;
@@ -576,6 +582,10 @@ export interface HerdrDispatchAdmission {
   readonly runtimeIdentity: string;
   readonly finalAdmission: (runtimeIdentity: string) => boolean;
 }
+
+export type HerdrLayoutNode =
+  | { readonly type: "pane"; readonly label?: string | null; readonly cwd?: string | null; readonly pane_id?: string | null; readonly command?: readonly string[] | null; readonly env?: Readonly<Record<string, string>> }
+  | { readonly type: "split"; readonly direction: "right" | "down"; readonly ratio: number; readonly first: HerdrLayoutNode; readonly second: HerdrLayoutNode };
 
 export class HerdrClient {
   constructor(
@@ -1174,6 +1184,20 @@ export class HerdrClient {
   /** Read the current pane layout; the caller validates the closed success DTO. */
   readPaneLayout(paneId: string): Promise<JsonValue> {
     return this.request<JsonValue>("pane.layout", { pane_id: paneId });
+  }
+
+  exportLayout(target: { readonly tab_id: string } | { readonly pane_id: string }): Promise<JsonValue> {
+    return this.request<JsonValue>("layout.export", target);
+  }
+
+  applyLayout(params: { readonly root: HerdrLayoutNode; readonly workspace_id?: string; readonly tab_id?: string; readonly tab_label?: string; readonly focus: false }): Promise<JsonValue> {
+    // SAFETY: The params are constructed from closed HerdrLayoutNode records in the adapter.
+    return this.request<JsonValue>("layout.apply", JSON.parse(JSON.stringify(params)) as JsonObject);
+  }
+
+  setSplitRatio(params: { readonly tab_id: string; readonly pane_id?: string; readonly path: readonly boolean[]; readonly ratio: number }): Promise<JsonValue> {
+    // SAFETY: The adapter validates tab identity, the boolean path, and a finite in-range ratio.
+    return this.request<JsonValue>("layout.set_split_ratio", JSON.parse(JSON.stringify(params)) as JsonObject);
   }
 
   readPaneNeighbor(paneId: string, direction: "left" | "right" | "up" | "down"): Promise<JsonValue> {

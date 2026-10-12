@@ -29,11 +29,15 @@ export interface OperationReceipt {
 }
 /** Persisted structured result is limited to the identity aliases needed after pane.move. */
 export interface OperationResult {
-  readonly kind: "pane-move";
-  readonly paneId: string;
-  readonly previousPaneId: string;
-  readonly previousTabId: string;
-  readonly previousWorkspaceId: string;
+  readonly kind: "pane-move" | "portable-layout" | "split-ratio";
+  readonly paneId?: string;
+  readonly previousPaneId?: string;
+  readonly previousTabId?: string;
+  readonly previousWorkspaceId?: string;
+  readonly workspaceId?: string;
+  readonly tabId?: string;
+  readonly paneIds?: readonly string[];
+  readonly focusedPaneId?: string;
   readonly transfer?: {
     readonly schema: 1;
     readonly changed: boolean;
@@ -100,6 +104,11 @@ function validOperationResult(value: unknown): value is DurableOperationResult {
       typeof r.path === "string" && r.path.length > 0 && r.path.length <= 4096 && !Array.from(r.path).some((char) => char.charCodeAt(0) < 32) &&
       (r.branch === null || typeof r.branch === "string" && r.branch.length > 0 && r.branch.length <= 256) && typeof r.forced === "boolean";
   }
+
+  if (r.kind === "portable-layout") return (Object.keys(r).length === 5 && Object.keys(r).every((key) => ["kind", "workspaceId", "tabId", "paneIds", "focusedPaneId"].includes(key))) &&
+    validOperationResultId(r.workspaceId) && validOperationResultId(r.tabId) && validOperationResultId(r.focusedPaneId) && Array.isArray(r.paneIds) && r.paneIds.length >= 1 && r.paneIds.length <= 64 &&
+    r.paneIds.every(validOperationResultId) && new Set(r.paneIds).size === r.paneIds.length && r.paneIds.includes(r.focusedPaneId);
+  if (r.kind === "split-ratio") return Object.keys(r).length === 2 && Object.keys(r).every((key) => ["kind", "tabId"].includes(key)) && validOperationResultId(r.tabId);
   if (!(Object.keys(r).length === 5 || Object.keys(r).length === 6) || !Object.keys(r).every((key) => ["kind", "paneId", "previousPaneId", "previousTabId", "previousWorkspaceId", "transfer"].includes(key)) ||
       r.kind !== "pane-move" || !validOperationResultId(r.paneId) || !validOperationResultId(r.previousPaneId) || !validOperationResultId(r.previousTabId) || !validOperationResultId(r.previousWorkspaceId)) return false;
   if (r.transfer === undefined) return true;

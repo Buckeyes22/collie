@@ -2,10 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import type { MuxSpace } from "../types.ts";
+import type { MuxPortableLayoutNode, MuxSpace } from "../types.ts";
 import { HerdrMux, REPO_LOOKUP_RETRY_MS, workspaceRepoOf } from "./adapter.ts";
 import { maskForwardedAnswer } from "../../crew/mask.ts";
-import type { HerdrWorktreeRemove, WireSnapshot, WireWorkspace, WireWorktreeListing, WireWorktreeRemoved } from "./client.ts";
+import type { HerdrWorktreeRemove, WireWorktreeRemoved, HerdrLayoutNode, HerdrRpc, WireSnapshot, WireWorkspace, WireWorktreeListing } from "./client.ts";
+import type { JsonValue } from "../../json.ts";
 import { FakeHerdr } from "./fixture.ts";
 import { buildSubscriptions } from "./events.ts";
 
@@ -60,6 +61,43 @@ function captured(): CapturedHerdr {
   const fake = new CapturedHerdr(CAPTURE.workspaces);
   for (const [id, reply] of Object.entries(CAPTURE.worktreeList)) fake.answers.set(id, { listing: reply.result });
   return fake;
+}
+
+class PortableReplyHerdr extends FakeHerdr {
+  applyReply: "matching" | "wrong-tab" | "wrong-tree" = "matching";
+  ratioReply: "matching" | "unchanged" | "wrong-tab" = "matching";
+
+  private layout(root: HerdrLayoutNode, workspaceId: string, tabId: string, mode: "matching" | "wrong-tab" | "wrong-tree") {
+    let next = 0;
+    const ids = (node: HerdrLayoutNode): HerdrLayoutNode => {
+      if (node.type === "split") return { ...node, first: ids(node.first), second: ids(node.second) };
+      const id = `new:p${++next}`;
+      return { ...node, pane_id: id, label: mode === "wrong-tree" && next === 1 ? "unexpected" : node.label };
+    };
+    return { workspace_id: workspaceId, tab_id: mode === "wrong-tab" ? "other:t1" : tabId,
+      focused_pane_id: "new:p1", zoomed: false, root: ids(root) };
+  }
+
+  async applyLayout(params: Parameters<NonNullable<HerdrRpc["applyLayout"]>>[0]): Promise<JsonValue> {
+    const snapshot = await this.sessionSnapshot();
+    const workspace = snapshot.workspaces[0]!;
+    const tab = snapshot.tabs.find((item) => item.workspace_id === workspace.workspace_id)!;
+    // SAFETY: the fixture's response is a wire-shaped JSON value built from the closed layout DTO.
+    return JSON.parse(JSON.stringify({ type: "layout_apply", layout: this.layout(params.root, workspace.workspace_id, tab.tab_id, this.applyReply) })) as JsonValue;
+  }
+
+  async setSplitRatio(params: Parameters<NonNullable<HerdrRpc["setSplitRatio"]>>[0]): Promise<JsonValue> {
+    const snapshot = await this.sessionSnapshot();
+    const workspace = snapshot.workspaces[0]!;
+    const tab = snapshot.tabs.find((item) => item.workspace_id === workspace.workspace_id)!;
+    const ratio = this.ratioReply === "unchanged" ? 0.5 : params.ratio;
+    const root: HerdrLayoutNode = { type: "split", direction: "right", ratio,
+      first: { type: "pane", pane_id: "new:p1", label: "left", cwd: null, command: null, env: {} },
+      second: { type: "pane", pane_id: "new:p2", label: "right", cwd: null, command: null, env: {} } };
+    // SAFETY: the fixture's response is a wire-shaped JSON value built from the closed layout DTO.
+    return JSON.parse(JSON.stringify({ type: "layout_split_ratio_set", layout: this.layout(root, workspace.workspace_id,
+      this.ratioReply === "wrong-tab" ? "other:t1" : tab.tab_id, "matching") })) as JsonValue;
+  }
 }
 
 function spaceOf(spaces: readonly MuxSpace[], id: string): MuxSpace {
@@ -324,6 +362,30 @@ describe("herdr pane layout capability and neutral adapter", () => {
       ok: true, value: { workspaceId: "w1", path: "/repo/.worktrees/topic", forced: true },
     });
     expect(current.seen).toEqual({ workspace_id: "w1", force: true });
+  });
+
+  test("portable apply and ratio replies prove the exact target and requested effect", async () => {
+    const fake = new PortableReplyHerdr();
+    const mux = new HerdrMux(fake, () => []);
+    await mux.reachable();
+    const snapshot = await mux.snapshot();
+    const source = snapshot.panes[0]!;
+    const root: MuxPortableLayoutNode = { type: "split", direction: "right", ratio: 0.5,
+      first: { type: "pane", label: "left", cwd: null, paneId: null, command: null, env: {} },
+      second: { type: "pane", label: "right", cwd: null, paneId: null, command: null, env: {} } };
+    const request = { root, workspaceId: source.spaceId, tabId: source.tabId, tabLabel: null, focus: false as const };
+    expect((await mux.applyPortableLayout(request, admitLayoutMutation)).ok).toBe(true);
+    fake.applyReply = "wrong-tree";
+    expect(await mux.applyPortableLayout(request, admitLayoutMutation)).toMatchObject({ ok: false, reason: "unreachable" });
+    fake.applyReply = "wrong-tab";
+    expect(await mux.applyPortableLayout(request, admitLayoutMutation)).toMatchObject({ ok: false, reason: "unreachable" });
+
+    const ratio = { tabId: source.tabId, paneId: null, path: [] as const, ratio: 0.625 };
+    expect((await mux.setSplitRatio(ratio, admitLayoutMutation)).ok).toBe(true);
+    fake.ratioReply = "unchanged";
+    expect(await mux.setSplitRatio(ratio, admitLayoutMutation)).toMatchObject({ ok: false, reason: "unreachable" });
+    fake.ratioReply = "wrong-tab";
+    expect(await mux.setSplitRatio(ratio, admitLayoutMutation)).toMatchObject({ ok: false, reason: "unreachable" });
   });
 
   test("runtime replacement retires pane-layout readiness and requires a new positive handshake", async () => {

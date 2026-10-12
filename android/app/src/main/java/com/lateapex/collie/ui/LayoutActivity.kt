@@ -19,6 +19,7 @@ import com.lateapex.collie.domain.PaneAddress
 import com.lateapex.collie.domain.Scope
 import com.lateapex.collie.network.ApiFailure
 import com.lateapex.collie.network.ApiResult
+import com.lateapex.collie.network.PaneMoveResult
 import com.lateapex.collie.network.FoldersResponse
 import com.lateapex.collie.network.LayoutPane
 import com.lateapex.collie.network.PaneSummary
@@ -638,14 +639,15 @@ class LayoutActivity : AppCompatActivity() {
                     }
                     when (operation.state) {
                         "succeeded" -> {
-                            val move = operation.paneMoveResult()
+                            val resultBody = operation.result
+                            val move = resultBody as? PaneMoveResult
                             if (kind == "move") {
                                 if (move?.kind != "pane-move" || move.previousPaneId != address.paneId || move.paneId == move.previousPaneId ||
                                     pendingSourceTabId == null || move.previousTabId != pendingSourceTabId ||
                                     pendingSourceWorkspaceId == null || move.previousWorkspaceId != pendingSourceWorkspaceId) {
                                     showUnknown(getString(R.string.pane_layout_unknown)); return@launch
                                 }
-                            } else if (move != null) {
+                            } else if (resultBody != null) {
                                 showUnknown(getString(R.string.pane_layout_unknown)); return@launch
                             }
                             if (!clearPendingIntent(captured, id)) {

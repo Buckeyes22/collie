@@ -38,6 +38,8 @@ class ScopedFeatureAdmissionTest {
         var layoutCalls = 0
         var layoutPlanCalls = 0
         var layoutApplyCalls = 0
+        var portableExportCalls = 0
+        var portablePlanCalls = 0
         var layoutPlan: PaneLayoutPlanResponse? = null
         override suspend fun snapshot(connection: Connection, scope: Scope): ApiResult<SnapshotResponse> {
             snapshotBlock?.invoke()
@@ -62,6 +64,14 @@ class ScopedFeatureAdmissionTest {
         override suspend fun applyPaneLayout(connection: Connection, address: PaneAddress, requestId: String, planToken: String, action: kotlinx.serialization.json.JsonObject): ApiResult<PaneLayoutOperationResponse> {
             layoutApplyCalls++
             return ApiResult.Failure(ApiFailure.Protocol("unexpected layout operation"))
+        }
+        override suspend fun exportPortableLayout(connection: Connection, scope: Scope, tabId: String): ApiResult<PortableLayoutExportResponse> {
+            portableExportCalls++
+            return ApiResult.Failure(ApiFailure.Protocol("unexpected portable export"))
+        }
+        override suspend fun planPortableLayout(connection: Connection, scope: Scope, body: kotlinx.serialization.json.JsonObject): ApiResult<PortableLayoutPlanResponse> {
+            portablePlanCalls++
+            return ApiResult.Failure(ApiFailure.Protocol("unexpected portable plan"))
         }
         override suspend fun pane(connection: Connection, address: PaneAddress, lines: Int, etag: String?, markSeen: Boolean): ApiResult<PaneReadResponse> =
             protectedFailure?.let { ApiResult.Failure(it) } ?: ApiResult.Success(PaneReadResponse(address.paneId, "screen", false, 1), 200, controlAuthority = readAuthority)
@@ -226,6 +236,21 @@ class ScopedFeatureAdmissionTest {
         assertEquals(1, api.layoutPlanCalls)
         assertTrue(repository.applyPaneLayout(address, "request-one", "plan-one", action, captured) is ApiResult.Failure)
         assertEquals(0, api.layoutApplyCalls)
+    }
+
+    @Test fun portableLayoutExportAndPlanRequireTheIndependentDeviceReadFactor() = runTest {
+        val api = Api().apply { authorized = false }
+        val repository = CollieRepository(api, Store(initial), OriginValidator())
+        val scope = Scope(host = "desk", session = "work")
+        repository.selectSubject(scope, "pane")
+        repository.snapshot(scope)
+        val captured = repository.readContext(scope, "pane")!!
+        val body = kotlinx.serialization.json.buildJsonObject { put("kind", "split-ratio") }
+
+        assertTrue(repository.exportPortableLayout(scope, "tab", captured) is ApiResult.Failure)
+        assertTrue(repository.planPortableLayout(scope, body, captured) is ApiResult.Failure)
+        assertEquals(0, api.portableExportCalls)
+        assertEquals(0, api.portablePlanCalls)
     }
 
     @Test fun delayedMediaPreparationCannotUploadToAReplacementConnection() = runTest {

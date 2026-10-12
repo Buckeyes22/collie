@@ -3266,9 +3266,9 @@ describe("the host gate — `?host=` selects among enrolled members and nothing 
     // writes on this machine's one-off command history, served by one function (ADR 0095), and the
     // read that checks a typed line before it runs (ADR 0095, amendment), owning-runtime linked
     // worktree removal planning/execution, and the owning workspace's Source read, scoped agent
-    // inventory and workspace/tab organization) reach
+    // inventory workspace/tab organization and portable-layout export/plan/apply) reach
     // their runtime through the caller's resolver and nothing else.
-    expect([...src.matchAll(/await caller\.resolve\(\);/g)]).toHaveLength(26);
+    expect([...src.matchAll(/await caller\.resolve\(\);/g)]).toHaveLength(27);
     // Exactly nine `registry.get(` calls remain, and each is a sanctioned one, named here rather
     // than exempted: assembling THIS collie's own snapshot body; `localRuntime`, the single
     // "(session) → runtime, or 404" helper both callers share; `/api/config`, which reports THIS

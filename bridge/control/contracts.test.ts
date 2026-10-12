@@ -23,6 +23,8 @@ describe("scoped control contracts", () => {
     expect(controlGate("/api/control/operations/intent1", "GET")).toBe("read");
     expect(controlGate("/api/pane/w1:p1/layout", "GET")).toBe("read");
     expect(controlGate("/api/pane/w1:p1/layout/plan", "POST")).toBe("read");
+    expect(controlGate("/api/tab/t1/layout/export", "GET")).toBe("device-read");
+    expect(controlGate("/api/layout/plan", "POST")).toBe("device-read");
     expect(controlGate("/api/tab/t1/transfer/plan", "POST")).toBe("read");
     expect(controlGate("/api/workspace/w1/worktree/remove-plan", "GET")).toBe("read");
     expect(controlGate("/api/workspace/w1/worktree/remove", "POST")).toBe("write");
@@ -147,6 +149,30 @@ describe("scoped control contracts", () => {
       await writeFile(file, JSON.stringify(rows));
       await expect(new OperationStore(dir).inspect("move-result", owner, "local", "work")).rejects.toThrow("operation registry unreadable");
     } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+  test("portable-layout receipts keep only bounded created identities and reject malformed stored rows", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "collie-control-portable-result-"));
+    try {
+      const layoutBinding = { ...binding, capability: "portableLayouts" };
+      const result = { kind: "portable-layout" as const, workspaceId: "w1", tabId: "t2", paneIds: ["p2", "p3"], focusedPaneId: "p2" };
+      const operation = await new OperationStore(dir).execute("portable-result", layoutBinding, "plan-1", async () => ({ state: "succeeded", result }));
+      expect(operation).toMatchObject({ state: "succeeded", result });
+      expect(await new OperationStore(dir).inspectIntent("portable-result", owner, "local", "work", "portableLayouts", layoutBinding.payloadHash, "plan-1"))
+        .toMatchObject({ kind: "match", operation: { result } });
+      const file = join(dir, "control-operations.json");
+      const rows = JSON.parse(await readFile(file, "utf8"));
+      rows[0].result.vendorPayload = "must reject";
+      await writeFile(file, JSON.stringify(rows));
+      await expect(new OperationStore(dir).inspect("portable-result", owner, "local", "work")).rejects.toThrow("operation registry unreadable");
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+  test("portable-layout success without valid created pane identities is unknown", async () => {
+    const layoutBinding = { ...binding, capability: "portableLayouts" };
+    const result = await new OperationStore().execute("portable-missing-identities", layoutBinding, "plan-1", async () => ({
+      state: "succeeded", result: { kind: "portable-layout", workspaceId: "w1", tabId: "t1", paneIds: [], focusedPaneId: "p1" },
+    }));
+    expect(result).toMatchObject({ state: "unknown", code: "operation.invalid_outcome" });
+    expect(result).not.toHaveProperty("result");
   });
   test("failed move completion drops aliases, stays unknown, and leaves a readable registry", async () => {
     const dir = await mkdtemp(join(tmpdir(), "collie-control-move-persist-failure-"));

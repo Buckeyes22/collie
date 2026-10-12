@@ -14,6 +14,8 @@ import {
   type MuxGridRequest,
   type MuxLayoutMutation,
   type MuxLayoutRead,
+  type MuxPortableLayout,
+  type MuxLayoutCreated,
   type MuxOutcome,
   type MuxPane,
   type MuxSession,
@@ -73,6 +75,10 @@ class StubAdapter implements MuxAdapter {
   applyLayout?: MuxAdapter["applyLayout"];
   layoutRuntimeIdentity?: MuxAdapter["layoutRuntimeIdentity"];
   removeWorktree?: MuxAdapter["removeWorktree"];
+
+  exportPortableLayout?: MuxAdapter["exportPortableLayout"];
+  applyPortableLayout?: MuxAdapter["applyPortableLayout"];
+  setSplitRatio?: MuxAdapter["setSplitRatio"];
   renameSpace?: MuxAdapter["renameSpace"];
   closeSpace?: MuxAdapter["closeSpace"];
   moveSpace?: MuxAdapter["moveSpace"];
@@ -310,6 +316,9 @@ describe("a decorator preserves the adapter's whole surface", () => {
     agentIdentity: true,
     readLogicalText: true,
     readLayout: true,
+    applyPortableLayout: true,
+    exportPortableLayout: true,
+    setSplitRatio: true,
     applyLayout: true,
     layoutRuntimeIdentity: true,
     typeText: true,
@@ -362,6 +371,14 @@ describe("a decorator preserves the adapter's whole surface", () => {
     stub.applyLayout = async () => muxOk({ kind: "focus-direction", changed: false, paneId: "%1", layout } satisfies MuxLayoutMutation);
     stub.layoutRuntimeIdentity = () => "fixture-runtime-1";
     stub.removeWorktree = async ({ workspaceId, force }) => muxOk({ workspaceId, path: "/repo/.worktrees/topic", forced: force });
+
+    const portable: MuxPortableLayout = {
+      workspaceId: "space", tabId: "tab", focusedPaneId: "%1", zoomed: false,
+      root: { type: "pane", label: null, cwd: null, paneId: "%1", command: null, env: {} },
+    };
+    stub.exportPortableLayout = async () => muxOk(portable);
+    stub.applyPortableLayout = async (): Promise<MuxOutcome<MuxLayoutCreated>> => muxOk({ workspaceId: "space", tabId: "tab", paneIds: ["%2"], focusedPaneId: "%2" });
+    stub.setSplitRatio = async () => muxOk(portable);
     stub.renameSpace = async () => ({ ok: true, value: undefined });
     stub.closeSpace = async () => ({ ok: true, value: undefined });
     stub.moveSpace = async () => ({ ok: true, value: undefined });

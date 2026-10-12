@@ -3995,6 +3995,20 @@ class PaneActivity : AppCompatActivity() {
                     })
                 })
             }
+            if (currentState.mux?.supportsNew("portableLayouts") == true) {
+                closingRow(getString(R.string.portable_layout_title), action = {
+                    val captured = repository.readContext(address.scope, address.paneId)
+                    if (captured == null || !repository.isCurrent(captured)) {
+                        Toast.makeText(this, getString(R.string.portable_layout_stale), Toast.LENGTH_LONG).show()
+                        return@closingRow
+                    }
+                    startActivity(Intent(this, LayoutRecipesActivity::class.java).apply {
+                        putExtra(LayoutRecipesActivity.EXTRA_PANE_ID, address.paneId)
+                        putExtra(LayoutRecipesActivity.EXTRA_HOST, address.scope.host)
+                        putExtra(LayoutRecipesActivity.EXTRA_SESSION, address.scope.session)
+                    })
+                })
+            }
             dialog.setSheetContent(content)
         }
         renderActions()

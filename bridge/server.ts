@@ -6,6 +6,7 @@ import { OperationStore } from "./control/operations.ts";
 import { executeBoundIntent, ownerBoundCallerReady, ownerBoundOperationReady, type IntentOwnerContext } from "./intent-operation-binding.ts";
 import { PlanStore } from "./control/plans.ts";
 import { servePaneLayoutRoute } from "./control/layout.ts";
+import { serveLayoutRecipeRoute } from "./control/layout-recipes.ts";
 import { serveOrganizationRoute } from "./control/organization.ts";
 import { serveControlRoute } from "./control/routes.ts";
 import { serveWorktreeRemoveRoute } from "./control/worktree-remove.ts";
@@ -20,6 +21,7 @@ import { isIP } from "node:net";
 import { homedir, networkInterfaces } from "node:os";
 import { dirname, extname, join, normalize, sep } from "node:path";
 import { createAccessGate, DOOR_PRESETS, FORWARDING_HEADERS } from "./access-jwt.ts";
+import { admitCrewForward } from "./crew/forward.ts";
 import type { JsonObject, JsonValue } from "./json.ts";
 import type { ActivityLedger } from "./activity.ts";
 import { type AuditDetail, type AuditEntry, AuditLog } from "./audit.ts";
@@ -1606,6 +1608,23 @@ export async function startServer(opts: {
     }, controlOperations);
     if (controlled) return controlled;
 
+    const recipesControlled = await serveLayoutRecipeRoute(req, url, {
+      gate: (level) => caller.gate(level),
+      pairedIdentity: () => caller.pairedIdentity?.() ?? null,
+      launchers: allowedLaunchers,
+      audit: (action, target, host, session, outcome) => audit.record({
+        action, paneId: target, host, session: session ?? undefined, device: whois(req).device,
+        detail: { outcome },
+      }),
+      resolve: async () => {
+        const runtime = await caller.resolve();
+        if (runtime instanceof Response) return runtime;
+        const resolved = { host: controlHostId, session: runtime.name, mux: runtime.herdr };
+        return folders === undefined ? resolved : Object.assign(resolved, { folders });
+      },
+    }, { plans: controlPlans, operations: controlOperations });
+    if (recipesControlled) return recipesControlled;
+
     const layoutControlled = await servePaneLayoutRoute(req, url, {
       gate: (level) => caller.gate(level),
       pairedIdentity: () => caller.pairedIdentity?.() ?? null,
@@ -2409,10 +2428,8 @@ export async function startServer(opts: {
             // The lead's own record of the forward (§12): one line, the same `action` the peer will
             // write, plus the target host — two independent logs of one event, neither depending on
             // the other machine's disk.
-            const finalDenied = currentCallerGate(/\/(?:files(?:\/(?:image|exist))?|processes)$/.test(pathname) ? "device-read" : req.method === "GET" || pathname === "/api/refresh" ? "read" : "write");
-            if (finalDenied) return finalDenied;
             const forwarded = secure(
-              await crewLead!.forward(req, url, resolved, {
+              await admitCrewForward(pathname, req.method, currentCallerGate, () => crewLead!.forward(req, url, resolved, {
                 device: whois(req).device,
                 pairedIdentity: pairedIdentityOf(req, pairingGate),
                 // A member's text is masked here too. Process details are always masked because
@@ -2431,7 +2448,7 @@ export async function startServer(opts: {
                   if (entry.session !== undefined) row.session = entry.session;
                   audit.record(row);
                 },
-              }),
+              })),
             );
             // The PRIMARY engine, because that is the one whose tick the sweep rides (index.ts).
             const own = registry.get()?.engine;

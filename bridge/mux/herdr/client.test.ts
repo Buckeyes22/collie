@@ -178,6 +178,21 @@ describe("HerdrClient workspace and tab organization wire mapping", () => {
   });
 });
 
+describe("HerdrClient portable layout wire mapping", () => {
+  test("uses the shipped layout method names and preserves binary split paths", async () => {
+    const client = new HerdrClient(await lateHerdr({}), 1_000);
+    const root = { type: "split" as const, direction: "right" as const, ratio: 0.5,
+      first: { type: "pane" as const, label: "left", cwd: ".", pane_id: null, command: null, env: {} },
+      second: { type: "pane" as const, label: "right", cwd: ".", pane_id: null, command: null, env: {} } };
+    await client.exportLayout({ tab_id: "w1:t1" });
+    expect(lastRequest).toEqual({ method: "layout.export", params: { tab_id: "w1:t1" } });
+    await client.applyLayout({ root, workspace_id: "w1", tab_id: "w1:t1", focus: false });
+    expect(lastRequest).toEqual({ method: "layout.apply", params: { root, workspace_id: "w1", tab_id: "w1:t1", focus: false } });
+    await client.setSplitRatio({ tab_id: "w1:t1", path: [false, true, false], ratio: 0.625 });
+    expect(lastRequest).toEqual({ method: "layout.set_split_ratio", params: { tab_id: "w1:t1", path: [false, true, false], ratio: 0.625 } });
+  });
+});
+
 describe("HerdrClient pane.process_info", () => {
   test("sends an explicit pane id and decodes the named success result", async () => {
     const result = {

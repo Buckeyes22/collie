@@ -51,6 +51,7 @@ export const MUX_CAPABILITIES = [
   "pushPaneEvents",
   "listSessions",
   "paneLayout",
+  "portableLayouts",
   "tabTransfer",
   "paneSplit",
   "paneResize",
@@ -143,6 +144,7 @@ export const MUX_CAPABILITY_ROUTES = {
   listSessions:
     "bridge/sessions.ts `SessionRegistry.refresh()`, the OTHER instances of this multiplexer on this machine, each with the endpoint to dial it, so one bridge can front them all. It fills the snapshot's `sessions` list and what `?session=<name>` can select. ABSENT IS THE DEFAULT AND IT IS THE HARMLESS DIRECTION: the registry pins to the primary, the phone sees the one session it saw before this capability existed, and nothing scans anything. Stated here rather than left implicit, because the absence of this key decides whether a filesystem or a process listing is walked at all (M22 counsel).",
   paneLayout: "GET /api/pane/:id/layout, /neighbor and /edges — inspect the current layout and adjacent panes without moving focus.",
+  portableLayouts: "GET /api/tab/:id/layout/export and planned layout import/split-ratio routes — export and restore bounded layouts with declared commands.",
   tabTransfer: "POST /api/tab/:id/transfer/plan and guarded pane.move — transfer an entire existing tab through owner-bound per-pane receipts without creating replacement shells.",
   paneSplit: "POST /api/pane/:id/layout/split — split the selected pane without changing operator focus by default.",
   paneResize: "POST /api/pane/:id/layout/resize — resize a pane using a fresh target plan.",
@@ -279,6 +281,7 @@ export function declareCapabilities(input: MuxCapabilityInput): MuxCapabilityDec
     pushPaneEvents: claimed.has("pushPaneEvents"),
     listSessions: claimed.has("listSessions"),
     paneLayout: claimed.has("paneLayout"),
+    portableLayouts: claimed.has("portableLayouts"),
     tabTransfer: claimed.has("tabTransfer"),
     paneSplit: claimed.has("paneSplit"),
     paneResize: claimed.has("paneResize"),
