@@ -598,6 +598,9 @@ export class HerdrMux implements MuxAdapter {
    * refusal shape, so a caller learns the multiplexer is unreachable the way it always did.
    */
   async snapshot(): Promise<MuxSnapshot> {
+    // Event subscription retirement clears the prior runtime proof. A normal snapshot
+    // must verify the current endpoint again before publishing its supported actions.
+    if (!this.paneLayoutReady && this.client.layoutHandshakeSample) await this.reachable();
     const wire = await this.fetchWire();
     await this.settleRepos(wire.workspaces);
     const spaceById = new Map(wire.workspaces.map((w) => [w.workspace_id, w]));

@@ -435,6 +435,26 @@ describe("herdr pane layout capability and neutral adapter", () => {
     expect(await mux.setSplitRatio(ratio, admitLayoutMutation)).toMatchObject({ ok: false, reason: "unreachable" });
   });
 
+  test("a snapshot verifies current runtime capabilities again after event subscription retirement", async () => {
+    const fake = new FakeHerdr();
+    const mux = new HerdrMux(fake, () => []);
+    await mux.reachable();
+    expect(mux.capabilities.supports.paneLayout).toBe(true);
+    let up = false;
+    const stream = mux.watch({ panes: [], onUp: () => { up = true; }, onDown: () => {}, onTopologyChange: () => {}, onPaneChange: () => {} });
+    await Promise.resolve(); await Promise.resolve();
+    expect(up).toBe(true);
+    expect(mux.capabilities.supports.paneLayout).toBe(false);
+    await mux.snapshot();
+    expect(mux.capabilities.supports.paneLayout).toBe(true);
+    fake.shutdown();
+    expect(mux.capabilities.supports.paneLayout).toBe(false);
+    fake.layoutHandshakeSample = async () => null;
+    await mux.snapshot();
+    expect(mux.capabilities.supports.paneLayout).toBe(false);
+    stream.close();
+  });
+
   test("runtime replacement retires pane-layout readiness and requires a new positive handshake", async () => {
     const fake = new FakeHerdr();
     const mux = new HerdrMux(fake, () => []);

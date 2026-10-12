@@ -14,6 +14,11 @@ Unreleased heading) **must** match the `version` field in `herdr-plugin.toml`, `
 and `web/package.json`, which `scripts/check-version.sh` checks. See [`CLAUDE.md`](./CLAUDE.md) →
 *Versioning* for the bump policy.
 
+### Fixed
+
+- **Restore verified actions after reconnecting to Herdr events.** Recheck the current runtime handshake during the next snapshot so supported controls become available without reusing retired authority.
+
+
 ## Upgrading
 
 **Already on 1.x?** Run `collie update`, or run
