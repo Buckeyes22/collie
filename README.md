@@ -20,6 +20,7 @@ The app follows the agents already running on your server.
 - Pair the phone for read and write access and revoke devices through Settings.
 - Use voice input when your server has speech-to-text configured.
 - Inspect Crew state and manage **server** updates.
+- Use New to start a declared worktree-capable agent from the default branch or a chosen ref, with a server-validated parent folder; on supported Herdr runtimes, review and remove an exact linked checkout while preserving its branch.
 
 Background push notifications are not implemented in the native app. Server updates do not
 update the Android APK. Some agent interactions depend on the bridge's journal and multiplexer

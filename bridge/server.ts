@@ -8,6 +8,7 @@ import { PlanStore } from "./control/plans.ts";
 import { servePaneLayoutRoute } from "./control/layout.ts";
 import { serveOrganizationRoute } from "./control/organization.ts";
 import { serveControlRoute } from "./control/routes.ts";
+import { serveWorktreeRemoveRoute } from "./control/worktree-remove.ts";
 import { servePaneProcesses } from "./control/processes.ts";
 import { servePaneAgentIdentity } from "./control/agent-identity.ts";
 import { AgentReporterRegistry, refuseUnsafeAgentMutation, type AgentMutationKind } from "./control/agent-authority.ts";
@@ -655,6 +656,16 @@ function receiptContextFor(
   return { key: caller.intentReceiptKey, deviceIdentity, owningHost, runtime };
 }
 
+/** Capture before any request-body/durable await; recheck at the named owner adapter call. */
+function captureWorktreeCaller(caller: RouteCaller) { return { device: caller.device(), pairedIdentity: caller.pairedIdentity?.() ?? null }; }
+async function worktreeFinalAdmissionFor(caller: RouteCaller, mux: MuxAdapter, original = captureWorktreeCaller(caller), capability: "createWorktree" | "openWorktree" = "createWorktree"): Promise<(identity: string) => boolean> {
+  const { device, pairedIdentity } = original;
+  const runtimeIdentity = await mux.layoutRuntimeIdentity?.();
+  return (identity) => runtimeIdentity != null && caller.gate("write") === null &&
+    caller.device() === device && (caller.pairedIdentity?.() ?? null) === pairedIdentity &&
+    identity === runtimeIdentity && mux.capabilities.supports[capability] === true;
+}
+
 function intentBinding(
   context: IntentOwnerContext | null | undefined,
   operation: string,
@@ -1263,6 +1274,8 @@ export async function startServer(opts: {
   const controlHostId = opts.controlHostId ?? opts.crewStatus?.()?.self.id ?? "local";
   await controlOperations.prepare();
   const ownerBoundReady = () => ownerBoundOperationReady(opts.intentReceiptKey, controlOperations.isReady());
+  const worktreeRemoveReady = (mux = registry.get()?.herdr) =>
+    ownerBoundReady() && mux?.capabilities.supports.removeWorktree === true && mux.removeWorktree !== undefined;
   const harnesses = opts.harnesses ?? createHarnessProbe();
   const worktreeChoices = opts.worktreeChoices ?? memoryWorktreeChoices();
   const machines = opts.machines;
@@ -1563,6 +1576,23 @@ export async function startServer(opts: {
   ): Promise<Response | null> => {
     const { pathname } = url;
 
+    const worktreeRemoveAnswer = await serveWorktreeRemoveRoute(req, url, {
+      gate: (level) => caller.gate(level),
+      pairedIdentity: () => caller.pairedIdentity?.() ?? null,
+      audit: (action, target, host, session, outcome) => audit.record({
+        action, paneId: target, host, session: session ?? undefined, device: whois(req).device,
+        detail: { outcome },
+      }),
+      resolve: async () => {
+        const runtime = await caller.resolve();
+        return runtime instanceof Response ? runtime : { host: controlHostId, session: runtime.name, mux: runtime.herdr };
+      },
+    }, { plans: controlPlans, operations: controlOperations });
+    if (worktreeRemoveAnswer) {
+      if (req.method === "POST") server.timeout(req, WORKTREE_ROUTE_BUDGET_S);
+      return worktreeRemoveAnswer;
+    }
+
     const controlled = await serveControlRoute(req, url, {
       gate: (level) => caller.gate(level),
       device: () => caller.device(),
@@ -1826,6 +1856,7 @@ export async function startServer(opts: {
       return planWorktree(req, worktreeChoices);
     }
     if (pathname === "/api/worktree" && req.method === "POST") {
+      const originalWorktreeCaller = captureWorktreeCaller(caller);
       const denied = caller.gate("write");
       if (denied) return denied;
       const rt = await caller.resolve();
@@ -1834,6 +1865,7 @@ export async function startServer(opts: {
       return createWorktreeAt(rt.herdr, rt.engine, req, caller.audit, caller.device(), rt.name, allowedLaunchers, {
         receipts: worktreeReceipts,
         receiptContext: receiptContextFor(caller, rt.name, controlHostId),
+        finalAdmission: await worktreeFinalAdmissionFor(caller, rt.herdr, originalWorktreeCaller),
         operations: controlOperations,
         bases: worktreeBases,
         choices: worktreeChoices,
@@ -1843,6 +1875,7 @@ export async function startServer(opts: {
     }
     const worktreeMatch = pathname.match(WORKTREE_ACTION_ROUTE);
     if (worktreeMatch && req.method === "POST") {
+      const originalWorktreeCaller = captureWorktreeCaller(caller);
       const denied = caller.gate("write");
       if (denied) return denied;
       const rt = await caller.resolve();
@@ -1855,7 +1888,7 @@ export async function startServer(opts: {
       // host and the phone is handed a dropped connection (ADR 0089). Probed on Bun 1.4.1.
       server.timeout(req, WORKTREE_ROUTE_BUDGET_S);
       if (action === "open") {
-        return openWorktree(rt.herdr, rt.engine, spaceId, req, caller.audit, device, rt.name);
+        return openWorktree(rt.herdr, rt.engine, spaceId, req, caller.audit, device, rt.name, await worktreeFinalAdmissionFor(caller, rt.herdr, originalWorktreeCaller, "openWorktree"));
       }
       return createWorktree(
         rt.herdr,
@@ -1868,7 +1901,7 @@ export async function startServer(opts: {
         allowedLaunchers,
         worktreeReceipts,
         {},
-        { bases: worktreeBases, receiptContext: receiptContextFor(caller, rt.name, controlHostId), operations: controlOperations },
+        { bases: worktreeBases, receiptContext: receiptContextFor(caller, rt.name, controlHostId), operations: controlOperations, finalAdmission: await worktreeFinalAdmissionFor(caller, rt.herdr, originalWorktreeCaller) },
       );
     }
 
@@ -1988,7 +2021,7 @@ export async function startServer(opts: {
     // M22/03: this collie's own capability declaration, for `hello`. The SAME expression the
     // `/api/config` route below publishes to a browser — the primary session's adapter — so a peer
     // cannot report capabilities that differ from the ones it serves its own operator.
-    controlCapabilities: () => ({ controlOperations: ownerBoundReady(), filesDiscovery: true }),
+    controlCapabilities: () => ({ controlOperations: ownerBoundReady(), worktreeRemove: worktreeRemoveReady(), filesDiscovery: true }),
     receiptContextBound: ownerBoundReady,
     mux: () => {
       const active = registry.get();
@@ -2541,7 +2574,11 @@ export async function startServer(opts: {
         const memberMux = scoped?.kind === "peer" ? crewLead?.muxFor(scoped.link.memberId) : null;
         const scopedControlCapabilities = scoped?.kind === "peer"
           ? crewLead?.controlFor(scoped.link.memberId) ?? {}
-          : { controlOperations: ownerBoundCallerReady(opts.intentReceiptKey, controlOperations.isReady(), pairedIdentityOf(req, pairingGate)), filesDiscovery: true };
+          : {
+              controlOperations: ownerBoundCallerReady(opts.intentReceiptKey, controlOperations.isReady(), pairedIdentityOf(req, pairingGate)),
+              worktreeRemove: ownerBoundCallerReady(opts.intentReceiptKey, controlOperations.isReady(), pairedIdentityOf(req, pairingGate)) && worktreeRemoveReady(),
+              filesDiscovery: true,
+            };
         const muxWire = memberMux == null ? undefined : {
           ...memberMux,
           capabilities: {
@@ -3987,8 +4024,8 @@ export async function filesImage(
 
 /** Just the two port calls a reply needs — the real adapter in the bridge, a fake in tests. */
 export interface ReplySender {
-  typeText(paneId: string, text: string): Promise<MuxAck>;
-  sendKeys(paneId: string, keys: readonly string[]): Promise<MuxAck>;
+  typeText(paneId: string, text: string, finalAdmission?: (runtimeIdentity: string) => boolean): Promise<MuxAck>;
+  sendKeys(paneId: string, keys: readonly string[], finalAdmission?: (runtimeIdentity: string) => boolean): Promise<MuxAck>;
 }
 
 /** Outcome of the two-step send. `textDelivered` is only meaningful on the failure branch. */
@@ -4015,6 +4052,7 @@ export async function sendReplySteps(
   submit: boolean,
   submitKeys: string[],
   sleep: SleepFn = defaultSleep,
+  custody?: { prepare: () => Promise<boolean>; finalAdmission: (runtimeIdentity: string) => boolean },
 ): Promise<ReplyOutcome> {
   let textDelivered = false;
   // One shape for both ways a step can fail — a refusal the adapter returned and an exception it
@@ -4033,13 +4071,15 @@ export async function sendReplySteps(
         { ok: false, textDelivered, ...apiError("reply.send_failed", { reason }) };
   try {
     if (txt) {
-      const typed = await client.typeText(paneId, txt);
+      if (custody && !await custody.prepare()) return failed("worktree.authority_changed");
+      const typed = await client.typeText(paneId, txt, custody?.finalAdmission);
       if (!typed.ok) return failed(typed.detail);
       textDelivered = true;
     }
     if (submit) {
       if (txt) await sleep(REPLY_SETTLE_MS);
-      const sent = await client.sendKeys(paneId, submitKeys);
+      if (custody && !await custody.prepare()) return failed("worktree.authority_changed");
+      const sent = await client.sendKeys(paneId, submitKeys, custody?.finalAdmission);
       if (!sent.ok) return failed(sent.detail);
     }
     return { ok: true, textDelivered };
@@ -4150,13 +4190,14 @@ export async function typeIntoFreshShell(
   command: string,
   wait: PaneReadyOptions = {},
   tag = "launch",
+  custody?: { prepare: () => Promise<boolean>; finalAdmission: (runtimeIdentity: string) => boolean },
 ): Promise<ReplyOutcome> {
   const ready = await awaitPaneReady(herdr, paneId, wait);
   if (!ready.ready) {
     const what = tag === "run" ? `a ${[...command].length}-character line` : `"${command}"`;
     console.warn(`[${tag}] pane ${paneId} did not settle after ${ready.ms}ms — sending ${what} anyway`);
   }
-  return sendReplySteps(herdr, paneId, command, true, ["Enter"], wait.sleep);
+  return sendReplySteps(herdr, paneId, command, true, ["Enter"], wait.sleep, custody);
 }
 
 export async function replyPane(
@@ -5136,6 +5177,7 @@ export async function createWorktree(
     ask?: GitAsk;
     receiptContext?: IntentOwnerContext | null;
     operations?: OperationStore;
+    finalAdmission?: (runtimeIdentity: string) => boolean;
   } = {},
 ): Promise<Response> {
   const ae = req.headers.get("accept-encoding");
@@ -5223,7 +5265,15 @@ export async function createWorktree(
     if (running && receiptBindingMismatch(receipts, requestId, binding)) return json({ ok: false, ...apiError("launch.request_mismatch") } satisfies WorktreeCreateResponse, ae, 409);
     if (running) return json(await joined(running), ae);
   }
-  const dispatch = () => runWorktreeCreate(
+  let noEffect = false;
+  const finalAdmission = deps.finalAdmission === undefined ? undefined : (identity: string): boolean => {
+    const allowed = deps.finalAdmission!(identity);
+    if (!allowed) noEffect = true;
+    return allowed;
+  };
+  const dispatch = async (): Promise<WorktreeCreateResponse> => {
+    if (repoRootOf(engine, spaceId) !== repoRoot) { noEffect = true; return { ok: false, ...apiError("worktree.create_failed", { reason: "worktree.target_changed" }) }; }
+    return runWorktreeCreate(
     herdr,
     engine,
     repoRoot,
@@ -5238,12 +5288,24 @@ export async function createWorktree(
     deps.bases ?? memoryWorktreeBases(),
     wait,
     binding,
+    undefined,
+    undefined,
+    finalAdmission,
+    async () => {
+      const stillOwned = repoRootOf(engine, spaceId) === repoRoot;
+      const lastBase = await resolveBase(parsedBase.base, repoRoot, deps.ask);
+      const same = stillOwned && repoRootOf(engine, spaceId) === repoRoot && lastBase.ok && lastBase.ref === resolved.ref;
+      if (!same) noEffect = true;
+      return same;
+    },
   );
+  };
   const work = executeBoundIntent({
     operations: deps.operations,
     requestId,
     context: deps.receiptContext,
     operation: "worktree.create",
+    classify: (value) => value.ok ? { state: "succeeded" } : value.code === "launch.outcome_unknown" ? { state: "unknown", code: "worktree.outcome_unknown" } : noEffect || value.code === "worktree.target_exists" || value.code === "worktree.invalid_base" || value.code === "worktree.folder_link" || value.code === "worktree.folder_outside_home" ? { state: "refused", code: value.code } : { state: "unknown", code: "worktree.outcome_unknown" },
     targetIdentity: JSON.stringify(["workspace", spaceId]),
     body,
     dispatch,
@@ -5277,14 +5339,24 @@ async function runWorktreeCreate(
   path?: string,
   // Run once the multiplexer said yes, before the answer: the New sheet's memory of this repo's choices.
   afterCreate?: () => Promise<void>,
+  finalAdmission?: (runtimeIdentity: string) => boolean,
+  beforeDispatch?: () => Promise<boolean>,
 ): Promise<WorktreeCreateResponse> {
   // `base` and `path` join the request only when there is one, so a call without them is the call
   // this route always made.
   let request: MuxWorktreeCreateRequest = { repoRoot, branch };
   if (base !== undefined) request = { ...request, base };
   if (path !== undefined) request = { ...request, path };
-  const outcome = await herdr.createWorktree(request);
+  let originalRuntime: string | null = null;
+  const creationAdmission = finalAdmission === undefined ? undefined : (identity: string) => {
+    if (!finalAdmission(identity) || originalRuntime !== null && originalRuntime !== identity) return false;
+    originalRuntime = identity; return true;
+  };
+  const outcome = await herdr.createWorktree(request, creationAdmission, beforeDispatch);
   if (!outcome.ok) {
+    // Unreachable includes an accepted prefix. Original admission may have since refused,
+    // but that diagnostic cannot convert a possibly dispatched create into known no effect.
+    if (outcome.reason === "unreachable") return worktreeIntentUnknown();
     // The half-done case gets its OWN code, because the recovery is the opposite one: the branch is
     // on disk and only the opening failed, so the phone must offer "open it", never "create it
     // again" (a second create refuses — the path is taken). Probed on herdr 0.8.2, 2026-08-28.
@@ -5299,12 +5371,18 @@ async function runWorktreeCreate(
   }
   const created = outcome.value;
   // Written only now, once the multiplexer said yes: a refusal leaves no checkout to describe.
-  if (base !== undefined) await bases.record(created.cwd, { base, createdAt: Date.now() });
-  if (afterCreate !== undefined) await afterCreate();
   let launcherStarted = false;
   let launcherError: string | undefined;
-  if (row !== undefined) {
-    const sent = await typeIntoFreshShell(herdr, created.paneId, row.command, wait, "worktree");
+  try {
+    if (base !== undefined) await bases.record(created.cwd, { base, createdAt: Date.now() });
+    if (afterCreate !== undefined) await afterCreate();
+  } catch { launcherError = "worktree.choice_record_failed"; }
+  if (row !== undefined && launcherError === undefined) {
+    const custody = finalAdmission === undefined ? undefined : {
+      prepare: async () => { const identity = await herdr.layoutRuntimeIdentity?.(); return originalRuntime !== null && identity === originalRuntime && finalAdmission(originalRuntime); },
+      finalAdmission: (identity: string) => originalRuntime !== null && identity === originalRuntime && finalAdmission(identity),
+    };
+    const sent = await typeIntoFreshShell(herdr, created.paneId, row.command, wait, "worktree", custody);
     launcherStarted = sent.ok;
     if (!sent.ok) launcherError = sent.error;
   }
@@ -5501,6 +5579,7 @@ export async function createWorktreeAt(
     receipts: WorktreeReceiptSurface;
     receiptContext?: IntentOwnerContext | null;
     operations?: OperationStore;
+    finalAdmission?: (runtimeIdentity: string) => boolean;
     bases?: WorktreeBaseSurface;
     choices?: WorktreeChoiceSurface;
     harnesses?: Pick<HarnessProbe, "launch">;
@@ -5588,7 +5667,24 @@ export async function createWorktreeAt(
           if (path !== undefined) choice.parent = dirname(path);
           return choices.record(repo.repoRoot, choice);
         };
-  const dispatch = () => runWorktreeCreate(
+  let noEffect = false;
+  const finalAdmission = deps.finalAdmission === undefined ? undefined : (identity: string): boolean => {
+    const allowed = deps.finalAdmission!(identity);
+    if (!allowed) noEffect = true;
+    return allowed;
+  };
+  const dispatch = async (): Promise<WorktreeCreateResponse> => {
+    const freshRepo = await repoForBranch(cwd, deps);
+    if (!freshRepo || freshRepo.repoRoot !== repo.repoRoot || freshRepo.workTree !== repo.workTree || !(await gitAcceptsBranch(freshRepo.repoRoot, branch, ask)))
+      { noEffect = true; return { ok: false, ...apiError("worktree.create_failed", { reason: "worktree.target_changed" }) }; }
+    const freshBase = await resolveBase(parsedBase.base, freshRepo.repoRoot, ask);
+    if (!freshBase.ok || freshBase.ref !== resolved.ref) return { ok: false, ...apiError("worktree.invalid_base") };
+    if (folder.kind === "parent") {
+      const freshParent = await resolveParentTarget({ parent: folder.parent, branch, repoRoot: freshRepo.repoRoot, home, fs: deps.fs });
+      if (!freshParent.ok) return { ok: false, ...apiError(freshParent.code, { path: freshParent.path ?? folder.parent }) };
+      if (freshParent.path !== path) { noEffect = true; return { ok: false, ...apiError("worktree.create_failed", { reason: "worktree.target_changed" }) }; }
+    }
+    return runWorktreeCreate(
     herdr,
     engine,
     repo.repoRoot,
@@ -5605,12 +5701,26 @@ export async function createWorktreeAt(
     binding,
     path,
     remember,
+    finalAdmission,
+    async () => {
+      const lastRepo = await repoForBranch(cwd, deps);
+      if (!lastRepo || lastRepo.repoRoot !== repo.repoRoot || lastRepo.workTree !== repo.workTree || !await gitAcceptsBranch(lastRepo.repoRoot, branch, ask)) { noEffect = true; return false; }
+      const lastBase = await resolveBase(parsedBase.base, lastRepo.repoRoot, ask);
+      if (!lastBase.ok || lastBase.ref !== resolved.ref) { noEffect = true; return false; }
+      if (folder.kind !== "parent") return true;
+      const lastParent = await resolveParentTarget({ parent: folder.parent, branch, repoRoot: lastRepo.repoRoot, home, fs: deps.fs });
+      const same = lastParent.ok && lastParent.path === path;
+      if (!same) noEffect = true;
+      return same;
+    },
   );
+  };
   const work = executeBoundIntent({
     operations: deps.operations,
     requestId,
     context: deps.receiptContext,
     operation: "worktree.createAt",
+    classify: (value) => value.ok ? { state: "succeeded" } : value.code === "launch.outcome_unknown" ? { state: "unknown", code: "worktree.outcome_unknown" } : noEffect || value.code === "worktree.target_exists" || value.code === "worktree.invalid_base" || value.code === "worktree.folder_link" || value.code === "worktree.folder_outside_home" ? { state: "refused", code: value.code } : { state: "unknown", code: "worktree.outcome_unknown" },
     targetIdentity: JSON.stringify(["folder", repo.repoRoot, path ?? repo.repoRoot]),
     body,
     dispatch,
@@ -5637,7 +5747,7 @@ function parseFolderChoice(
   return null;
 }
 
-async function openWorktree(
+export async function openWorktree(
   herdr: MuxAdapter,
   engine: StateEngine,
   spaceId: string,
@@ -5645,7 +5755,9 @@ async function openWorktree(
   audit: AuditLog,
   device: string | null,
   session: string,
+  finalAdmission?: (runtimeIdentity: string) => boolean,
 ): Promise<Response> {
+  const originalRepoRoot = repoRootOf(engine, spaceId);
   const ae = req.headers.get("accept-encoding");
   let body: JsonValue;
   try {
@@ -5667,7 +5779,8 @@ async function openWorktree(
       ae,
     );
   }
-  const outcome = await herdr.openWorktree({ repoRoot, path });
+  if (repoRoot !== originalRepoRoot) return json({ ok: false, ...apiError("worktree.open_failed", { reason: "worktree.target_changed" }) } satisfies WorktreeOpenResponse, ae, 409);
+  const outcome = await herdr.openWorktree({ repoRoot, path }, finalAdmission, async () => repoRootOf(engine, spaceId) === originalRepoRoot);
   if (!outcome.ok) {
     return json(
       {

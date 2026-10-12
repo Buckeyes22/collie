@@ -17,6 +17,7 @@
 // lands in `docs/` without a line below. The root contributor specifications are deliberately not
 // here: the largest of them is 194 KB on its own, and an agent that needs them has the checkout.
 
+import agentIdentity from "../docs/agent-identity.md" with { type: "text" };
 import changes from "../docs/changes.md" with { type: "text" };
 import claudeCodeOnYourPhone from "../docs/claude-code-on-your-phone.md" with { type: "text" };
 import commands from "../docs/commands.md" with { type: "text" };
@@ -107,6 +108,11 @@ export const DOC_PAGES: readonly DocPage[] = [
     name: "voice-and-push",
     purpose: "The microphone in the composer, and notifications when an agent waits on you",
     text: voiceAndPush,
+  },
+  {
+    name: "agent-identity",
+    purpose: "Inspect agent identity, session provenance and lifecycle authority on the owning runtime",
+    text: agentIdentity,
   },
   {
     name: "security",

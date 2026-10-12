@@ -1,5 +1,6 @@
 package com.lateapex.collie.network
 
+import java.security.MessageDigest
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.jsonObject
@@ -43,6 +44,22 @@ class ControlModelsTest {
         assertEquals(result, json.decodeFromString<ControlOperation>(json.encodeToString(ControlOperation.serializer(), move)).result)
     }
 
+    @Test fun removalReceiptBindsTheExactWorkspaceRequestForceAndOwnerTarget() {
+        val workspace = "space-7"
+        val requestId = "remove-19"
+        val target = MessageDigest.getInstance("SHA-256").digest("worktree:$workspace".toByteArray())
+            .joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
+        val now = System.currentTimeMillis()
+        val result = WorktreeRemoveResult("worktree-remove", workspace, "/repo/.worktrees/topic", "topic", false)
+        val operation = ControlOperation(1, requestId, "succeeded", "worktreeRemove", target, now, now, result = result)
+        val response = WorktreeRemoveResponse(true, "worktree_removed", workspace, "/repo/.worktrees/topic", "topic", false, operation)
+        assertTrue(response.validFor(workspace, false, requestId))
+        assertFalse(response.validFor(workspace, false, "another-request"))
+        assertFalse(response.validFor(workspace, true, requestId))
+        assertFalse(response.copy(operation = operation.copy(targetIdentity = "f".repeat(64))).validFor(workspace, false, requestId))
+        assertFalse(response.copy(path = "relative/path").validFor(workspace, false, requestId))
+    }
+
     @Test fun paneLayoutPlansBindRequestedPaneActionAndClosedEffects() {
         val layout = PaneLayoutRead("layout", LayoutSnapshot("space", "tab", false, LayoutRect(0, 0, 80, 24), "pane:one",
             listOf(LayoutPane("pane:one", true, LayoutRect(0, 0, 80, 24))), emptyList()))
@@ -73,6 +90,33 @@ class ControlModelsTest {
             Json.parseToJsonElement("""{"verb":"swap","sourcePaneId":"pane","targetPaneId":"other","direction":null}""").jsonObject, geometry)
         assertTrue(swap.validForPane("pane", swapAction))
         assertFalse(swap.copy(effects = Json.parseToJsonElement("""{"verb":"swap","sourcePaneId":"pane","targetPaneId":"other","direction":true}""").jsonObject).validForPane("pane", swapAction))
+    }
+
+
+    @Test fun removalClosedUnionRejectsScalarCoercionExtrasAndEveryEnvelopeMismatch() {
+        val json = Json { ignoreUnknownKeys = true }
+        val now = System.currentTimeMillis()
+        val target = MessageDigest.getInstance("SHA-256").digest("worktree:space".toByteArray()).joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
+        val result = WorktreeRemoveResult("worktree-remove", "space", "/repo/topic", "topic", false)
+        val operation = ControlOperation(1, "remove", "succeeded", "worktreeRemove", target, now, now, result = result)
+        val good = WorktreeRemoveResponse(true, "worktree_removed", "space", "/repo/topic", "topic", false, operation)
+        val raw = json.encodeToString(WorktreeRemoveResponse.serializer(), good)
+        assertTrue(json.decodeFromString<WorktreeRemoveResponse>(raw).validFor("space", false, "remove"))
+        for (wrong in listOf(
+            raw.replace("\"workspaceId\":\"space\"", "\"workspaceId\":17"),
+            raw.replace("\"path\":\"/repo/topic\"", "\"path\":17"),
+            raw.replace("\"branch\":\"topic\"", "\"branch\":true"),
+            raw.replace("\"forced\":false", "\"forced\":\"false\""),
+            raw.replace("\"at\":$now", "\"at\":\"$now\""),
+            raw.replace("\"kind\":\"worktree-remove\"", "\"kind\":\"worktree-remove\",\"vendor\":1"),
+        )) assertThrows(kotlinx.serialization.SerializationException::class.java) { json.decodeFromString<WorktreeRemoveResponse>(wrong) }
+        for (bad in listOf(good.copy(workspaceId = "other"), good.copy(path = "/repo/other"), good.copy(branch = "other"), good.copy(forced = true),
+            good.copy(operation = operation.copy(result = result.copy(workspaceId = "other"))), good.copy(operation = operation.copy(result = result.copy(path = "/repo/other"))),
+            good.copy(operation = operation.copy(result = result.copy(branch = "other"))), good.copy(operation = operation.copy(result = result.copy(forced = true)))))
+            assertFalse(bad.validFor("space", false, "remove"))
+        val refused = WorktreeRemoveResponse(false, operation = operation.copy(state = "refused", result = null, code = "worktree.stale_worktree_operation"), code = "worktree.stale_worktree_operation", error = "The target changed")
+        assertTrue(refused.knownRefusalFor("space", "remove"))
+        assertFalse(refused.copy(operation = refused.operation!!.copy(state = "unknown")).knownRefusalFor("space", "remove"))
     }
 
 }

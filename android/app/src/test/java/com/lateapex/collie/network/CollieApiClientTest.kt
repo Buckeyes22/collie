@@ -29,6 +29,35 @@ import org.junit.Test
 import kotlinx.serialization.json.put
 
 class CollieApiClientTest {
+    @Test fun mountedRemovalRefusalIsTypedAndMalformedSuccessNeverBecomesAReceipt(): Unit = runBlocking {
+        val mounted = Connection(CollieOrigin(server.url("/nested/collie/").toString()), "phone", "token")
+        val now = System.currentTimeMillis()
+        val target = java.security.MessageDigest.getInstance("SHA-256").digest("worktree:space".toByteArray()).joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
+        val json = Json { encodeDefaults = true }
+        val receipt = ControlOperation(1, "remove", "refused", "worktreeRemove", target, now, now, "worktree.dirty_worktree_requires_force")
+        val value = WorktreeRemoveResponse(false, operation = receipt, code = receipt.code, error = "Review a separate force plan")
+        server.enqueue(MockResponse().setResponseCode(409).setBody(json.encodeToString(WorktreeRemoveResponse.serializer(), value))
+            .setHeader("x-collie-error-source", "collie").setHeader("x-collie-error-factor", "operation").setHeader("x-collie-error-code", receipt.code!!))
+        val result = api.removeWorktree(mounted, Scope(host = "peer", session = "work"), "space", WorktreeRemoveRequest("remove", "plan", false))
+        assertTrue(result is ApiResult.Success && result.value.knownRefusalFor("space", "remove"))
+        val request = server.takeRequest()
+        assertEquals("/nested/collie/api/workspace/space/worktree/remove?host=peer&session=work", request.path)
+        assertEquals("POST", request.method)
+        assertEquals("Bearer token", request.getHeader("Authorization"))
+        val succeeded = value.copy(ok = true, type = "worktree_removed", workspaceId = "space", path = "/repo/topic", branch = "topic", forced = false,
+            operation = receipt.copy(state = "succeeded", code = null, result = WorktreeRemoveResult("worktree-remove", "space", "/repo/topic", "topic", false)), code = null, error = null)
+        val good = json.encodeToString(WorktreeRemoveResponse.serializer(), succeeded)
+        for (bad in listOf(good.replace("\"forced\":false", "\"forced\":\"false\""), good.replace("\"path\":\"/repo/topic\"", "\"path\":17"))) {
+            server.enqueue(MockResponse().setBody(bad))
+            val rejected = api.removeWorktree(mounted, Scope(), "space", WorktreeRemoveRequest("remove", "plan", false))
+            assertTrue(rejected is ApiResult.Failure && rejected.error is ApiFailure.Protocol)
+            server.takeRequest()
+        }
+        server.enqueue(MockResponse().setBody(good))
+        assertTrue(api.removeWorktree(mounted, Scope(), "space", WorktreeRemoveRequest("remove", "plan", false)) is ApiResult.Success)
+        server.takeRequest()
+    }
+
     @Test
     fun agentCapabilityInventoryIsAnAuthenticatedScopedReadAndRetainsUnknownDimensionStates() = runBlocking {
         val mounted = Connection(CollieOrigin(server.url("/nested/collie/").toString()), "phone", "token")

@@ -9,6 +9,12 @@ import { type PlanBinding, sameBinding } from "./plans.ts";
  * discriminant/key overhead and state growth stays below 2 KiB. Held once per pending row so
  * concurrent completions cannot consume one another's terminal-result space. */
 export const OPERATION_COMPLETION_HEADROOM_BYTES = 4096;
+/** UTF-16 limits may require six JSON bytes per code unit (escaped branch controls). Include all
+ * keys, aliases, state/timestamps and bounded code; held separately for each concurrent pending row. */
+export const WORKTREE_REMOVE_COMPLETION_HEADROOM_BYTES = 32 * 1024;
+function completionHeadroom(capability: string): number {
+  return capability === "worktreeRemove" ? WORKTREE_REMOVE_COMPLETION_HEADROOM_BYTES : OPERATION_COMPLETION_HEADROOM_BYTES;
+}
 
 export type OperationState = "pending" | "succeeded" | "refused" | "unknown";
 export interface OperationReceipt {
@@ -19,7 +25,7 @@ export interface OperationReceipt {
   readonly at: number;
   readonly updatedAt: number;
   readonly code: string | null;
-  readonly result?: OperationResult;
+  readonly result?: DurableOperationResult;
 }
 /** Persisted structured result is limited to the identity aliases needed after pane.move. */
 export interface OperationResult {
@@ -40,7 +46,15 @@ export interface OperationResult {
     readonly closedWorkspaceId: string | null;
   };
 }
-export interface OperationOutcome { readonly state: "succeeded" | "refused" | "unknown"; readonly code?: string; readonly result?: OperationResult }
+export interface WorktreeRemoveOperationResult {
+  readonly kind: "worktree-remove";
+  readonly workspaceId: string;
+  readonly path: string;
+  readonly branch: string | null;
+  readonly forced: boolean;
+}
+export type DurableOperationResult = OperationResult | WorktreeRemoveOperationResult;
+export interface OperationOutcome { readonly state: "succeeded" | "refused" | "unknown"; readonly code?: string; readonly result?: DurableOperationResult }
 export interface OperationView {
   readonly schema: 1;
   readonly requestId: string;
@@ -50,7 +64,7 @@ export interface OperationView {
   readonly at: number;
   readonly updatedAt: number;
   readonly code: string | null;
-  readonly result?: OperationResult;
+  readonly result?: DurableOperationResult;
 }
 export type ExistingOperation = { readonly kind: "missing" } | { readonly kind: "conflict" } | { readonly kind: "match"; readonly operation: OperationView };
 type BeforeOperationPersist = () => Promise<void>;
@@ -76,10 +90,16 @@ function validReceipt(value: unknown): value is OperationReceipt {
   if ((Object.keys(r).length !== 7 && Object.keys(r).length !== 8) || !Object.keys(r).every((key) => ["requestId", "binding", "planToken", "state", "at", "updatedAt", "code", "result"].includes(key))) return false;
   return typeof r.requestId === "string" && /^[a-zA-Z0-9_-]{1,128}$/.test(r.requestId) && validBinding(r.binding) && (r.planToken === null || bounded(r.planToken)) && typeof r.state === "string" && ["pending", "succeeded", "refused", "unknown"].includes(r.state) && typeof r.at === "number" && Number.isSafeInteger(r.at) && r.at >= 0 && typeof r.updatedAt === "number" && Number.isSafeInteger(r.updatedAt) && r.updatedAt >= r.at && (r.code === null || bounded(r.code)) && (r.result === undefined || (r.state === "succeeded" && validOperationResult(r.result)));
 }
-function validOperationResult(value: unknown): value is OperationResult {
+function validOperationResult(value: unknown): value is DurableOperationResult {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
   // SAFETY: null and arrays are excluded; the key set and every value are checked before the guard returns true.
   const r = value as Record<string, unknown>;
+  if (r.kind === "worktree-remove") {
+    return Object.keys(r).length === 5 && Object.keys(r).every((key) => ["kind", "workspaceId", "path", "branch", "forced"].includes(key)) &&
+      typeof r.workspaceId === "string" && /^[A-Za-z0-9_.:-]{1,128}$/.test(r.workspaceId) &&
+      typeof r.path === "string" && r.path.length > 0 && r.path.length <= 4096 && !Array.from(r.path).some((char) => char.charCodeAt(0) < 32) &&
+      (r.branch === null || typeof r.branch === "string" && r.branch.length > 0 && r.branch.length <= 256) && typeof r.forced === "boolean";
+  }
   if (!(Object.keys(r).length === 5 || Object.keys(r).length === 6) || !Object.keys(r).every((key) => ["kind", "paneId", "previousPaneId", "previousTabId", "previousWorkspaceId", "transfer"].includes(key)) ||
       r.kind !== "pane-move" || !validOperationResultId(r.paneId) || !validOperationResultId(r.previousPaneId) || !validOperationResultId(r.previousTabId) || !validOperationResultId(r.previousWorkspaceId)) return false;
   if (r.transfer === undefined) return true;
@@ -217,7 +237,7 @@ export class OperationStore {
       if (!Number.isSafeInteger(at) || at < 0) throw new Error("operation.invalid_clock");
       const receipt: OperationReceipt = { requestId, binding: { ...binding }, planToken, state: "pending", at, updatedAt: at, code: null };
       // Keep every file we create within the loader's byte bound, with completion headroom.
-      if (Buffer.byteLength(JSON.stringify([...this.receipts.values(), receipt]), "utf8") + (1 + [...this.receipts.values()].filter((row) => row.state === "pending").length) * OPERATION_COMPLETION_HEADROOM_BYTES > 4 * 1024 * 1024) throw new Error("operation.capacity");
+      if (Buffer.byteLength(JSON.stringify([...this.receipts.values(), receipt]), "utf8") + completionHeadroom(binding.capability) + [...this.receipts.values()].filter((row) => row.state === "pending").reduce((sum, row) => sum + completionHeadroom(row.binding.capability), 0) > 4 * 1024 * 1024) throw new Error("operation.capacity");
       this.receipts.set(requestId, receipt);
       // A failed reserve must not dispatch. Leave the process-local entry unknown as well.
       try { await this.persist(); } catch (error) {
@@ -230,7 +250,7 @@ export class OperationStore {
     if (!reservation.fresh) return operationView(reservation.receipt);
     let outcome: OperationOutcome;
     try { outcome = await dispatch(); } catch { outcome = { state: "unknown", code: "operation.outcome_unknown" }; }
-    if (!["succeeded", "refused", "unknown"].includes(outcome.state) || (outcome.code !== undefined && !bounded(outcome.code)) || (outcome.result !== undefined && (outcome.state !== "succeeded" || !validOperationResult(outcome.result))) || (reservation.receipt.binding.capability === "paneMove" && outcome.state === "succeeded" && (outcome.result === undefined || !validOperationResult(outcome.result)))) outcome = { state: "unknown", code: "operation.invalid_outcome" };
+    if (!["succeeded", "refused", "unknown"].includes(outcome.state) || (outcome.code !== undefined && !bounded(outcome.code)) || (outcome.result !== undefined && (outcome.state !== "succeeded" || !validOperationResult(outcome.result))) || (["paneMove", "worktreeRemove"].includes(reservation.receipt.binding.capability) && outcome.state === "succeeded" && (outcome.result === undefined || !validOperationResult(outcome.result)))) outcome = { state: "unknown", code: "operation.invalid_outcome" };
     return this.serial(async () => {
       const observedAt = this.now();
       const updatedAt = Number.isSafeInteger(observedAt) ? Math.max(reservation.receipt.at, observedAt) : reservation.receipt.at;

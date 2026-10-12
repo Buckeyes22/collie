@@ -264,6 +264,8 @@ the same handlers. There is no second handler set, no second semantic, and no He
 | `POST` | `/crew/v1/tab` | `POST /api/tab` (`:218`) | forwarded |
 | `POST` | `/crew/v1/tab/:id/rename\|close` | `TAB_ACTION_ROUTE` (`:102`, matched `:234`) | forwarded |
 | `POST` | `/crew/v1/workspace` | `POST /api/workspace` (`:225`) | forwarded |
+| `GET` | `/crew/v1/workspace/:id/worktree/remove-plan` | `GET /api/workspace/:id/worktree/remove-plan` | additive-optional — an owner-host read that resolves the exact discovered linked checkout and binds its real paths, branch, Git status and current pane identities into a short-lived plan. Dirty worktrees require a second plan with explicit `force=true`; the lead never resolves a caller path or substitutes its own runtime |
+| `POST` | `/crew/v1/workspace/:id/worktree/remove` | `POST /api/workspace/:id/worktree/remove` | additive-optional — an owner-host write carrying only `{ requestId, planToken, force }`; the peer repeats discovery and status/pane checks before one removal call and keeps a durable result/unknown receipt. The route never forwards a Herdr method or trust flag. The owner retains paired-device/write gates; unsupported or old peers return their typed refusal |
 | `POST` | `/crew/v1/launch` | `POST /api/launch` | forwarded — additive-optional (§7.1). Runs an allowlisted `launchers.toml` row **on the peer**, from that peer's own rows; a lead that predates it never calls it, and a peer that predates it answers 404 to a lead that does. Since 1.19.0 (ADR 0091) the body may instead name `harness` (an id from that peer's own `harnesses` list) or `shell: true`, plus `cwd` and `requestId`, all optional and additive: the receipt lives on the peer that made the pane. Since 1.19.0 (ADR 0095) the body may instead name `run`, a one-off line the peer checks against its own `[phone] run` switch and character rule and types into a fresh shell; the answer may carry `noPrompts`, and a run that worked joins that peer's own `commands-recent.json`. A peer that predates them answers 400 to a body without `command`, which the phone never sends to it, because that peer's launchers answer carries no `harnesses` |
 | `GET` | `/crew/v1/launchers` | `GET /api/launchers` | forwarded — additive-optional (§7.1), same pairing as above. Rows must come from the host that runs them, so this is a READ crossing the link rather than a second copy of `config`'s `launchers` field, which is why that field was retired from `/api/config` in the same change. Since 1.19.0 (ADR 0091) the answer may carry `harnesses: [{ id, label, found }]`, the agents that peer starts and whether each binary is on its login PATH; additive-optional, and its absence is how the phone tells an older peer apart. Since 1.19.0 (ADR 0094) it may also carry `adding` (that peer's `[phone]` switches, its `launchers.toml` path, its recipe table and the added rows it holds back), and each row may carry `source`, `id`, `kind`, `harness`, `noPrompts`, `addedBy`, `addedAt` and `addedAs`, all additive-optional. Since 1.19.0 (ADR 0095) it may also carry `recentRuns` (that peer's one-off command history) and `adding.run` (its `[phone] run` switch), additive-optional |
 | `GET` | `/crew/v1/agents/capabilities` | `GET /api/agents/capabilities` | forwarded — additive-optional (§7.1). A paired, session-scoped READ answered by the owning runtime. It reports the canonical 24-kind catalog separately from executable registrations; per-kind detection/session counts require exact identities and references in that runtime's current snapshot. Registered binaries may receive only a fixed, bounded `--version` probe; executable paths and raw command output never cross the API. `media: interface-ready` means only that a bounded producer can call the owner port; it is not end-to-end ingestion or recorder acceptance. A lead that predates this route never calls it, and an older peer answers 404. |
@@ -3231,3 +3233,21 @@ cannot adopt the pending request. The only reconstructed phone `X-Collie-*` read
 `X-Collie-Seen: 1` on pane/history/chat GETs; it grants no authority and does not convey native
 identity claims. Final local checks do not assert peer/vendor atomic compare-and-send; uncertain
 responses retain the existing no-automatic-retry policy.
+
+
+### Owner-scoped worktree removal (B15)
+
+The neutral `/api/workspace/:id/worktree/remove-plan` read and `/remove` write are the only
+worktree routes that cross Crew. Existing folder-plan/create/list/open remain lead-local and are
+never inferred from the generic launch route. On the addressed owner, the plan resolves the linked
+checkout from its snapshot and worktree listing, records real repository/checkout paths, branch,
+bounded Git status and pane/terminal identities, then repeats those reads before dispatch. Git
+status and pane identity are advisory rechecks: Herdr 0.9.3's removal operation has no expected-state
+or compare-and-set argument, so this route does not claim an atomic precondition. A busy operation,
+changed snapshot, substituted path or changed Git evidence refuses; unsupported muxes and peers
+fail closed. A clean plan leaves force false. A dirty plan requires a separate explicit force plan
+and product confirmation naming the discarded changes. The method removes only Herdr's discovered
+linked checkout and never deletes the branch or the main checkout. A lost reply is an unknown
+durable result; same-ID reconciliation reads the existing receipt and never dispatches a second
+removal. The lead forwards the same closed neutral request body and preserves owner/device/session
+scope; no raw vendor method, arbitrary path or trust option crosses the link.

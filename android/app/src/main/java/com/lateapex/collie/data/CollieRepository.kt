@@ -57,6 +57,10 @@ import com.lateapex.collie.network.UpdateStartResponse
 import com.lateapex.collie.network.UploadResponse
 import com.lateapex.collie.network.WorktreeListResponse
 import com.lateapex.collie.network.WorktreeOpenResponse
+import com.lateapex.collie.network.WorktreeRemovePlanResponse
+import com.lateapex.collie.network.WorktreeRemoveRequest
+import com.lateapex.collie.network.knownRefusalFor
+import com.lateapex.collie.network.WorktreeRemoveResponse
 import com.lateapex.collie.network.WorktreeAtRequest
 import com.lateapex.collie.network.BranchRequest
 import com.lateapex.collie.network.StartLaunchRequest
@@ -519,7 +523,7 @@ class CollieRepository(
                 }
             }
             if (reason in setOf(AuthorityInvalidation.PAIRING_RETIRED, AuthorityInvalidation.DISCONNECTED)) {
-                transition.owner?.let { owner -> runCatching { launchIntentStore?.retireOwned(owner) } }
+                transition.owner?.let { owner -> runCatching { launchIntentStore?.retireOwned(owner, transition.pendingGeneration.takeIf { transition.retiredIncarnation == null }) } }
             }
             transition.authorityListeners.forEach { listener -> runCatching { listener(event) } }
         } finally {
@@ -927,11 +931,13 @@ class CollieRepository(
         requestId: String,
         cwd: String? = null,
         confirmedNoPrompts: Boolean,
+        expectedContext: ScopedReadContext? = null,
     ): ApiResult<CreateResponse> {
-        val context = readContext(scope) ?: return notConnected()
+        val context = expectedContext ?: readContext(scope) ?: return notConnected()
+        if (!isCurrent(context) || context.requestScope != scope) return staleScope()
         val store = launchIntentStore ?: return intentUnavailable()
         if (!writesAllowed(scope) || !context.connection.isPaired) return notConnected()
-        if (unresolvedLaunchIntents(scope).isNotEmpty()) {
+        if (unresolvedLaunchIntents(scope, context).isNotEmpty()) {
             return ApiResult.Failure(ApiFailure.Http(409, "Resolve the earlier uncertain launch before starting another", "launch.unresolved_intent"))
         }
         when (val readiness = intentReceiptReadiness(context, scope)) {
@@ -943,6 +949,7 @@ class CollieRepository(
             StartLaunchRequest.serializer(),
             StartLaunchRequest(requestId, cwd, target.harness, target.command, target.shell),
         )
+        if (!isCurrent(context)) return staleScope()
         val intent = FrozenLaunchIntent(
             requestId = requestId,
             origin = context.key.origin,
@@ -957,7 +964,8 @@ class CollieRepository(
             confirmedNoPrompts = confirmedNoPrompts,
             canonicalBody = body,
         )
-        val reserved = try { store.reserve(intent) } catch (_: Exception) { return intentUnavailable() }
+        val reserved = try { store.reserve(intent) { isCurrent(context) } } catch (_: Exception) { return intentUnavailable() }
+        if (reserved is ReserveIntentResult.Retired) return staleScope()
         if (reserved is ReserveIntentResult.Unresolved) return unresolvedIntentFailure()
         if (reserved !is ReserveIntentResult.Reserved) {
             return ApiResult.Failure(ApiFailure.Http(409, "This request ID is already bound to a saved intent", "launch.request_mismatch"))
@@ -1005,6 +1013,7 @@ class CollieRepository(
             is ApiResult.NotModified -> return intentUnavailable()
         }
         val body = intentJson.encodeToString(StartRunRequest.serializer(), StartRunRequest(requestId, cwd, run))
+        if (!isCurrent(context)) return staleScope()
         val intent = FrozenLaunchIntent(
             requestId = requestId, origin = context.key.origin, mount = context.key.origin,
             connectionGeneration = context.key.connectionGeneration, pairedDeviceIdentity = context.key.pairedDeviceIdentity,
@@ -1012,7 +1021,8 @@ class CollieRepository(
             subjectIdentity = context.key.subjectIdentity, operation = "launch.run",
             confirmedNoPrompts = confirmedNoPrompts, canonicalBody = body,
         )
-        val reserved = try { store.reserve(intent) } catch (_: Exception) { return intentUnavailable() }
+        val reserved = try { store.reserve(intent) { isCurrent(context) } } catch (_: Exception) { return intentUnavailable() }
+        if (reserved is ReserveIntentResult.Retired) return staleScope()
         if (reserved is ReserveIntentResult.Unresolved) return unresolvedIntentFailure()
         if (reserved !is ReserveIntentResult.Reserved) {
             return ApiResult.Failure(ApiFailure.Http(409, "This request ID is already bound to a saved intent", "launch.request_mismatch"))
@@ -1042,8 +1052,10 @@ class CollieRepository(
         requestId: String,
         cwd: String? = null,
         confirmedNoPrompts: Boolean,
+        expectedContext: ScopedReadContext? = null,
     ): ApiResult<CreateResponse> {
-        val context = readContext(scope) ?: return notConnected()
+        val context = expectedContext ?: readContext(scope) ?: return notConnected()
+        if (!isCurrent(context) || context.requestScope != scope) return staleScope()
         val store = launchIntentStore ?: return intentUnavailable()
         if (command.isBlank() || requestId.isBlank() || !writesAllowed(scope) || !context.connection.isPaired) return notConnected()
         if (unresolvedLaunchIntents(scope).isNotEmpty()) return unresolvedIntentFailure()
@@ -1051,6 +1063,7 @@ class CollieRepository(
             StartLaunchRequest.serializer(),
             StartLaunchRequest(requestId, cwd, command = command),
         )
+        if (!isCurrent(context)) return staleScope()
         val intent = FrozenLaunchIntent(
             requestId = requestId, origin = context.key.origin, mount = context.key.origin,
             connectionGeneration = context.key.connectionGeneration, pairedDeviceIdentity = context.key.pairedDeviceIdentity,
@@ -1059,7 +1072,8 @@ class CollieRepository(
             receiptMode = LaunchIntentReceiptMode.legacyInitialOnly,
             confirmedNoPrompts = confirmedNoPrompts, canonicalBody = body,
         )
-        val reserved = try { store.reserve(intent) } catch (_: Exception) { return intentUnavailable() }
+        val reserved = try { store.reserve(intent) { isCurrent(context) } } catch (_: Exception) { return intentUnavailable() }
+        if (reserved is ReserveIntentResult.Retired) return staleScope()
         if (reserved is ReserveIntentResult.Unresolved) return unresolvedIntentFailure()
         if (reserved !is ReserveIntentResult.Reserved) {
             return ApiResult.Failure(ApiFailure.Http(409, "This request ID is already bound to a saved intent", "launch.request_mismatch"))
@@ -1261,7 +1275,7 @@ class CollieRepository(
         ApiFailure.Protocol("Launch outcome is unknown; the saved request remains available for deliberate reconciliation"),
     )
 
-    suspend fun planWorktree(scope: Scope, cwd: String, branch: String? = null, parent: String? = null): ApiResult<WorktreePlanResponse> = withConnection(scope) {
+    suspend fun planWorktree(scope: Scope, cwd: String, branch: String? = null, parent: String? = null, expectedContext: ScopedReadContext? = null): ApiResult<WorktreePlanResponse> = withConnection(scope, expectedContext = expectedContext) {
         api.planWorktree(it, scope, cwd, branch, parent)
     }
 
@@ -1278,11 +1292,13 @@ class CollieRepository(
         base: WorktreeBase = WorktreeBase(),
         folder: WorktreeFolder = WorktreeFolder(),
         confirmedNoPrompts: Boolean,
+        expectedContext: ScopedReadContext? = null,
     ): ApiResult<WorktreeOpenResponse> {
-        val context = readContext(scope) ?: return notConnected()
+        val context = expectedContext ?: readContext(scope) ?: return notConnected()
+        if (!isCurrent(context) || context.requestScope != scope) return staleScope()
         val store = launchIntentStore ?: return intentUnavailable()
         if (!writesAllowed(scope) || !context.connection.isPaired) return notConnected()
-        if (unresolvedLaunchIntents(scope).isNotEmpty()) {
+        if (unresolvedLaunchIntents(scope, context).isNotEmpty()) {
             return ApiResult.Failure(ApiFailure.Http(409, "Resolve the earlier uncertain launch before starting another", "launch.unresolved_intent"))
         }
         when (val readiness = intentReceiptReadiness(context, scope)) {
@@ -1294,6 +1310,7 @@ class CollieRepository(
             WorktreeAtRequest.serializer(),
             WorktreeAtRequest(cwd, branch, base, folder, requestId, target.harness, target.command, target.shell),
         )
+        if (!isCurrent(context)) return staleScope()
         val intent = FrozenLaunchIntent(
             requestId = requestId, origin = context.key.origin, mount = context.key.origin,
             connectionGeneration = context.key.connectionGeneration, pairedDeviceIdentity = context.key.pairedDeviceIdentity,
@@ -1301,7 +1318,8 @@ class CollieRepository(
             subjectIdentity = context.key.subjectIdentity, operation = "worktree.createAt",
             confirmedNoPrompts = confirmedNoPrompts, canonicalBody = body,
         )
-        val reserved = try { store.reserve(intent) } catch (_: Exception) { return intentUnavailable() }
+        val reserved = try { store.reserve(intent) { isCurrent(context) } } catch (_: Exception) { return intentUnavailable() }
+        if (reserved is ReserveIntentResult.Retired) return staleScope()
         if (reserved is ReserveIntentResult.Unresolved) return unresolvedIntentFailure()
         if (reserved !is ReserveIntentResult.Reserved) {
             return ApiResult.Failure(ApiFailure.Http(409, "This request ID is already bound to a saved intent", "launch.request_mismatch"))
@@ -1321,7 +1339,7 @@ class CollieRepository(
         if (!workspaceId.isNotBlank() || !branch.isNotBlank() || !writesAllowed(scope) || !context.connection.isPaired) {
             return notConnected()
         }
-        if (unresolvedLaunchIntents(scope).isNotEmpty()) {
+        if (unresolvedLaunchIntents(scope, context).isNotEmpty()) {
             return ApiResult.Failure(ApiFailure.Http(409, "Resolve the earlier uncertain launch before starting another", "launch.unresolved_intent"))
         }
         when (val readiness = intentReceiptReadiness(context, scope)) {
@@ -1330,6 +1348,7 @@ class CollieRepository(
             is ApiResult.Success -> if (!readiness.value) return intentUnavailable()
         }
         val body = intentJson.encodeToString(BranchRequest.serializer(), BranchRequest(branch, requestId))
+        if (!isCurrent(context)) return staleScope()
         val intent = FrozenLaunchIntent(
             requestId = requestId, origin = context.key.origin, mount = context.key.origin,
             connectionGeneration = context.key.connectionGeneration, pairedDeviceIdentity = context.key.pairedDeviceIdentity,
@@ -1337,7 +1356,8 @@ class CollieRepository(
             subjectIdentity = context.key.subjectIdentity, operation = "worktree.create", targetIdentity = workspaceId,
             confirmedNoPrompts = false, canonicalBody = body,
         )
-        val reserved = try { store.reserve(intent) } catch (_: Exception) { return intentUnavailable() }
+        val reserved = try { store.reserve(intent) { isCurrent(context) } } catch (_: Exception) { return intentUnavailable() }
+        if (reserved is ReserveIntentResult.Retired) return staleScope()
         if (reserved is ReserveIntentResult.Unresolved) return unresolvedIntentFailure()
         if (reserved !is ReserveIntentResult.Reserved) {
             return ApiResult.Failure(ApiFailure.Http(409, "This request ID is already bound to a saved intent", "launch.request_mismatch"))
@@ -1345,13 +1365,14 @@ class CollieRepository(
         return dispatchWorktreeIntent(context, reserved.record)
     }
 
-    suspend fun retryWorktreeIntent(scope: Scope, requestId: String): ApiResult<WorktreeOpenResponse> {
+    suspend fun retryWorktreeIntent(scope: Scope, requestId: String, expectedContext: ScopedReadContext? = null): ApiResult<WorktreeOpenResponse> {
         val store = launchIntentStore ?: return intentUnavailable()
         val record = runCatching { store.get(requestId) }.getOrNull() ?: return intentUnavailable()
         if (record.state != LaunchIntentState.unknown || record.intent.receiptMode != LaunchIntentReceiptMode.ownerBound || record.intent.operation !in setOf("worktree.createAt", "worktree.create")) {
             return ApiResult.Failure(ApiFailure.Http(409, "The saved worktree request is not retryable in this scope", "launch.request_mismatch"))
         }
-        val context = readContext(scope) ?: return notConnected()
+        val context = expectedContext ?: readContext(scope) ?: return notConnected()
+        if (!isCurrent(context) || context.requestScope != scope) return staleScope()
         val refreshed = snapshot(scope, context)
         if (!isCurrent(context)) return staleScope()
         if (refreshed !is ApiResult.Success) return (refreshed as? ApiResult.Failure) ?: intentUnavailable()
@@ -1376,11 +1397,14 @@ class CollieRepository(
         workspaceId: String,
         branch: String,
         requestId: String,
+        expectedContext: ScopedReadContext? = null,
     ): ApiResult<WorktreeOpenResponse> {
-        val context = readContext(scope) ?: return notConnected()
+        val context = expectedContext ?: readContext(scope) ?: return notConnected()
+        if (context.requestScope != scope || !isCurrent(context)) return staleScope()
         val store = launchIntentStore ?: return intentUnavailable()
         if (workspaceId.isBlank() || branch.isBlank() || !writesAllowed(scope) || !context.connection.isPaired) return notConnected()
         val body = intentJson.encodeToString(BranchRequest.serializer(), BranchRequest(branch, requestId))
+        if (!isCurrent(context)) return staleScope()
         val intent = FrozenLaunchIntent(
             requestId = requestId, origin = context.key.origin, mount = context.key.origin,
             connectionGeneration = context.key.connectionGeneration, pairedDeviceIdentity = context.key.pairedDeviceIdentity,
@@ -1389,7 +1413,8 @@ class CollieRepository(
             receiptMode = LaunchIntentReceiptMode.legacyInitialOnly,
             confirmedNoPrompts = false, canonicalBody = body,
         )
-        val reserved = try { store.reserve(intent) } catch (_: Exception) { return intentUnavailable() }
+        val reserved = try { store.reserve(intent) { isCurrent(context) } } catch (_: Exception) { return intentUnavailable() }
+        if (reserved is ReserveIntentResult.Retired) return staleScope()
         if (reserved is ReserveIntentResult.Unresolved) return unresolvedIntentFailure()
         if (reserved !is ReserveIntentResult.Reserved) {
             return ApiResult.Failure(ApiFailure.Http(409, "This request ID is already bound to a saved intent", "launch.request_mismatch"))
@@ -1486,6 +1511,7 @@ class CollieRepository(
         if (policyNoPrompts && isRecipe && expectedRecipe == null) {
             return ApiResult.Failure(ApiFailure.Protocol("The no-prompts recipe must be compared with the reviewed catalog before dispatch"))
         }
+        if (!isCurrent(context)) return staleScope()
         val intent = FrozenLaunchIntent(
             requestId = requestId, origin = context.key.origin, mount = context.key.origin,
             connectionGeneration = context.key.connectionGeneration, pairedDeviceIdentity = context.key.pairedDeviceIdentity,
@@ -1493,7 +1519,8 @@ class CollieRepository(
             subjectIdentity = context.key.subjectIdentity, operation = "launcher.add", targetIdentity = "added-launcher-row",
             confirmedNoPrompts = policyNoPrompts && confirmedNoPrompts, canonicalBody = canonicalBody,
         )
-        val reserved = try { store.reserve(intent) } catch (_: Exception) { return intentUnavailable() }
+        val reserved = try { store.reserve(intent) { isCurrent(context) } } catch (_: Exception) { return intentUnavailable() }
+        if (reserved is ReserveIntentResult.Retired) return staleScope()
         if (reserved is ReserveIntentResult.Unresolved) return unresolvedIntentFailure()
         if (reserved !is ReserveIntentResult.Reserved) {
             return ApiResult.Failure(ApiFailure.Http(409, "This request ID is already bound to a saved intent", "launch.request_mismatch"))
@@ -1667,8 +1694,8 @@ class CollieRepository(
     suspend fun folders(scope: Scope? = null, expectedContext: ScopedReadContext? = null): ApiResult<FoldersResponse> =
         withResolvedConnection(scope, expectedContext) { configured, requestScope -> api.folders(configured, requestScope) }
 
-    suspend fun starFolder(scope: Scope? = null, folder: String, starred: Boolean): ApiResult<FoldersResponse> =
-        withResolvedWritableConnection(scope) { configured, requestScope -> api.starFolder(configured, requestScope, folder, starred) }
+    suspend fun starFolder(scope: Scope? = null, folder: String, starred: Boolean, expectedContext: ScopedReadContext? = null): ApiResult<FoldersResponse> =
+        withResolvedWritableConnection(scope, expectedContext) { configured, requestScope -> api.starFolder(configured, requestScope, folder, starred) }
 
     /** Read-only per-harness implementation inventory from the exact owning host/session. */
     suspend fun agentCapabilities(scope: Scope = selectedScope.value, expectedContext: ScopedReadContext? = null): ApiResult<AgentCapabilitiesResponse> =
@@ -1687,7 +1714,8 @@ class CollieRepository(
     suspend fun listWorktrees(
         workspaceId: String,
         scope: Scope? = null,
-    ): ApiResult<WorktreeListResponse> = withResolvedConnection(scope) { configured, requestScope ->
+        expectedContext: ScopedReadContext? = null,
+    ): ApiResult<WorktreeListResponse> = withResolvedConnection(scope, expectedContext) { configured, requestScope ->
         require(workspaceId.isNotBlank())
         api.listWorktrees(configured, requestScope, workspaceId)
     }
@@ -1705,9 +1733,103 @@ class CollieRepository(
         workspaceId: String,
         path: String,
         scope: Scope? = null,
-    ): ApiResult<WorktreeOpenResponse> = withResolvedWritableConnection(scope) { configured, requestScope ->
+        expectedContext: ScopedReadContext? = null,
+    ): ApiResult<WorktreeOpenResponse> = withResolvedWritableConnection(scope, expectedContext) { configured, requestScope ->
         require(workspaceId.isNotBlank() && path.isNotBlank())
         api.openWorktree(configured, requestScope, workspaceId, path)
+    }
+
+    suspend fun planWorktreeRemoval(workspaceId: String, force: Boolean = false, scope: Scope? = null, expectedContext: ScopedReadContext? = null): ApiResult<WorktreeRemovePlanResponse> = withResolvedConnection(scope, expectedContext) { configured, requestScope ->
+        val config = api.config(configured, requestScope)
+        if (config is ApiResult.Failure) return@withResolvedConnection config
+        if (config !is ApiResult.Success || config.value.control?.supportsNew("worktreeRemove") != true || config.value.mux?.supportsNew("removeWorktree") != true) {
+            return@withResolvedConnection ApiResult.Failure(ApiFailure.Http(501, "Safe worktree removal is unavailable on this runtime", "worktree.remove_unsupported"))
+        }
+        api.planWorktreeRemoval(configured, requestScope, workspaceId, force)
+    }
+
+    /** Reserve the exact confirmation and request ID in the encrypted owner-bound intent journal before dispatch. */
+    suspend fun removeWorktreeIntent(workspaceId: String, requestId: String, planToken: String, force: Boolean, scope: Scope, expectedContext: ScopedReadContext? = null, plan: WorktreeRemovePlanResponse? = null): ApiResult<WorktreeRemoveResponse> {
+        val context = expectedContext ?: readContext(scope) ?: return notConnected()
+        if (!isCurrent(context) || context.requestScope != scope) return staleScope()
+        if (plan != null && (!plan.validFor(workspaceId, force) || plan.planToken != planToken)) return staleScope()
+        val store = launchIntentStore ?: return intentUnavailable()
+        if (workspaceId.isBlank() || requestId.isBlank() || planToken.isBlank() || !writesAllowed(scope) || !context.connection.isPaired) return notConnected()
+        when (val readiness = intentReceiptReadiness(context, scope)) {
+            is ApiResult.Failure -> return readiness
+            is ApiResult.NotModified -> return intentUnavailable()
+            is ApiResult.Success -> if (!readiness.value) return intentUnavailable()
+        }
+        val request = WorktreeRemoveRequest(requestId, planToken, force)
+        val body = intentJson.encodeToString(WorktreeRemoveRequest.serializer(), request)
+        if (!isCurrent(context)) return staleScope()
+        val intent = FrozenLaunchIntent(
+            requestId = requestId, origin = context.key.origin, mount = context.key.origin,
+            connectionGeneration = context.key.connectionGeneration, pairedDeviceIdentity = context.key.pairedDeviceIdentity,
+            leadEpoch = context.key.leadEpoch, host = context.key.host, session = context.key.session,
+            subjectIdentity = context.key.subjectIdentity, operation = "worktree.remove", targetIdentity = workspaceId,
+            plannedWorktreePath = plan?.path, plannedWorktreeBranch = plan?.branch,
+            confirmedNoPrompts = force, canonicalBody = body,
+        )
+        val reserved = try { store.reserve(intent) { isCurrent(context) } } catch (_: Exception) { return intentUnavailable() }
+        if (reserved is ReserveIntentResult.Retired) return staleScope()
+        if (reserved is ReserveIntentResult.Unresolved) return unresolvedIntentFailure()
+        if (reserved !is ReserveIntentResult.Reserved) return ApiResult.Failure(ApiFailure.Http(409, "This request ID is already bound to a saved intent", "operation.request_mismatch"))
+        return dispatchWorktreeRemoval(context, reserved.record, workspaceId)
+    }
+
+    /** Deliberate same-ID replay; the owner returns its durable receipt without dispatching twice. */
+    suspend fun retryWorktreeRemovalIntent(scope: Scope, requestId: String, expectedContext: ScopedReadContext? = null): ApiResult<WorktreeRemoveResponse> {
+        val store = launchIntentStore ?: return intentUnavailable()
+        val record = runCatching { store.get(requestId) }.getOrNull() ?: return intentUnavailable()
+        if (record.state != LaunchIntentState.unknown || record.intent.operation != "worktree.remove" || record.intent.targetIdentity.isNullOrBlank()) {
+            return ApiResult.Failure(ApiFailure.Http(409, "The saved removal request is not unresolved in this scope", "operation.request_mismatch"))
+        }
+        val context = expectedContext ?: readContext(scope) ?: return notConnected()
+        if (!isCurrent(context) || context.requestScope != scope) return staleScope()
+        if (!intentMatches(record.intent, context, "worktree.remove")) return ApiResult.Failure(ApiFailure.Http(409, "The saved removal belongs to a different owner or scope", "operation.request_mismatch"))
+        when (val readiness = intentReceiptReadiness(context, scope)) {
+            is ApiResult.Failure -> return readiness
+            is ApiResult.NotModified -> return intentUnavailable()
+            is ApiResult.Success -> if (!readiness.value) return intentUnavailable()
+        }
+        return dispatchWorktreeRemoval(context, record, record.intent.targetIdentity!!)
+    }
+
+    private suspend fun dispatchWorktreeRemoval(context: ScopedReadContext, record: StoredLaunchIntent, workspaceId: String): ApiResult<WorktreeRemoveResponse> {
+        if (!isCurrent(context) || !writesAllowed(context.key.scope, context.key.subjectIdentity) || !context.connection.isPaired) {
+            persistIntentState(record, LaunchIntentState.unknown)
+            return staleScope()
+        }
+        val frozen = runCatching { intentJson.decodeFromString(WorktreeRemoveRequest.serializer(), record.intent.canonicalBody) }.getOrNull()
+            ?: return intentUnknown()
+        if (frozen.requestId != record.intent.requestId) return intentUnknown()
+        return try {
+            val result = withConnectionOf(context.connection, context.key.scope, context.key.subjectIdentity, mutation = true, expectedContext = context) {
+                api.removeWorktree(it, context.key.scope, workspaceId, frozen)
+            }
+            if (!isCurrent(context)) {
+                persistIntentState(record, LaunchIntentState.unknown)
+                return staleScope()
+            }
+            when (result) {
+                is ApiResult.Success -> if (result.value.knownRefusalFor(workspaceId, frozen.requestId)) {
+                    if (record.state == LaunchIntentState.pending && !persistIntentState(record, LaunchIntentState.refused)) intentUnknown() else result
+                } else if (result.value.validFor(workspaceId, frozen.force, frozen.requestId) &&
+                    (record.intent.plannedWorktreePath == null || result.value.path == record.intent.plannedWorktreePath && result.value.branch == record.intent.plannedWorktreeBranch)) {
+                    val reference = "control-op:${frozen.requestId}"
+                    if (launchIntentStore?.transition(frozen.requestId, record.intent.bodySha256, LaunchIntentState.succeeded, reference) == null) intentUnknown() else result
+                } else {
+                    persistIntentState(record, LaunchIntentState.unknown); intentUnknown()
+                }
+                is ApiResult.Failure -> { persistIntentState(record, LaunchIntentState.unknown); result }
+                is ApiResult.NotModified -> { persistIntentState(record, LaunchIntentState.unknown); intentUnknown() }
+            }
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            persistIntentState(record, LaunchIntentState.unknown); throw cancelled
+        } catch (_: Exception) {
+            persistIntentState(record, LaunchIntentState.unknown); intentUnknown()
+        }
     }
 
     suspend fun upload(address: PaneAddress, upload: ImageUpload, context: ScopedReadContext? = null): ApiResult<UploadResponse> =
@@ -2006,9 +2128,10 @@ class CollieRepository(
 
     private suspend fun <T> withResolvedWritableConnection(
         scope: Scope?,
+        expectedContext: ScopedReadContext? = null,
         block: suspend (Connection, Scope) -> ApiResult<T>,
     ): ApiResult<T> {
-        val target = readTarget(scope) ?: return notConnected()
+        val target = readTarget(scope, expectedContext = expectedContext) ?: return notConnected()
         return withWritableConnection(target.scope, target.context.key.subjectIdentity, target.context) {
             block(it, target.scope)
         }

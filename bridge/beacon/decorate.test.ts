@@ -72,6 +72,7 @@ class StubAdapter implements MuxAdapter {
   readLayout?: MuxAdapter["readLayout"];
   applyLayout?: MuxAdapter["applyLayout"];
   layoutRuntimeIdentity?: MuxAdapter["layoutRuntimeIdentity"];
+  removeWorktree?: MuxAdapter["removeWorktree"];
   renameSpace?: MuxAdapter["renameSpace"];
   closeSpace?: MuxAdapter["closeSpace"];
   moveSpace?: MuxAdapter["moveSpace"];
@@ -330,6 +331,7 @@ describe("a decorator preserves the adapter's whole surface", () => {
     listWorktrees: true,
     createWorktree: true,
     openWorktree: true,
+    removeWorktree: true,
     listSessions: true,
     watch: true,
   } satisfies Record<keyof Required<MuxAdapter>, true>;
@@ -359,6 +361,7 @@ describe("a decorator preserves the adapter's whole surface", () => {
     stub.readLayout = async () => muxOk({ kind: "layout", layout } satisfies MuxLayoutRead);
     stub.applyLayout = async () => muxOk({ kind: "focus-direction", changed: false, paneId: "%1", layout } satisfies MuxLayoutMutation);
     stub.layoutRuntimeIdentity = () => "fixture-runtime-1";
+    stub.removeWorktree = async ({ workspaceId, force }) => muxOk({ workspaceId, path: "/repo/.worktrees/topic", forced: force });
     stub.renameSpace = async () => ({ ok: true, value: undefined });
     stub.closeSpace = async () => ({ ok: true, value: undefined });
     stub.moveSpace = async () => ({ ok: true, value: undefined });
@@ -428,6 +431,10 @@ describe("everything but capabilities and snapshot is a pass-through", () => {
 
   test("every method reaches the wrapped adapter with the arguments it was given", async () => {
     const adapter = new StubAdapter();
+    adapter.removeWorktree = async (removeRequest) => {
+      adapter.calls.push({ method: "removeWorktree", args: [removeRequest] });
+      return muxOk({ workspaceId: removeRequest.workspaceId, path: "/repo/.worktrees/topic", forced: removeRequest.force });
+    };
     const decorated = decorate(adapter, []);
     expect(decorated.mux).toBe(adapter.mux);
     expect(await decorated.reachable()).toBe(true);
@@ -441,6 +448,7 @@ describe("everything but capabilities and snapshot is a pass-through", () => {
     await decorated.renameTab("tab", "label");
     await decorated.closeTab("tab");
     await decorated.createSpace({ cwd: "/tmp" });
+    expect(await decorated.removeWorktree?.({ workspaceId: "space", force: false })).toMatchObject({ ok: true });
     expect(decorated.watch(watchOptions)).toBe(adapter.subscription);
 
     const seen = adapter.calls.filter((call) => call.method !== "snapshot" && call.method !== "readGrid");
@@ -455,6 +463,7 @@ describe("everything but capabilities and snapshot is a pass-through", () => {
       { method: "renameTab", args: ["tab", "label"] },
       { method: "closeTab", args: ["tab"] },
       { method: "createSpace", args: [{ cwd: "/tmp" }] },
+      { method: "removeWorktree", args: [{ workspaceId: "space", force: false }] },
       { method: "watch", args: [watchOptions] },
     ]);
   });
@@ -637,4 +646,30 @@ describe("no pane takes an identity it cannot prove", () => {
     ]);
     expect((await paneOf(decorated, "%1")).agent).toBe("shell");
   });
+});
+
+
+test("composed production beacons and hints forward exact original worktree predicates without early invocation", async () => {
+  const adapter = new StubAdapter();
+  let beforeCalls = 0; let finalCalls = 0; let targetCurrent = true; let ownerCurrent = true;
+  const finalAdmission = (identity: string) => { finalCalls++; return identity === "original-runtime" && ownerCurrent; };
+  const beforeDispatch = async () => { beforeCalls++; return targetCurrent; };
+  let seenFinal: typeof finalAdmission | undefined; let seenBefore: typeof beforeDispatch | undefined;
+  adapter.createWorktree = async (request, originalFinal?: typeof finalAdmission, originalBefore?: typeof beforeDispatch) => {
+    seenFinal = originalFinal; seenBefore = originalBefore;
+    expect(request.branch).toBe("original-branch");
+    if (!originalBefore || !await originalBefore() || !originalFinal || !originalFinal("original-runtime")) return { ok: false, reason: "refused", detail: "retired" };
+    return muxOk({ paneId: "%original", spaceId: "original", spaceLabel: "original", tabId: "original-tab", cwd: "/original" });
+  };
+  const wrapped = withAgentHints(decorate(adapter, [], false), { hooksInstalled: () => false });
+  expect(beforeCalls).toBe(0); expect(finalCalls).toBe(0);
+  expect((await wrapped.createWorktree({ repoRoot: "/original", branch: "original-branch" }, finalAdmission, beforeDispatch)).ok).toBe(true);
+  expect(seenFinal).toBe(finalAdmission); expect(seenBefore).toBe(beforeDispatch);
+  expect(beforeCalls).toBe(1); expect(finalCalls).toBe(1);
+  ownerCurrent = false;
+  expect((await wrapped.createWorktree({ repoRoot: "/original", branch: "original-branch" }, finalAdmission, beforeDispatch)).ok).toBe(false);
+  targetCurrent = false;
+  const priorFinal = finalCalls;
+  expect((await wrapped.createWorktree({ repoRoot: "/original", branch: "original-branch" }, finalAdmission, beforeDispatch)).ok).toBe(false);
+  expect(finalCalls).toBe(priorFinal); // The final target wait precedes authority dispatch.
 });

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import type { MuxSpace } from "../types.ts";
 import { HerdrMux, REPO_LOOKUP_RETRY_MS, workspaceRepoOf } from "./adapter.ts";
 import { maskForwardedAnswer } from "../../crew/mask.ts";
-import type { WireSnapshot, WireWorkspace, WireWorktreeListing } from "./client.ts";
+import type { HerdrWorktreeRemove, WireSnapshot, WireWorkspace, WireWorktreeListing, WireWorktreeRemoved } from "./client.ts";
 import { FakeHerdr } from "./fixture.ts";
 import { buildSubscriptions } from "./events.ts";
 
@@ -286,6 +286,7 @@ describe("herdr pane layout capability and neutral adapter", () => {
     await oldMux.reachable();
     expect(oldMux.capabilities.supports.paneLayout).toBe(false);
     expect(oldMux.capabilities.supports.paneMove).toBe(false);
+    expect(oldMux.capabilities.supports.removeWorktree).toBe(false);
     expect((await oldMux.readLayout("w1:p3")).ok).toBe(false);
 
     const current = new FakeHerdr();
@@ -293,11 +294,36 @@ describe("herdr pane layout capability and neutral adapter", () => {
     await mux.reachable();
     expect(mux.capabilities.supports.paneLayout).toBe(true);
     expect(mux.capabilities.supports.paneMove).toBe(true);
+    expect(mux.capabilities.supports.removeWorktree).toBe(true);
     const snapshot = await mux.snapshot();
     const source = snapshot.panes[0]!;
     const layout = await mux.readLayout(source.paneId);
     expect(layout).toMatchObject({ ok: true, value: { kind: "layout", layout: { workspaceId: source.spaceId, tabId: source.tabId } } });
     expect(source.terminalIncarnation).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  test("neutral worktree removal requires the current verified Herdr runtime and maps no vendor trust option", async () => {
+    class RemovableHerdr extends FakeHerdr {
+      seen: HerdrWorktreeRemove | null = null;
+      async removeWorktree(request: HerdrWorktreeRemove): Promise<WireWorktreeRemoved> {
+        this.seen = request;
+        return { type: "worktree_removed", workspace_id: request.workspace_id, path: "/repo/.worktrees/topic", forced: request.force };
+      }
+    }
+    const old = new RemovableHerdr();
+    old.layoutVersion = "0.9.2";
+    const oldMux = new HerdrMux(old, () => []);
+    await oldMux.reachable();
+    expect(await oldMux.removeWorktree({ workspaceId: "w1", force: false })).toMatchObject({ ok: false, reason: "unsupported" });
+    expect(old.seen).toBeNull();
+
+    const current = new RemovableHerdr();
+    const mux = new HerdrMux(current, () => []);
+    await mux.reachable();
+    expect(await mux.removeWorktree({ workspaceId: "w1", force: true })).toEqual({
+      ok: true, value: { workspaceId: "w1", path: "/repo/.worktrees/topic", forced: true },
+    });
+    expect(current.seen).toEqual({ workspace_id: "w1", force: true });
   });
 
   test("runtime replacement retires pane-layout readiness and requires a new positive handshake", async () => {
@@ -534,4 +560,34 @@ describe("Herdr pane agent identity join", () => {
       stateAuthority: { observed: false, source: null },
     } });
   });
+});
+
+
+test("worktree adapters repeat original authority after awaited preparation immediately before the named vendor method", async () => {
+  class CountedHerdr extends FakeHerdr {
+    creates = 0;
+    removes = 0;
+    override async createWorktree(options: Parameters<FakeHerdr["createWorktree"]>[0]) { this.creates++; return super.createWorktree(options); }
+    async removeWorktree(request: HerdrWorktreeRemove): Promise<WireWorktreeRemoved> { this.removes++; return { type: "worktree_removed", workspace_id: request.workspace_id, path: "/repo/topic", forced: request.force }; }
+  }
+  for (const action of ["create", "remove"] as const) for (const replace of [false, true]) {
+    const fake = new CountedHerdr();
+    const mux = new HerdrMux(fake, () => []);
+    await mux.reachable();
+    const original = await mux.layoutRuntimeIdentity();
+    let allowed = true;
+    const admission = (identity: string) => allowed && identity === original;
+    const prepare = async () => { await Promise.resolve(); if (replace) fake.runtimeIdentity = "replacement"; else allowed = false; return true; };
+    const result = action === "create" ? await mux.createWorktree({ repoRoot: "/repo", branch: "topic" }, admission, prepare) : await mux.removeWorktree({ workspaceId: "w1", force: false }, admission, prepare);
+    expect(result.ok).toBe(false);
+    expect(fake.creates + fake.removes).toBe(0);
+  }
+  const positive = new CountedHerdr();
+  const mux = new HerdrMux(positive, () => []);
+  await mux.reachable();
+  const original = await mux.layoutRuntimeIdentity();
+  expect((await mux.createWorktree({ repoRoot: "/repo", branch: "fresh" }, (identity) => identity === original, async () => true)).ok).toBe(true);
+  expect((await mux.removeWorktree({ workspaceId: "w1", force: false }, (identity) => identity === original, async () => true)).ok).toBe(true);
+  expect(positive.creates).toBe(1);
+  expect(positive.removes).toBe(1);
 });

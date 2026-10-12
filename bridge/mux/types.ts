@@ -557,6 +557,19 @@ export interface MuxWorktreeOpenRequest extends MuxWorktreeScope {
   readonly path: string;
 }
 
+/** Remove only a discovered, currently open linked checkout by its owner workspace ID. */
+export interface MuxWorktreeRemoveRequest {
+  readonly workspaceId: string;
+  /** Defaults false. True is a separate operator confirmation that discards reported changes. */
+  readonly force: boolean;
+}
+
+export interface MuxWorktreeRemoved {
+  readonly workspaceId: string;
+  readonly path: string;
+  readonly forced: boolean;
+}
+
 /**
  * Opening one either made a space or found the space already showing it.
  *
@@ -741,7 +754,7 @@ export interface MuxAdapter {
   layoutRuntimeIdentity?(): Promise<string | null> | string | null;
 
   /** Type literal text into a pane, submitting nothing. Needs `typeText`. */
-  typeText(paneId: string, text: string): Promise<MuxAck>;
+  typeText(paneId: string, text: string, finalAdmission?: (runtimeIdentity: string) => boolean): Promise<MuxAck>;
 
   /**
    * Send keys in the contract's neutral spelling (keys.ts), applied in order. Needs `sendKeys`.
@@ -749,7 +762,7 @@ export interface MuxAdapter {
    * A key the multiplexer cannot send is `refused` and is listed in `unsupportedKeys` — the whole
    * door is not closed because one key is missing.
    */
-  sendKeys(paneId: string, keys: readonly string[]): Promise<MuxAck>;
+  sendKeys(paneId: string, keys: readonly string[], finalAdmission?: (runtimeIdentity: string) => boolean): Promise<MuxAck>;
 
   /** Set or clear a pane's operator label (`null` clears). Needs `renamePane`. */
   renamePane(paneId: string, label: string | null): Promise<MuxAck>;
@@ -800,10 +813,13 @@ export interface MuxAdapter {
   listWorktrees(scope: MuxWorktreeScope): Promise<MuxOutcome<readonly MuxWorktree[]>>;
 
   /** New worktree on a new branch, opened as a space. Needs `createWorktree`. */
-  createWorktree(request: MuxWorktreeCreateRequest): Promise<MuxOutcome<MuxCreatedPane>>;
+  createWorktree(request: MuxWorktreeCreateRequest, finalAdmission?: (runtimeIdentity: string) => boolean, beforeDispatch?: () => Promise<boolean>): Promise<MuxOutcome<MuxCreatedPane>>;
 
   /** Show an existing worktree as a space. Needs `openWorktree`. */
-  openWorktree(request: MuxWorktreeOpenRequest): Promise<MuxOutcome<MuxWorktreeOpened>>;
+  openWorktree(request: MuxWorktreeOpenRequest, finalAdmission?: (runtimeIdentity: string) => boolean, beforeDispatch?: () => Promise<boolean>): Promise<MuxOutcome<MuxWorktreeOpened>>;
+
+  /** Remove one discovered linked checkout, never its branch or the main checkout. */
+  removeWorktree?(request: MuxWorktreeRemoveRequest, finalAdmission?: (runtimeIdentity: string) => boolean, beforeDispatch?: () => Promise<boolean>): Promise<MuxOutcome<MuxWorktreeRemoved>>;
 
   /**
    * The OTHER instances of this multiplexer on this machine, each with the endpoint to dial it.
@@ -867,6 +883,7 @@ export function muxDataFields(adapter: MuxAdapter): Pick<MuxAdapter, "logo" | "h
  */
 type MuxOptionalMethodFields = Pick<MuxAdapter,
   | "readLogicalText" | "processInfo" | "readLayout" | "applyLayout" | "layoutRuntimeIdentity" | "agentIdentity"
+  | "removeWorktree"
   | "renameSpace" | "closeSpace" | "moveSpace" | "moveSpaceBlock" | "focusSpace" | "moveTab" | "focusTab"
 >;
 export function muxOptionalMethods(adapter: MuxAdapter): MuxOptionalMethodFields {
@@ -875,6 +892,7 @@ export function muxOptionalMethods(adapter: MuxAdapter): MuxOptionalMethodFields
   const readLayout = adapter.readLayout?.bind(adapter);
   const applyLayout = adapter.applyLayout?.bind(adapter);
   const layoutRuntimeIdentity = adapter.layoutRuntimeIdentity?.bind(adapter);
+  const removeWorktree = adapter.removeWorktree?.bind(adapter);
   const renameSpace = adapter.renameSpace?.bind(adapter);
   const closeSpace = adapter.closeSpace?.bind(adapter);
   const moveSpace = adapter.moveSpace?.bind(adapter);
@@ -889,6 +907,7 @@ export function muxOptionalMethods(adapter: MuxAdapter): MuxOptionalMethodFields
   if (readLayout !== undefined) methods.readLayout = readLayout;
   if (applyLayout !== undefined) methods.applyLayout = applyLayout;
   if (layoutRuntimeIdentity !== undefined) methods.layoutRuntimeIdentity = layoutRuntimeIdentity;
+  if (removeWorktree !== undefined) methods.removeWorktree = removeWorktree;
   if (renameSpace !== undefined) methods.renameSpace = renameSpace;
   if (closeSpace !== undefined) methods.closeSpace = closeSpace;
   if (moveSpace !== undefined) methods.moveSpace = moveSpace;

@@ -216,15 +216,30 @@ internal data class WorktreeAtRequest(
 )
 
 @Serializable
+data class WorktreeRememberedChoice(val base: String, val folder: String, val parent: String? = null)
+
+@Serializable
+data class WorktreeDefaultTarget(val path: String, val exists: Boolean)
+
+@Serializable
+data class WorktreeParentTarget(
+    val ok: Boolean,
+    val path: String? = null,
+    val error: String? = null,
+    val code: String? = null,
+    val detail: JsonObject? = null,
+)
+
+@Serializable
 data class WorktreePlanResponse(
     val ok: Boolean,
     val repoRoot: String? = null,
     val defaultBranch: String? = null,
     val currentBranch: String? = null,
-    val remembered: JsonObject? = null,
+    val remembered: WorktreeRememberedChoice? = null,
     val branchValid: Boolean? = null,
-    val defaultTarget: JsonObject? = null,
-    val parentTarget: JsonObject? = null,
+    val defaultTarget: WorktreeDefaultTarget? = null,
+    val parentTarget: WorktreeParentTarget? = null,
     val error: String? = null,
     val code: String? = null,
 )

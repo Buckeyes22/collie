@@ -12,6 +12,8 @@ export const CONTROL_ROUTES = [
   { name: "agentAuthorityClear", method: "POST", pattern: /^\/api\/pane\/[^/]+\/agent\/authority\/clear$/, gate: "write", scope: "session", capability: "agentLifecycleWrites", maxBodyBytes: 16 * 1024 },
   { name: "refresh", method: "POST", pattern: /^\/api\/refresh$/, gate: "read", scope: "session", capability: null, maxBodyBytes: 0 },
   { name: "operation", method: "GET", pattern: /^\/api\/control\/operations\/([a-zA-Z0-9_-]{1,128})$/, gate: "read", scope: "session", capability: "controlOperations", maxBodyBytes: 0 },
+  { name: "worktree-remove-plan", method: "GET", pattern: /^\/api\/workspace\/[^/]{1,256}\/worktree\/remove-plan$/, gate: "read", scope: "session", capability: "worktreeRemove", maxBodyBytes: 0 },
+  { name: "worktree-remove", method: "POST", pattern: /^\/api\/workspace\/[^/]{1,256}\/worktree\/remove$/, gate: "write", scope: "session", capability: "worktreeRemove", maxBodyBytes: 8 * 1024 },
   { name: "pane-layout", method: "GET", pattern: /^\/api\/pane\/([^/]{1,256})\/layout$/, gate: "read", scope: "session", capability: "paneLayout", maxBodyBytes: 0 },
   { name: "pane-neighbor", method: "GET", pattern: /^\/api\/pane\/([^/]{1,256})\/layout\/neighbor$/, gate: "read", scope: "session", capability: "paneLayout", maxBodyBytes: 0 },
   { name: "pane-edges", method: "GET", pattern: /^\/api\/pane\/([^/]{1,256})\/layout\/edges$/, gate: "read", scope: "session", capability: "paneLayout", maxBodyBytes: 0 },
@@ -41,6 +43,8 @@ export const CONTROL_ROUTES = [
   { name: "tab-rename", method: "POST", pattern: /^\/api\/tab\/([^/]{1,256})\/rename$/, gate: "write", scope: "session", capability: "renameTab", maxBodyBytes: 8 * 1024 },
   { name: "tab-close", method: "POST", pattern: /^\/api\/tab\/([^/]{1,256})\/close$/, gate: "write", scope: "session", capability: "closeTab", maxBodyBytes: 8 * 1024 },
   { name: "tab-focus", method: "POST", pattern: /^\/api\/tab\/([^/]{1,256})\/focus$/, gate: "write", scope: "session", capability: "tabFocus", maxBodyBytes: 8 * 1024 },
+  { name: "worktree-remove-plan", method: "GET", pattern: /^\/api\/workspace\/([^/]{1,128})\/worktree\/remove-plan$/, gate: "read", scope: "session", capability: "worktreeRemove", maxBodyBytes: 0 },
+  { name: "worktree-remove", method: "POST", pattern: /^\/api\/workspace\/([^/]{1,128})\/worktree\/remove$/, gate: "write", scope: "session", capability: "worktreeRemove", maxBodyBytes: 8 * 1024 },
 ] as const;
 export type ControlRoute = (typeof CONTROL_ROUTES)[number];
 export type ControlScope = { readonly host: string | null; readonly session: string | null };

@@ -1,3 +1,4 @@
+import { WORKTREE_REMOVE_COMPLETION_HEADROOM_BYTES } from "./operations.ts";
 import { describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -23,6 +24,8 @@ describe("scoped control contracts", () => {
     expect(controlGate("/api/pane/w1:p1/layout", "GET")).toBe("read");
     expect(controlGate("/api/pane/w1:p1/layout/plan", "POST")).toBe("read");
     expect(controlGate("/api/tab/t1/transfer/plan", "POST")).toBe("read");
+    expect(controlGate("/api/workspace/w1/worktree/remove-plan", "GET")).toBe("read");
+    expect(controlGate("/api/workspace/w1/worktree/remove", "POST")).toBe("write");
     expect(controlGate("/api/pane/w1:p1/layout/move", "POST")).toBe("write");
     expect(controlGate("/api/pane/w1:p1/layout/plan", "GET")).toBeNull();
     expect(controlGate("/api/pane/w1%3Ap1/agent", "GET")).toBe("device-read");
@@ -261,3 +264,67 @@ describe("scoped control contracts", () => {
     expect(await serveControlRoute(new Request(url), url, { ...caller, resolve: async () => remote }, operations)).toBe(remote);
   });
 });
+
+
+test("worktree completion reserves the serialized worst legal path and escaped branch for every pending row", async () => {
+  const result = { kind: "worktree-remove" as const, workspaceId: "w".repeat(128), path: "/" + "界".repeat(4095), branch: "\u0001".repeat(256), forced: true };
+  const pending = { requestId: "remove", binding: { ...binding, capability: "worktreeRemove" }, planToken: "p".repeat(256), state: "pending", at: 1, updatedAt: 1, code: null };
+  const terminal = { ...pending, state: "succeeded", updatedAt: 2, code: "😀".repeat(256), result };
+  expect(Buffer.byteLength(JSON.stringify(terminal)) - Buffer.byteLength(JSON.stringify(pending))).toBeLessThan(WORKTREE_REMOVE_COMPLETION_HEADROOM_BYTES);
+  const dir = await mkdtemp(join(tmpdir(), "collie-control-remove-headroom-"));
+  try {
+    const store = new OperationStore(dir);
+    let release!: () => void;
+    const hold = new Promise<void>((resolve) => { release = resolve; });
+    let entered = 0;
+    let allEntered!: () => void;
+    const reserved = new Promise<void>((resolve) => { allEntered = resolve; });
+    const actions = Array.from({ length: 96 }, (_, index) => store.execute(`remove-${index}`, { ...binding, capability: "worktreeRemove" }, "plan", async () => { if (++entered === 96) allEntered(); await hold; return { state: "succeeded" as const, result }; }));
+    await reserved;
+    release();
+    const receipts = await Promise.all(actions);
+    expect(receipts.every((row) => row.state === "succeeded")).toBe(true);
+    expect(Buffer.byteLength(await readFile(join(dir, "control-operations.json"), "utf8"))).toBeLessThanOrEqual(4 * 1024 * 1024);
+    expect((await new OperationStore(dir).inspect("remove-95", owner, "local", "work"))?.state).toBe("succeeded");
+  } finally { await rm(dir, { recursive: true, force: true }); }
+}, 30_000);
+
+
+test("mixed pending removal reservations refuse before effects and keep every completion inside the fixed byte cap", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "collie-control-mixed-remove-cap-"));
+  try {
+    const large = "😀".repeat(128);
+    const seedBinding = { ...binding, device: large, host: large, session: large, capability: large, targetIdentity: large, evidence: large };
+    const rows = Array.from({ length: 2048 }, (_, i) => ({ requestId: `seed${i}`, binding: seedBinding, planToken: large, state: "succeeded", at: 1, updatedAt: 1, code: null }));
+    while (Buffer.byteLength(JSON.stringify(rows)) > 4 * 1024 * 1024 - 70_000) rows.pop();
+    await writeFile(join(dir, "control-operations.json"), JSON.stringify(rows));
+    const store = new OperationStore(dir);
+    let release!: () => void;
+    const hold = new Promise<void>((resolve) => { release = resolve; });
+    let removalEffects = 0;
+    let moveEffects = 0;
+    const result = { kind: "worktree-remove" as const, workspaceId: "linked", path: "/" + "界".repeat(4095), branch: "\\\"".repeat(128), forced: true };
+    const removals = Array.from({ length: 6 }, (_, index) => store.execute(`remove-${index}`, { ...binding, capability: "worktreeRemove" }, "plan", async () => {
+      removalEffects++; await hold; return { state: "succeeded" as const, result };
+    }).then(() => true, (error) => { expect(String(error)).toContain("capacity"); return false; }));
+    const moves = Array.from({ length: 2 }, (_, index) => store.execute(`move-${index}`, binding, "plan", async () => {
+      moveEffects++; await hold; return { state: "refused" as const, code: "source.changed" };
+    }).then(() => true, (error) => { expect(String(error)).toContain("capacity"); return false; }));
+    await store.inspect("seed0", large, large, large);
+    release();
+    const admitted = await Promise.all(removals);
+    await Promise.all(moves);
+    expect(removalEffects).toBeGreaterThan(0);
+    expect(removalEffects).toBeLessThan(6);
+    expect(admitted.filter(Boolean)).toHaveLength(removalEffects);
+    expect(moveEffects).toBeLessThanOrEqual(2);
+    const bytes = await readFile(join(dir, "control-operations.json"), "utf8");
+    expect(Buffer.byteLength(bytes)).toBeLessThanOrEqual(4 * 1024 * 1024);
+    const restored = new OperationStore(dir);
+    expect(await restored.inspect("seed0", large, large, large)).not.toBeNull();
+    for (let i = 0; i < admitted.length; i++) {
+      const row = await restored.inspect(`remove-${i}`, owner, "local", "work");
+      expect(row?.state ?? null).toBe(admitted[i] ? "succeeded" : null);
+    }
+  } finally { await rm(dir, { recursive: true, force: true }); }
+}, 30_000);

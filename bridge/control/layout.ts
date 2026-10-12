@@ -516,7 +516,7 @@ function operationResponse(action: MuxLayoutAction, view: import("./operations.t
   if (view.state === "unknown" || view.state === "pending") return Response.json({ ok: false, code: "layout.outcome_unknown", operation: view }, { status: 202, headers: { "cache-control": "no-store" } });
   if (view.state === "refused") return refusalResponse(refusal(view.code ?? "layout.refused", "The layout action was refused", "operation"), 409);
   if (action.kind === "move" && view.result?.kind !== "pane-move") return Response.json({ ok: false, code: "layout.outcome_unknown", operation: view }, { status: 202, headers: { "cache-control": "no-store" } });
-  if (action.kind === "move" && action.transfer && (!view.result?.transfer || view.result.transfer.schema !== 1 || !view.result.transfer.changed)) return Response.json({ ok: false, code: "tab.transfer.outcome_unknown", operation: view }, { status: 202, headers: { "cache-control": "no-store" } });
+  if (action.kind === "move" && action.transfer && (view.result?.kind !== "pane-move" || !view.result.transfer || view.result.transfer.schema !== 1 || !view.result.transfer.changed)) return Response.json({ ok: false, code: "tab.transfer.outcome_unknown", operation: view }, { status: 202, headers: { "cache-control": "no-store" } });
   const response: JsonObject = { ok: true, operation: jsonValue(view) };
   if (view.result?.kind === "pane-move") response.move = jsonValue(view.result);
   return Response.json(response, { headers: { "cache-control": "no-store" } });

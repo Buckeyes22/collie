@@ -71,6 +71,7 @@ results; neither settlement nor notification automatically retries a POST.
 | `/api/folders`, `/api/folders/star` | Read recent and favourite folder strings from the selected machine/session. Star writes address a folder already supplied by that host; recent/favourite collections remain machine-owned and manual remote-folder entry remains available when an older bridge lacks these routes. |
 | Workspace worktree list/create/open | Decode default branch, launcher result and replay metadata. Carry a request ID on create. Allow the server's longer worktree execution budget. Workspace creation uses the same frozen owner-bound intent and positive capability gate when available; old/mixed servers permit only the legacy initial attempt, with no same-ID recovery retry after uncertainty. |
 | `/api/worktree/plan`, `/api/worktree` | Add scoped plan/create transport and repository methods. Encode `base.kind=default` or `ref` with its ref; encode `folder.kind=default` or `parent` with its parent. Folder worktree requests and retries preserve the exact caller-held request ID and frozen POST body, and deliberate replay is available only when the owning host positively declares bound receipts. |
+| `/api/workspace/:id/worktree/remove-plan`, `/remove` | Add a separate explicitly named owner-runtime removal contract. Crew forwards only the closed removal plan/read and `{ requestId, planToken, force }` write. The owner resolves a linked checkout from current discovery, checks canonical repo/path/branch/Git status/pane identity, then repeats checks before dispatch. Clean removal is default; dirty status requires a distinct explicit force confirmation. A saved operation result is reconciled with the same request ID. Herdr has no atomic expected-state condition, so these pre-dispatch checks are advisory against a narrow race; no trust flag, arbitrary path, branch deletion or main-checkout removal is exposed. |
 | Pane upload and `/api/stt` | Existing multipart image/audio contracts and draft insertion remain compatible. Generic documents use the same pane multipart endpoint and upload-capability type/byte policy. Android streams SAF content through a cancellable owned descriptor into private storage, enforcing `min(server maxBytes, 10 MiB)` even for unknown-length/nonseekable providers; advertised extensions are the policy boundary and provider MIME is advisory. Each POST is one-shot; 400/413/415 refusals are surfaced without automatic replay. Photo Picker image behavior and normal mounted-HTTPS/TLS/bearer handling remain unchanged. |
 | `GET /api/agents/capabilities` | Schema `1` returns the 24 canonical harness kinds and separate launch, detection, session, journal, web semantic/composer and media states for the requested owning host/session. Registered binaries may receive a fixed `--version` probe with a 1.5-second timeout and 4 KiB output ceiling in a minimal environment; only a parsed semantic version is returned. Per-kind detection/session counts come from exact identities and session references in the current owner-runtime snapshot; generic mux declarations alone do not establish a per-kind result. The paired read is owner-scoped and forwarded through Crew; an older peer's 404 is surfaced as unsupported, not synthesized as all-supported. Unknown additive fields are ignored; an unsupported schema is refused by the native decoder and shown as unsupported by Settings. |
 | Harness transcript journal | Gemini CLI's current JSONL session record format is read from the owner-configured `GEMINI_CLI_HOME/.gemini/tmp` root, with exact UUID verification, bounded path discovery and contained reads. Message order/removal updates reset the live chat generation because UUID upserts alone cannot move/delete a turn. It does not advertise media or interactive parity; no live Gemini session canary was available for this source change. |
@@ -224,3 +225,45 @@ Actual AppContainer, identity coordinator, interceptor, callback handoff and pro
 Local acknowledged terminal input is neither vendor transcript nor an automatic resend queue. Production caches key the committed incarnation and selectively erase retired entries, including same-object ABA; harmless current-instance recommits preserve acknowledgements. Unsupported stores retain the established in-memory origin/pairing-token fallback, with explicit disconnection/pairing retirement still selective. No acknowledgement enters persistent storage, Bundle state, logs, or dispatch authority.
 
 The original corrective26 checkpoint2 native attempt remains failed (1,156 tests, three failures) and immutable. Two new read-only consumer fixtures lacked explicit snapshot/device authority; their setup now obtains a successful B snapshot before the no-extra-read baseline, preserving every assertion and deadline. The original acknowledged-input test remains byte-identical. New tests exercise actual encrypted connection/store transitions, a preexisting container/profile Activity, pinned HTTPS counted nonce/mutation traffic, durable failed-persistence behavior, process-stamp recreation, and original-owner cleanup. They are source fixtures until ROOT runs the joined native gates. Prior isolated B10/B24 approvals do not approve this combined source. Joined native, independent whole review, B18 H11/R1, B22/B23/B26 reconciliation and actual platform/device/vendor acceptance remain OPEN.
+
+### Worktree final dispatch and bounded native reviews (B15 corrective6)
+
+The neutral adapter adds optional original-runtime admission predicates to text/keys and an
+original target preparation callback to legacy worktree Open. Production beacon and hint
+decorators forward these exact functions without recapture or early invocation. These are
+host-local function arguments, not Crew fields or raw vendor RPC. Herdr validates its original
+runtime immediately before the named dispatch; absent runtime proof refuses rather than silently
+borrowing another runtime. A successful create remains a known checkout when post-create
+persistence/readiness loses authority, with launcherStarted=false and stable-ID recovery.
+
+Native Open is one-shot per review. A bounded lease owns one Activity flow and four private
+copies; explicit modal handoffs preserve the original context, while invalid/cancelled/completed
+flows release callbacks and copied text. Genuine pairing/disconnect cleanup atomically commits
+exact-owner retirement metadata and body removal even when no body existed. Durable production
+incarnations use owner-wide hashes; unsupported legacy test stores additionally bind their
+capture-time generation so a deliberate re-pair remains distinct. Every production reserve
+passes its immutable original actor predicate under the journal monitor. Cleanup and GUI ACK
+run outside repository/admission locks; no journal callback performs HTTP or ACK. The separate
+4,096-hash encrypted metadata envelope is bounded to 512 KiB and does not reduce the existing
+body journal's 128 rows, 512 KiB or reserved resolution headroom. Hash eviction never substitutes
+for current original-actor admission. Real vendor CAS, Crew and native accessibility acceptance
+remain separate requirements.
+
+### Final Herdr transport and retained New form custody (B15 corrective8)
+
+An immutable original runtime identity and original admission predicate accompany protected
+worktree.create/open/remove and pane.send_text/send_keys calls into HerdrClient. The actual
+post-dial continuation and each Bun-managed remainder check the same witness immediately before
+writing; no current replacement is recaptured. Zero accepted bytes gives a typed refusal. Any
+accepted prefix stays uncertain; Node’s full queued write is one admitted payload, not a new
+application retry, and later failure does not prove no effect. Timeouts close only the owned
+pending socket. These host-local callbacks add no vendor RPC fields or inferred vendor CAS.
+
+The retained New editor has independent original-owner custody after modal completion. Its
+single saved copy contains bounded text plus a non-secret owner digest/durable incarnation,
+never Connection or bearer data. Private editor platform state is disabled, and restoration
+requires the original owner witness. Original retirement wipes the live editor and bounded
+owned saved copy on Main outside custody/admission locks; delayed A never clears adopted B.
+Current cancellation/rotation positives and temporary actor fencing remain distinct from true
+retirement. Latest-version physical-Pixel acceptance remains required; historical legacy matrices
+are preserved as history under the user’s updated scope.

@@ -26,6 +26,9 @@ data class FrozenLaunchIntent(
     val receiptMode: LaunchIntentReceiptMode = LaunchIntentReceiptMode.ownerBound,
     /** Stable route target (for example a workspace ID), when the HTTP path is target-specific. */
     val targetIdentity: String? = null,
+    /** Exact removal evidence retained privately; never included in the wire request. */
+    val plannedWorktreePath: String? = null,
+    val plannedWorktreeBranch: String? = null,
     /** The user's explicit consent to skip prompts, frozen with this exact request. */
     val confirmedNoPrompts: Boolean,
     /** Canonical JSON bytes, represented as UTF-8 text and encrypted at rest. */
@@ -55,6 +58,7 @@ sealed interface ReserveIntentResult {
     data class Existing(val record: StoredLaunchIntent) : ReserveIntentResult
     data class Unresolved(val record: StoredLaunchIntent) : ReserveIntentResult
     data object Mismatch : ReserveIntentResult
+    data object Retired : ReserveIntentResult
 }
 
 /**
@@ -74,6 +78,8 @@ class LaunchIntentStore(
         preferencesOverride ?: context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
     private val records = linkedMapOf<String, StoredLaunchIntent>()
     private var unavailable = false
+    private val retiredOwners = linkedSetOf<String>()
+    @Volatile internal var beforeReserveForTesting: () -> Unit = {}
 
     init {
         read()
@@ -96,8 +102,9 @@ class LaunchIntentStore(
     @Synchronized
     fun clear() {
         try {
-            check(preferences.edit().remove(RECORD).commit()) { "Unable to retire encrypted launch intents" }
+            check(preferences.edit().remove(RECORD).remove(RETIRED_RECORD).commit()) { "Unable to retire encrypted launch intents" }
             records.clear()
+            retiredOwners.clear()
             unavailable = false
         } catch (error: Exception) {
             unavailable = true
@@ -107,20 +114,26 @@ class LaunchIntentStore(
 
     /** Atomic durable retirement of the ENTRY owner. A delayed A ACK cannot erase B's barrier. */
     @Synchronized
-    fun retireOwned(owner: ScopedCustodyOwner): Int {
+    fun retireOwned(owner: ScopedCustodyOwner, originalLegacyGeneration: Long? = null): Int {
         checkAvailable()
         val next = records.values.filterNot { record ->
             record.intent.origin == owner.origin && record.intent.mount == owner.mount &&
-                record.intent.pairedDeviceIdentity == owner.pairedDeviceIdentity
+                record.intent.pairedDeviceIdentity == owner.pairedDeviceIdentity &&
+                (originalLegacyGeneration == null || record.intent.connectionGeneration == originalLegacyGeneration)
         }
         val removed = records.size - next.size
-        if (removed == 0) return 0
-        try { persist(next) } catch (error: Exception) {
+        val retired = ownerHash(owner.origin, owner.mount, owner.pairedDeviceIdentity, originalLegacyGeneration)
+        if (removed == 0 && retired in retiredOwners) return 0
+        // Serialized with reservation, including a zero-row purge. Bounds do not weaken the
+        // immutable production predicate: an evicted old owner still fails original admission.
+        val nextOwners = (retiredOwners + retired).toList().takeLast(MAX_RETIRED_OWNERS).toSet()
+        try { persist(next, nextOwners) } catch (error: Exception) {
             unavailable = true
             throw error
         }
         records.clear()
         next.forEach { records[it.intent.requestId] = it }
+        retiredOwners.clear(); retiredOwners.addAll(nextOwners)
         return removed
     }
 
@@ -142,20 +155,23 @@ class LaunchIntentStore(
     }
 
     /** Atomically reserve a request ID for one frozen authority and canonical body. */
-    @Synchronized
-    fun reserve(intent: FrozenLaunchIntent): ReserveIntentResult {
+    fun reserve(intent: FrozenLaunchIntent, originalAdmission: () -> Boolean = { true }): ReserveIntentResult {
+        beforeReserveForTesting()
+        return synchronized(this) {
         checkAvailable()
         requireValidIntent(intent)
+        if (ownerHash(intent.origin, intent.mount, intent.pairedDeviceIdentity) in retiredOwners ||
+            ownerHash(intent.origin, intent.mount, intent.pairedDeviceIdentity, intent.connectionGeneration) in retiredOwners || !originalAdmission()) return@synchronized ReserveIntentResult.Retired
         require(intent.bodySha256 == sha256(intent.canonicalBody))
         val prior = records[intent.requestId]
         if (prior != null) {
-            return if (prior.intent == intent) ReserveIntentResult.Existing(prior) else ReserveIntentResult.Mismatch
+            return@synchronized if (prior.intent == intent) ReserveIntentResult.Existing(prior) else ReserveIntentResult.Mismatch
         }
         val unresolved = records.values.firstOrNull { record ->
             (record.state == LaunchIntentState.pending || record.state == LaunchIntentState.unknown) &&
                 sameAdmissionScope(record.intent, intent)
         }
-        if (unresolved != null) return ReserveIntentResult.Unresolved(unresolved)
+        if (unresolved != null) return@synchronized ReserveIntentResult.Unresolved(unresolved)
         check(records.size < MAX_RECORDS) { "Launch intent journal is full; resolve or retain its existing intents" }
         val record = StoredLaunchIntent(intent, LaunchIntentState.pending)
         try {
@@ -165,7 +181,8 @@ class LaunchIntentStore(
             throw error
         }
         records[intent.requestId] = record
-        return ReserveIntentResult.Reserved(record)
+        ReserveIntentResult.Reserved(record)
+        }
     }
 
     /** Update only the state for a matching immutable intent; there is no transition back to pending. */
@@ -219,6 +236,17 @@ class LaunchIntentStore(
     }
 
     private fun read() {
+        try {
+            preferences.getString(RETIRED_RECORD, null)?.let { encoded ->
+                require(encoded.length <= MAX_ENVELOPE_CHARS)
+                val envelope = json.decodeFromString(Envelope.serializer(), encoded)
+                require(envelope.version == VERSION && envelope.iv.length == IV_BASE64_CHARS && envelope.ciphertext.length in MIN_CIPHERTEXT_BASE64_CHARS..MAX_CIPHERTEXT_BASE64_CHARS)
+                val clear = cipher.decrypt(CipherEnvelope(Base64.decode(envelope.iv, Base64.NO_WRAP), Base64.decode(envelope.ciphertext, Base64.NO_WRAP)))
+                val owners = try { require(clear.size <= MAX_JOURNAL_BYTES); json.decodeFromString(RetiredOwnerList.serializer(), clear.decodeToString()).owners } finally { clear.fill(0) }
+                require(owners.size <= MAX_RETIRED_OWNERS && owners.distinct().size == owners.size && owners.all { it.matches(Regex("[0-9a-f]{64}")) })
+                retiredOwners.addAll(owners)
+            }
+        } catch (_: Exception) { unavailable = true; return }
         val encoded = preferences.getString(RECORD, null) ?: return
         try {
             require(encoded.length <= MAX_ENVELOPE_CHARS)
@@ -250,7 +278,7 @@ class LaunchIntentStore(
         }
     }
 
-    private fun persist(next: List<StoredLaunchIntent>) {
+    private fun persist(next: List<StoredLaunchIntent>, owners: Set<String> = retiredOwners) {
         if (next.size > MAX_RECORDS) throw JournalLimitException("Launch intent journal is full; existing intents were retained")
         val clear = json.encodeToString(RecordList.serializer(), RecordList(next)).encodeToByteArray()
         if (clear.size > MAX_JOURNAL_BYTES || reservedResolutionHeadroom(next) > MAX_JOURNAL_BYTES - clear.size) {
@@ -268,7 +296,17 @@ class LaunchIntentStore(
             ),
         )
         check(encoded.length <= MAX_ENVELOPE_CHARS)
-        check(preferences.edit().putString(RECORD, encoded).commit()) {
+        val editor = preferences.edit().putString(RECORD, encoded)
+        if (owners.isNotEmpty()) {
+            val retiredClear = json.encodeToString(RetiredOwnerList.serializer(), RetiredOwnerList(owners.toList())).encodeToByteArray()
+            require(owners.size <= MAX_RETIRED_OWNERS && retiredClear.size <= MAX_JOURNAL_BYTES)
+            val retired = try { cipher.encrypt(retiredClear) } finally { retiredClear.fill(0) }
+            require(retired.iv.size == IV_BYTES && retired.ciphertext.size <= MAX_CIPHERTEXT_BYTES)
+            val retiredEncoded = json.encodeToString(Envelope.serializer(), Envelope(VERSION, Base64.encodeToString(retired.iv, Base64.NO_WRAP), Base64.encodeToString(retired.ciphertext, Base64.NO_WRAP)))
+            require(retiredEncoded.length <= MAX_ENVELOPE_CHARS)
+            editor.putString(RETIRED_RECORD, retiredEncoded)
+        } else editor.remove(RETIRED_RECORD)
+        check(editor.commit()) {
             "Unable to persist encrypted launch intents"
         }
     }
@@ -280,6 +318,8 @@ class LaunchIntentStore(
         require(intent.pairedDeviceIdentity.isNotBlank() && intent.pairedDeviceIdentity.length <= MAX_IDENTITY_CHARS)
         require(intent.operation.isNotBlank() && intent.operation.length <= MAX_OPERATION_CHARS)
         require(intent.targetIdentity == null || (intent.targetIdentity.isNotBlank() && intent.targetIdentity.length <= MAX_IDENTITY_CHARS))
+        require(intent.plannedWorktreePath == null || (intent.operation == "worktree.remove" && intent.plannedWorktreePath.length in 2..4096 && intent.plannedWorktreePath.startsWith("/") && intent.plannedWorktreePath.none(Char::isISOControl)))
+        require(intent.plannedWorktreeBranch == null || (intent.operation == "worktree.remove" && intent.plannedWorktreeBranch.length in 1..256 && intent.plannedWorktreeBranch.none(Char::isISOControl)))
         require(intent.canonicalBody.isNotBlank() && intent.canonicalBody.length <= MAX_BODY_CHARS)
         require(intent.connectionGeneration >= 0L && intent.leadEpoch >= 0L)
         require(intent.host == null || (intent.host.isNotBlank() && intent.host.length <= MAX_IDENTITY_CHARS))
@@ -308,6 +348,12 @@ class LaunchIntentStore(
         check(!unavailable) { "Encrypted launch intent journal is unreadable; refusing new intents" }
     }
 
+    private fun ownerHash(origin: String, mount: String, pairedIdentity: String, legacyGeneration: Long? = null): String =
+        sha256((listOf(origin, mount, pairedIdentity) + listOfNotNull(legacyGeneration?.toString())).joinToString("") { "${it.encodeToByteArray().size}:$it" })
+
+    @Serializable
+    private data class RetiredOwnerList(val owners: List<String>)
+
     @Serializable
     private data class RecordList(val records: List<StoredLaunchIntent>)
 
@@ -317,6 +363,8 @@ class LaunchIntentStore(
     companion object {
         private const val PREFERENCES = "collie_launch_intents"
         private const val RECORD = "encrypted_records"
+        private const val RETIRED_RECORD = "encrypted_retired_owners"
+        private const val MAX_RETIRED_OWNERS = 4096
         private const val VERSION = 1
         private const val KEY_ALIAS = "com.lateapex.collie.launch-intents.v1"
         private const val MAX_RECORDS = 128

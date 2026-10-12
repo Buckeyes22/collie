@@ -242,6 +242,80 @@ class LaunchIntentStoreTest {
         assertTrue(restarted.all { it.state == LaunchIntentState.succeeded || it.state == LaunchIntentState.refused })
     }
 
+    @Test fun zeroRowRetirementPersistsOriginalFenceWhileFreshOwnerAndUnknownBodySurviveRecreation() {
+        val authenticated = AuthenticatedLaunchIntentFixtureCipher()
+        val store = LaunchIntentStore(context, authenticated, Json)
+        val old = intent()
+        val owner = ScopedCustodyOwner(old.origin, old.mount, old.pairedDeviceIdentity)
+        assertEquals(0, store.retireOwned(owner))
+        assertEquals(ReserveIntentResult.Retired, store.reserve(old))
+        val restored = LaunchIntentStore(context, authenticated, Json)
+        assertEquals(ReserveIntentResult.Retired, restored.reserve(old))
+        val fresh = old.copy(requestId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc", pairedDeviceIdentity = "fresh-incarnation")
+        assertTrue(restored.reserve(fresh) is ReserveIntentResult.Reserved)
+        assertNotNull(restored.transition(fresh.requestId, fresh.bodySha256, LaunchIntentState.unknown))
+        assertEquals(0, restored.retireOwned(owner))
+        assertEquals(LaunchIntentState.unknown, restored.get(fresh.requestId)!!.state)
+        assertEquals(LaunchIntentState.unknown, LaunchIntentStore(context, authenticated, Json).get(fresh.requestId)!!.state)
+        assertFalse(context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).getString("encrypted_retired_owners", null)!!.contains(old.pairedDeviceIdentity))
+    }
+
+    @Test fun failedSerializedRetirementPreservesRawJournalAndCannotAdmitAnotherBody() {
+        val authenticated = AuthenticatedLaunchIntentFixtureCipher()
+        val prefs = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+        var fail = false
+        val failing = object : android.content.SharedPreferences by prefs {
+            override fun edit(): android.content.SharedPreferences.Editor {
+                val editor = prefs.edit()
+                return object : android.content.SharedPreferences.Editor by editor {
+                    override fun putString(key: String?, value: String?): android.content.SharedPreferences.Editor { editor.putString(key, value); return this }
+                    override fun remove(key: String?): android.content.SharedPreferences.Editor { editor.remove(key); return this }
+                    override fun commit(): Boolean = if (fail) false else editor.commit()
+                }
+            }
+        }
+        val store = LaunchIntentStore(context, authenticated, Json, failing)
+        val old = intent(); assertTrue(store.reserve(old) is ReserveIntentResult.Reserved)
+        val raw = prefs.getString(RECORD, null)
+        fail = true
+        assertTrue(runCatching { store.retireOwned(ScopedCustodyOwner(old.origin, old.mount, old.pairedDeviceIdentity)) }.isFailure)
+        assertEquals(raw, prefs.getString(RECORD, null)); assertFalse(prefs.contains("encrypted_retired_owners"))
+        assertTrue(runCatching { store.reserve(old.copy(requestId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd")) }.isFailure)
+        assertEquals(raw, prefs.getString(RECORD, null))
+        fail = false
+        val restored = LaunchIntentStore(context, authenticated, Json)
+        assertEquals(LaunchIntentState.unknown, restored.get(old.requestId)!!.state)
+        assertEquals(1, restored.retireOwned(ScopedCustodyOwner(old.origin, old.mount, old.pairedDeviceIdentity)))
+        assertEquals(ReserveIntentResult.Retired, LaunchIntentStore(context, authenticated, Json).reserve(old))
+    }
+
+    @Test fun authenticatedEmptyRetirementRecreatesAndTamperedTagFailsClosedWithoutErasingRawEvidence() {
+        val authenticated = AuthenticatedLaunchIntentFixtureCipher()
+        val emptyBody = "{\"records\":[]}".encodeToByteArray()
+        assertEquals(14, emptyBody.size)
+        val exact = authenticated.encrypt(emptyBody)
+        assertEquals(30, exact.ciphertext.size)
+        assertTrue(authenticated.decrypt(exact).contentEquals(emptyBody))
+        val changed = exact.ciphertext.copyOf().apply { this[lastIndex] = (this[lastIndex].toInt() xor 1).toByte() }
+        assertTrue(runCatching { authenticated.decrypt(CipherEnvelope(exact.iv, changed)) }.isFailure)
+
+        val store = LaunchIntentStore(context, authenticated, Json)
+        val old = intent()
+        assertEquals(0, store.retireOwned(ScopedCustodyOwner(old.origin, old.mount, old.pairedDeviceIdentity)))
+        assertTrue(LaunchIntentStore(context, AuthenticatedLaunchIntentFixtureCipher(), Json).all().isEmpty())
+        val prefs = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+        val bodyBefore = prefs.getString(RECORD, null)
+        val retirementRaw = prefs.getString("encrypted_retired_owners", null)!!
+        val envelope = Json.decodeFromString(Envelope.serializer(), retirementRaw)
+        val ciphertext = Base64.decode(envelope.ciphertext, Base64.NO_WRAP).apply { this[lastIndex] = (this[lastIndex].toInt() xor 1).toByte() }
+        val forged = Json.encodeToString(Envelope.serializer(), envelope.copy(ciphertext = Base64.encodeToString(ciphertext, Base64.NO_WRAP)))
+        assertTrue(prefs.edit().putString("encrypted_retired_owners", forged).commit())
+        val refused = LaunchIntentStore(context, AuthenticatedLaunchIntentFixtureCipher(), Json)
+        assertTrue(runCatching { refused.reserve(old.copy(pairedDeviceIdentity = "fresh-owner")) }.isFailure)
+        assertEquals(forged, prefs.getString("encrypted_retired_owners", null))
+        assertEquals(bodyBefore, prefs.getString(RECORD, null))
+    }
+
     private fun intent(
         requestId: String = "11111111-1111-4111-8111-111111111111",
         canonicalBody: String = "{\"command\":\"claude\",\"noPrompts\":true}",

@@ -1095,7 +1095,7 @@ describe("journal, uploads and state stay host-local", () => {
     // And the contract names the gap, so the two cannot drift apart silently.
     const contract = readFileSync(join(import.meta.dir, "..", "..", "MUX_CONTRACT.md"), "utf8");
     expect(contract).toContain("## Conformance across a crew link");
-    expect(contract).toContain("listSessions` and the three worktree verbs have no forwardable route");
+    expect(contract).toContain("listSessions` and the existing lead-local `listWorktrees`, `createWorktree` and `openWorktree` routes have no forwardable route");
   });
 });
 
@@ -1151,6 +1151,18 @@ describe("scoped foundation Crew reads", () => {
       expect(forwardGate(route, method)).toBe(gate);
     }
     expect(crewRouteFor("/api/pane/w1:p1/layout/arbitrary")).toBeNull();
+  });
+
+  test("owning-peer removal has its own read plan and write route over Crew", () => {
+    for (const [route, method, gate] of [
+      ["workspace/w1/worktree/remove-plan", "GET", "read"],
+      ["workspace/w1/worktree/remove", "POST", "write"],
+    ] as const) {
+      expect(crewRouteFor(`/api/${route}`)).toBe(route);
+      expect(forwardKind(route, method)).toBe(gate);
+      expect(forwardGate(route, method)).toBe(gate);
+    }
+    expect(crewRouteFor("/api/workspace/w1/worktree/arbitrary")).toBeNull();
   });
 });
 

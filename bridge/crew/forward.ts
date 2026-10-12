@@ -83,6 +83,7 @@ const FORWARDABLE: readonly RegExp[] = [
   /^tab\/[^/]+\/(?:move|focus)(?:\/plan)?$/,
   /^workspace$/,
   /^workspace\/[^/]+\/(?:rename|close|move|focus)(?:\/plan)?$/,
+  /^workspace\/[^/]+\/worktree\/(?:remove-plan|remove)$/,
   /^workspaces\/reorder(?:\/plan)?$/,
   // The Changes view asked by workspace (ADR 0065): read-only git over the folder of a space that
   // lives on ONE member, so a `?host=` call is proxied like `pane/:id/changes`. Mirrors

@@ -3257,18 +3257,19 @@ describe("the host gate — `?host=` selects among enrolled members and nothing 
     // The load-bearing claim: `?h=laptop` + `w1:p1` must never be served the DESK's `w1:p1`, and
     // pane ids collide across machines, so a fall-through here is a cross-host write.
     //
-    // All TWENTY-FOUR session-scoped route handlers (tab create, workspace create, launch, this host's launcher
+    // All TWENTY-SIX session-scoped route handlers (tab create, workspace create, launch, this host's launcher
     // rows, this host's folder list and a star on it, one journal blob, a workspace's Changes list,
     // a workspace's Files view, the Files existence check by pane or workspace, the Files image read
     // by pane or workspace (ADR 0090), tab action, the pane family, "look now", the worktree listing,
     // the worktree actions, the New sheet's branch plan and create from a folder (ADR 0093), and the
     // three writes on a phone's own launcher rows, served by one function (ADR 0094), and the two
     // writes on this machine's one-off command history, served by one function (ADR 0095), and the
-    // read that checks a typed line before it runs (ADR 0095, amendment), and the
-    // owning workspace's Source read, scoped agent inventory and workspace/tab organization) reach
+    // read that checks a typed line before it runs (ADR 0095, amendment), owning-runtime linked
+    // worktree removal planning/execution, and the owning workspace's Source read, scoped agent
+    // inventory and workspace/tab organization) reach
     // their runtime through the caller's resolver and nothing else.
-    expect([...src.matchAll(/await caller\.resolve\(\);/g)]).toHaveLength(25);
-    // Exactly eight `registry.get(` calls remain, and each is a sanctioned one, named here rather
+    expect([...src.matchAll(/await caller\.resolve\(\);/g)]).toHaveLength(26);
+    // Exactly nine `registry.get(` calls remain, and each is a sanctioned one, named here rather
     // than exempted: assembling THIS collie's own snapshot body; `localRuntime`, the single
     // "(session) → runtime, or 404" helper both callers share; `/api/config`, which reports THIS
     // collie's own multiplexer (M10/06) and is not session-scoped at all; `/api/mux/logo.svg`,
@@ -3284,9 +3285,10 @@ describe("the host gate — `?host=` selects among enrolled members and nothing 
     // swept body instead, exactly as `bridge/crew/notify.ts` does, and writes to no terminal at all;
     // and the hot intent after an input FORWARDED to a member, which tightens THIS collie's primary
     // engine because the sweep that brings the member's answer back rides its tick (CREW_PROTOCOL.md
-    // §10.1). It runs after the forward has answered and writes nothing. A NINTH would be a route
-    // reaching past the gate.
-    expect([...src.matchAll(/registry\.get\(/g)]).toHaveLength(8);
+    // §10.1). It runs after the forward has answered and writes nothing; and the removal-readiness
+    // helper reads the local runtime only to publish its already-negotiated capability in config.
+    // A TENTH would be a route reaching past the gate.
+    expect([...src.matchAll(/registry\.get\(/g)]).toHaveLength(9);
     // The mux read is a read of the LOCAL primary — never `?host=`, because a peer's capabilities
     // are its own business and reach the lead over the crew API, never out of this registry.
     expect(src).toContain("const activeMux = registry.get();");

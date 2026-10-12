@@ -48,6 +48,7 @@ import com.lateapex.collie.network.WorkspaceSummary
 import com.lateapex.collie.network.StartTarget
 import com.lateapex.collie.network.LauncherItem
 import com.lateapex.collie.network.WorktreeBase
+import com.lateapex.collie.network.knownRefusalFor
 import com.lateapex.collie.network.WorktreeFolder
 import com.lateapex.collie.domain.PaneAddress
 import com.lateapex.collie.domain.Scope
@@ -1042,12 +1043,17 @@ class MainActivity : AppCompatActivity() {
 
     /** Lists a repository's worktrees; a test replaces it because the dashboard test has no bridge. */
     @androidx.annotation.VisibleForTesting
-    internal var worktreeLister: suspend (String, Scope) -> ApiResult<com.lateapex.collie.network.WorktreeListResponse> =
+    private val productionWorktreeLister: suspend (String, Scope) -> ApiResult<com.lateapex.collie.network.WorktreeListResponse> =
         { workspaceId, scope -> viewModel.listWorktrees(workspaceId, scope) }
 
     @androidx.annotation.VisibleForTesting
-    internal var worktreeOpener: suspend (String, String, Scope) -> ApiResult<com.lateapex.collie.network.WorktreeOpenResponse> =
+    internal var worktreeLister = productionWorktreeLister
+
+    private val productionWorktreeOpener: suspend (String, String, Scope) -> ApiResult<com.lateapex.collie.network.WorktreeOpenResponse> =
         { workspaceId, path, scope -> viewModel.openWorktree(workspaceId, path, scope) }
+
+    @androidx.annotation.VisibleForTesting
+    internal var worktreeOpener = productionWorktreeOpener
 
     @androidx.annotation.VisibleForTesting
     internal fun startWorktreeFlowForTest() {
@@ -1059,10 +1065,17 @@ class MainActivity : AppCompatActivity() {
 
     /** B.3: one sheet that names the repository and the base it branches from. */
     private fun showCreateWorktree(repos: List<WorkspaceSummary>, scope: Scope) {
+        if (repos.isEmpty()) {
+            viewModel.report(getString(R.string.worktree_repository_folder_missing))
+            return
+        }
         val repository = (application as CollieApplication).container.repository
+        val context = repository.readContext(scope)
+        val lease = WorktreeUiLease(this, repository, context)
         val dialog = CollieBottomSheetDialog(this, getString(R.string.worktree_create), initiallyExpanded = true)
         val body = sheetBody()
         var selected = repos.first()
+        val createOnce = java.util.concurrent.atomic.AtomicBoolean(false)
 
         fun baseCaption() = getString(
             R.string.worktree_base_caption,
@@ -1084,13 +1097,16 @@ class MainActivity : AppCompatActivity() {
         fun loadExisting(repo: WorkspaceSummary) {
             // Undispatched: the lookup starts in this frame and only yields at the network call.
             lifecycleScope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
-                val context = repository.readContext(viewModel.currentScope) ?: return@launch
-                val result = worktreeLister(repo.workspaceId, scope)
-                if (!repository.isCurrent(context)) return@launch
+                if (!lease.current()) return@launch
+                val result = if (worktreeLister === productionWorktreeLister) repository.listWorktrees(repo.workspaceId, scope, context) else worktreeLister(repo.workspaceId, scope)
+                if (!lease.current()) return@launch
                 if (selected !== repo) return@launch
                 existing.removeAllViews()
                 val unopened = (result as? ApiResult.Success)?.value?.worktrees
                     ?.filter { it.linked && it.openWorkspaceId == null }
+                    .orEmpty()
+                val opened = (result as? ApiResult.Success)?.value?.worktrees
+                    ?.filter { it.linked && it.openWorkspaceId != null }
                     .orEmpty()
                 if (unopened.isNotEmpty()) {
                     existing.addView(TextView(this@MainActivity).apply {
@@ -1101,14 +1117,29 @@ class MainActivity : AppCompatActivity() {
                     unopened.forEach { worktree ->
                         existing.addView(
                             sheetActionButton(worktree.branch ?: getString(R.string.worktree_detached, worktree.path)) {
-                                dialog.dismiss()
-                                confirmOpenWorktree(repo, worktree, scope)
+                                lease.handoff(dialog); dialog.dismiss()
+                                if (lease.current()) confirmOpenWorktree(repo, worktree, scope, lease)
                             },
                             sheetRowParams(top = 4),
                         )
                     }
                 }
-                existing.isVisible = unopened.isNotEmpty()
+                if (opened.isNotEmpty() && viewModel.state.value.receiptContextBound == true && viewModel.state.value.mux?.supportsNew("removeWorktree") == true) {
+                    existing.addView(TextView(this@MainActivity).apply {
+                        text = getString(R.string.worktree_remove_opened)
+                        textSize = 13f
+                        setTextColor(ContextCompat.getColor(this@MainActivity, R.color.collie_muted))
+                    }, sheetRowParams(top = 16))
+                    opened.forEach { worktree ->
+                        existing.addView(sheetActionButton(getString(R.string.worktree_remove_label, worktree.branch ?: worktree.path)) {
+                            if (lease.current()) {
+                                lease.handoff(dialog); dialog.dismiss()
+                                confirmRemoveWorktree(worktree.openWorkspaceId!!, worktree.branch, worktree.path, scope, lease)
+                            }
+                        }, sheetRowParams(top = 4))
+                    }
+                }
+                existing.isVisible = unopened.isNotEmpty() || opened.isNotEmpty()
             }
         }
         if (repos.size > 1) {
@@ -1162,15 +1193,15 @@ class MainActivity : AppCompatActivity() {
         } else null
         var folderResponse: com.lateapex.collie.network.FoldersResponse? = null
         lateinit var folderPicker: FolderPickerView
-        val folderContext = repository.readContext(scope)
-        folderPicker = FolderPickerView(this, onSelect = { folder -> folderParent?.setText(folder.orEmpty()) }, onStar = { folder, starred ->
-            if (folderContext != null) lifecycleScope.launch {
-                when (val result = repository.starFolder(scope, folder, starred)) {
-                    is ApiResult.Success -> if (repository.isCurrent(folderContext)) {
+        val folderContext = context
+        folderPicker = FolderPickerView(this, onSelect = { folder -> if (lease.current()) folderParent?.setText(folder.orEmpty()) }, onStar = { folder, starred ->
+            if (lease.current()) lifecycleScope.launch {
+                when (val result = repository.starFolder(scope, folder, starred, folderContext)) {
+                    is ApiResult.Success -> if (lease.current()) {
                         folderResponse = result.value
                         folderPicker.render(folderResponse, folderParent?.valueOrNull(), repository.writesAllowed(scope))
                     }
-                    is ApiResult.Failure -> if (repository.isCurrent(folderContext)) viewModel.report(MainViewModel.describe(resources, result.error))
+                    is ApiResult.Failure -> if (lease.current()) viewModel.report(MainViewModel.describe(resources, result.error))
                     is ApiResult.NotModified -> Unit
                 }
             }
@@ -1182,47 +1213,53 @@ class MainActivity : AppCompatActivity() {
         if (folderParent != null) {
             folderPicker.render(null, folderParent.valueOrNull(), repository.writesAllowed(scope))
             body.addView(folderPicker, sheetRowParams(top = 4))
-            if (folderContext != null) lifecycleScope.launch {
-                val result = repository.folders(scope)
-                if (repository.isCurrent(folderContext) && result is ApiResult.Success) {
+            if (lease.current()) lifecycleScope.launch {
+                val result = repository.folders(scope, folderContext)
+                if (lease.current() && result is ApiResult.Success) {
                     folderResponse = result.value
                     folderPicker.render(folderResponse, folderParent.valueOrNull(), repository.writesAllowed(scope))
                 }
             }
         }
         body.addView(sheetActionButton(getString(R.string.action_create)) {
+            if (!lease.current()) return@sheetActionButton
+            val captured = context ?: return@sheetActionButton
             val name = branch.text.toString().trim()
             if (name.isEmpty()) return@sheetActionButton
             val target = revalidatedStructuralScope(scope) ?: return@sheetActionButton
+            if (!createOnce.compareAndSet(false, true)) return@sheetActionButton
+            val selectedRepo = selected
             if (viewModel.state.value.receiptContextBound == true) {
-                val cwd = selected.repoRoot?.takeIf(String::isNotBlank) ?: selected.folder?.takeIf(String::isNotBlank)
+                val cwd = selectedRepo.repoRoot?.takeIf(String::isNotBlank) ?: selectedRepo.folder?.takeIf(String::isNotBlank)
                 if (cwd == null) {
                     viewModel.report(getString(R.string.worktree_repository_folder_missing))
                     return@sheetActionButton
                 }
                 val base = baseRef?.valueOrNull()?.let { WorktreeBase(kind = "ref", ref = it) } ?: WorktreeBase()
                 val folder = folderParent?.valueOrNull()?.let { WorktreeFolder(kind = "parent", parent = it) } ?: WorktreeFolder()
-                val context = repository.readContext(target) ?: return@sheetActionButton
-                dialog.dismiss()
+                if (target != scope || !lease.current()) return@sheetActionButton
+                lease.handoff(dialog); dialog.dismiss()
                 lifecycleScope.launch {
-                    val planned = viewModel.planWorktree(cwd, name, folder.parent, target)
-                    if (!repository.isCurrent(context)) return@launch
+                    try {
+                    val planned = viewModel.planWorktree(cwd, name, folder.parent, target, captured)
+                    if (!lease.current()) return@launch
                     when (planned) {
                         is ApiResult.Success -> if (planned.value.ok && planned.value.branchValid != false) {
-                            showWorktreePlanConfirmation(selected, target, cwd, name, base, folder, context, planned.value)
+                            showWorktreePlanConfirmation(selectedRepo, target, cwd, name, base, folder, captured, planned.value, lease)
                         } else viewModel.report(planned.value.error ?: getString(R.string.worktree_plan_refused))
                         is ApiResult.Failure -> viewModel.report(MainViewModel.describe(resources, planned.error))
                         is ApiResult.NotModified -> viewModel.report(getString(R.string.worktree_plan_refused))
                     }
+                    } finally { if (lease.boundCopiesForTesting == 0) lease.finish() }
                 }
                 return@sheetActionButton
             }
-            dialog.dismiss()
+            lease.handoff(dialog); dialog.dismiss()
             val repository = (application as CollieApplication).container.repository
-            val context = repository.readContext(target) ?: return@sheetActionButton
+            if (target != scope || !lease.current()) return@sheetActionButton
             val requestId = UUID.randomUUID().toString()
             lifecycleScope.launch {
-                if (!repository.isCurrent(context) || viewModel.currentScope != target) return@launch
+                if (!lease.current() || viewModel.currentScope != target) return@launch
                 val actor = UUID.randomUUID().toString()
                 structuralActor = actor
                 structuralContext = context
@@ -1230,21 +1267,23 @@ class MainActivity : AppCompatActivity() {
                 structuralProgressRes = R.string.worktree_creating
                 render(viewModel.state.value)
                 try {
-                    val result = viewModel.createWorkspaceWorktreeLegacyInitial(selected.workspaceId, name, requestId, target)
-                    if (!repository.isCurrent(context) || viewModel.currentScope != target) return@launch
-                    handleWorktreeIntentOutcome(result, requestId, target, context)
+                    val result = viewModel.createWorkspaceWorktreeLegacyInitial(selectedRepo.workspaceId, name, requestId, target, captured)
+                    if (!lease.current() || viewModel.currentScope != target) return@launch
+                    handleWorktreeIntentOutcome(result, requestId, target, captured)
                 } finally {
                     if (structuralActor == actor) {
                         structuralActor = null
                         structuralBusy = false
                         render(viewModel.state.value)
                     }
+                    lease.finish()
                 }
             }
         }, sheetRowParams(top = 12))
         body.addView(existing, sheetRowParams())
         loadExisting(selected)
         dialog.setSheetContent(body)
+        if (!lease.bind(dialog, body)) return
         dialog.show()
         branch.post { branch.requestFocus() }
     }
@@ -1258,6 +1297,7 @@ class MainActivity : AppCompatActivity() {
         folder: WorktreeFolder,
         context: ScopedReadContext,
         plan: com.lateapex.collie.network.WorktreePlanResponse,
+        lease: WorktreeUiLease,
     ) {
         val repository = (application as CollieApplication).container.repository
         val dialog = CollieBottomSheetDialog(this, getString(R.string.worktree_plan_title))
@@ -1276,6 +1316,17 @@ class MainActivity : AppCompatActivity() {
             setTextColor(ContextCompat.getColor(this@MainActivity, R.color.collie_foreground))
             setPadding(0, dp(8), 0, dp(8))
         }, sheetRowParams())
+        val folderState = when {
+            plan.parentTarget?.ok == false -> plan.parentTarget.error ?: getString(R.string.worktree_plan_refused)
+            plan.parentTarget?.ok == true -> plan.parentTarget.path ?: getString(R.string.worktree_plan_refused)
+            else -> plan.defaultTarget?.let { getString(R.string.worktree_plan_target, it.path, if (it.exists) getString(R.string.worktree_plan_exists) else getString(R.string.worktree_plan_available)) }
+                ?: getString(R.string.worktree_plan_unavailable)
+        }
+        body.addView(TextView(this).apply {
+            text = getString(R.string.worktree_plan_folder_detail, folderState, if (plan.branchValid == false) getString(R.string.worktree_plan_branch_invalid) else branch)
+            textSize = 12f
+            setTextColor(ContextCompat.getColor(this@MainActivity, R.color.collie_muted))
+        }, sheetRowParams())
 
         val availableLaunchers = viewModel.state.value.launchers?.items.orEmpty().filter { it.available }
         val choices = listOf<LauncherItem?>(null) + availableLaunchers
@@ -1292,8 +1343,10 @@ class MainActivity : AppCompatActivity() {
             })
         }
         body.addView(targets, sheetRowParams(top = 4))
+        val requestId = UUID.randomUUID().toString()
+        val confirmed = java.util.concurrent.atomic.AtomicBoolean(false)
         body.addView(sheetActionButton(getString(R.string.worktree_plan_create)) {
-            if (!repository.isCurrent(context) || viewModel.currentScope != scope) return@sheetActionButton
+            if (!lease.current() || viewModel.currentScope != scope || !confirmed.compareAndSet(false, true)) return@sheetActionButton
             val chosen = choices.getOrNull(selectedChoice)
             val start = chosen?.start ?: StartTarget(shell = true)
             val noPrompts = chosen?.noPrompts == true
@@ -1307,24 +1360,27 @@ class MainActivity : AppCompatActivity() {
                 )
             }
             lifecycleScope.launch {
-                if (launcher != null && !confirmLauncher(this@MainActivity, launcher, scope.host ?: context.connection.origin.value)) return@launch
-                if (!repository.isCurrent(context) || viewModel.currentScope != scope) return@launch
-                dialog.dismiss()
-                val requestId = UUID.randomUUID().toString()
+                try {
+                if (launcher != null && !confirmLauncher(this@MainActivity, launcher, scope.host ?: context.connection.origin.value, lease)) return@launch
+                if (!lease.current() || viewModel.currentScope != scope) return@launch
+                lease.handoff(dialog); dialog.dismiss()
                 val result = viewModel.createWorktreeIntent(
                     cwd, branch, start, requestId, base, folder,
-                    confirmedNoPrompts = noPrompts, scope = scope,
+                    confirmedNoPrompts = noPrompts, scope = scope, expectedContext = context,
                 )
-                if (repository.isCurrent(context) && viewModel.currentScope == scope) {
+                if (lease.current() && viewModel.currentScope == scope) {
                     handleWorktreeIntentOutcome(result, requestId, scope, context)
                 }
+                } finally { lease.finish() }
             }
         }, sheetRowParams(top = 8))
         dialog.setSheetContent(ScrollView(this).apply { addView(body) })
+        if (!lease.bind(dialog, body)) return
         dialog.show()
     }
 
-    private fun confirmOpenWorktree(workspace: WorkspaceSummary, worktree: com.lateapex.collie.network.Worktree, scope: Scope) {
+    private fun confirmOpenWorktree(workspace: WorkspaceSummary, worktree: com.lateapex.collie.network.Worktree, scope: Scope, lease: WorktreeUiLease) {
+        if (!lease.current()) return
         val dialog = CollieBottomSheetDialog(this, getString(R.string.worktree_open_title))
         val body = sheetBody()
         body.addView(TextView(this).apply {
@@ -1333,17 +1389,105 @@ class MainActivity : AppCompatActivity() {
             setTextColor(ContextCompat.getColor(this@MainActivity, R.color.collie_muted))
             setPadding(0, dp(8), 0, dp(8))
         }, sheetRowParams())
+        val openOnce = java.util.concurrent.atomic.AtomicBoolean(false)
         body.addView(sheetActionButton(getString(R.string.action_open)) {
+            if (!lease.current() || !openOnce.compareAndSet(false, true)) return@sheetActionButton
             val target = revalidatedStructuralScope(scope) ?: return@sheetActionButton
-            dialog.dismiss()
+            lease.handoff(dialog); dialog.dismiss()
             lifecycleScope.launch {
-                handleWorktree(structuralRequest(R.string.worktree_opening) {
-                    worktreeOpener(workspace.workspaceId, worktree.path, target)
-                } ?: return@launch, target)
+                if (!lease.current()) return@launch
+                try {
+                    val opened = structuralRequest(R.string.worktree_opening) {
+                        if (worktreeOpener === productionWorktreeOpener) repository.openWorktree(workspace.workspaceId, worktree.path, target, lease.context) else worktreeOpener(workspace.workspaceId, worktree.path, target)
+                    } ?: return@launch
+                    if (lease.current()) handleWorktree(opened, target)
+                } finally { lease.finish() }
             }
         }, sheetRowParams(top = 8))
         dialog.setSheetContent(body)
+        if (!lease.bind(dialog, body)) return
         dialog.show()
+    }
+
+    private fun confirmRemoveWorktree(workspaceId: String, branch: String?, path: String, scope: Scope, lease: WorktreeUiLease) {
+        if (!lease.current()) return
+        lifecycleScope.launch {
+            try {
+            val planned = viewModel.planWorktreeRemoval(workspaceId, false, scope, lease.context)
+            if (!lease.current()) return@launch
+            when (planned) {
+                is ApiResult.Success -> showRemoveWorktreeConfirmation(workspaceId, branch, path, scope, planned.value, false, lease)
+                is ApiResult.Failure -> if (planned.error is com.lateapex.collie.network.ApiFailure.Http && planned.error.code == "worktree.dirty_worktree_requires_force") {
+                    val once = java.util.concurrent.atomic.AtomicBoolean(false)
+                    val forceDialog = AlertDialog.Builder(this@MainActivity)
+                        .setTitle(R.string.worktree_force_title)
+                        .setMessage(getString(R.string.worktree_force_message, path))
+                        .setNegativeButton(android.R.string.cancel, null)
+                        .setPositiveButton(R.string.worktree_force_review) { clicked, _ ->
+                            if (!lease.current() || !once.compareAndSet(false, true)) return@setPositiveButton
+                            lease.handoff(clicked as android.app.Dialog)
+                            lifecycleScope.launch {
+                                try {
+                                val forced = viewModel.planWorktreeRemoval(workspaceId, true, scope, lease.context)
+                                if (!lease.current()) return@launch
+                                when (forced) {
+                                    is ApiResult.Success -> showRemoveWorktreeConfirmation(workspaceId, branch, path, scope, forced.value, true, lease)
+                                    is ApiResult.Failure -> viewModel.report(MainViewModel.describe(resources, forced.error))
+                                    is ApiResult.NotModified -> viewModel.report(getString(R.string.worktree_remove_unavailable))
+                                }
+                                } finally { if (lease.boundCopiesForTesting == 0) lease.finish() }
+                            }
+                        }.create()
+                    if (lease.bind(forceDialog)) forceDialog.show()
+                } else viewModel.report(MainViewModel.describe(resources, planned.error))
+                is ApiResult.NotModified -> viewModel.report(getString(R.string.worktree_remove_unavailable))
+            }
+            } finally { if (lease.boundCopiesForTesting == 0) lease.finish() }
+        }
+    }
+
+    private fun showRemoveWorktreeConfirmation(
+        workspaceId: String, branch: String?, path: String, scope: Scope,
+        plan: com.lateapex.collie.network.WorktreeRemovePlanResponse, force: Boolean, lease: WorktreeUiLease,
+    ) {
+        if (!lease.current()) return
+        if (!plan.validFor(workspaceId, force) || plan.path != path || plan.branch != branch) {
+            viewModel.report(getString(R.string.worktree_remove_unavailable))
+            lease.finish()
+            return
+        }
+        val message = getString(
+            if (force) R.string.worktree_remove_force_confirm else R.string.worktree_remove_confirm,
+            plan.label ?: branch ?: path, plan.path ?: path, plan.changedCount ?: 0, plan.paneCount ?: 0,
+        )
+        val requestId = UUID.randomUUID().toString()
+        val once = java.util.concurrent.atomic.AtomicBoolean(false)
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(R.string.worktree_remove_title).setMessage(message)
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton(R.string.worktree_remove_button) { clicked, _ ->
+                if (!lease.current() || !once.compareAndSet(false, true)) return@setPositiveButton
+                lease.handoff(clicked as android.app.Dialog)
+                lifecycleScope.launch {
+                    try {
+                    val removed = viewModel.removeWorktreeIntent(workspaceId, requestId, plan.planToken!!, force, scope, lease.context, plan)
+                    if (!lease.current()) return@launch
+                    when (removed) {
+                        is ApiResult.Success -> when {
+                            removed.value.validFor(workspaceId, force, requestId) && removed.value.path == plan.path && removed.value.branch == plan.branch -> {
+                                viewModel.report(getString(R.string.worktree_removed))
+                                viewModel.refresh(lease.context)
+                            }
+                            removed.value.knownRefusalFor(workspaceId, requestId) -> viewModel.report(removed.value.error ?: removed.value.code ?: getString(R.string.worktree_plan_refused))
+                            else -> viewModel.report(getString(R.string.worktree_remove_unknown))
+                        }
+                        is ApiResult.Failure -> viewModel.report(getString(R.string.worktree_remove_unknown))
+                        is ApiResult.NotModified -> viewModel.report(getString(R.string.worktree_remove_unknown))
+                    }
+                    } finally { lease.finish() }
+                }
+            }.create()
+        if (lease.bind(dialog)) dialog.show()
     }
 
     private fun showChoiceSheet(title: String, choices: List<Pair<String, () -> Unit>>) {
@@ -1477,6 +1621,21 @@ class MainActivity : AppCompatActivity() {
                         if (repository.isCurrent(context) && viewModel.currentScope == scope) {
                             finishRetryingLaunchIntent(actor)
                             handleWorktreeIntentOutcome(result, record.intent.requestId, scope, context)
+                        }
+                    } else if (record.intent.operation == "worktree.remove") {
+                        val result = viewModel.retryWorktreeRemovalIntent(record.intent.requestId, scope)
+                        if (repository.isCurrent(context) && viewModel.currentScope == scope) {
+                            finishRetryingLaunchIntent(actor)
+                            val unresolved = viewModel.state.value.unknownLaunchIntents.firstOrNull { it.intent.requestId == record.intent.requestId }
+                            if (unresolved != null) showUnknownLaunchIntent(unresolved) else when (result) {
+                                is ApiResult.Success -> if (record.intent.targetIdentity?.let { result.value.validFor(it, record.intent.confirmedNoPrompts, record.intent.requestId) } == true) {
+                                    dialog.dismiss()
+                                    viewModel.report(getString(R.string.worktree_removed))
+                                    viewModel.refresh()
+                                } else viewModel.report(getString(R.string.worktree_remove_unknown))
+                                is ApiResult.Failure -> viewModel.report(getString(R.string.worktree_remove_unknown))
+                                is ApiResult.NotModified -> viewModel.report(getString(R.string.worktree_remove_unknown))
+                            }
                         }
                     } else if (record.intent.operation == "launcher.add") {
                         val result = viewModel.retryAddedLauncherIntent(record.intent.requestId, scope)

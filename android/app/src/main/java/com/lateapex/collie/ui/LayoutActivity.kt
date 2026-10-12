@@ -638,7 +638,7 @@ class LayoutActivity : AppCompatActivity() {
                     }
                     when (operation.state) {
                         "succeeded" -> {
-                            val move = operation.result
+                            val move = operation.paneMoveResult()
                             if (kind == "move") {
                                 if (move?.kind != "pane-move" || move.previousPaneId != address.paneId || move.paneId == move.previousPaneId ||
                                     pendingSourceTabId == null || move.previousTabId != pendingSourceTabId ||

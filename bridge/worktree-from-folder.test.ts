@@ -1,12 +1,15 @@
+import { HerdrMux } from "./mux/herdr/adapter.ts";
+import { FakeHerdr } from "./mux/herdr/fixture.ts";
+import { withAgentHints } from "./beacon/hint.ts";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readdir, realpath, rm, symlink } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, realpath, rename, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { AuditLog } from "./audit.ts";
 import type { JsonObject, JsonValue } from "./json.ts";
 import { harnessLaunch } from "./harness-launch.ts";
-import { createWorktreeAt, planWorktree } from "./server.ts";
+import { createWorktreeAt, planWorktree, openWorktree } from "./server.ts";
 import type { StateEngine } from "./state-engine.ts";
 import type { WorktreeCreateResponse, WorktreePlanResponse } from "./types.ts";
 import {
@@ -86,7 +89,9 @@ class FakeMux {
   readonly creates: MuxWorktreeCreateRequest[] = [];
   readonly texts: Array<[string, string]> = [];
   gate: Promise<void> | null = null;
-  async createWorktree(request: MuxWorktreeCreateRequest): Promise<MuxOutcome<MuxCreatedPane>> {
+  async createWorktree(request: MuxWorktreeCreateRequest, finalAdmission?: (identity: string) => boolean, beforeDispatch?: () => Promise<boolean>): Promise<MuxOutcome<MuxCreatedPane>> {
+    if (beforeDispatch && !await beforeDispatch()) return { ok: false, reason: "refused", detail: "target_changed" };
+    if (finalAdmission && !finalAdmission("fixture-runtime")) return { ok: false, reason: "refused", detail: "authority_changed" };
     this.creates.push(request);
     if (this.gate !== null) await this.gate;
     await Promise.resolve();
@@ -131,6 +136,7 @@ async function create(mux: FakeMux, body: JsonObject, extra: {
   choices?: ReturnType<typeof memoryWorktreeChoices>;
   receipts?: ReturnType<typeof memoryWorktreeReceipts>;
   operations?: OperationStore;
+  finalAdmission?: (identity: string) => boolean;
   receiptContext?: { key: Uint8Array; deviceIdentity: string; owningHost?: string; runtime: string } | null;
 } = {}) {
   const res = await createWorktreeAt(
@@ -145,6 +151,7 @@ async function create(mux: FakeMux, body: JsonObject, extra: {
       ...deps(),
       receipts: extra.receipts ?? memoryWorktreeReceipts(),
       operations: extra.operations,
+      finalAdmission: extra.finalAdmission,
       receiptContext: extra.receiptContext,
       choices: extra.choices,
       harnesses: { launch: harnessLaunch },
@@ -325,4 +332,142 @@ describe("WorktreeChoiceStore — the file", () => {
     expect(coerceChoice({ base: "sideways", folder: "default", at: 1 })).toBeNull();
     expect(coerceChoice({ base: "default", folder: "parent", parent: 3, at: 1 })).toBeNull();
   });
+});
+
+
+describe("create-at final durable-reservation boundary", () => {
+  for (const changed of ["child", "parent", "policy"] as const) test(`a ${changed} change during durable reservation cannot dispatch the frozen parent create`, async () => {
+    const mux = new FakeMux();
+    const context = { key: new Uint8Array(32).fill(8), deviceIdentity: "a".repeat(64), owningHost: "host-a", runtime: "default" };
+    let allowed = true;
+    let persisted = 0;
+    const operations = new OperationStore(join(root, "race-operations"), Date.now, async () => {
+      if (++persisted !== 1) return;
+      if (changed === "child") await mkdir(join(home, "trees", "final-race"));
+      else if (changed === "parent") { await rename(join(home, "trees"), join(home, "old-trees")); await symlink(join(root, "outside"), join(home, "trees")); }
+      else allowed = false;
+    });
+    await mkdir(join(root, "outside"));
+    await operations.prepare();
+    const body = { cwd: repo, branch: "final-race", requestId: ID, folder: { kind: "parent", parent: "~/trees" } };
+    const first = await create(mux, body, { operations, receiptContext: context, finalAdmission: () => allowed });
+    expect(first.body.ok).toBe(false);
+    expect(mux.creates).toHaveLength(0);
+    const again = await create(mux, body, { operations, receiptContext: context, finalAdmission: () => true });
+    expect(again.body.ok).toBe(false);
+    expect(mux.creates).toHaveLength(0);
+  });
+});
+
+
+describe("B15 original authority across actual hinted owner dispatch", () => {
+  class CountedOwner extends FakeHerdr {
+    creations = 0; opens = 0; textCalls = 0; keyCalls = 0;
+    override async createWorktree(options: { cwd: string; branch: string }) { this.creations++; return super.createWorktree(options); }
+    override async openWorktree(options: { cwd: string; path: string }) { this.opens++; return super.openWorktree(options); }
+    override async sendPaneText(paneId: string, value: string) { this.textCalls++; return super.sendPaneText(paneId, value); }
+    override async sendPaneKeys(paneId: string, keys: string[]) { this.keyCalls++; return super.sendPaneKeys(paneId, keys); }
+  }
+  function deferred() { let release!: () => void; const promise = new Promise<void>((resolve) => { release = resolve; }); return { promise, release }; }
+  async function owner() {
+    const client = new CountedOwner(); const raw = new HerdrMux(client, () => []);
+    await raw.reachable();
+    return { client, mux: withAgentHints(raw, { hooksInstalled: () => false }) };
+  }
+  for (const retirement of ["pairing", "runtime", "between-text-enter", "unchanged"] as const) {
+    test(`post-create base custody and text/Enter keep the original ${retirement} witness and same-ID checkout`, async () => {
+      const { client, mux } = await owner(); const originalRuntime = client.runtimeIdentity;
+      let allowed = true;
+      const entered = deferred(); const release = deferred(); const receipts = memoryWorktreeReceipts();
+      const branch = "custody-" + retirement;
+      let ms = 0;
+      const invoke = () => createWorktreeAt(mux, engine(), new Request("http://x/api/worktree", { method: "POST", body: JSON.stringify({ cwd: repo, branch, base: { kind: "default" }, harness: "codex", requestId: ID }) }), new AuditLog(() => {}), "original-device", "default", async () => [], {
+        ...deps(), receipts, harnesses: { launch: harnessLaunch },
+        bases: { get: () => undefined, record: async () => { entered.release(); await release.promise; } },
+        finalAdmission: (identity) => allowed && identity === originalRuntime,
+        wait: { now: () => ms, sleep: async (by) => { ms += by; if (retirement === "between-text-enter" && client.textCalls > 0) allowed = false; } },
+      });
+      const pending = invoke(); await entered.promise;
+      expect(client.creations).toBe(1); expect(client.textCalls).toBe(0); expect(client.keyCalls).toBe(0);
+      if (retirement === "pairing") allowed = false;
+      if (retirement === "runtime") client.runtimeIdentity = "replacement-runtime";
+      release.release();
+      const result = await (await pending).json();
+      expect(result.ok).toBe(true); expect(result.pane).toBeDefined(); // The checkout exists.
+      expect(result.launcherStarted).toBe(retirement === "unchanged");
+      expect(client.textCalls).toBe(retirement === "unchanged" || retirement === "between-text-enter" ? 1 : 0);
+      expect(client.keyCalls).toBe(retirement === "unchanged" ? 1 : 0);
+      await invoke(); // Identical receipt recovery never recreates or retypes.
+      expect(client.creations).toBe(1);
+      expect(client.textCalls).toBe(retirement === "unchanged" || retirement === "between-text-enter" ? 1 : 0);
+      expect(client.keyCalls).toBe(retirement === "unchanged" ? 1 : 0);
+    });
+  }
+  for (const changed of ["authority", "runtime", "target", "unchanged"] as const) {
+    test(`actual hinted create preparation refuses ${changed} replacement at named vendor boundary`, async () => {
+      const { client, mux } = await owner(); const runtime = client.runtimeIdentity;
+      const entered = deferred(); const release = deferred(); let allowed = true; let target = true;
+      const finalAdmission = (identity: string) => allowed && identity === runtime;
+      const beforeDispatch = async () => { entered.release(); await release.promise; return target; };
+      const pending = mux.createWorktree({ repoRoot: repo, branch: "decorated-" + changed }, finalAdmission, beforeDispatch);
+      await entered.promise;
+      if (changed === "authority") allowed = false;
+      if (changed === "runtime") client.runtimeIdentity = "new-runtime";
+      if (changed === "target") target = false;
+      release.release(); const result = await pending;
+      expect(result.ok).toBe(changed === "unchanged"); expect(client.creations).toBe(changed === "unchanged" ? 1 : 0);
+    });
+  }
+  test("actual open reads held body under original root and final hinted owner gate", async () => {
+    for (const changed of ["authority", "runtime", "target", "unchanged"] as const) {
+      const { client, mux } = await owner();
+      const created = await client.createWorktree({ cwd: repo, branch: "opened-" + changed });
+      const runtime = client.runtimeIdentity; let allowed = true; let currentRoot = repo;
+      // Only the authoritative current root is needed by this real route helper.
+      const current: Partial<StateEngine> = { pokeNow() {}, current: () => ({ agents: [], shellPanes: [], tabs: [], bridge: "connected", workspaces: [{ workspaceId: "root", number: 1, label: "root", focused: false, activeTabId: "tab", paneCount: 1, tabCount: 1, repoRoot: currentRoot }] }) };
+      // SAFETY: openWorktree consumes only current() and pokeNow(); its named owner is real HerdrMux.
+      const state = current as StateEngine;
+      const entered = deferred(); const release = deferred();
+      const req = new Request("http://x/api/workspace/root/worktree/open", { method: "POST", body: JSON.stringify({ path: created.cwd }) });
+      const readBody = req.json.bind(req);
+      req.json = async () => { entered.release(); await release.promise; return readBody(); };
+      const pending = openWorktree(mux, state, "root", req, new AuditLog(() => {}), "original", "default", (identity) => allowed && identity === runtime);
+      await entered.promise;
+      if (changed === "authority") allowed = false;
+      if (changed === "runtime") client.runtimeIdentity = "new-open-runtime";
+      if (changed === "target") currentRoot = "/replacement-root";
+      release.release(); const result = await (await pending).json();
+      expect(result.ok).toBe(changed === "unchanged"); expect(client.opens).toBe(changed === "unchanged" ? 1 : 0);
+    }
+  });
+  for (const held of ["choices", "ready"] as const) {
+    test(`actual post-create ${held} await refuses old caller and keeps known checkout`, async () => {
+      const { client, mux } = await owner(); const runtime = client.runtimeIdentity; let allowed = true;
+      const entered = deferred(); const release = deferred(); const receipts = memoryWorktreeReceipts();
+      const choices = memoryWorktreeChoices();
+      const actualChoices = { get: choices.get.bind(choices), record: async (...args: Parameters<typeof choices.record>) => { if (held === "choices") { entered.release(); await release.promise; } return choices.record(...args); } };
+      const read = mux.readGrid.bind(mux);
+      mux.readGrid = async (paneId, request) => { if (held === "ready") { entered.release(); await release.promise; } return read(paneId, request); };
+      let ms = 0;
+      const pending = createWorktreeAt(mux, engine(), new Request("http://x/api/worktree", { method: "POST", body: JSON.stringify({ cwd: repo, branch: "await-" + held, base: { kind: "default" }, harness: "codex", requestId: ID }) }), new AuditLog(() => {}), "original", "default", async () => [], {
+        ...deps(), receipts, choices: actualChoices, harnesses: { launch: harnessLaunch }, finalAdmission: (identity) => allowed && identity === runtime,
+        wait: { now: () => ms, sleep: async (by) => { ms += by; } },
+      });
+      await entered.promise; expect(client.creations).toBe(1); allowed = false; release.release();
+      const result = await (await pending).json();
+      expect(result.ok).toBe(true); expect(result.pane).toBeDefined(); expect(result.launcherStarted).toBe(false);
+      expect(client.creations).toBe(1); expect(client.textCalls).toBe(0); expect(client.keyCalls).toBe(0);
+      expect(receipts.get(ID)?.launcherStarted).toBe(false);
+    });
+  }
+  test("actual hinted open preparation rechecks original owner after its final target await", async () => {
+    const { client, mux } = await owner(); const created = await client.createWorktree({ cwd: repo, branch: "open-preparation" });
+    const runtime = client.runtimeIdentity; let allowed = true; const entered = deferred(); const release = deferred();
+    const pending = mux.openWorktree({ repoRoot: repo, path: created.cwd }, (identity) => allowed && identity === runtime, async () => { entered.release(); await release.promise; return true; });
+    await entered.promise; allowed = false; release.release();
+    expect((await pending).ok).toBe(false); expect(client.opens).toBe(0);
+    expect((await mux.openWorktree({ repoRoot: repo, path: created.cwd }, (identity) => identity === runtime, async () => true)).ok).toBe(true);
+    expect(client.opens).toBe(1);
+  });
+
 });

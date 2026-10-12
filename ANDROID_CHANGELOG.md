@@ -9,6 +9,9 @@ the first Android release from this fork.
 - Return directly opened file references to their calling pane on Back, including after recreation; retain folder hierarchy after deliberate breadcrumb or listing navigation.
 
 - Fetch a fresh pane body for a new or retired pane screen before admitting file-reference links; keep conditional reads only for a current body accepted by that screen.
+- Retire New’s editable worktree fields and owned saved copies even after a review is cancelled or refused. Same-owner rotation retains allowed manual input; replacement credentials cannot restore the old form.
+
+- Release cancelled, invalid and completed worktree reviews while keeping explicit form, no-prompts and force-review handoffs. Consume each Open confirmation once and retain exact-owner encrypted retirement fences, including a zero-row purge.
 
 - Restore retained local Codex input acknowledgements when the authoritative legacy connection returns, without resetting an already adopted pane or accepting queued old connection values.
 
@@ -32,6 +35,10 @@ the first Android release from this fork.
 - Erase retired Files names from detached and pooled rows, release retained SVG graphs, and retire original-actor image requests, caches and viewers on encrypted connection changes while preserving current replacement content.
 
 - Clear native Files source, previews and dialogs, including retained copies from earlier Source/Preview redraws, when the encrypted connection is removed or replaced, even while the screen is stopped and no read is pending.
+
+- Keep worktree forms and force reviews bound to their original connection and scope; clear copied sheets on stop or authority retirement, and distinguish known removal refusals from unknown outcomes.
+
+- Add B15 worktree planning to native New with selected agent, explicit base ref and parent-folder review; preserve owner-bound create recovery and add scoped clean removal with a separate force review, durable receipts and linked-checkout reopening.
 
 - Open current, bridge-listed Changes source in native Files with the original scoped read actor; explain historical and deleted diffs and preserve Files device-read refusals.
 

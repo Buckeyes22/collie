@@ -47,7 +47,7 @@ class DiagnosticsInterceptor internal constructor(
             diagnostics.record("network", fields)
             return response
         }
-        if (isPaneLayoutRequest(tagged)) {
+        if (isWorktreeRemovalRequest(tagged) || isPaneLayoutRequest(tagged)) {
             // Layout replies and plans have independent streaming bounds downstream. Keep
             // literal environment values, folders and geometry out of diagnostic body custody.
             tagged.body?.let { body ->
@@ -147,6 +147,11 @@ class DiagnosticsInterceptor internal constructor(
         val segments = request.url.encodedPath.split('/').filter(String::isNotEmpty)
         if (segments.size < 3 || segments.takeLast(3).take(2) != listOf("api", "blobs")) return false
         return JOURNAL_HASH.matches(segments.last())
+    }
+    private fun isWorktreeRemovalRequest(request: okhttp3.Request): Boolean {
+        val tail = request.url.pathSegments.takeLast(5)
+        if (tail.size != 5 || tail[0] != "api" || tail[1] != "workspace" || tail[2].isBlank() || tail[3] != "worktree") return false
+        return request.method == "GET" && tail[4] == "remove-plan" || request.method == "POST" && tail[4] == "remove"
     }
     private fun isPaneLayoutRequest(request: okhttp3.Request): Boolean {
         val segments = request.url.pathSegments

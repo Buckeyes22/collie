@@ -49,6 +49,44 @@ class DiagnosticsInterceptorTest {
         server.shutdown()
     }
 
+    @Test fun mountedWorktreeRemovalAllMimeAndChunkedErrorsRemainBoundedWithActualDiagnosticsEnabled(): Unit = kotlinx.coroutines.runBlocking {
+        val certificate = HeldCertificate.Builder().commonName("localhost").addSubjectAlternativeName("localhost").build()
+        val certificates = HandshakeCertificates.Builder().heldCertificate(certificate).build()
+        val trust = HandshakeCertificates.Builder().addTrustedCertificate(certificate.certificate).build()
+        server.useHttps(certificates.sslSocketFactory(), false)
+        val consumed = AtomicLong()
+        val enabled = OkHttpClient.Builder().sslSocketFactory(trust.sslSocketFactory(), trust.trustManager)
+            .addInterceptor(DiagnosticsInterceptor(RecordingDiagnosticsRecorder(recorded)))
+            .addNetworkInterceptor { chain ->
+                val response = chain.proceed(chain.request())
+                val body = response.body!!
+                val source = object : ForwardingSource(body.source()) {
+                    override fun read(sink: okio.Buffer, byteCount: Long): Long = super.read(sink, byteCount).also { if (it > 0) consumed.addAndGet(it) }
+                }.buffer()
+                response.newBuilder().body(object : ResponseBody() {
+                    override fun contentType() = body.contentType()
+                    override fun contentLength() = body.contentLength()
+                    override fun source() = source
+                }).build()
+            }.build()
+        val api = CollieApiClient(enabled, Json { ignoreUnknownKeys = true })
+        val connection = Connection(CollieOrigin(server.url("/mount/").toString()), "phone", "token")
+        for (mime in listOf(null, "text/plain", "application/json", "application/octet-stream")) {
+            consumed.set(0)
+            val reply = MockResponse().setResponseCode(503).setChunkedBody("x".repeat(1024 * 1024), 4096)
+            mime?.let { reply.setHeader("Content-Type", it) }
+            server.enqueue(reply)
+            val result = api.removeWorktree(connection, Scope(), "space", com.lateapex.collie.network.WorktreeRemoveRequest("remove", "plan", false))
+            assertTrue(result is ApiResult.Failure && result.error is ApiFailure.Protocol)
+            assertTrue(consumed.get() <= 64 * 1024L + 16 * 1024L)
+            server.takeRequest()
+            val fields = recorded.last().second
+            assertEquals(true, fields["responseBodyStreaming"])
+            assertFalse(fields.containsKey("responseBody"))
+            assertFalse(fields.containsKey("requestBody"))
+        }
+    }
+
     @Test
     fun recordsMethodPathStatusAndAddsATraceIdHeaderTheServerReceives() {
         server.enqueue(MockResponse().setResponseCode(200).setBody("{\"ok\":true}"))

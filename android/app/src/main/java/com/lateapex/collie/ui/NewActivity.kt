@@ -18,6 +18,7 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.core.view.isVisible
+import androidx.core.widget.doAfterTextChanged
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.button.MaterialButton
 import com.lateapex.collie.CollieApplication
@@ -34,6 +35,9 @@ import com.lateapex.collie.network.Launcher
 import com.lateapex.collie.network.LauncherItem
 import com.lateapex.collie.network.LaunchersResponse
 import com.lateapex.collie.network.StartTarget
+import com.lateapex.collie.network.WorktreeBase
+import com.lateapex.collie.network.WorktreeFolder
+import com.lateapex.collie.network.WorktreePlanResponse
 import com.lateapex.collie.network.SnapshotResponse
 import java.util.UUID
 import kotlinx.coroutines.flow.collect
@@ -50,12 +54,13 @@ internal data class NewLaunchChoice(
     val available: Boolean,
     val reason: String?,
     val ownerIntentSupported: Boolean = true,
+    val branchSupported: Boolean = false,
 )
 
 /** Pure catalog mapping kept separate from Activity rendering so legacy/malformed choices are tested. */
 internal object NewLaunchModel {
     fun choices(response: LaunchersResponse): List<NewLaunchChoice> = response.items?.map { item ->
-        NewLaunchChoice(item.key, item.label, item.start, item.command, item.cwd, item.noPrompts, item.available, item.reason)
+        NewLaunchChoice(item.key, item.label, item.start, item.command, item.cwd, item.noPrompts, item.available, item.reason, branchSupported = item.branch)
     } ?: response.launchers.map { row ->
         NewLaunchChoice(
             key = "legacy:${row.command}", label = row.label,
@@ -77,22 +82,39 @@ class NewActivity : AppCompatActivity() {
     private lateinit var progress: ProgressBar
     private lateinit var choicesView: RadioGroup
     private lateinit var cwd: EditText
+    private lateinit var worktreeToggle: com.google.android.material.switchmaterial.SwitchMaterial
+    private lateinit var worktreeOptions: LinearLayout
+    private lateinit var worktreeBranch: EditText
+    private lateinit var worktreeBaseRef: EditText
+    private lateinit var worktreeParent: EditText
     private lateinit var pickerSlot: LinearLayout
     private lateinit var recoverySlot: LinearLayout
     private lateinit var launchButton: MaterialButton
     private lateinit var runButton: MaterialButton
     private lateinit var recipesButton: MaterialButton
     private lateinit var folderPicker: FolderPickerView
-    private var contextKey: ScopedReadContext? = null
+    @Volatile private var contextKey: ScopedReadContext? = null
     private var catalog: List<NewLaunchChoice> = emptyList()
     private var selectedKey: String? = null
     private var requiresTargetChoice = false
     private var folderOverrideSelected = false
+    private var applyingFolderPolicy = false
+    private var worktreeSelected = false
     private var folders: FoldersResponse? = null
     private var running = false
     private var inventory: SnapshotResponse? = null
     private var scopedSnapshotReady = false
     private var uiOperation = 0L
+    private class WorktreeFormOwner(val context: ScopedReadContext, val operation: Long)
+    private var worktreeFormOwner: WorktreeFormOwner? = null
+    // Editable inputs outlive a modal review; one Activity subscription owns this separate copy.
+    private var editableFormContext: ScopedReadContext? = null
+    private var editableFormScope: Scope? = null
+    private data class SavedEditableForm(val ownerHash: String, val incarnation: String,
+        val cwd: String, val branch: String, val base: String, val parent: String,
+        val folderOverride: Boolean, val worktreeSelected: Boolean)
+    private var pendingEditableForm: SavedEditableForm? = null
+    private var savedFormCopy: Bundle? = null
     private var scopeSelectionInProgress = false
     private var authoritySubscription: AutoCloseable? = null
     private var connectionObservation: Job? = null
@@ -107,8 +129,20 @@ class NewActivity : AppCompatActivity() {
         )
         requiresTargetChoice = savedInstanceState?.getBoolean(STATE_REQUIRES_TARGET_CHOICE) == true
         selectedKey = savedInstanceState?.getString(STATE_SELECTED_KEY).takeUnless { requiresTargetChoice }
-        folderOverrideSelected = savedInstanceState?.getBoolean(STATE_FOLDER_SELECTED) == true
-        buildContent(savedInstanceState?.getString(STATE_CWD).orEmpty())
+        // Saved private strings are inert until their original durable owner matches an admitted
+        // current connection. A bearer-bearing Connection never enters saved state.
+        val savedOwner = savedInstanceState?.getString(STATE_FORM_OWNER)
+        val savedIncarnation = savedInstanceState?.getString(STATE_FORM_INCARNATION)
+        if (savedInstanceState != null && savedOwner?.matches(Regex("[0-9a-f]{64}")) == true &&
+            savedIncarnation?.matches(Regex("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")) == true) {
+            pendingEditableForm = SavedEditableForm(savedOwner, savedIncarnation,
+                savedInstanceState.getString(STATE_CWD).orEmpty().take(MAX_SAVED_CWD_CHARS),
+                savedInstanceState.getString(STATE_WORKTREE_BRANCH).orEmpty().take(MAX_SAVED_BRANCH_CHARS),
+                savedInstanceState.getString(STATE_WORKTREE_BASE).orEmpty().take(MAX_SAVED_BRANCH_CHARS),
+                savedInstanceState.getString(STATE_WORKTREE_PARENT).orEmpty().take(MAX_SAVED_CWD_CHARS),
+                savedInstanceState.getBoolean(STATE_FOLDER_SELECTED), savedInstanceState.getBoolean(STATE_WORKTREE_SELECTED))
+        }
+        buildContent("")
         window.applySafeContentInsets(root)
         observeRepositoryAuthority()
         loadInventory()
@@ -118,7 +152,10 @@ class NewActivity : AppCompatActivity() {
         authoritySubscription?.close()
         connectionObservation?.cancel()
         authoritySubscription = repository.onAuthorityRetired { event ->
-            withRetirementOnMain(event, { contextKey }) {
+            withMainCustodyAck {
+                if (event.retiresReadActor && event.affects(editableFormContext)) clearEditableForm()
+                if (event.retiresReadActor && pendingEditableForm?.ownerHash == event.owner?.storageIdentity) pendingEditableForm = null
+                if (!event.affects(contextKey)) return@withMainCustodyAck
                 val reason = event.reason
                 runOnUiThread {
                     val contextIsStale = contextKey?.let { !repository.isCurrent(it) } == true
@@ -162,7 +199,51 @@ class NewActivity : AppCompatActivity() {
     override fun onDestroy() {
         authoritySubscription?.close()
         authoritySubscription = null
+        pendingEditableForm = null
+        // Android owns a permitted saved rotation copy after destruction; its witness still
+        // prevents any replacement incarnation from restoring those strings.
+        savedFormCopy = null
+        clearEditableForm()
         super.onDestroy()
+    }
+
+    private fun clearSavedFormCopy() {
+        savedFormCopy?.let { copy ->
+            listOf(STATE_FORM_OWNER, STATE_FORM_INCARNATION, STATE_CWD, STATE_WORKTREE_BRANCH,
+                STATE_WORKTREE_BASE, STATE_WORKTREE_PARENT).forEach { copy.remove(it) }
+            copy.putBoolean(STATE_FOLDER_SELECTED, false); copy.putBoolean(STATE_WORKTREE_SELECTED, false)
+        }
+        savedFormCopy = null
+    }
+
+    private fun clearEditableForm() {
+        clearSavedFormCopy()
+        editableFormContext = null; editableFormScope = null; worktreeFormOwner = null
+        folderOverrideSelected = false
+        setFolderText("")
+        worktreeBranch.setText(""); worktreeBaseRef.setText(""); worktreeParent.setText("")
+        recoverySlot.removeAllViews()
+    }
+
+    /** Called on Main before publishing a newly admitted actor or its catalog defaults. */
+    private fun adoptEditableForm(captured: ScopedReadContext) {
+        val previous = editableFormContext
+        if (previous != null && (previous.connection !== captured.connection ||
+                previous.connectionIncarnation != captured.connectionIncarnation || editableFormScope != scope ||
+                repository.isActorRetired(previous))) clearEditableForm()
+        editableFormContext = captured; editableFormScope = scope
+        pendingEditableForm?.let { saved ->
+            pendingEditableForm = null
+            val owner = com.lateapex.collie.data.ScopedCustodyOwner(captured.key.origin, captured.key.origin, captured.key.pairedDeviceIdentity)
+            if (captured.committedStore && captured.connectionIncarnation == saved.incarnation && owner.storageIdentity == saved.ownerHash) {
+                folderOverrideSelected = saved.folderOverride
+                setFolderText(saved.cwd)
+                worktreeBranch.setText(saved.branch); worktreeBaseRef.setText(saved.base); worktreeParent.setText(saved.parent)
+                worktreeToggle.isChecked = saved.worktreeSelected
+            } else {
+                selectedKey = null; requiresTargetChoice = true
+            }
+        }
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -170,8 +251,22 @@ class NewActivity : AppCompatActivity() {
         outState.putString(STATE_SCOPE_SESSION, scope.session)
         outState.putBoolean(STATE_REQUIRES_TARGET_CHOICE, requiresTargetChoice)
         outState.putString(STATE_SELECTED_KEY, selectedKey)
-        outState.putString(STATE_CWD, cwd.text.toString().take(MAX_SAVED_CWD_CHARS))
-        outState.putBoolean(STATE_FOLDER_SELECTED, folderOverrideSelected)
+        clearSavedFormCopy()
+        val copied = editableFormContext?.takeIf { it.committedStore && it.connectionIncarnation != null &&
+            editableFormScope == scope && !repository.isActorRetired(it) }
+        val maySave = copied != null
+        if (copied != null) {
+            val owner = com.lateapex.collie.data.ScopedCustodyOwner(copied.key.origin, copied.key.origin, copied.key.pairedDeviceIdentity)
+            outState.putString(STATE_FORM_OWNER, owner.storageIdentity)
+            outState.putString(STATE_FORM_INCARNATION, copied.connectionIncarnation)
+            savedFormCopy = outState
+        }
+        outState.putString(STATE_CWD, if (maySave) cwd.text.toString().take(MAX_SAVED_CWD_CHARS) else "")
+        outState.putBoolean(STATE_FOLDER_SELECTED, maySave && folderOverrideSelected)
+        outState.putBoolean(STATE_WORKTREE_SELECTED, maySave && worktreeToggle.isChecked)
+        outState.putString(STATE_WORKTREE_BRANCH, if (maySave) worktreeBranch.text.toString().take(MAX_SAVED_BRANCH_CHARS) else "")
+        outState.putString(STATE_WORKTREE_BASE, if (maySave) worktreeBaseRef.text.toString().take(MAX_SAVED_BRANCH_CHARS) else "")
+        outState.putString(STATE_WORKTREE_PARENT, if (maySave) worktreeParent.text.toString().take(MAX_SAVED_CWD_CHARS) else "")
         super.onSaveInstanceState(outState)
     }
 
@@ -221,6 +316,7 @@ class NewActivity : AppCompatActivity() {
         choicesView = RadioGroup(this).apply { orientation = RadioGroup.VERTICAL }
         root.addView(choicesView, rowParams(8))
         cwd = EditText(this).apply {
+            isSaveEnabled = false
             hint = getString(R.string.new_folder_manual)
             inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_URI
             isSingleLine = true
@@ -228,12 +324,57 @@ class NewActivity : AppCompatActivity() {
             setText(savedCwd.take(MAX_SAVED_CWD_CHARS))
             minHeight = dp(48)
             contentDescription = getString(R.string.new_folder_manual_accessibility)
+            doAfterTextChanged {
+                // Manual folder input is an explicit choice, just like the native picker.
+                // Rebuilding target rows/toggling worktree mode must not erase that input.
+                if (!applyingFolderPolicy) folderOverrideSelected = true
+            }
         }
         root.addView(cwd, rowParams(8))
+        worktreeToggle = com.google.android.material.switchmaterial.SwitchMaterial(this).apply {
+            text = getString(R.string.new_worktree_toggle)
+            isChecked = worktreeSelected
+            minHeight = dp(48)
+            setOnCheckedChangeListener { _, checked ->
+                worktreeSelected = checked
+                worktreeOptions.isVisible = checked
+                launchButton.text = getString(if (checked) R.string.new_worktree_review else R.string.new_start)
+                renderChoices()
+                launchButton.isEnabled = canStartSelected()
+            }
+        }
+        root.addView(worktreeToggle, rowParams(8))
+        worktreeOptions = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; isVisible = worktreeSelected }
+        worktreeBranch = EditText(this).apply {
+            isSaveEnabled = false
+            hint = getString(R.string.new_worktree_branch)
+            inputType = android.text.InputType.TYPE_CLASS_TEXT
+            isSingleLine = true
+            minHeight = dp(48)
+        }
+        worktreeBaseRef = EditText(this).apply {
+            isSaveEnabled = false
+            hint = getString(R.string.new_worktree_base_ref)
+            inputType = android.text.InputType.TYPE_CLASS_TEXT
+            isSingleLine = true
+            minHeight = dp(48)
+        }
+        worktreeParent = EditText(this).apply {
+            isSaveEnabled = false
+            hint = getString(R.string.new_worktree_parent)
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_URI
+            isSingleLine = true
+            filters = arrayOf(InputFilter.LengthFilter(MAX_SAVED_CWD_CHARS))
+            minHeight = dp(48)
+        }
+        worktreeOptions.addView(worktreeBranch, rowParams(4))
+        worktreeOptions.addView(worktreeBaseRef, rowParams(4))
+        worktreeOptions.addView(worktreeParent, rowParams(4))
+        root.addView(worktreeOptions, rowParams(2))
         pickerSlot = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         folderPicker = FolderPickerView(this, onSelect = { selected ->
             folderOverrideSelected = true
-            cwd.setText(selected.orEmpty())
+            setFolderText(selected.orEmpty())
             cwd.setSelection(cwd.text.length)
         }, onStar = ::toggleStar)
         pickerSlot.addView(folderPicker, rowParams())
@@ -281,10 +422,11 @@ class NewActivity : AppCompatActivity() {
         if (contextKey != null && (contextKey?.connection !== captured.connection || contextKey?.connectionIncarnation != captured.connectionIncarnation)) {
             catalog = emptyList(); inventory = null; folders = null; selectedKey = null; requiresTargetChoice = true; renderChoices()
         }
+        adoptEditableForm(captured)
         contextKey = captured
         lifecycleScope.launch {
             val scopedSnapshot = repository.snapshot(scope, captured)
-            if (!repository.isCurrent(captured)) {
+            if (!repository.isCurrent(captured) || operation != uiOperation) {
                 settleStaleOperation(operation)
                 return@launch
             }
@@ -302,9 +444,9 @@ class NewActivity : AppCompatActivity() {
                 showUnresolvedIntent()
                 return@launch
             }
-            val launchResult = repository.launchers(scope)
-            val folderResult = repository.folders(scope)
-            if (!repository.isCurrent(captured)) {
+            val launchResult = repository.launchers(scope, captured)
+            val folderResult = repository.folders(scope, captured)
+            if (!repository.isCurrent(captured) || operation != uiOperation) {
                 settleStaleOperation(operation)
                 return@launch
             }
@@ -324,8 +466,9 @@ class NewActivity : AppCompatActivity() {
                 is ApiResult.NotModified -> status.append("\n${getString(R.string.folder_list_unavailable)}")
             }
             folderPicker.render(folders, cwd.text.toString().ifBlank { null }, repository.writesAllowed(scope))
-            launchButton.isEnabled = catalog.any { it.available && it.key == selectedKey } && !requiresTargetChoice && writesAvailable() &&
-                ownedUnresolvedIntents().isEmpty()
+            worktreeToggle.isEnabled = isLeadLocalTarget()
+            worktreeToggle.contentDescription = getString(if (isLeadLocalTarget()) R.string.new_worktree_toggle else R.string.new_worktree_local_only)
+            launchButton.isEnabled = canStartSelected()
             showUnresolvedIntent()
         }
     }
@@ -345,11 +488,12 @@ class NewActivity : AppCompatActivity() {
         if (contextKey != null && (contextKey?.connection !== inventoryContext.connection || contextKey?.connectionIncarnation != inventoryContext.connectionIncarnation)) {
             catalog = emptyList(); inventory = null; folders = null; selectedKey = null; requiresTargetChoice = true; renderChoices()
         }
+        adoptEditableForm(inventoryContext)
         contextKey = inventoryContext
         progress.isVisible = true
         lifecycleScope.launch {
             val result = repository.snapshot(Scope(viewAll = true), inventoryContext)
-            if (!repository.isCurrent(inventoryContext)) {
+            if (!repository.isCurrent(inventoryContext) || operation != uiOperation) {
                 settleStaleOperation(operation)
                 return@launch
             }
@@ -378,7 +522,7 @@ class NewActivity : AppCompatActivity() {
                 machineButton.text = getString(R.string.new_machine_select, options[which].second)
                 sessionButton.text = getString(R.string.new_session_select, getString(R.string.new_default_session))
                 updateScopeCaption()
-                cwd.setText("")
+                setFolderText("")
                 folderOverrideSelected = false
                 folders = null
                 catalog = emptyList()
@@ -414,7 +558,7 @@ class NewActivity : AppCompatActivity() {
                 scopeSelectionInProgress = false
                 sessionButton.text = getString(R.string.new_session_select, selectedSession ?: getString(R.string.new_default_session))
                 updateScopeCaption()
-                cwd.setText("")
+                setFolderText("")
                 folderOverrideSelected = false
                 folders = null
                 catalog = emptyList()
@@ -436,7 +580,7 @@ class NewActivity : AppCompatActivity() {
             val radio = RadioButton(this).apply {
                 id = View.generateViewId()
                 text = option.label
-                isEnabled = option.available
+                isEnabled = option.available && (!worktreeToggle.isChecked || option.branchSupported && option.ownerIntentSupported)
                 isChecked = option.key == selectedKey || selectedKey == null && !requiresTargetChoice && option.available && catalog.firstOrNull(NewLaunchChoice::available)?.key == option.key
                 if (isChecked) selectedKey = option.key
                 contentDescription = getString(R.string.new_choice_accessibility, option.label)
@@ -444,18 +588,25 @@ class NewActivity : AppCompatActivity() {
                     selectedKey = option.key
                     requiresTargetChoice = false
                     applySelectedFolderPolicy(option)
-                    launchButton.isEnabled = writesAvailable() && !running && ownedUnresolvedIntents().isEmpty()
+                    launchButton.isEnabled = canStartSelected()
                 }
             }
             choicesView.addView(radio, RadioGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
-            if (!option.available) choicesView.addView(TextView(this).apply {
-                text = option.reason?.takeIf(String::isNotBlank) ?: getString(R.string.new_choice_unavailable)
+            if (!option.available || worktreeToggle.isChecked && (!option.branchSupported || !option.ownerIntentSupported)) choicesView.addView(TextView(this).apply {
+                text = if (worktreeToggle.isChecked && (!option.branchSupported || !option.ownerIntentSupported)) getString(R.string.new_worktree_target_unavailable)
+                    else option.reason?.takeIf(String::isNotBlank) ?: getString(R.string.new_choice_unavailable)
                 textSize = 12f
                 setTextColor(ContextCompat.getColor(this@NewActivity, R.color.collie_muted))
                 setPadding(dp(44), 0, 0, dp(6))
             }, rowParams())
         }
         catalog.firstOrNull { it.key == selectedKey }?.let(::applySelectedFolderPolicy)
+    }
+
+    private fun setFolderText(value: String) {
+        val wasApplying = applyingFolderPolicy
+        applyingFolderPolicy = true
+        try { cwd.setText(value) } finally { applyingFolderPolicy = wasApplying }
     }
 
     private fun applySelectedFolderPolicy(option: NewLaunchChoice) {
@@ -468,10 +619,10 @@ class NewActivity : AppCompatActivity() {
             getString(R.string.new_folder_pinned_accessibility, pinned)
         }
         if (pinned != null) {
-            cwd.setText(pinned)
+            setFolderText(pinned)
             folderPickerSlotVisible(false)
         } else {
-            if (!folderOverrideSelected) cwd.setText(option.cwd.orEmpty())
+            if (!folderOverrideSelected) setFolderText(option.cwd.orEmpty())
             folderPickerSlotVisible(true)
             folderPicker.render(folders, cwd.text.toString().ifBlank { null }, writesAvailable())
         }
@@ -493,7 +644,7 @@ class NewActivity : AppCompatActivity() {
         val captured = contextKey ?: return
         if (!repository.isCurrent(captured) || !writesAvailable() || running) return
         lifecycleScope.launch {
-            val result = repository.starFolder(scope, folder, starred)
+            val result = repository.starFolder(scope, folder, starred, captured)
             if (!repository.isCurrent(captured)) return@launch
             when (result) {
                 is ApiResult.Success -> {
@@ -528,6 +679,10 @@ class NewActivity : AppCompatActivity() {
         progress.isVisible = true
         lifecycleScope.launch {
             try {
+                if (worktreeToggle.isChecked) {
+                    startWorktreeForSelected(selected, captured, operation)
+                    return@launch
+                }
                 val enteredPath = cwd.text.toString().trim().takeIf(String::isNotEmpty)
                 val path = selected.cwd?.takeIf(String::isNotBlank) ?: enteredPath
                 val launcher = Launcher(
@@ -543,10 +698,10 @@ class NewActivity : AppCompatActivity() {
                 val result = if (!selected.ownerIntentSupported) {
                     val command = selected.command ?: return@launch
                     val requestId = UUID.randomUUID().toString()
-                    repository.startLegacyLaunchInitial(scope, command, requestId, path, selected.noPrompts)
+                    repository.startLegacyLaunchInitial(scope, command, requestId, path, selected.noPrompts, captured)
                 } else {
                     val requestId = UUID.randomUUID().toString()
-                    repository.startLaunchIntent(scope, selected.target, requestId, path, selected.noPrompts)
+                    repository.startLaunchIntent(scope, selected.target, requestId, path, selected.noPrompts, captured)
                 }
                 if (!repository.isCurrent(captured)) {
                     settleStaleOperation(operation)
@@ -568,26 +723,157 @@ class NewActivity : AppCompatActivity() {
                 if (operation == uiOperation) {
                     running = false
                     progress.isVisible = false
-                    launchButton.isEnabled = catalog.any { it.available && it.key == selectedKey } && !requiresTargetChoice && writesAvailable() &&
-                        ownedUnresolvedIntents().isEmpty()
+                    launchButton.isEnabled = canStartSelected()
                 }
             }
         }
     }
 
+    private suspend fun startWorktreeForSelected(selected: NewLaunchChoice, captured: ScopedReadContext, operation: Long) {
+        val formOwner = WorktreeFormOwner(captured, operation)
+        worktreeFormOwner = formOwner
+        val lease = WorktreeUiLease(this, repository, captured) {
+            // Dialog copies belong to the lease and are always wiped. The shared form may
+            // already belong to a later deliberate operation or replacement credential.
+            if (worktreeFormOwner !== formOwner || contextKey !== formOwner.context) return@WorktreeUiLease
+            clearEditableForm()
+            status.text = ""; recoverySlot.removeAllViews(); running = false; progress.isVisible = false
+            launchButton.isEnabled = false
+        }
+        try {
+        if (!lease.current() || operation != uiOperation) return
+        val repo = cwd.text.toString().trim()
+        val branch = worktreeBranch.text.toString().trim()
+        if (repo.isBlank() || branch.isBlank()) {
+            status.setText(R.string.new_worktree_repo_branch_required)
+            return
+        }
+        if (!isLeadLocalTarget()) {
+            status.setText(R.string.new_worktree_local_only)
+            return
+        }
+        if (!selected.ownerIntentSupported || !selected.branchSupported) {
+            status.setText(R.string.new_worktree_receipts_unsupported)
+            return
+        }
+        val ref = worktreeBaseRef.text.toString().trim().takeIf(String::isNotEmpty)
+        val parent = worktreeParent.text.toString().trim().takeIf(String::isNotEmpty)
+        val base = if (ref == null) WorktreeBase() else WorktreeBase(kind = "ref", ref = ref)
+        val folder = if (parent == null) WorktreeFolder() else WorktreeFolder(kind = "parent", parent = parent)
+        val launcher = Launcher(
+            command = selected.command ?: selected.target.command ?: selected.target.harness ?: getString(R.string.launch_target_shell),
+            label = selected.label, cwd = repo, harness = selected.target.harness,
+            noPrompts = selected.noPrompts, target = selected.target,
+        )
+        if (!confirmLauncher(this, launcher, scope.host ?: captured.connection.origin.value, lease)) return
+        if (!lease.current() || operation != uiOperation || !writesAvailable()) return
+        val planned = repository.planWorktree(scope, repo, branch, parent, captured)
+        if (!lease.current() || operation != uiOperation) {
+            settleStaleOperation(operation)
+            return
+        }
+        when (planned) {
+            is ApiResult.Success -> {
+                when (val presentation = WorktreePlanPresentation.evaluate(
+                    planned.value, parent, ref, repository.isCurrent(captured), isLeadLocalTarget(),
+                )) {
+                    is WorktreePlanPresentation.Result.Refused -> {
+                        status.text = presentation.detail ?: getString(when (presentation.reason) {
+                            WorktreePlanPresentation.Refusal.INVALID_BRANCH -> R.string.new_worktree_branch_invalid
+                            WorktreePlanPresentation.Refusal.FORBIDDEN_PARENT -> R.string.new_worktree_parent_forbidden
+                            WorktreePlanPresentation.Refusal.TARGET_EXISTS -> R.string.new_worktree_target_exists
+                            else -> R.string.new_worktree_plan_refused
+                        })
+                        return
+                    }
+                    is WorktreePlanPresentation.Result.Ready -> showWorktreePlanConfirmation(selected, captured, operation, repo, branch, base, folder, presentation, lease)
+                }
+            }
+            is ApiResult.Failure -> status.text = getString(R.string.new_worktree_plan_error, MainViewModel.describe(resources, planned.error))
+            is ApiResult.NotModified -> status.setText(R.string.new_worktree_plan_refused)
+        }
+        } finally { if (lease.boundCopiesForTesting == 0) lease.finish() }
+    }
+
     /** Local recovery rows stay bound to the accepted original; callbacks never mint an actor. */
     private fun ownedUnresolvedIntents() = contextKey?.let { repository.unresolvedLaunchIntents(scope, it) }.orEmpty()
 
-    private fun showUnresolvedIntent() {
-        recoverySlot.removeAllViews()
-        val unresolved = ownedUnresolvedIntents().firstOrNull { it.intent.operation == "launch" } ?: return
-        status.setText(R.string.new_outcome_unknown)
-        launchButton.isEnabled = false
-        showRecoveryActions(unresolved.intent.requestId, unresolved.intent.receiptMode)
+    private fun isLeadLocalTarget(): Boolean {
+        val lead = inventory?.servers.orEmpty().firstOrNull { it.isLead }?.id
+        return scope.host == null || lead != null && scope.host == lead
     }
 
-    private fun showRecoveryActions(requestId: String, receiptMode: LaunchIntentReceiptMode = LaunchIntentReceiptMode.ownerBound) {
+    private fun showWorktreePlanConfirmation(
+        selected: NewLaunchChoice,
+        captured: ScopedReadContext,
+        operation: Long,
+        repo: String,
+        branch: String,
+        base: WorktreeBase,
+        folder: WorktreeFolder,
+        presentation: WorktreePlanPresentation.Result.Ready,
+        lease: WorktreeUiLease,
+    ) {
+        val detail = getString(R.string.new_worktree_plan_confirmation, selected.label, repo, branch, presentation.baseLabel, presentation.targetPath)
+        if (!lease.current() || operation != uiOperation) return
+        val requestId = UUID.randomUUID().toString()
+        val once = java.util.concurrent.atomic.AtomicBoolean(false)
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle(R.string.new_worktree_review)
+            .setMessage(detail)
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton(R.string.new_worktree_create) { clicked, _ ->
+                if (!lease.current() || operation != uiOperation || !writesAvailable() || running || !once.compareAndSet(false, true)) return@setPositiveButton
+                lease.handoff(clicked as android.app.Dialog)
+                running = true
+                progress.isVisible = true
+                lifecycleScope.launch {
+                    try {
+                        val result = repository.createWorktreeAtIntent(
+                            scope, repo, branch, selected.target, requestId, base, folder,
+                            confirmedNoPrompts = selected.noPrompts, expectedContext = captured,
+                        )
+                        if (!lease.current() || operation != uiOperation) {
+                            settleStaleOperation(operation)
+                            return@launch
+                        }
+                        when (result) {
+                            is ApiResult.Success -> if (result.value.ok && result.value.pane != null) openCreatedPane(result.value)
+                            else status.text = result.value.error ?: getString(R.string.new_worktree_create_failed)
+                            is ApiResult.Failure -> {
+                                val unresolved = ownedUnresolvedIntents().firstOrNull { it.intent.requestId == requestId }
+                                if (unresolved != null) {
+                                    status.setText(R.string.new_outcome_unknown)
+                                    showRecoveryActions(unresolved.intent.requestId, unresolved.intent.receiptMode, unresolved.intent.operation)
+                                } else status.text = getString(R.string.new_worktree_create_error, MainViewModel.describe(resources, result.error))
+                            }
+                            is ApiResult.NotModified -> status.setText(R.string.new_worktree_create_failed)
+                        }
+                    } finally {
+                        if (operation == uiOperation && lease.current()) {
+                            running = false
+                            progress.isVisible = false
+                            launchButton.isEnabled = canStartSelected()
+                        }
+                        lease.finish()
+                    }
+                }
+            }.create()
+        if (lease.bind(dialog)) dialog.show()
+    }
+
+    private fun showUnresolvedIntent() {
         recoverySlot.removeAllViews()
+        val unresolved = ownedUnresolvedIntents().firstOrNull { it.intent.operation in setOf("launch", "worktree.createAt", "worktree.create") } ?: return
+        status.setText(R.string.new_outcome_unknown)
+        launchButton.isEnabled = false
+        showRecoveryActions(unresolved.intent.requestId, unresolved.intent.receiptMode, unresolved.intent.operation)
+    }
+
+    private fun showRecoveryActions(requestId: String, receiptMode: LaunchIntentReceiptMode = LaunchIntentReceiptMode.ownerBound, operationKind: String = "launch") {
+        recoverySlot.removeAllViews()
+        val recoveryContext = contextKey ?: return
+        val recoveryScope = scope
         var retry: View? = null
         if (receiptMode == LaunchIntentReceiptMode.legacyInitialOnly) {
             recoverySlot.addView(TextView(this).apply {
@@ -602,26 +888,35 @@ class NewActivity : AppCompatActivity() {
                 minHeight = dp(48)
                 isEnabled = writesAvailable()
                 setOnClickListener {
-                    val captured = contextKey ?: return@setOnClickListener
-                    if (!repository.isCurrent(captured) || running) return@setOnClickListener
+                    val captured = recoveryContext
+                    if (contextKey !== captured || scope != recoveryScope || !repository.isCurrent(captured) || running) return@setOnClickListener
                     val operation = ++uiOperation
                     running = true
                     progress.isVisible = true
                     lifecycleScope.launch {
                         try {
-                            val result = repository.retryLaunchIntent(scope, requestId)
-                            if (!repository.isCurrent(captured)) {
-                                settleStaleOperation(operation)
-                                return@launch
+                            if (operationKind == "worktree.createAt" || operationKind == "worktree.create") {
+                                val result = repository.retryWorktreeIntent(scope, requestId, captured)
+                                if (!repository.isCurrent(captured) || operation != uiOperation) {
+                                    settleStaleOperation(operation)
+                                    return@launch
+                                }
+                                if (result is ApiResult.Success && result.value.ok && result.value.pane != null) openCreatedPane(result.value)
+                                else status.setText(R.string.new_outcome_unknown)
+                            } else {
+                                val result = repository.retryLaunchIntent(scope, requestId, captured)
+                                if (!repository.isCurrent(captured) || operation != uiOperation) {
+                                    settleStaleOperation(operation)
+                                    return@launch
+                                }
+                                if (result is ApiResult.Success && result.value.ok && result.value.pane != null) openCreatedPane(result.value)
+                                else status.setText(R.string.new_outcome_unknown)
                             }
-                            if (result is ApiResult.Success && result.value.ok && result.value.pane != null) openCreatedPane(result.value)
-                            else status.setText(R.string.new_outcome_unknown)
                         } finally {
                             if (operation == uiOperation) {
                                 running = false
                                 progress.isVisible = false
-                                launchButton.isEnabled = catalog.any { it.available && it.key == selectedKey } && !requiresTargetChoice && writesAvailable() &&
-                                    ownedUnresolvedIntents().isEmpty()
+                                launchButton.isEnabled = canStartSelected()
                             }
                         }
                     }
@@ -635,27 +930,37 @@ class NewActivity : AppCompatActivity() {
             isAllCaps = false
             minHeight = dp(48)
             setOnClickListener {
-                androidx.appcompat.app.AlertDialog.Builder(this@NewActivity)
+                if (contextKey !== recoveryContext || scope != recoveryScope || !repository.isCurrent(recoveryContext)) return@setOnClickListener
+                val lease = WorktreeUiLease(this@NewActivity, repository, recoveryContext)
+                val dialog = androidx.appcompat.app.AlertDialog.Builder(this@NewActivity)
                     .setTitle(R.string.new_abandon_title)
                     .setMessage(R.string.new_abandon_warning)
                     .setNegativeButton(android.R.string.cancel, null)
                     .setPositiveButton(R.string.new_abandon_confirm) { _, _ ->
-                        val captured = contextKey
-                        if (captured == null || !repository.isCurrent(captured)) return@setPositiveButton
+                        val captured = recoveryContext
+                        if (contextKey !== captured || scope != recoveryScope || !lease.current()) return@setPositiveButton
                         val result = repository.abandonLaunchIntent(scope, requestId)
                         if (result is ApiResult.Success) {
                             status.setText(R.string.new_intent_abandoned)
                             retry?.visibility = View.GONE
                             this.visibility = View.GONE
                         } else status.setText(R.string.new_outcome_unknown)
-                    }.show()
+                    }.create()
+                if (lease.bind(dialog)) dialog.show()
             }
         }
         recoverySlot.addView(abandon, rowParams(4))
     }
 
     private fun openCreatedPane(response: CreateResponse) {
-        val pane = response.pane ?: return
+        response.pane?.let(::openCreatedPane)
+    }
+
+    private fun openCreatedPane(response: com.lateapex.collie.network.WorktreeOpenResponse) {
+        response.pane?.let(::openCreatedPane)
+    }
+
+    private fun openCreatedPane(pane: com.lateapex.collie.network.CreatedPane) {
         startActivity(Intent(this, PaneActivity::class.java).apply {
             putExtra(PaneActivity.EXTRA_PANE_ID, pane.paneId)
             putExtra(PaneActivity.EXTRA_HOST, scope.host)
@@ -672,6 +977,12 @@ class NewActivity : AppCompatActivity() {
     }
 
     private fun writesAvailable(): Boolean = scopedSnapshotReady && repository.writesAllowed(scope)
+
+    private fun canStartSelected(): Boolean {
+        val selected = catalog.firstOrNull { it.key == selectedKey && it.available } ?: return false
+        if (requiresTargetChoice || !writesAvailable() || running || ownedUnresolvedIntents().isNotEmpty()) return false
+        return !worktreeToggle.isChecked || isLeadLocalTarget() && selected.branchSupported && selected.ownerIntentSupported
+    }
 
     private fun settleStaleOperation(operation: Long) {
         if (operation != uiOperation) return
@@ -696,9 +1007,16 @@ class NewActivity : AppCompatActivity() {
         private const val STATE_SCOPE_SESSION = "new.scopeSession"
         private const val STATE_REQUIRES_TARGET_CHOICE = "new.requiresTargetChoice"
         private const val STATE_SELECTED_KEY = "new.selectedKey"
+        private const val STATE_FORM_OWNER = "new.formOwner"
+        private const val STATE_FORM_INCARNATION = "new.formIncarnation"
         private const val STATE_CWD = "new.cwd"
         private const val STATE_FOLDER_SELECTED = "new.folderSelected"
+        private const val STATE_WORKTREE_SELECTED = "new.worktreeSelected"
+        private const val STATE_WORKTREE_BRANCH = "new.worktreeBranch"
+        private const val STATE_WORKTREE_BASE = "new.worktreeBase"
+        private const val STATE_WORKTREE_PARENT = "new.worktreeParent"
         private const val MAX_SAVED_CWD_CHARS = 4096
+        private const val MAX_SAVED_BRANCH_CHARS = 256
 
         fun intent(context: Context, scope: Scope) = Intent(context, NewActivity::class.java).apply {
             putExtra(EXTRA_HOST, scope.host)

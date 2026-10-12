@@ -27,7 +27,7 @@ import { createHash } from "node:crypto";
 import type { JsonObject, JsonValue } from "../../json.ts";
 import { meaningfulTabLabel, meaningfulTerminalTitle } from "../../activity.ts";
 import { isUnnamedTab } from "../../pane-name.ts";
-import type { DialMode } from "../../dial.ts";
+import { WriteAdmissionRetired, type DialMode } from "../../dial.ts";
 import { declareCapabilities } from "../capabilities.ts";
 import { herdrMachineCandidates } from "./machine-list.ts";
 import { herdrSessionSource } from "./sessions.ts";
@@ -72,6 +72,8 @@ import {
   type MuxWorktreeCreateRequest,
   type MuxWorktreeOpenRequest,
   type MuxWorktreeOpened,
+  type MuxWorktreeRemoveRequest,
+  type MuxWorktreeRemoved,
   type MuxWorktreeScope,
 } from "../types.ts";
 import {
@@ -152,6 +154,7 @@ const HERDR_BASE_CAPABILITIES = [
 const HERDR_CAPABILITIES = declareCapabilities({
   supports: [
     ...HERDR_BASE_CAPABILITIES,
+    "removeWorktree",
     "paneLayout", "tabTransfer", "paneSplit", "paneResize", "paneZoom", "paneSwap", "paneMove", "paneDirectionalFocus",
     "workspaceRename", "workspaceClose", "workspaceMove", "workspaceMoveBlock", "workspaceFocus", "tabMove", "tabFocus",
   ],
@@ -285,6 +288,7 @@ const GONE_CODES: readonly string[] = ["pane_not_found", "tab_not_found", "works
 /** Which refusal an exception off the socket is: a dead pane/tab, or a multiplexer that did not answer. */
 function transportRefusal<T>(err: T): MuxRefusalOutcome {
   const detail = reason(err);
+  if (err instanceof WriteAdmissionRetired && !err.bytesMayHaveBeenSent) return muxRefused(detail);
   if (GONE_CODES.some((code) => detail.includes(code))) return muxGone(detail);
   if (["workspace_group_close_required", "confirmation_required", "invalid_workspace_order", "invalid_insert_index"].some((code) => detail.includes(code))) return muxRefused(detail);
   return muxUnreachable(detail);
@@ -306,6 +310,8 @@ const WORKTREE_REFUSAL_CODES: readonly string[] = [
   "worktree_open_failed",
   "worktree_list_failed",
   "worktree_remove_failed",
+  "repository_not_trusted",
+  "ownership_refused",
   "ambiguous_worktree_branch", // source-only
   "not_linked_worktree", // source-only
   "worktree_operation_in_progress", // source-only
@@ -324,6 +330,7 @@ const WORKTREE_GONE_CODES: readonly string[] = ["worktree_not_found"];
  */
 function worktreeRefusal<T>(err: T): MuxRefusalOutcome {
   const detail = reason(err);
+  if (err instanceof WriteAdmissionRetired && !err.bytesMayHaveBeenSent) return muxRefused(detail);
   if (WORKTREE_GONE_CODES.some((code) => detail.includes(code))) return muxGone(detail);
   if (GONE_CODES.some((code) => detail.includes(code))) return muxGone(detail);
   if (WORKTREE_REFUSAL_CODES.some((code) => detail.includes(code))) return muxRefused(detail);
@@ -999,8 +1006,10 @@ export class HerdrMux implements MuxAdapter {
     }
   }
 
-  async typeText(paneId: string, text: string): Promise<MuxAck> {
-    return this.attempt(() => this.client.sendPaneText(paneId, text));
+  async typeText(paneId: string, text: string, finalAdmission?: (runtimeIdentity: string) => boolean): Promise<MuxAck> {
+    const identity = this.client.layoutRuntimeIdentity?.();
+    if (finalAdmission && (!identity || !finalAdmission(identity))) return muxRefused("worktree.authority_changed");
+    return this.attempt(() => this.client.sendPaneText(paneId, text, finalAdmission && identity ? { runtimeIdentity: identity, finalAdmission } : undefined));
   }
 
   /**
@@ -1010,7 +1019,7 @@ export class HerdrMux implements MuxAdapter {
    * sequence, and delivering its front half is worse than delivering none of it (the pane would be
    * left mid-chord with no way for the caller to know where it stopped).
    */
-  async sendKeys(paneId: string, keys: readonly string[]): Promise<MuxAck> {
+  async sendKeys(paneId: string, keys: readonly string[], finalAdmission?: (runtimeIdentity: string) => boolean): Promise<MuxAck> {
     const translated: string[] = [];
     for (const key of keys) {
       const result = toHerdrKey(key);
@@ -1023,7 +1032,9 @@ export class HerdrMux implements MuxAdapter {
       }
       translated.push(result.key);
     }
-    return this.attempt(() => this.client.sendPaneKeys(paneId, translated));
+    const identity = this.client.layoutRuntimeIdentity?.();
+    if (finalAdmission && (!identity || !finalAdmission(identity))) return muxRefused("worktree.authority_changed");
+    return this.attempt(() => this.client.sendPaneKeys(paneId, translated, finalAdmission && identity ? { runtimeIdentity: identity, finalAdmission } : undefined));
   }
 
   async renamePane(paneId: string, label: string | null): Promise<MuxAck> {
@@ -1132,7 +1143,7 @@ export class HerdrMux implements MuxAdapter {
     }
   }
 
-  async createWorktree(request: MuxWorktreeCreateRequest): Promise<MuxOutcome<MuxCreatedPane>> {
+  async createWorktree(request: MuxWorktreeCreateRequest, finalAdmission?: (runtimeIdentity: string) => boolean, beforeDispatch?: () => Promise<boolean>): Promise<MuxOutcome<MuxCreatedPane>> {
     try {
       const { repoRoot: cwd, branch, base, path } = request;
       // Assigned, never spread from `undefined`: an absent field must stay off the wire, so a call
@@ -1140,20 +1151,42 @@ export class HerdrMux implements MuxAdapter {
       const opts: HerdrWorktreeCreate = { cwd, branch };
       if (base !== undefined) opts.base = base;
       if (path !== undefined) opts.path = path;
-      const created = await this.client.createWorktree(opts);
+      const identity = finalAdmission ? await this.layoutRuntimeIdentity() : null;
+      if (finalAdmission && !identity) return muxRefused("worktree.authority_changed");
+      if (beforeDispatch && !await beforeDispatch()) return muxRefused("worktree.target_changed");
+      if (finalAdmission && (this.client.layoutRuntimeIdentity?.() !== identity || !finalAdmission(identity!))) return muxRefused("worktree.authority_changed");
+      const created = await this.client.createWorktree(opts, finalAdmission && identity ? { runtimeIdentity: identity, finalAdmission } : undefined);
       return muxOk(toCreatedPane(created));
     } catch (err) {
       return worktreeRefusal(err);
     }
   }
 
-  async openWorktree(request: MuxWorktreeOpenRequest): Promise<MuxOutcome<MuxWorktreeOpened>> {
+  async openWorktree(request: MuxWorktreeOpenRequest, finalAdmission?: (runtimeIdentity: string) => boolean, beforeDispatch?: () => Promise<boolean>): Promise<MuxOutcome<MuxWorktreeOpened>> {
     try {
+      const identity = finalAdmission ? await this.layoutRuntimeIdentity() : null;
+      if (beforeDispatch && !await beforeDispatch()) return muxRefused("worktree.target_changed");
+      if (finalAdmission && (!identity || this.client.layoutRuntimeIdentity?.() !== identity || !finalAdmission(identity))) return muxRefused("worktree.authority_changed");
       const opened = await this.client.openWorktree({
         cwd: request.repoRoot,
         path: request.path,
-      });
+      }, finalAdmission && identity ? { runtimeIdentity: identity, finalAdmission } : undefined);
       return muxOk({ pane: toCreatedPane(opened.shell), alreadyOpen: opened.alreadyOpen });
+    } catch (err) {
+      return worktreeRefusal(err);
+    }
+  }
+
+  async removeWorktree(request: MuxWorktreeRemoveRequest, finalAdmission?: (runtimeIdentity: string) => boolean, beforeDispatch?: () => Promise<boolean>): Promise<MuxOutcome<MuxWorktreeRemoved>> {
+    const identity = await this.layoutRuntimeIdentity();
+    const remove = this.client.removeWorktree;
+    if (this.capabilities.supports.removeWorktree !== true || !identity || !remove) return muxUnsupported("removeWorktree", "This Herdr runtime has not completed a current compatible protocol handshake.");
+    try {
+      if (beforeDispatch && !await beforeDispatch()) return muxRefused("worktree.target_changed");
+      if (this.client.layoutRuntimeIdentity?.() !== identity || (finalAdmission && !finalAdmission(identity))) return muxRefused("worktree.authority_changed");
+      const removed = await remove.call(this.client, { workspace_id: request.workspaceId, force: request.force }, { runtimeIdentity: identity, finalAdmission: finalAdmission ?? (() => true) });
+      if (this.client.layoutRuntimeIdentity?.() !== identity) return muxUnreachable("Herdr runtime changed during worktree removal; the outcome is unknown.");
+      return muxOk({ workspaceId: removed.workspace_id, path: removed.path, forced: removed.forced });
     } catch (err) {
       return worktreeRefusal(err);
     }

@@ -50,6 +50,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -69,6 +70,44 @@ class CollieRepositoryTest {
     private val store = FakeStore(connection)
     private val api = FakeApi()
     private val repository = CollieRepository(api, store, OriginValidator())
+
+    @Test fun removalKnownNoEffectReceiptIsRefusedWhileTransportAndChangedPlannedPathRemainUnknown(): Unit = runBlocking {
+        val scope = Scope()
+        val now = System.currentTimeMillis()
+        val target = java.security.MessageDigest.getInstance("SHA-256").digest("worktree:space".toByteArray()).joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
+        for (scenario in listOf("refused", "transport", "path")) {
+            val context = ApplicationProvider.getApplicationContext<Context>()
+            context.getSharedPreferences("collie_launch_intents", Context.MODE_PRIVATE).edit().clear().commit()
+            val requestId = "bbbbbbbb-bbbb-4bbb-8bbb-${"%012d".format(listOf("refused", "transport", "path").indexOf(scenario) + 1)}"
+            val nextId = "cccccccc-cccc-4ccc-8ccc-${"%012d".format(listOf("refused", "transport", "path").indexOf(scenario) + 1)}"
+            var calls = 0
+            val base = FakeApi().apply { snapshotDevice = DeviceAuthorization(true, "phone", true) }
+            val removalApi = object : CollieApi by base {
+                override suspend fun config(connection: Connection, scope: Scope) = ApiResult.Success(BridgeConfigResponse(receiptContextBound = true), 200)
+                override suspend fun removeWorktree(connection: Connection, scope: Scope, workspaceId: String, request: com.lateapex.collie.network.WorktreeRemoveRequest): ApiResult<com.lateapex.collie.network.WorktreeRemoveResponse> {
+                    calls++
+                    if (scenario == "transport") return ApiResult.Failure(ApiFailure.Network("reply lost"))
+                    val receipt = com.lateapex.collie.network.ControlOperation(1, request.requestId, if (scenario == "refused") "refused" else "succeeded", "worktreeRemove", target, now, now,
+                        code = if (scenario == "refused") "worktree.stale_worktree_operation" else null,
+                        result = if (scenario == "refused") null else com.lateapex.collie.network.WorktreeRemoveResult("worktree-remove", "space", "/repo/other", "topic", false))
+                    return ApiResult.Success(com.lateapex.collie.network.WorktreeRemoveResponse(scenario != "refused", "worktree_removed", "space", if (scenario == "refused") null else "/repo/other", "topic", false, receipt,
+                        code = receipt.code, error = if (scenario == "refused") "The target changed" else null), if (scenario == "refused") 409 else 200)
+                }
+            }
+            val journal = LaunchIntentStore(context, TestCipher(), Json)
+            val repo = CollieRepository(removalApi, FakeStore(connection), OriginValidator(), launchIntentStore = journal)
+            assertTrue(repo.snapshot(scope) is ApiResult.Success)
+            val actor = repo.readContext(scope)!!
+            val plan = com.lateapex.collie.network.WorktreeRemovePlanResponse(true, 1, "space", "space", "/repo/topic", "/repo", "topic", 0, false, 0, "plan", now + 60_000, false)
+            repo.removeWorktreeIntent("space", requestId, "plan", false, scope, actor, plan)
+            assertEquals(1, calls)
+            assertEquals(if (scenario == "refused") LaunchIntentState.refused else LaunchIntentState.unknown, journal.get(requestId)!!.state)
+            assertEquals("/repo/topic", journal.get(requestId)!!.intent.plannedWorktreePath)
+            val second = repo.removeWorktreeIntent("space", nextId, "plan", false, scope, actor, plan)
+            if (scenario != "refused") { assertTrue(second is ApiResult.Failure); assertEquals(1, calls) }
+            else { assertTrue(second is ApiResult.Success); assertEquals(2, calls); assertEquals(LaunchIntentState.refused, journal.get(nextId)!!.state) }
+        }
+    }
 
     @Test
     fun machineHistoryRejectsMalformedMemberIdsBeforeApiDispatch() = runBlocking {
@@ -1427,6 +1466,61 @@ class CollieRepositoryTest {
         override fun clear() {
             cleared = true
             mutable.value = null
+        }
+    }
+
+    @Test(timeout = 30_000)
+    fun actualEncryptedJournalRejectsLateOriginalReservationAfterDisconnectAndPairRetirementAndKeepsFreshBUnknown(): Unit = runBlocking {
+        val android = ApplicationProvider.getApplicationContext<Context>()
+        for (pairedRefusal in listOf(false, true)) {
+            android.getSharedPreferences("collie_launch_intents", Context.MODE_PRIVATE).edit().clear().commit()
+            android.getSharedPreferences(EncryptedConnectionStore.PREFERENCES, Context.MODE_PRIVATE).edit().clear().commit()
+            val encrypted = EncryptedConnectionStore(android, TestCipher(), Json, OriginValidator())
+            val original = Connection(connection.origin, "original", "same-fixture-token")
+            encrypted.save(original)
+            val api = FakeApi().apply { snapshotDevice = DeviceAuthorization(enforced = true, device = "phone", authorized = true) }
+            val journalCipher = AuthenticatedLaunchIntentFixtureCipher()
+            val journal = LaunchIntentStore(android, journalCipher, Json)
+            val repo = CollieRepository(api, encrypted, OriginValidator(), launchIntentStore = journal)
+            assertTrue(repo.snapshot() is ApiResult.Success)
+            val actor = repo.readContext(Scope(), null)!!
+            val entered = java.util.concurrent.CountDownLatch(1)
+            val release = java.util.concurrent.CountDownLatch(1)
+            journal.beforeReserveForTesting = { entered.countDown(); check(release.await(5, java.util.concurrent.TimeUnit.SECONDS)) }
+            val oldId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+            val old = async(kotlinx.coroutines.Dispatchers.IO) {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                    repo.createWorktreeAtIntent(Scope(), "/private-original-repository", "private-original-branch", StartTarget(shell = true), oldId, confirmedNoPrompts = false, expectedContext = actor)
+                }
+            }
+            assertTrue(entered.await(5, java.util.concurrent.TimeUnit.SECONDS))
+            try {
+                if (pairedRefusal) {
+                    api.paneFailure = ApiFailure.Http(401, "fixture authoritative retirement", "pairing.expired", source = com.lateapex.collie.network.FailureSource.COLLIE, factor = com.lateapex.collie.network.FailureFactor.PAIRING)
+                    assertTrue(repo.readPane(PaneAddress(paneId = "p1")) is ApiResult.Failure)
+                } else repo.disconnect()
+                assertTrue(journal.all().isEmpty()) // Retirement recorded even though no row existed.
+                assertFalse(repo.isCurrent(actor))
+            } finally { release.countDown() }
+            assertTrue(kotlinx.coroutines.withTimeout(5_000) { old.await() } is ApiResult.Failure)
+            assertNull(journal.get(oldId)); assertEquals(0, api.worktreeAtCalls)
+            assertTrue(LaunchIntentStore(android, journalCipher, Json).all().isEmpty())
+            journal.beforeReserveForTesting = {}
+            api.paneFailure = null
+            encrypted.save(Connection(original.origin, "fresh replacement", original.token))
+            assertTrue(repo.snapshot() is ApiResult.Success)
+            val fresh = repo.readContext(Scope(), null)!!
+            assertNotEquals(actor.connectionIncarnation, fresh.connectionIncarnation)
+            assertNotEquals(actor.key.pairedDeviceIdentity, fresh.key.pairedDeviceIdentity)
+            api.firstWorktreeAtResponse = ApiResult.Failure(ApiFailure.Network("controlled uncertain current dispatch"))
+            val freshId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+            assertTrue(repo.createWorktreeAtIntent(Scope(), "/current-repository", "current-branch", StartTarget(shell = true), freshId, confirmedNoPrompts = false, expectedContext = fresh) is ApiResult.Failure)
+            assertEquals(1, api.worktreeAtCalls)
+            assertEquals(LaunchIntentState.unknown, journal.get(freshId)!!.state)
+            encrypted.save(encrypted.connection.value!!)
+            assertEquals(LaunchIntentState.unknown, LaunchIntentStore(android, journalCipher, Json).get(freshId)!!.state)
+            assertTrue(repo.isCurrent(fresh))
+            assertNull(journal.get(oldId))
         }
     }
 

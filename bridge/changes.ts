@@ -53,7 +53,8 @@
 // reads it from system and global config only). The operator's own global config is trusted: it is
 // theirs, like their shell.
 
-import { lstat, readdir, readlink, realpath, stat } from "node:fs/promises";
+import { lstat, readFile, readdir, readlink, realpath, stat } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 
 import { isAbsoluteFolder } from "./changes-root.ts";
@@ -641,6 +642,54 @@ async function repoStatus(
   if (run.timedOut || (run.code !== 0 && !run.capped)) return null;
   const entries = parseStatusV2(run.stdout.toString("utf8"), !run.capped);
   return { entries, truncated: run.capped, config };
+}
+
+/** Bounded worktree-removal evidence from the same hardened porcelain read as Changes. */
+export interface WorktreeStatusEvidence {
+  readonly clean: boolean;
+  readonly changedCount: number;
+  readonly fingerprint: string;
+}
+
+/**
+ * Read the exact tracked and untracked status used to preview a linked-checkout removal.
+ * This is advisory evidence only: Herdr remains the remover and does not accept a status CAS.
+ */
+export async function worktreeStatusEvidence(workTreePath: string, expectedRepoRoot?: string): Promise<WorktreeStatusEvidence | null> {
+  const workTree = await realpath(workTreePath).catch(() => null);
+  if (workTree === null) return null;
+  const commonGitDir = expectedRepoRoot === undefined ? null : await realpath(join(expectedRepoRoot, ".git")).catch(() => null);
+  if (expectedRepoRoot !== undefined && (commonGitDir === null || workTree === await realpath(expectedRepoRoot).catch(() => null))) return null;
+  const dotGit = join(workTree, ".git");
+  const metadataStat = await lstat(dotGit).catch(() => null);
+  let gitDir = metadataStat?.isDirectory() ? await realpath(dotGit).catch(() => null) : null;
+  if (gitDir === null) {
+    const metadata = await readFile(join(workTree, ".git"), "utf8").catch(() => null);
+    const match = metadata === null ? null : /^gitdir: (.+)\r?\n?$/.exec(metadata);
+    if (!match) return null;
+    gitDir = await realpath(resolve(workTree, match[1]!)).catch(() => null);
+  }
+  if (gitDir === null || (commonGitDir !== null && !isInside(HOST, gitDir, join(commonGitDir, "worktrees")))) return null;
+  const git = await gitBinary();
+  if (git === null) return null;
+  const repo: RepoDirs = { workTree, gitDir };
+  const config = await filterOverrides(git, repo);
+  if (config === null) return null;
+  const run = await runGit(
+    git,
+    repo,
+    ["status", "--porcelain=v2", "-z", "--untracked-files=all", "--ignore-submodules=dirty"],
+    config,
+    MAX_LIST_BYTES,
+  );
+  if (run.code !== 0 || run.timedOut || run.capped) return null;
+  const raw = run.stdout.toString("utf8");
+  const entries = parseStatusV2(raw);
+  return {
+    clean: entries.length === 0,
+    changedCount: entries.length,
+    fingerprint: createHash("sha256").update(run.stdout).digest("hex"),
+  };
 }
 
 /** Drop a parent's entry for a folder that discovery lists as a repo of its own. */

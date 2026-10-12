@@ -1,9 +1,12 @@
 package com.lateapex.collie.network
 
+import java.security.MessageDigest
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.doubleOrNull
 
@@ -46,19 +49,141 @@ data class ControlOperation(
     val at: Long,
     val updatedAt: Long,
     val code: String? = null,
-    val result: PaneMoveResult? = null,
+    val result: ControlOperationResult? = null,
 ) {
+    fun paneMoveResult(): PaneMoveResult? = result as? PaneMoveResult
+    fun worktreeRemoveResult(): WorktreeRemoveResult? = result as? WorktreeRemoveResult
+
     fun validFor(id: String): Boolean = schema == 1 && requestId == id &&
         state in setOf("pending", "succeeded", "refused", "unknown") &&
         capability.matches(Regex("[A-Za-z][A-Za-z0-9]{0,63}")) && targetIdentity.matches(Regex("[a-f0-9]{64}")) &&
         at >= 0 && updatedAt >= at && updatedAt <= System.currentTimeMillis() + 60_000 &&
-        (result == null || (result.kind == "pane-move" && listOf(result.paneId, result.previousPaneId, result.previousTabId, result.previousWorkspaceId).all { it.matches(Regex("[A-Za-z0-9_.:-]{1,128}")) } &&
-            (result.transfer == null || result.transfer.valid()))) &&
+        (result == null || (capability == "paneMove" && paneMoveResult()?.let { move -> listOf(move.paneId, move.previousPaneId, move.previousTabId, move.previousWorkspaceId).all { it.matches(Regex("[A-Za-z0-9_.:-]{1,128}")) } &&
+            (move.transfer == null || move.transfer.valid()) } == true) ||
+            (capability == "worktreeRemove" && worktreeRemoveResult()?.valid() == true)) &&
         (result == null || state == "succeeded") &&
-        (capability != "paneMove" || state != "succeeded" || result?.kind == "pane-move")
+        (capability !in setOf("paneMove", "worktreeRemove") || state != "succeeded" || result != null)
+}
+@Serializable(with = ControlOperationResultSerializer::class)
+sealed interface ControlOperationResult
+@Serializable
+data class WorktreeRemoveResult(val kind: String, val workspaceId: String, val path: String, val branch: String?, val forced: Boolean) : ControlOperationResult {
+    fun valid(): Boolean = kind == "worktree-remove" && workspaceId.matches(Regex("[A-Za-z0-9_.:-]{1,128}")) &&
+        path.length in 2..4096 && path.startsWith("/") && path.none(Char::isISOControl) &&
+        (branch == null || branch.length in 1..256 && branch.none(Char::isISOControl))
+}
+/** Closed wire union even when the enclosing display decoder allows additive unknown fields. */
+object ControlOperationResultSerializer : kotlinx.serialization.json.JsonContentPolymorphicSerializer<ControlOperationResult>(ControlOperationResult::class) {
+    override fun selectDeserializer(element: kotlinx.serialization.json.JsonElement): kotlinx.serialization.DeserializationStrategy<ControlOperationResult> {
+        val value = element as? JsonObject ?: throw kotlinx.serialization.SerializationException("Operation result must be an object")
+        fun text(key: String): Boolean = (value[key] as? JsonPrimitive)?.isString == true
+        val kind = (value["kind"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+        when (kind) {
+            "worktree-remove" -> if (value.keys == setOf("kind", "workspaceId", "path", "branch", "forced") &&
+                text("workspaceId") && text("path") && (value["branch"] == JsonNull || text("branch")) &&
+                (value["forced"] as? JsonPrimitive)?.takeIf { !it.isString }?.booleanOrNull != null) return WorktreeRemoveResult.serializer()
+            "pane-move" -> if (value.keys in listOf(setOf("kind", "paneId", "previousPaneId", "previousTabId", "previousWorkspaceId"),
+                    setOf("kind", "paneId", "previousPaneId", "previousTabId", "previousWorkspaceId", "transfer")) &&
+                listOf("paneId", "previousPaneId", "previousTabId", "previousWorkspaceId").all(::text)) return PaneMoveResult.serializer()
+        }
+        throw kotlinx.serialization.SerializationException("Unknown or malformed operation result")
+    }
 }
 @Serializable
 data class ControlOperationResponse(val ok: Boolean, val operation: ControlOperation)
+
+@Serializable
+data class WorktreeRemovePlanResponse(
+    val ok: Boolean,
+    val schema: Int? = null,
+    val workspaceId: String? = null,
+    val label: String? = null,
+    val path: String? = null,
+    val repoRoot: String? = null,
+    val branch: String? = null,
+    val changedCount: Int? = null,
+    val force: Boolean? = null,
+    val paneCount: Int? = null,
+    val planToken: String? = null,
+    val expiresAt: Long? = null,
+    val vendorConditionalRemoval: Boolean? = null,
+    val error: String? = null,
+    val code: String? = null,
+    val forceAvailable: Boolean? = null,
+) {
+    fun validFor(targetWorkspaceId: String, forceChoice: Boolean): Boolean = ok && schema == 1 && workspaceId == targetWorkspaceId &&
+        !label.isNullOrBlank() && path?.let { it.length in 2..4096 && it.startsWith("/") && it.none(Char::isISOControl) } == true &&
+        repoRoot?.let { it.length in 2..4096 && it.startsWith("/") && it.none(Char::isISOControl) && it != path } == true &&
+        (branch?.let { it.length in 1..256 && it.none(Char::isISOControl) } ?: true) && changedCount?.let { it >= 0 } == true && force == forceChoice &&
+        paneCount?.let { it in 0..256 } == true && planToken?.matches(Regex("[A-Za-z0-9_.:-]{1,128}")) == true &&
+        expiresAt?.let { it in (System.currentTimeMillis() + 1)..(System.currentTimeMillis() + 60_000) } == true && vendorConditionalRemoval == false &&
+        (changedCount == 0 || forceChoice)
+}
+
+@Serializable
+data class WorktreeRemoveRequest(val requestId: String, val planToken: String, val force: Boolean)
+
+@Serializable(with = WorktreeRemoveResponseSerializer::class)
+data class WorktreeRemoveResponse(
+    val ok: Boolean,
+    val type: String? = null,
+    val workspaceId: String? = null,
+    val path: String? = null,
+    val branch: String? = null,
+    val forced: Boolean? = null,
+    val operation: ControlOperation? = null,
+    val code: String? = null,
+    val error: String? = null,
+) {
+    fun validFor(targetWorkspaceId: String, forceChoice: Boolean, requestId: String): Boolean = ok && type == "worktree_removed" && workspaceId == targetWorkspaceId &&
+        path?.let { it.length in 2..4096 && it.startsWith("/") && it.none(Char::isISOControl) } == true && forced == forceChoice && operation?.let {
+            it.requestId == requestId && it.state == "succeeded" && it.capability == "worktreeRemove" &&
+                it.targetIdentity == worktreeTargetIdentity(targetWorkspaceId) && it.validFor(requestId) &&
+                it.worktreeRemoveResult()?.let { result -> result.workspaceId == workspaceId && result.path == path && result.branch == branch && result.forced == forced } == true
+        } == true
+}
+
+/** Wire scalars are exact even under the normal additive display decoder. */
+@Serializable
+private data class WorktreeRemoveWire(
+    val ok: Boolean, val type: String? = null, val workspaceId: String? = null, val path: String? = null,
+    val branch: String? = null, val forced: Boolean? = null, val operation: ControlOperation? = null,
+    val code: String? = null, val error: String? = null,
+)
+object WorktreeRemoveResponseSerializer : kotlinx.serialization.KSerializer<WorktreeRemoveResponse> {
+    override val descriptor = WorktreeRemoveWire.serializer().descriptor
+    override fun deserialize(decoder: kotlinx.serialization.encoding.Decoder): WorktreeRemoveResponse {
+        val input = decoder as? kotlinx.serialization.json.JsonDecoder ?: throw kotlinx.serialization.SerializationException("JSON required")
+        val value = input.decodeJsonElement() as? JsonObject ?: throw kotlinx.serialization.SerializationException("Removal response must be an object")
+        fun text(objectValue: JsonObject, key: String): Boolean = (objectValue[key] as? JsonPrimitive)?.isString == true
+        fun bool(objectValue: JsonObject, key: String): Boolean = (objectValue[key] as? JsonPrimitive)?.takeIf { !it.isString }?.booleanOrNull != null
+        fun nullableText(key: String): Boolean = value[key] == null || value[key] == JsonNull || text(value, key)
+        fun integer(objectValue: JsonObject, key: String): Boolean = (objectValue[key] as? JsonPrimitive)?.let {
+            !it.isString && it.content.matches(Regex("0|[1-9][0-9]*")) && it.content.toLongOrNull() != null
+        } == true
+        if (!bool(value, "ok") || !listOf("type", "workspaceId", "path", "branch", "code", "error").all(::nullableText) ||
+            (value["forced"] != null && value["forced"] != JsonNull && !bool(value, "forced"))) throw kotlinx.serialization.SerializationException("Malformed removal response scalar")
+        value["operation"]?.takeUnless { it == JsonNull }?.let { element ->
+            val receipt = element as? JsonObject ?: throw kotlinx.serialization.SerializationException("Malformed removal receipt")
+            if (!listOf("requestId", "state", "capability", "targetIdentity").all { text(receipt, it) } ||
+                !listOf("schema", "at", "updatedAt").all { integer(receipt, it) } ||
+                (receipt["code"] != null && receipt["code"] != JsonNull && !text(receipt, "code"))) throw kotlinx.serialization.SerializationException("Malformed removal receipt scalar")
+        }
+        val wire = input.json.decodeFromJsonElement(WorktreeRemoveWire.serializer(), value)
+        return WorktreeRemoveResponse(wire.ok, wire.type, wire.workspaceId, wire.path, wire.branch, wire.forced, wire.operation, wire.code, wire.error)
+    }
+    override fun serialize(encoder: kotlinx.serialization.encoding.Encoder, value: WorktreeRemoveResponse) =
+        encoder.encodeSerializableValue(WorktreeRemoveWire.serializer(), WorktreeRemoveWire(value.ok, value.type, value.workspaceId, value.path, value.branch, value.forced, value.operation, value.code, value.error))
+}
+
+fun WorktreeRemoveResponse.knownRefusalFor(workspaceId: String, requestId: String): Boolean = !ok && operation?.let {
+    it.validFor(requestId) && it.state == "refused" && it.capability == "worktreeRemove" &&
+        it.targetIdentity == worktreeTargetIdentity(workspaceId) && it.result == null && code?.matches(Regex("[A-Za-z0-9_.:-]{1,128}")) == true && code == it.code &&
+        (error == null || error.length <= 256 && error.none(Char::isISOControl))
+} == true
+
+private fun worktreeTargetIdentity(workspaceId: String): String = MessageDigest.getInstance("SHA-256")
+    .digest("worktree:$workspaceId".toByteArray(Charsets.UTF_8)).joinToString("") { (it.toInt() and 0xff).toString(16).padStart(2, '0') }
 
 /** Only a declared response source/factor/code can retire Collie pairing, never server prose. */
 fun ApiFailure.Http.retiresPairing(): Boolean = status in setOf(401, 403) &&
@@ -148,7 +273,7 @@ data class PaneLayoutPlanResponse(
 data class PaneMoveResult(
     val kind: String, val paneId: String, val previousPaneId: String,
     val previousTabId: String, val previousWorkspaceId: String, val transfer: PaneTransferResult? = null,
-)
+) : ControlOperationResult
 @kotlinx.serialization.Serializable
 data class PaneTransferResult(
     val schema: Int, val changed: Boolean, val targetTabId: String, val targetWorkspaceId: String, val processWitness: String,

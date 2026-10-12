@@ -4,7 +4,7 @@ import { statSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { readWindowsPipeWitness } from "./windows-pipe-witness.ts";
 import type { AgentStatus } from "../../types.ts";
-import { dialHerdr, type DialMode, type SockHandle } from "../../dial.ts";
+import { WriteAdmissionRetired, dialHerdr, type DialMode, type SockHandle } from "../../dial.ts";
 import { decodeReplyLine, decodeStreamLine, type EventData } from "../../wire.ts";
 import { redactText } from "../../redact.ts";
 import { randomUUID } from "node:crypto";
@@ -473,6 +473,7 @@ export type HerdrRpc = Pick<
   | "handshake"
   | "layoutHandshakeSample"
   | "layoutRuntimeIdentity"
+  | "removeWorktree"
   | "retireLayoutRuntime"
   | "readPaneLayout"
   | "readPaneNeighbor"
@@ -545,6 +546,19 @@ export interface HerdrWorktreeCreate {
   path?: string;
 }
 
+/** Herdr 0.9.3's closed remove-worktree request. Trust is never inferred or added by Collie. */
+export interface HerdrWorktreeRemove {
+  readonly workspace_id: string;
+  readonly force: boolean;
+}
+
+export interface WireWorktreeRemoved {
+  readonly type: "worktree_removed";
+  readonly workspace_id: string;
+  readonly path: string;
+  readonly forced: boolean;
+}
+
 /** Closed parameters for the one-shot, focus-off pane.split mapping. */
 export interface HerdrSplitPaneParams {
   readonly direction: "right" | "down";
@@ -557,12 +571,20 @@ export interface HerdrSplitPaneParams {
   readonly right_click: "herdr";
 }
 
+/** Immutable callback from the original admitted operation, never a new caller/runtime lookup. */
+export interface HerdrDispatchAdmission {
+  readonly runtimeIdentity: string;
+  readonly finalAdmission: (runtimeIdentity: string) => boolean;
+}
+
 export class HerdrClient {
   constructor(
     private readonly socketPath: string,
     private readonly timeoutMs = DEFAULT_TIMEOUT_MS,
     /** Which dialer to use; see {@link DialMode}. `auto` picks by platform. */
     private readonly dialMode: DialMode = "auto",
+    /** Tests may hold the actual production dial continuation; normal construction uses dialHerdr. */
+    private readonly dial: typeof dialHerdr = dialHerdr,
   ) {}
 
   /** Stable local endpoint plus process-incarnation witness for the currently handshaken runtime. */
@@ -631,11 +653,18 @@ export class HerdrClient {
    *
    * `timeoutMs` overrides the client's budget for this one call; absent, the constructor's applies.
    */
-  private request<T>(method: string, params: JsonObject = {}, timeoutMs = this.timeoutMs, maxReplyChars?: number, exactUint64Marker?: string): Promise<T> {
+  private request<T>(method: string, params: JsonObject = {}, timeoutMs = this.timeoutMs, maxReplyChars?: number, exactUint64Marker?: string, originalAdmission?: HerdrDispatchAdmission): Promise<T> {
+    const originalRuntime = originalAdmission?.runtimeIdentity;
+    const originalPredicate = originalAdmission?.finalAdmission;
     const id = `b${++idCounter}`;
     return new Promise<T>((resolve, reject) => {
       let buf = "";
       let settled = false;
+      const admitted = () => {
+        if (settled) return false;
+        try { return originalPredicate === undefined || originalRuntime !== undefined && this.layoutRuntimeIdentity() === originalRuntime && originalPredicate(originalRuntime); }
+        catch { return false; }
+      };
       // The live socket, once the dial opens one. Hoisted so EVERY terminal path (timeout
       // included) can close it — otherwise a timeout leaves the FD dangling.
       let socket: SockHandle | null = null;
@@ -675,7 +704,7 @@ export class HerdrClient {
         timeoutMs,
       );
 
-      const dialed = dialHerdr(this.socketPath, {
+      const dialed = this.dial(this.socketPath, {
         onDial(cancel) {
           cancelDial = cancel;
         },
@@ -741,8 +770,9 @@ export class HerdrClient {
           // one go; the dialer owns that continuation, so there is nothing to retry here (dial.ts,
           // write-drain.ts). A connection that dies mid-write lands in close/error above and
           // rejects like any other transport failure.
-          s.write(JSON.stringify({ id, method, params }) + "\n");
-          s.flush();
+          if (!admitted()) { finish(() => reject(new WriteAdmissionRetired(false))); return; }
+          s.write(JSON.stringify({ id, method, params }) + "\n", admitted);
+          if (!settled) s.flush();
         } catch (err) {
           finish(() => reject(err));
         }
@@ -1030,7 +1060,7 @@ export class HerdrClient {
    * docs say a missing branch is created "from the requested base or `HEAD`"). It is sent only when
    * given, so a call without one is byte-for-byte the call this method always made.
    */
-  async createWorktree(opts: HerdrWorktreeCreate): Promise<CreatedShell> {
+  async createWorktree(opts: HerdrWorktreeCreate, originalAdmission?: HerdrDispatchAdmission): Promise<CreatedShell> {
     // No `trust_repository`: that flag grants Git trust for the request (`safe.directory`), and the
     // operator gives it in Herdr, never from the phone (ADR 0089). `path` is Herdr 0.9.3's
     // `WorktreeCreateParams.path`, absolute, checked by bridge/worktree-folder.ts (ADR 0093).
@@ -1041,7 +1071,7 @@ export class HerdrClient {
     const r = await this.request<{ workspace: WireWorkspace; root_pane: WirePane }>(
       "worktree.create",
       params,
-      WORKTREE_TIMEOUT_MS,
+      WORKTREE_TIMEOUT_MS, undefined, undefined, originalAdmission,
     );
     const p = r.root_pane;
     return {
@@ -1063,12 +1093,12 @@ export class HerdrClient {
   async openWorktree(opts: {
     cwd: string;
     path: string;
-  }): Promise<{ shell: CreatedShell; alreadyOpen: boolean }> {
+  }, originalAdmission?: HerdrDispatchAdmission): Promise<{ shell: CreatedShell; alreadyOpen: boolean }> {
     const r = await this.request<{
       workspace: WireWorkspace;
       root_pane: WirePane;
       already_open?: boolean;
-    }>("worktree.open", { cwd: opts.cwd, path: opts.path, focus: false }, WORKTREE_TIMEOUT_MS);
+    }>("worktree.open", { cwd: opts.cwd, path: opts.path, focus: false }, WORKTREE_TIMEOUT_MS, undefined, undefined, originalAdmission);
     const p = r.root_pane;
     return {
       shell: {
@@ -1080,6 +1110,18 @@ export class HerdrClient {
       },
       alreadyOpen: r.already_open === true,
     };
+  }
+
+  /** Remove a linked checkout by the workspace Herdr currently owns, never by a caller path. */
+  async removeWorktree(opts: HerdrWorktreeRemove, originalAdmission?: HerdrDispatchAdmission): Promise<WireWorktreeRemoved> {
+    const r = await this.request<WireWorktreeRemoved>("worktree.remove", {
+      workspace_id: opts.workspace_id,
+      force: opts.force,
+    }, WORKTREE_TIMEOUT_MS, undefined, undefined, originalAdmission);
+    if (r.type !== "worktree_removed" || r.workspace_id !== opts.workspace_id || typeof r.path !== "string" || r.forced !== opts.force) {
+      throw new Error("worktree.remove_failed: invalid worktree removal response");
+    }
+    return r;
   }
 
 
@@ -1101,13 +1143,13 @@ export class HerdrClient {
   }
 
   /** Type literal text into a pane's terminal (does not submit). */
-  sendPaneText(paneId: string, text: string): Promise<void> {
-    return this.request<void>("pane.send_text", { pane_id: paneId, text });
+  sendPaneText(paneId: string, text: string, originalAdmission?: HerdrDispatchAdmission): Promise<void> {
+    return this.request<void>("pane.send_text", { pane_id: paneId, text }, this.timeoutMs, undefined, undefined, originalAdmission);
   }
 
   /** Send key names (e.g. ["Enter"]) to a pane — used to submit a reply. */
-  sendPaneKeys(paneId: string, keys: string[]): Promise<void> {
-    return this.request<void>("pane.send_keys", { pane_id: paneId, keys });
+  sendPaneKeys(paneId: string, keys: string[], originalAdmission?: HerdrDispatchAdmission): Promise<void> {
+    return this.request<void>("pane.send_keys", { pane_id: paneId, keys }, this.timeoutMs, undefined, undefined, originalAdmission);
   }
 
   /** Close a pane, terminating its agent ("kill"). Resolves on Herdr's `{type:"ok"}` reply. */

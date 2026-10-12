@@ -204,6 +204,8 @@ interface CollieApi {
         workspaceId: String,
         path: String,
     ): ApiResult<WorktreeOpenResponse> = unavailable("Worktree open")
+    suspend fun planWorktreeRemoval(connection: Connection, scope: Scope, workspaceId: String, force: Boolean = false): ApiResult<WorktreeRemovePlanResponse> = unavailable("Worktree removal plan")
+    suspend fun removeWorktree(connection: Connection, scope: Scope, workspaceId: String, request: WorktreeRemoveRequest): ApiResult<WorktreeRemoveResponse> = unavailable("Worktree removal")
     suspend fun upload(
         connection: Connection,
         address: PaneAddress,
@@ -1251,6 +1253,33 @@ class CollieApiClient(
         return executeWorktreeOpen(post(connection, url, body))
     }
 
+    override suspend fun planWorktreeRemoval(connection: Connection, scope: Scope, workspaceId: String, force: Boolean): ApiResult<WorktreeRemovePlanResponse> {
+        require(workspaceId.matches(Regex("[A-Za-z0-9_.:-]{1,128}")))
+        val url = scopedUrl(connection.origin, path("workspace", workspaceId, "worktree", "remove-plan"), scope, listOf("force" to force.toString()))
+        return requireContract(executeJson(request(connection, url), WorktreeRemovePlanResponse.serializer(), READ_TIMEOUT_SECONDS), "Malformed worktree removal plan") {
+            it.validFor(workspaceId, force) || (!it.ok && !it.code.isNullOrBlank() && !it.error.isNullOrBlank())
+        }
+    }
+
+    override suspend fun removeWorktree(connection: Connection, scope: Scope, workspaceId: String, request: WorktreeRemoveRequest): ApiResult<WorktreeRemoveResponse> {
+        require(workspaceId.matches(Regex("[A-Za-z0-9_.:-]{1,128}")) && request.requestId.matches(Regex("[A-Za-z0-9_-]{1,128}")) && request.planToken.matches(Regex("[A-Za-z0-9_.:-]{1,128}")))
+        val url = scopedUrl(connection.origin, path("workspace", workspaceId, "worktree", "remove"), scope)
+        val body = json.encodeToString(request)
+        return executeResponse(post(connection, url, body), MUTATION_TIMEOUT_SECONDS) { response ->
+            if (response.code in REDIRECT_CODES) return@executeResponse ApiResult.Failure(ApiFailure.Redirect(response.code))
+            val bytes = readBoundedBody(response, 64 * 1024) ?: return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Removal response exceeded its limit"))
+            val value = decode(WorktreeRemoveResponse.serializer(), bytes)
+            val knownRefusal = response.code == 409 && response.header("x-collie-error-source") == "collie" &&
+                response.header("x-collie-error-factor") == "operation" && value?.knownRefusalFor(workspaceId, request.requestId) == true &&
+                response.header("x-collie-error-code") == value.code
+            if (!response.isSuccessful && !knownRefusal) return@executeResponse failure(response, bytes)
+            if (value == null || !(value.validFor(workspaceId, request.force, request.requestId) || knownRefusal ||
+                !value.ok && value.operation?.let { it.validFor(request.requestId) && it.state in setOf("pending", "unknown") && it.capability == "worktreeRemove" } == true))
+                return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Malformed worktree removal response"))
+            ApiResult.Success(value, response.code, controlAuthority = responseAuthority(response))
+        }
+    }
+
     override suspend fun upload(
         connection: Connection,
         address: PaneAddress,
@@ -1619,7 +1648,7 @@ class CollieApiClient(
             if (operation == null || !operation.validFor(requestId) || operation.capability != capability) false
             else if (response.ok) operation.state == "succeeded" && if (kind == "move") {
                 val move = response.move
-                move != null && move.kind == "pane-move" && move == operation.result && move.previousPaneId == address.paneId && move.paneId != move.previousPaneId
+                move != null && move.kind == "pane-move" && move == operation.paneMoveResult() && move.previousPaneId == address.paneId && move.paneId != move.previousPaneId
             } else response.move == null && operation.result == null
             else operation.state in setOf("unknown", "pending") && response.code == "layout.outcome_unknown" && response.move == null && operation.result == null
         }

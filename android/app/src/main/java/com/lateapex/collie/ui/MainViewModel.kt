@@ -261,10 +261,10 @@ class MainViewModel @JvmOverloads constructor(
         }
     }
 
-    fun refresh() {
+    fun refresh(expectedContext: ScopedReadContext? = null) {
         if (!manualRefreshPending.compareAndSet(false, true)) return
         val refreshScope = currentScope
-        val readContext = repository.readContext(refreshScope, null)
+        val readContext = expectedContext ?: repository.readContext(refreshScope, null)
         if (readContext == null) {
             manualRefreshPending.set(false)
             return
@@ -402,9 +402,10 @@ class MainViewModel @JvmOverloads constructor(
         folder: com.lateapex.collie.network.WorktreeFolder = com.lateapex.collie.network.WorktreeFolder(),
         confirmedNoPrompts: Boolean,
         scope: Scope = currentScope,
+        expectedContext: ScopedReadContext? = null,
     ): ApiResult<WorktreeOpenResponse> {
-        val actor = repository.readContext(scope)
-        val result = repository.createWorktreeAtIntent(scope, cwd, branch, target, requestId, base, folder, confirmedNoPrompts)
+        val actor = expectedContext ?: repository.readContext(scope)
+        val result = repository.createWorktreeAtIntent(scope, cwd, branch, target, requestId, base, folder, confirmedNoPrompts, actor)
         if (actor != null && !repository.isCurrent(actor)) return staleScopeResult()
         if (scope == currentScope) refreshLaunchIntentState(scope)
         return result
@@ -452,9 +453,10 @@ class MainViewModel @JvmOverloads constructor(
         branch: String,
         requestId: String,
         scope: Scope = currentScope,
+        expectedContext: ScopedReadContext? = null,
     ): ApiResult<WorktreeOpenResponse> {
-        val actor = repository.readContext(scope)
-        val result = repository.createWorkspaceWorktreeLegacyInitial(scope, workspaceId, branch, requestId)
+        val actor = expectedContext ?: repository.readContext(scope)
+        val result = repository.createWorkspaceWorktreeLegacyInitial(scope, workspaceId, branch, requestId, actor)
         if (actor != null && !repository.isCurrent(actor)) return staleScopeResult()
         if (scope == currentScope) refreshLaunchIntentState(scope)
         return result
@@ -470,11 +472,11 @@ class MainViewModel @JvmOverloads constructor(
         ApiFailure.Protocol("Connection or scope changed; refresh before trying again"),
     )
 
-    suspend fun listWorktrees(workspaceId: String, scope: Scope = currentScope): ApiResult<WorktreeListResponse> =
-        repository.listWorktrees(workspaceId, scope)
+    suspend fun listWorktrees(workspaceId: String, scope: Scope = currentScope, expectedContext: ScopedReadContext? = null): ApiResult<WorktreeListResponse> =
+        repository.listWorktrees(workspaceId, scope, expectedContext)
 
-    suspend fun planWorktree(cwd: String, branch: String?, parent: String?, scope: Scope = currentScope): ApiResult<WorktreePlanResponse> =
-        repository.planWorktree(scope, cwd, branch, parent)
+    suspend fun planWorktree(cwd: String, branch: String?, parent: String?, scope: Scope = currentScope, expectedContext: ScopedReadContext? = null): ApiResult<WorktreePlanResponse> =
+        repository.planWorktree(scope, cwd, branch, parent, expectedContext)
 
     suspend fun createWorktree(
         workspaceId: String,
@@ -487,6 +489,17 @@ class MainViewModel @JvmOverloads constructor(
         path: String,
         scope: Scope = currentScope,
     ): ApiResult<WorktreeOpenResponse> = repository.openWorktree(workspaceId, path, scope)
+
+    suspend fun planWorktreeRemoval(workspaceId: String, force: Boolean = false, scope: Scope = currentScope, expectedContext: ScopedReadContext? = null): ApiResult<com.lateapex.collie.network.WorktreeRemovePlanResponse> =
+        repository.planWorktreeRemoval(workspaceId, force, scope, expectedContext)
+
+    suspend fun removeWorktreeIntent(workspaceId: String, requestId: String, planToken: String, force: Boolean, scope: Scope = currentScope, expectedContext: ScopedReadContext? = null, plan: com.lateapex.collie.network.WorktreeRemovePlanResponse? = null): ApiResult<com.lateapex.collie.network.WorktreeRemoveResponse> =
+        repository.removeWorktreeIntent(workspaceId, requestId, planToken, force, scope, expectedContext, plan)
+
+    suspend fun retryWorktreeRemovalIntent(requestId: String, scope: Scope = currentScope): ApiResult<com.lateapex.collie.network.WorktreeRemoveResponse> =
+        repository.retryWorktreeRemovalIntent(scope, requestId).also {
+            if (scope == currentScope) refreshLaunchIntentState(scope)
+        }
 
     fun report(error: String?) {
         mutableState.value = mutableState.value.copy(error = error, snapshotFailed = false, authError = false)

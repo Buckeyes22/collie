@@ -133,6 +133,16 @@ describe("HerdrClient per-call timeout", () => {
     expect(lastRequest?.params).toEqual({ cwd: "/repo", branch: "worktree/x", focus: false });
     expect(Object.keys(lastRequest?.params ?? {})).not.toContain("base");
   });
+
+  test("worktree.remove sends only the discovered workspace identity and explicit force choice", async () => {
+    const client = new HerdrClient(await lateHerdr({
+      type: "worktree_removed", workspace_id: "w9", path: "/repo/.worktrees/topic", forced: true,
+    }), 1_000);
+    const removed = await client.removeWorktree({ workspace_id: "w9", force: true });
+    expect(removed).toEqual({ type: "worktree_removed", workspace_id: "w9", path: "/repo/.worktrees/topic", forced: true });
+    expect(lastRequest).toEqual({ method: "worktree.remove", params: { workspace_id: "w9", force: true } });
+    expect(lastRequest?.params).not.toHaveProperty("trust_repository");
+  });
 });
 
 

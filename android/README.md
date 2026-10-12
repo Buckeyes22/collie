@@ -451,3 +451,38 @@ screen while predecessor cleanup is held. Genuine same-generation or unsupported
 acknowledgements refuse new actors while preserving temporarily fenced original custody.
 Fresh canonical whole review, native compilation and actual device/Crew/format acceptance
 remain required; historical failed runs remain preserved, and B18 H11/R1 remain open.
+
+Worktree review custody permits one live flow per Activity and at most four attached private
+dialog copies. Cancelling, invalid input, superseding a review or completing it releases its
+subscription and copied text. Explicit form-to-plan, no-prompts and force-review handoffs retain
+the original actor; STOP remains terminal. Each Open confirmation consumes its action once,
+and a fresh deliberate review may open the current target again.
+
+The bridge retains a checkout that it already created even if later persistence or launcher
+readiness loses authority. It reports the launcher as not started and keeps the original request
+ID; it never automatically recreates the checkout or repeats launcher commands. Original paired
+caller, runtime and target checks reach the actual adapter before each text and Enter dispatch.
+
+The encrypted launch journal serializes reservation with exact-owner retirement, including a
+zero-row purge. Separate bounded encrypted metadata stores up to 4,096 retired owner hashes,
+committed atomically with body removal; the existing 128-record, 512 KiB body limit and completion
+headroom remain unchanged. Every production reservation also checks its immutable original actor,
+so metadata eviction cannot grant a retired actor authority. Failed persistence preserves the raw
+envelope and makes the live journal unavailable. Fresh committed incarnations and their UNKNOWN
+barriers remain independent. Native compilation and actual device/Crew/vendor acceptance of these
+corrections remain pending.
+
+New retains a separate original owner for editable cwd/branch/base/parent and its single owned
+saved form copy after a modal review ends. Genuine original retirement clears those copies;
+a delayed predecessor event leaves an admitted successor’s form intact. Saved fields restore
+only after the same durable owner/incarnation matches a current actor; no bearer-bearing
+Connection enters Bundle state. Same-owner cancellation and rotation preserve manual inputs,
+and a replacement requires a fresh target choice.
+
+Herdr worktree create/open/remove and selected launcher text/Enter keep their original admission
+through dial readiness and every managed write/drain continuation. Before any bytes are accepted,
+retirement is a refusal; an accepted prefix or lost reply remains uncertain. There is no automatic
+second request. A full Node transport queue has already accepted its one payload and cannot be
+recalled as a proven zero-effect refusal. This local fence does not provide a vendor filesystem
+or occupant CAS. Current user acceptance targets latest versions and the physical Pixel; old
+version/device matrices remain historical evidence and are not current acceptance requirements.

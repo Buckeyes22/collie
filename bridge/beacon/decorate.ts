@@ -322,8 +322,8 @@ export function withAgentBeacons(
     // wrapped adapter's census forward is exactly what a refresh should do either way.
     refresh: () => adapter.refresh(),
     readGrid: (paneId, request) => adapter.readGrid(paneId, request),
-    typeText: (paneId, text) => adapter.typeText(paneId, text),
-    sendKeys: (paneId, keys) => adapter.sendKeys(paneId, keys),
+    typeText: (paneId, text, finalAdmission) => adapter.typeText(paneId, text, finalAdmission),
+    sendKeys: (paneId, keys, finalAdmission) => adapter.sendKeys(paneId, keys, finalAdmission),
     renamePane: (paneId, label) => adapter.renamePane(paneId, label),
     closePane: (paneId) => adapter.closePane(paneId),
     setFocus: (paneId) => adapter.setFocus(paneId),
@@ -332,8 +332,8 @@ export function withAgentBeacons(
     closeTab: (tabId) => adapter.closeTab(tabId),
     createSpace: (request) => adapter.createSpace(request),
     listWorktrees: (scope) => adapter.listWorktrees(scope),
-    createWorktree: (request) => adapter.createWorktree(request),
-    openWorktree: (request) => adapter.openWorktree(request),
+    createWorktree: (request, finalAdmission, beforeDispatch) => adapter.createWorktree(request, finalAdmission, beforeDispatch),
+    openWorktree: (request, finalAdmission, beforeDispatch) => adapter.openWorktree(request, finalAdmission, beforeDispatch),
     // A beacon says which agent is in a pane. It says nothing about which SESSIONS this machine has,
     // so the wrapped adapter's answer passes through untouched.
     listSessions: () => adapter.listSessions(),
