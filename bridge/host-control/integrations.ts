@@ -163,7 +163,7 @@ function operationReply(operation: Awaited<ReturnType<OperationStore["execute"]>
 export async function serveHostIntegrationRoute(req: Request, url: URL, caller: HostIntegrationRouteCaller,
   plans: PlanStore, operations: OperationStore): Promise<Response | null> {
   const contract = controlRoute(url.pathname, req.method);
-  if (!contract || !contract.name.startsWith("host-")) return null;
+  if (!contract || !/^\/api\/host\/(?:integrations|agent-manifests)(?:\/|$)/u.test(url.pathname)) return null;
   const denied = caller.gate(contract.gate);
   if (denied) return denied;
   if (!controlScope(url, "host")) return errorResponse("scope.malformed", "Malformed host administration scope", 400, "scope");

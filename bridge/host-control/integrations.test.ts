@@ -200,3 +200,23 @@ test("scope, missing device-read identity, gate, and unsupported targets fail cl
     expect(await f.route("GET", "/api/host/integrations/status")).toBe(denied);
   } finally { await f.cleanup(); }
 });
+
+
+test("integration dispatcher leaves agent-view routes for their own handler", async () => {
+  const f = fixture();
+  await f.ready();
+  let touched = 0;
+  const caller = {
+    gate: () => { touched++; return null; },
+    pairedIdentity: () => { touched++; return device; },
+    resolve: async () => { touched++; return { host: "host-a", port: f.port }; },
+  };
+  try {
+    const url = new URL("http://collie/api/host/agent-view");
+    for (const method of ["GET", "POST", "DELETE"]) {
+      expect(await serveHostIntegrationRoute(new Request(url, { method }), url, caller, f.plans, f.operations)).toBeNull();
+    }
+    expect(touched).toBe(0);
+    expect(f.dispatches).toBe(0);
+  } finally { await f.cleanup(); }
+});

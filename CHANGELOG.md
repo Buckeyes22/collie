@@ -13,6 +13,7 @@ empty `## [Unreleased]` section above it. The newest numbered `## [x.y.z]` headi
 Unreleased heading) **must** match the `version` field in `herdr-plugin.toml`, `package.json`,
 and `web/package.json`, which `scripts/check-version.sh` checks. See [`CLAUDE.md`](./CLAUDE.md) →
 *Versioning* for the bump policy.
+- **Agent views reach their dedicated host handler.** Integration administration dispatches only its own routes so phone view reads and changes are available.
 
 ### Fixed
 
