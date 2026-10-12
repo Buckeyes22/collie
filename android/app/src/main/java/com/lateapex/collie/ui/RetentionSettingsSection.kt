@@ -22,6 +22,7 @@ internal class RetentionSettingsSection(
     private val repository: CollieRepository,
 ) {
     private val store get() = preferences.offlineContentStore
+    private lateinit var currentChoice: TextView
     private lateinit var usage: TextView
     private lateinit var legacy: TextView
     private lateinit var status: TextView
@@ -33,6 +34,12 @@ internal class RetentionSettingsSection(
         val panel = LinearLayout(activity).apply { id = R.id.settings_offline_retention; orientation = LinearLayout.VERTICAL }
         panel.addView(label(R.string.offline_retention_title).also { ViewCompat.setAccessibilityHeading(it, true) })
         panel.addView(label(R.string.offline_retention_description))
+        currentChoice = TextView(activity).apply {
+            id = R.id.settings_offline_retention_current
+            setTextColor(androidx.core.content.ContextCompat.getColor(activity, R.color.collie_foreground))
+            accessibilityLiveRegion = android.view.View.ACCESSIBILITY_LIVE_REGION_POLITE
+        }
+        panel.addView(currentChoice)
         for ((value, title) in listOf(OfflineContentStore.Retention.OFF to R.string.offline_retention_off,
             OfflineContentStore.Retention.ONE_DAY to R.string.offline_retention_one_day,
             OfflineContentStore.Retention.SEVEN_DAYS to R.string.offline_retention_seven_days)) {
@@ -88,6 +95,14 @@ internal class RetentionSettingsSection(
     private fun refresh() {
         updating = true
         choices.forEach { (value, button) -> button.isSelected = value == store.retention }
+        val selectedTitle = when (store.retention) {
+            OfflineContentStore.Retention.OFF -> R.string.offline_retention_off
+            OfflineContentStore.Retention.ONE_DAY -> R.string.offline_retention_one_day
+            OfflineContentStore.Retention.SEVEN_DAYS -> R.string.offline_retention_seven_days
+        }
+        currentChoice.text = if (store.available) {
+            activity.getString(R.string.offline_retention_current, activity.getString(selectedTitle))
+        } else activity.getString(R.string.offline_storage_unavailable)
         drafts.isChecked = store.draftsEnabled
         val (bytes, count) = store.storageUsage()
         usage.text = activity.getString(R.string.offline_usage, bytes, count)

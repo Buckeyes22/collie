@@ -46,4 +46,5 @@
     <item name="settings_offline_retention_one_day" type="id" />
     <item name="settings_offline_retention_seven_days" type="id" />
     <item name="settings_saved_drafts_switch" type="id" />
+    <item name="settings_offline_retention_current" type="id" />
 </resources>

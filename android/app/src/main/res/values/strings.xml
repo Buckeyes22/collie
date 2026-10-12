@@ -892,4 +892,5 @@ Only the declared issuer receives this authorization exchange. Pairing is retain
 Read-only. Retry live to update.</string>
     <string name="offline_retry_live">Retry live connection</string>
     <string name="offline_clear_drafts">Clear saved drafts now</string>
+    <string name="offline_retention_current">Current choice: %1$s</string>
 </resources>

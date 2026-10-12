@@ -324,7 +324,10 @@ class PaneActivity : AppCompatActivity() {
             ),
             paneId,
         )
+        binding.filesButton.isEnabled = false
         binding.filesButton.setOnClickListener {
+            val original = currentState.paneReadContext ?: return@setOnClickListener
+            if (currentState.savedCopy != null || !filesDiscoveryAllowed(original)) return@setOnClickListener
             startActivity(FilesActivity.intent(this, com.lateapex.collie.network.FilesTarget.Pane(paneId), address.scope))
         }
         panePresenceTracker = PanePresenceTracker(
@@ -849,6 +852,7 @@ class PaneActivity : AppCompatActivity() {
 
     /** Retire copied content before the next Flow/render dispatch can run. */
     private fun retireSensitiveCustody() {
+        binding.filesButton.isEnabled = false
         retirePrintedPathCustody()
         resetTranscriptLinkBudget()
         terminalOutputContext = null
@@ -1895,6 +1899,7 @@ class PaneActivity : AppCompatActivity() {
         val filesAdmissionReady = paneActor?.let(::filesDiscoveryAllowed) == true
         if (filesAdmissionReady != lastFilesAdmissionReady) filesAdmissionGeneration++
         lastFilesAdmissionReady = filesAdmissionReady
+        filesButton.isEnabled = state.savedCopy == null && filesAdmissionReady
         lastFilesDiscoveryAllowed = filesAllowed
         if (recoverFromClosedPane(state)) return@with
         pendingSent?.let { sent ->

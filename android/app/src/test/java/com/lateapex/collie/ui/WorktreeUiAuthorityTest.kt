@@ -107,6 +107,9 @@ class WorktreeUiAuthorityTest {
                 shadowOf(Looper.getMainLooper()).idle()
                 assertEquals(0, fixture.plans)
                 assertNotNull(fixture.repository.readContext())
+                // The replacement actor must complete its actual supported refresh/snapshot
+                // before the fresh form may open; retain the existing five-second bound.
+                awaitCurrentRoot(fixture)
                 fixture.activity.startWorktreeFlowForTest()
                 assertTrue((ShadowDialog.getLatestDialog() as CollieBottomSheetDialog).isShowing)
             } finally { pool.shutdownNow() }
