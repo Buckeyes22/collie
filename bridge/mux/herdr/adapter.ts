@@ -1,3 +1,5 @@
+import { HerdrAgentControl } from "./agent-control.ts";
+import type { AgentAction, AgentControlInfo, AgentExplain, AgentOccupant, AgentWaitCondition } from "../../control/agent-models.ts";
 // HERDR, BEHIND THE CONTRACT — the reference adapter (M10/02).
 //
 // Everything above this file talks the mux port (../types.ts); everything below it (`client.ts`)
@@ -162,6 +164,7 @@ const HERDR_CAPABILITIES = declareCapabilities({
   supports: [
     ...HERDR_BASE_CAPABILITIES,
     "removeWorktree",
+    "agentAutomation", "agentWaits",
     "paneLayout", "portableLayouts", "tabTransfer", "paneSplit", "paneResize", "paneZoom", "paneSwap", "paneMove", "paneDirectionalFocus",
     "workspaceRename", "workspaceClose", "workspaceMove", "workspaceMoveBlock", "workspaceFocus", "tabMove", "tabFocus",
   ],
@@ -482,7 +485,9 @@ export class HerdrMux implements MuxAdapter {
     readLimits: { maxRequestedLines: 1_000 },
   });
   get capabilities(): typeof HERDR_CAPABILITIES | ReturnType<typeof declareCapabilities> {
-    return this.paneLayoutReady ? HERDR_CAPABILITIES : this.legacyCapabilities;
+    if (!this.paneLayoutReady) return this.legacyCapabilities;
+    if (this.client.getAgentControl && this.client.listAgentControls && this.client.readAgentControl && this.client.actOnAgent && this.client.explainAgent && this.client.waitForAgentCondition) return this.client.observeAgentEvent && this.client.sampleAgentOutputRevision ? HERDR_CAPABILITIES : { ...HERDR_CAPABILITIES, supports: { ...HERDR_CAPABILITIES.supports, agentWaits: false } };
+    return { ...HERDR_CAPABILITIES, supports: { ...HERDR_CAPABILITIES.supports, agentAutomation: false, agentWaits: false } };
   }
 
   // session.snapshot is the fast path; flipped off PERMANENTLY once a server proves it predates the
@@ -518,6 +523,16 @@ export class HerdrMux implements MuxAdapter {
   ) {
     this.hostControl = createHerdrHostControl(client, socketPath);
   }
+
+  private agentPort(): HerdrAgentControl { return new HerdrAgentControl(this.client, () => this.layoutRuntimeIdentity()); }
+  agentList(): Promise<MuxOutcome<readonly AgentControlInfo[]>> { return this.agentPort().list(); }
+  agentRead(expected: AgentOccupant, source: "visible" | "recent" | "recent_unwrapped" | "detection", lines: number, finalAdmission: (runtime: string) => boolean): Promise<MuxOutcome<MuxGrid>> { return this.agentPort().readNamed(expected, source, lines, finalAdmission); }
+  agentControl(paneId: string): Promise<MuxOutcome<AgentControlInfo>> { return this.agentPort().read(paneId); }
+  agentExplain(expected: AgentOccupant): Promise<MuxOutcome<AgentExplain>> { return this.agentPort().explain(expected); }
+  agentAction(action: AgentAction, expected: AgentOccupant, finalAdmission: (runtime: string) => boolean, signal?: AbortSignal, beforeFirstBytes?: () => Promise<boolean>): Promise<import("../../control/agent-models.ts").AgentActionOutcome> { return this.agentPort().action(action, expected, finalAdmission, signal, beforeFirstBytes); }
+  agentWait(condition: AgentWaitCondition, expected: AgentOccupant, timeoutMs: number, finalAdmission: (runtime: string) => boolean, signal: AbortSignal, observationOwner?: import("../../control/agent-models.ts").AgentObservationOwner): Promise<import("../../control/agent-models.ts").AgentWaitOutcome> { return this.agentPort().wait(condition, expected, timeoutMs, finalAdmission, signal, observationOwner); }
+  agentObservedTransition(original: AgentOccupant, observed: import("../../control/agent-models.ts").AgentObservedTransition, owner: import("../../control/agent-models.ts").AgentObservationOwner): Promise<MuxOutcome<void>> { return this.agentPort().proveTransition(original, observed, owner); }
+  agentObservedMove(original: AgentOccupant, observed: import("../../control/agent-models.ts").AgentObservedMove, owner: import("../../control/agent-models.ts").AgentObservationOwner): Promise<MuxOutcome<AgentControlInfo>> { return this.agentPort().proveMove(original, observed, owner); }
 
   /** Reachability for the connected/disconnected banner — one cheap list call. */
   async reachable(): Promise<boolean> {

@@ -1,5 +1,7 @@
 # Collie for Android changelog
 
+
+- B19 source: retain original-terminal custody through negotiated producer input queues and live scoped transitions; native waits resume the same opaque ID and show moved/closed/detected results without successor actions. Producer compilation/review and physical acceptance remain pending.
 Android app releases use `android-vX.Y.Z` tags. The inherited server/PWA history remains in
 [CHANGELOG.md](CHANGELOG.md). The current app is version 1.5.2, versionCode 3,
 the first Android release from this fork.
@@ -23,6 +25,8 @@ the first Android release from this fork.
 
 - Use current Android APIs and MockWebServer 3 fixtures, and install a version-pinned Android CLI for CI SDK setup. Resolve the update preflight button style through its owning AppCompat resources.
 - Support the current Android 17 release only, with stable SDK 37.2, AGP built-in Kotlin and age-eligible build/runtime dependencies; preserve security and lifecycle tests on SDK 37.
+
+- Add native named-agent start, rename, focus, reviewed text/keys, atomic prompt and bounded lifecycle/output/event observation screens. Retain opaque unknown-action receipts across recreation, cancel only observation, and erase retired or stopped private copies by their original owner.
 
 - Return directly opened file references to their calling pane on Back, including after recreation; retain folder hierarchy after deliberate breadcrumb or listing navigation.
 

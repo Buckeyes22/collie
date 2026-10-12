@@ -1,3 +1,6 @@
+import { strictAgentJson } from "../../control/agent-requests.ts";
+import { agentObject, agentString, parseAgentControlInfo, agentEventMatch, type WireAgentControlInfo } from "./agent-codecs.ts";
+import { AGENT_LIMITS, type AgentAction, type AgentEventCondition, type AgentWaitCondition } from "../../control/agent-models.ts";
 import type { JsonObject, JsonValue } from "../../json.ts";
 import { HOST } from "../../host.ts";
 import { statSync } from "node:fs";
@@ -296,6 +299,10 @@ export interface PaneRead {
 
 /** `pane.process_info` result from the pinned protocol schema (protocol 22/schema 1). */
 export interface WirePaneProcessInfo {
+  runtime_incarnation?: string;
+  original_binding?: string;
+  original_incarnation?: string;
+  original_epoch?: string;
   pane_id: string;
   shell_pid?: number | null;
   foreground_process_group_id?: number | null;
@@ -497,6 +504,12 @@ function parsePaneProcessInfo(value: JsonValue): WirePaneProcessInfo {
     foregroundProcesses.push(parsed);
   }
   const parsed: WirePaneProcessInfo = { pane_id: paneId, foreground_processes: foregroundProcesses, truncated };
+  if (result.runtime_incarnation !== undefined) { const incarnation = wireText(result, "runtime_incarnation"); if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(incarnation)) throw new Error("herdr pane.process_info: invalid runtime incarnation"); parsed.runtime_incarnation = incarnation; }
+  if (result.original_binding !== undefined || result.original_incarnation !== undefined || result.original_epoch !== undefined) {
+    const binding = wireText(result, "original_binding"); const incarnation = wireText(result, "original_incarnation"); const epoch = wireText(result, "original_epoch");
+    if (!/^[a-f0-9]{64}$/.test(binding) || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(incarnation) || !/^(0|[1-9][0-9]{0,19})$/.test(epoch) || BigInt(epoch) > 18_446_744_073_709_551_615n) throw new Error("herdr pane.process_info: invalid original custody");
+    parsed.original_binding = binding; parsed.original_incarnation = incarnation; parsed.original_epoch = epoch;
+  }
   const shellPid = wirePid(result, "shell_pid");
   if (shellPid !== undefined) parsed.shell_pid = shellPid;
   const processGroupId = wirePid(result, "foreground_process_group_id");
@@ -541,6 +554,12 @@ type WorkspaceCreateParams = { cwd: string; focus: false; label?: string };
 /** What {@link HerdrClient.subscribeEvents} is asked for. */
 export type SubscribeOptions = {
   subscriptions: Array<{ type: string; pane_id?: string }>;
+  /** Additive bounded observer mode; legacy snapshot pokes retain their original contract. */
+  original?: HerdrDispatchAdmission;
+  signal?: AbortSignal;
+  boundedAgentObserver?: boolean;
+  /** Negotiated producer cursor; mandatory for observations that retire their old anchor. */
+  originalObservationRegistration?: string;
   onUp: () => void;
   onEvent: (event: string, data: EventData) => void;
   onDown: (reason: string) => void;
@@ -591,6 +610,7 @@ export type HerdrRpc = Pick<
   | "openWorktree"
   | "subscribeEvents"
 > & Partial<Pick<HerdrClient,
+  | "getAgentControl" | "listAgentControls" | "readAgentControl" | "actOnAgent" | "explainAgent" | "waitForAgentCondition" | "observeAgentEvent" | "sampleAgentOutputRevision" | "originalAgentObservations" | "originalAgentInputs"
   | "handshake"
   | "layoutHandshakeSample"
   | "layoutRuntimeIdentity"
@@ -703,10 +723,18 @@ export interface HerdrSplitPaneParams {
   readonly right_click: "herdr";
 }
 
-/** Immutable callback from the original admitted operation, never a new caller/runtime lookup. */
+/** Immutable original runtime and actor predicate, never an ambient resampler. */
+export class HerdrAgentRefusal extends Error {
+  constructor(readonly vendorCode: string) { super(`Owning runtime refused agent operation (${vendorCode}).`); }
+}
+
 export interface HerdrDispatchAdmission {
   readonly runtimeIdentity: string;
+  readonly originalBinding?: string;
+  readonly originalPaneId?: string;
+  readonly observationTimeoutMs?: number;
   readonly finalAdmission: (runtimeIdentity: string) => boolean;
+  readonly beforeFirstBytes?: (() => Promise<boolean>) | undefined;
 }
 
 export type HerdrLayoutNode =
@@ -778,26 +806,33 @@ export class HerdrClient {
     this.verifiedEndpointWitness = null;
     this.lastEndpointWitness = null;
     this.handshakeGeneration += 1;
+    this.verifiedOriginalAgentObservations = false;
+    this.verifiedOriginalAgentInputs = false;
   }
   private verifiedHandshake: string | null = null;
   private verifiedEndpointWitness: string | null = null;
   private lastEndpointWitness: string | null = null;
   private handshakeGeneration = 0;
+  private verifiedOriginalAgentObservations = false;
+  private verifiedOriginalAgentInputs = false;
+  originalAgentInputs(): boolean { return this.layoutRuntimeIdentity() !== null && this.verifiedOriginalAgentInputs; }
+  originalAgentObservations(): boolean { return this.layoutRuntimeIdentity() !== null && this.verifiedOriginalAgentObservations; }
 
   /**
    * One request, one reply, one connection. Rejects on error reply, timeout, or early close.
    *
    * `timeoutMs` overrides the client's budget for this one call; absent, the constructor's applies.
    */
-  private request<T>(method: string, params: JsonObject = {}, timeoutMs = this.timeoutMs, maxReplyChars?: number, exactUint64Marker?: string, originalAdmission?: HerdrDispatchAdmission): Promise<T> {
+  private request<T>(method: string, params: JsonObject = {}, timeoutMs = this.timeoutMs, maxReplyChars?: number, exactUint64Marker?: string, originalAdmission?: HerdrDispatchAdmission, signal?: AbortSignal, requireCorrelation = false): Promise<T> {
     const originalRuntime = originalAdmission?.runtimeIdentity;
     const originalPredicate = originalAdmission?.finalAdmission;
+    const originalBeforeFirstBytes = originalAdmission?.beforeFirstBytes;
     const id = `b${++idCounter}`;
     return new Promise<T>((resolve, reject) => {
       let buf = "";
       let settled = false;
       const admitted = () => {
-        if (settled) return false;
+        if (settled || signal?.aborted) return false;
         try { return originalPredicate === undefined || originalRuntime !== undefined && this.layoutRuntimeIdentity() === originalRuntime && originalPredicate(originalRuntime); }
         catch { return false; }
       };
@@ -817,6 +852,7 @@ export class HerdrClient {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        signal?.removeEventListener("abort", abort);
         fn();
         if (socket) {
           try {
@@ -840,6 +876,9 @@ export class HerdrClient {
         timeoutMs,
       );
 
+      const abort = () => finish(() => reject(new Error("agent.observation_cancelled")));
+      signal?.addEventListener("abort", abort, { once: true });
+      if (signal?.aborted) { abort(); return; }
       const dialed = this.dial(this.socketPath, {
         onDial(cancel) {
           cancelDial = cancel;
@@ -870,6 +909,16 @@ export class HerdrClient {
           finish(() => {
             try {
               decoder.decode(); // Reject an incomplete UTF-8 codepoint at the reply boundary.
+              if (requireCorrelation || originalAdmission !== undefined) {
+                const frame = agentObject(strictAgentJson(line));
+                if (frame.id !== id) throw new Error("agent.protocol: response correlation mismatch");
+                if (frame.error !== undefined) {
+                  const error = agentObject(frame.error); const code = agentString(error.code, 128);
+                  agentString(error.message, 2048);
+                  if (!/^[a-z_]{1,128}$/.test(code)) throw new Error("agent.protocol: invalid error code");
+                  throw new HerdrAgentRefusal(code);
+                }
+              }
               const decoded = decodeReplyLine<T>(exactUint64Marker ? preserveUint64Tokens(line, exactUint64Marker) : line, method);
               resolve(decoded);
             } catch (error) {
@@ -907,6 +956,11 @@ export class HerdrClient {
           // write-drain.ts). A connection that dies mid-write lands in close/error above and
           // rejects like any other transport failure.
           if (!admitted()) { finish(() => reject(new WriteAdmissionRetired(false))); return; }
+          if (originalBeforeFirstBytes) {
+            let ready = false; try { ready = await originalBeforeFirstBytes(); } catch { /* An original preflight exception accepts no action bytes. */ }
+            if (!ready) { finish(() => reject(new WriteAdmissionRetired(false))); return; }
+          }
+          if (!admitted()) { finish(() => reject(new WriteAdmissionRetired(false))); return; }
           s.write(JSON.stringify({ id, method, params }) + "\n", admitted);
           if (!settled) s.flush();
         } catch (err) {
@@ -926,8 +980,8 @@ export class HerdrClient {
     return r.panes;
   }
 
-  async getPane(paneId: string): Promise<WirePane> {
-    const r = await this.request<{ type: string; pane: WirePane }>("pane.get", { pane_id: paneId }, this.timeoutMs, MAX_PANE_REPLY_CHARS);
+  async getPane(paneId: string, signal?: AbortSignal, original?: HerdrDispatchAdmission): Promise<WirePane> {
+    const r = await this.request<{ type: string; pane: WirePane }>("pane.get", { pane_id: paneId }, this.timeoutMs, MAX_PANE_REPLY_CHARS, undefined, original, signal, original !== undefined);
     const pane = r.pane;
     if (r.type !== "pane_info" || !pane || pane.pane_id !== paneId ||
       typeof pane.terminal_id !== "string" || pane.terminal_id.trim() === "" ||
@@ -985,9 +1039,90 @@ export class HerdrClient {
     return { manifests: manifestRows(result.manifests) };
   }
 
+  /** Exact shipped AgentInfo, retaining the resolved terminal/name independently of public pane alias. */
+  async getAgentControl(target: string, signal?: AbortSignal, original?: HerdrDispatchAdmission): Promise<WireAgentControlInfo> {
+    const marker = randomUUID();
+    const result = agentObject(await this.request<JsonValue>("agent.get", { target }, this.timeoutMs, 64 * 1024, marker, original, signal, true));
+    if (result.type !== "agent_info") throw new Error("agent.protocol: expected agent_info");
+    return parseAgentControlInfo(result.agent, marker);
+  }
+  async listAgentControls(): Promise<readonly WireAgentControlInfo[]> {
+    const marker = randomUUID(); const result = agentObject(await this.request<JsonValue>("agent.list", {}, this.timeoutMs, 64 * 1024, marker, undefined, undefined, true));
+    if (result.type !== "agent_list" || !Array.isArray(result.agents) || result.agents.length > 64) throw new Error("agent.protocol: invalid agent list");
+    const rows = result.agents.map((value) => parseAgentControlInfo(value, marker));
+    if (new Set(rows.map((row) => row.paneId)).size !== rows.length || new Set(rows.map((row) => row.terminalId)).size !== rows.length) throw new Error("agent.protocol: duplicated agent identity");
+    return rows;
+  }
+  async readAgentControl(paneId: string, source: "visible" | "recent" | "recent_unwrapped" | "detection", lines: number, original: HerdrDispatchAdmission, signal?: AbortSignal): Promise<{ readonly read: JsonObject; readonly marker: string }> {
+    const marker = randomUUID(); const result = agentObject(await this.request<JsonValue>("agent.read", { target: paneId, source, lines, format: "ansi", strip_ansi: false }, this.timeoutMs, 64 * 1024, marker, original, signal));
+    if (result.type !== "pane_read") throw new Error("agent.protocol: invalid named read envelope");
+    return { read: agentObject(result.read), marker };
+  }
+  async actOnAgent(paneId: string, action: AgentAction, original: HerdrDispatchAdmission, signal?: AbortSignal): Promise<WireAgentControlInfo> {
+    const marker = randomUUID(); let method: string; let params: JsonObject; let expected: string;
+    if (action.kind === "start") { method = "agent.start"; params = { pane_id: paneId, name: action.name, kind: action.agent, args: [...action.args], timeout_ms: action.timeoutMs }; expected = "agent_started"; }
+    else if (action.kind === "focus") { method = "agent.focus"; params = { target: paneId }; expected = "agent_info"; }
+    else if (action.kind === "keys") { method = "agent.send_keys"; params = { target: paneId, keys: [...action.keys] }; expected = "ok"; }
+    else if (action.kind === "input") { method = "pane.send_input"; params = { pane_id: paneId, text: action.text, keys: [...action.keys] }; expected = "ok"; }
+    else if (action.kind === "rename") { method = "agent.rename"; params = { target: paneId, name: action.name }; expected = "agent_info"; }
+    else { method = "agent.prompt"; params = { target: paneId, text: action.text }; if (action.until !== null) params.wait = { until: [...action.until], timeout_ms: action.timeoutMs }; expected = "agent_prompted"; }
+    if (this.originalAgentInputs()) {
+      if (!original.originalBinding || !/^[a-f0-9]{64}$/.test(original.originalBinding)) throw new HerdrAgentRefusal("original_input_unavailable");
+      params.original_binding = original.originalBinding;
+    }
+    const actionBudget = action.kind === "start" || action.kind === "prompt" ? action.timeoutMs + 1000 : this.timeoutMs;
+    const result = agentObject(await this.request<JsonValue>(method, params, actionBudget, 64 * 1024, marker, original, signal));
+    if (result.type !== expected) throw new Error("agent.protocol: unexpected action envelope");
+    if (action.kind === "start") {
+      if (!Array.isArray(result.argv) || result.argv.length < 1 || result.argv.length > 33) throw new Error("agent.protocol: invalid argv");
+      result.argv.forEach((arg) => agentString(arg, 512));
+    }
+    if (expected === "ok") return this.getAgentControl(paneId, signal);
+    const info = parseAgentControlInfo(result.agent, marker);
+    if (info.paneId !== paneId) throw new Error("agent.protocol: action target mismatch");
+    return info;
+  }
+  async explainAgent(paneId: string): Promise<JsonObject> {
+    const result = agentObject(await this.request<JsonValue>("agent.explain", { target: paneId }, this.timeoutMs, 64 * 1024, undefined, undefined, undefined, true));
+    if (result.type !== "agent_explain") throw new Error("agent.protocol: expected agent_explain");
+    return agentObject(result.explain);
+  }
+  async waitForAgentCondition(paneId: string, condition: AgentWaitCondition, timeoutMs: number, original: HerdrDispatchAdmission, signal: AbortSignal): Promise<{ readonly raw: JsonObject; readonly marker: string }> {
+    const marker = randomUUID(); let method: string; let params: JsonObject;
+    if (condition.kind === "lifecycle") { method = "agent.wait"; params = { target: paneId, until: [...condition.until], timeout_ms: timeoutMs }; }
+    else if (condition.kind === "output") { method = "pane.wait_for_output"; params = { pane_id: paneId, source: condition.source, match: { type: condition.match.kind, value: condition.match.value }, lines: condition.lines, strip_ansi: true, timeout_ms: timeoutMs }; }
+    else { method = "events.wait"; params = { match_event: agentEventMatch(condition), timeout_ms: timeoutMs }; }
+    return { raw: agentObject(await this.request<JsonValue>(method, params, timeoutMs + 1000, 64 * 1024, marker, original, signal)), marker };
+  }
+
+  /** A bounded official subscription equivalence for general events absent from events.wait.
+   * Registration never reconnects/catches up and returns only the matched original event. */
+  observeAgentEvent(condition: AgentEventCondition, original: HerdrDispatchAdmission, signal: AbortSignal, matches: (event: string, data: JsonObject) => boolean, cursorRequired = false): Promise<JsonObject> {
+    if (cursorRequired && !this.originalAgentObservations()) return Promise.reject(new HerdrAgentRefusal("original_observation_unavailable"));
+    const registration = cursorRequired ? randomUUID() : undefined;
+    const event = agentEventMatch(condition).event; const subscription = agentString(event, 64).replace("_", ".");
+    return new Promise<JsonObject>((resolve, reject) => {
+      let stream: EventStream | null = null; let settled = false;
+      const finish = (value: JsonObject | Error) => { if (settled) return; settled = true; stream?.close(); if (value instanceof Error) reject(value); else resolve(value); };
+      const observerOptions: SubscribeOptions = { subscriptions: [{ type: subscription }], original, signal, boundedAgentObserver: true,
+        onUp: () => {}, onEvent: (name, data) => {
+          try { const row = agentObject(data); if (matches(name, row)) finish({ event: name, data: row }); }
+          catch (error) { finish(error instanceof Error ? error : new Error("agent.event_protocol")); }
+        }, onDown: (reason) => finish(new HerdrAgentRefusal(/^agent\.[a-z_]{1,64}$/.test(reason) ? reason.slice("agent.".length) : "event_stream_lost")),
+      };
+      if (registration !== undefined) Object.assign(observerOptions, { originalObservationRegistration: registration });
+      stream = this.subscribeEvents(observerOptions);
+      if (settled) stream.close();
+    });
+  }
+  async sampleAgentOutputRevision(paneId: string, original: HerdrDispatchAdmission, signal: AbortSignal): Promise<{ readonly read: JsonObject; readonly marker: string }> {
+    const marker = randomUUID(); const result = agentObject(await this.request<JsonValue>("pane.read", { pane_id: paneId, source: "visible", lines: AGENT_LIMITS.lines, format: "text", strip_ansi: true, intent: "passive" }, this.timeoutMs, 64 * 1024, marker, original, signal));
+    if (result.type !== "pane_read") throw new Error("agent.output_revision_protocol"); return { read: agentObject(result.read), marker };
+  }
+
   /** Fetch sensitive process metadata for the explicit target; never asks Herdr to infer focus. */
-  async processInfo(paneId: string): Promise<WirePaneProcessInfo> {
-    const r = await this.request<JsonValue>("pane.process_info", { pane_id: paneId }, this.timeoutMs, MAX_PROCESS_INFO_REPLY_CHARS);
+  async processInfo(paneId: string, signal?: AbortSignal, original?: HerdrDispatchAdmission): Promise<WirePaneProcessInfo> {
+    const r = await this.request<JsonValue>("pane.process_info", { pane_id: paneId }, this.timeoutMs, MAX_PROCESS_INFO_REPLY_CHARS, undefined, original, signal);
     const result = wireObject(r, "result wrapper");
     if (result.type !== "pane_process_info") throw new Error("herdr pane.process_info: unexpected result type");
     return parsePaneProcessInfo(result.process_info ?? null);
@@ -1017,8 +1152,14 @@ export class HerdrClient {
    * ends it with reason "closed". Reconnect/backoff live in the caller (see EventPoker).
    */
   subscribeEvents(opts: SubscribeOptions): EventStream {
+    const signal = opts.signal;
+    const originalRuntime = opts.original?.runtimeIdentity; const originalPredicate = opts.original?.finalAdmission;
+    const beforeFirstBytes = opts.original?.beforeFirstBytes; const bounded = opts.boundedAgentObserver === true;
+    const registration = opts.originalObservationRegistration; let cursor: bigint | null = null;
+    const admitted = (): boolean => { try { return !signal?.aborted && (originalPredicate === undefined || originalRuntime !== undefined && this.layoutRuntimeIdentity() === originalRuntime && originalPredicate(originalRuntime)); } catch { return false; } };
+    let frameCount = 0; let streamBytes = 0;
     const id = `es${++idCounter}`;
-    const decoder = new TextDecoder("utf-8");
+    const decoder = new TextDecoder("utf-8", { fatal: bounded });
     let buf = "";
     let socket: SockHandle | null = null;
     let cancelDial: (() => void) | null = null;
@@ -1030,6 +1171,7 @@ export class HerdrClient {
       if (down) return;
       down = true;
       clearTimeout(ackTimer);
+      signal?.removeEventListener("abort", abort);
       if (socket) {
         try {
           socket.end();
@@ -1055,11 +1197,33 @@ export class HerdrClient {
 
     const handleLine = (line: string) => {
       if (line === "") return;
+      if (!admitted()) { fireDown("agent.observation_retired"); return; }
+      if (bounded) {
+        try {
+          if (++frameCount > 256 || Buffer.byteLength(line) > 65_536) { fireDown("agent.event_budget_exceeded"); return; }
+          const frame = agentObject(strictAgentJson(line));
+          if (frame.error !== undefined) { const error = agentObject(frame.error); const code = agentString(error.code, 128); agentString(error.message, 2048); fireDown(/^[a-z_]{1,64}$/.test(code) ? `agent.${code}` : "agent.event_protocol"); return; }
+          if (frame.result !== undefined) {
+            const result = agentObject(frame.result);
+            if (acked || frame.id !== id || result.type !== "subscription_started") throw new Error("agent.event_protocol");
+            if (registration !== undefined) {
+              const proof = agentObject(result.original_observation);
+              if (Object.keys(proof).length !== 2 || proof.registration_id !== registration) throw new Error("agent.event_protocol");
+              cursor = originalObservationSequence(proof.start_sequence);
+            }
+          } else if (!acked || frame.event === undefined || frame.data === undefined) throw new Error("agent.event_protocol");
+          else if (registration !== undefined) {
+            const proof = agentObject(frame.original_observation); const next = originalObservationSequence(proof.sequence);
+            if (Object.keys(proof).length !== 2 || proof.registration_id !== registration || cursor === null || next <= cursor) throw new Error("agent.event_protocol");
+            cursor = next;
+          }
+        } catch { fireDown("agent.event_protocol"); return; }
+      }
       let decoded;
       try {
         decoded = decodeStreamLine(line);
       } catch (e) {
-        fireDown(`protocol error: ${e instanceof Error ? e.message : String(e)}`);
+        fireDown(bounded ? "agent.event_protocol" : `protocol error: ${e instanceof Error ? e.message : String(e)}`);
         return;
       }
       if (decoded.kind === "error") {
@@ -1073,10 +1237,13 @@ export class HerdrClient {
         opts.onUp();
         return;
       }
-      opts.onEvent(decoded.event, decoded.data);
+      try { opts.onEvent(decoded.event, decoded.data); } catch { fireDown("agent.event_protocol"); }
     };
 
-    const dialed = dialHerdr(this.socketPath, {
+    const abort = () => fireDown("agent.observation_cancelled");
+    signal?.addEventListener("abort", abort, { once: true });
+    if (!admitted()) { fireDown("agent.observation_retired"); return { close: () => {} }; }
+    const dialed = this.dial(this.socketPath, {
       onDial(cancel) {
         cancelDial = cancel;
       },
@@ -1087,7 +1254,10 @@ export class HerdrClient {
       // stream open. Stream-decode so a multi-byte codepoint split across chunks isn't corrupted.
       data(s, chunk) {
         socket = s;
-        buf += decoder.decode(chunk, { stream: true });
+        streamBytes += chunk.byteLength;
+        if (bounded && streamBytes > 1_048_576) { fireDown("agent.event_budget_exceeded"); return; }
+        try { buf += decoder.decode(chunk, { stream: true }); } catch { fireDown("agent.event_protocol"); return; }
+        if (bounded && buf.indexOf("\n") < 0 && Buffer.byteLength(buf) > 65_536) { fireDown("agent.event_budget_exceeded"); return; }
         let nl = buf.indexOf("\n");
         while (nl >= 0) {
           if (down) break;
@@ -1119,7 +1289,11 @@ export class HerdrClient {
           return;
         }
         socket = s;
-        s.write(JSON.stringify({ id, method: "events.subscribe", params: { subscriptions: opts.subscriptions } }) + "\n");
+        if (!admitted() || beforeFirstBytes && !await beforeFirstBytes() || !admitted()) { fireDown("agent.observation_retired"); return; }
+        const marker: JsonObject = { type: "original.agent_observation", registration_id: registration ?? "" };
+        if (opts.original?.originalBinding !== undefined) Object.assign(marker, { pane_id: opts.original.originalPaneId, original_binding: opts.original.originalBinding, timeout_ms: opts.original.observationTimeoutMs });
+        const subscriptions = registration === undefined ? opts.subscriptions : [...opts.subscriptions, marker];
+        s.write(JSON.stringify({ id, method: "events.subscribe", params: { subscriptions } }) + "\n", opts.original === undefined ? undefined : admitted);
         s.flush();
       } catch (err) {
         fireDown((err instanceof Error ? err.message : String(err)) || "connect failed");
@@ -1431,7 +1605,12 @@ export class HerdrClient {
       this.retireHandshake();
       throw new Error("herdr ping: malformed pong");
     }
-    this.verifiedHandshake = `${result.version}:${result.protocol}`;
+    const capabilities = result.capabilities === undefined || result.capabilities === null ? null : agentObject(result.capabilities);
+    if (capabilities?.agent_observation_cursor_v1 !== undefined && typeof capabilities.agent_observation_cursor_v1 !== "boolean") { this.retireHandshake(); throw new Error("herdr ping: malformed observation capability"); }
+    this.verifiedOriginalAgentObservations = capabilities?.agent_observation_cursor_v1 === true;
+    if (capabilities?.agent_original_input_v1 !== undefined && typeof capabilities.agent_original_input_v1 !== "boolean") { this.retireHandshake(); throw new Error("herdr ping: malformed original input capability"); }
+    this.verifiedOriginalAgentInputs = capabilities?.agent_original_input_v1 === true;
+    this.verifiedHandshake = `${result.version}:${result.protocol}:${this.verifiedOriginalAgentObservations}:${this.verifiedOriginalAgentInputs}`;
     return { version: result.version, protocol: result.protocol };
   }
 
@@ -1444,4 +1623,11 @@ export class HerdrClient {
       return false;
     }
   }
+}
+
+/** Cursor tokens remain exact unsigned decimal strings, never rounded JSON numbers. */
+function originalObservationSequence(value: JsonValue | undefined): bigint {
+  const sequence = agentString(value, 20);
+  if (!/^(0|[1-9][0-9]{0,19})$/.test(sequence) || BigInt(sequence) > 18_446_744_073_709_551_615n) throw new Error("agent.event_protocol");
+  return BigInt(sequence);
 }

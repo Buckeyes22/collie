@@ -1,3 +1,4 @@
+import type { AgentAction, AgentControlInfo, AgentExplain, AgentOccupant, AgentWaitCondition } from "../control/agent-models.ts";
 // THE MUX PORT — everything Collie needs from a multiplexer, in Collie's words.
 //
 // A *multiplexer* is what owns the pane. A *harness* is what runs inside it (claude, codex, pi, omp).
@@ -762,6 +763,16 @@ export interface MuxAdapter {
 
   /** Read owner-supplied agent/session diagnostics without inferring a state authority source. */
   agentIdentity?(paneId: string): Promise<MuxOutcome<MuxAgentIdentity>>;
+  /** Optional closed orchestration methods; every original witness is retained through awaits. */
+  agentList?(): Promise<MuxOutcome<readonly AgentControlInfo[]>>;
+  agentRead?(expected: AgentOccupant, source: "visible" | "recent" | "recent_unwrapped" | "detection", lines: number, finalAdmission: (runtime: string) => boolean): Promise<MuxOutcome<MuxGrid>>;
+  agentControl?(paneId: string): Promise<MuxOutcome<AgentControlInfo>>;
+  agentExplain?(expected: AgentOccupant): Promise<MuxOutcome<AgentExplain>>;
+  agentAction?(action: AgentAction, expected: AgentOccupant, finalAdmission: (runtimeIdentity: string) => boolean, signal?: AbortSignal, beforeFirstBytes?: () => Promise<boolean>): Promise<import("../control/agent-models.ts").AgentActionOutcome>;
+  agentWait?(condition: AgentWaitCondition, expected: AgentOccupant, timeoutMs: number, finalAdmission: (runtimeIdentity: string) => boolean, signal: AbortSignal, observationOwner?: import("../control/agent-models.ts").AgentObservationOwner): Promise<import("../control/agent-models.ts").AgentWaitOutcome>;
+  agentObservedTransition?(original: AgentOccupant, observed: import("../control/agent-models.ts").AgentObservedTransition, owner: import("../control/agent-models.ts").AgentObservationOwner): Promise<MuxOutcome<void>>;
+  agentObservedMove?(original: AgentOccupant, observed: import("../control/agent-models.ts").AgentObservedMove, owner: import("../control/agent-models.ts").AgentObservationOwner): Promise<MuxOutcome<AgentControlInfo>>;
+
 
   /**
    * The same rows with soft wraps undone, when the multiplexer can produce them.
@@ -916,7 +927,7 @@ export function muxDataFields(adapter: MuxAdapter): Pick<MuxAdapter, "logo" | "h
  * unwrap (tmux) never comes out of a decorator appearing to offer the read: absent stays absent.
  */
 type MuxOptionalMethodFields = Pick<MuxAdapter,
-  | "readLogicalText" | "processInfo" | "readLayout" | "applyLayout" | "exportPortableLayout" | "applyPortableLayout" | "setSplitRatio" | "layoutRuntimeIdentity" | "agentIdentity"
+  | "readLogicalText" | "processInfo" | "readLayout" | "applyLayout" | "exportPortableLayout" | "applyPortableLayout" | "setSplitRatio" | "layoutRuntimeIdentity" | "agentIdentity" | "agentList" | "agentRead" | "agentControl" | "agentExplain" | "agentAction" | "agentWait" | "agentObservedMove" | "agentObservedTransition"
   | "removeWorktree"
   | "renameSpace" | "closeSpace" | "moveSpace" | "moveSpaceBlock" | "focusSpace" | "moveTab" | "focusTab"
 >;
@@ -938,6 +949,14 @@ export function muxOptionalMethods(adapter: MuxAdapter): MuxOptionalMethodFields
   const moveTab = adapter.moveTab?.bind(adapter);
   const focusTab = adapter.focusTab?.bind(adapter);
   const agentIdentity = adapter.agentIdentity?.bind(adapter);
+  const agentList = adapter.agentList?.bind(adapter);
+  const agentRead = adapter.agentRead?.bind(adapter);
+  const agentControl = adapter.agentControl?.bind(adapter);
+  const agentExplain = adapter.agentExplain?.bind(adapter);
+  const agentAction = adapter.agentAction?.bind(adapter);
+  const agentWait = adapter.agentWait?.bind(adapter);
+  const agentObservedTransition = adapter.agentObservedTransition?.bind(adapter);
+  const agentObservedMove = adapter.agentObservedMove?.bind(adapter);
   const methods: MuxOptionalMethodFields = {};
   if (readLogicalText !== undefined) methods.readLogicalText = readLogicalText;
   if (processInfo !== undefined) methods.processInfo = processInfo;
@@ -956,5 +975,13 @@ export function muxOptionalMethods(adapter: MuxAdapter): MuxOptionalMethodFields
   if (moveTab !== undefined) methods.moveTab = moveTab;
   if (focusTab !== undefined) methods.focusTab = focusTab;
   if (agentIdentity !== undefined) methods.agentIdentity = agentIdentity;
+  if (agentList !== undefined) methods.agentList = agentList;
+  if (agentRead !== undefined) methods.agentRead = agentRead;
+  if (agentControl !== undefined) methods.agentControl = agentControl;
+  if (agentExplain !== undefined) methods.agentExplain = agentExplain;
+  if (agentAction !== undefined) methods.agentAction = agentAction;
+  if (agentWait !== undefined) methods.agentWait = agentWait;
+  if (agentObservedTransition !== undefined) methods.agentObservedTransition = agentObservedTransition;
+  if (agentObservedMove !== undefined) methods.agentObservedMove = agentObservedMove;
   return methods;
 }

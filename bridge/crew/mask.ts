@@ -1,3 +1,4 @@
+import { maskAgentControlAnswer, maskAgentWaitAnswer } from "../control/agent-response.ts";
 import {
   maskChatBody,
   maskDiff,
@@ -76,6 +77,10 @@ function maskBody(answer: TextAnswer, body: JsonObject, raw: string, expectedPan
       return maskedProcessInfo(body, expectedPaneId);
     case "agent":
       return maskedAgentIdentity(body, expectedPaneId);
+    case "agent-control":
+      return maskAgentControlAnswer(body, expectedPaneId);
+    case "waits":
+      return maskAgentWaitAnswer(body);
   }
 }
 

@@ -663,6 +663,8 @@ describe("solo zero-tax — routes", () => {
       "/api/*",
       // H12's read-only exact-name capability snapshot, scoped to the selected owner runtime.
       "/api/agents/capabilities",
+      // B19 scoped read-only named census; every mutation remains separately gated.
+      "/api/agents/named",
       // The prompt-cache rule catalog (M28/02). A process-scoped READ, gated exactly as `/api/config`
       // is, and the only route this feature adds. Not forwarded across the crew link.
       "/api/cache-rules",
@@ -984,6 +986,8 @@ const STATE_DIR_ENTRIES = [
   "activity.json",
   // Operator-owned allowlist for explicitly registered custom agent reporters and exact session refs.
   "agent-reporters.json",
+  // B19 bounded original observation metadata; never prompts or matched output.
+  "agent-waits-v1.json",
   "audit.log",
   // Agent beacons (M11/01) — a directory, and one no bridge module ever writes: the bridge only ever
   // READS it, and the emitter that fills it is a CLI verb the operator installs a hook for. An

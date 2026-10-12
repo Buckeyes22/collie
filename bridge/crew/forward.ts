@@ -66,6 +66,8 @@ export function crewRouteFor(pathname: string): string | null {
  */
 const FORWARDABLE: readonly RegExp[] = [
   /^refresh$/,
+  /^pane\/[^/]+\/agent\/(?:control|explain|read|start|rename|prompt|focus|keys|input)$/,
+  /^waits(?:\/[A-Za-z0-9_-]{1,128})?$/,
   /^control\/operations\/[a-zA-Z0-9_-]{1,128}$/,
   /^pane\/[^/]+(?:\/(?:reply|keys|upload|close|rename|history|chat|changes|files|focus|processes|agent|agent\/(?:state|session|release|authority\/clear)))?$/,
   /^pane\/[^/]+\/layout(?:\/(?:neighbor|edges|plan|split|resize|zoom|swap|move|focus-direction))?$/,
@@ -106,6 +108,8 @@ const FORWARDABLE: readonly RegExp[] = [
   /^host\/integrations(?:\/status)?$/,
   new RegExp(`^host/integrations/(?:${INTEGRATION_TARGETS.join("|")}|letta)/(?:install|uninstall)(?:/plan)?$`),
   /^host\/agent-manifests(?:\/(?:reload|refresh)(?:\/plan)?)?$/,
+
+  /^agents\/named$/,
   // The rows a phone adds, removes and renames (ADR 0094). Each machine keeps its own store, so a
   // `?host=` write lands in THAT member's `launchers-added.json` and nowhere else; no row is ever
   // copied between machines. `forget-device` is the lead's own call when it revokes a device; the
@@ -136,7 +140,7 @@ const FORWARDABLE: readonly RegExp[] = [
  * by pane or by space. A picture (`files/image`) and a blob are bytes, never text, and stay byte for
  * byte, and so does every write's answer.
  */
-export type TextAnswer = "pane" | "history" | "chat" | "changes" | "files" | "processes" | "agent";
+export type TextAnswer = "pane" | "history" | "chat" | "changes" | "files" | "processes" | "agent" | "agent-control" | "waits";
 
 /** Which {@link TextAnswer} a crew route answers with, or `null` for a route whose answer is not text. */
 export function textAnswerOf(route: string): TextAnswer | null {
@@ -145,6 +149,9 @@ export function textAnswerOf(route: string): TextAnswer | null {
   if (/^pane\/[^/]+\/chat$/.test(route)) return "chat";
   if (/^pane\/[^/]+\/processes$/.test(route)) return "processes";
   if (/^pane\/[^/]+\/agent$/.test(route)) return "agent";
+  if (/^pane\/[^/]+\/agent\/(?:control|explain|read|start|rename|prompt|focus|keys|input)$/.test(route)) return "agent-control";
+  if (route === "agents/named") return "agent-control";
+  if (/^waits(?:\/[A-Za-z0-9_-]{1,128})?$/.test(route)) return "waits";
   if (/^(?:pane|workspace)\/[^/]+\/changes$/.test(route)) return "changes";
   if (/^(?:pane|workspace)\/[^/]+\/files$/.test(route)) return "files";
   return null;
@@ -604,7 +611,7 @@ async function maskedAnswer(res: Response, answer: TextAnswer, mask: AnswerMask,
   if (res.status < 200 || res.status >= 300 || res.status === 204 || res.body === null) return res;
   let raw: string | null;
   try {
-    raw = answer === "processes" ? await readBoundedUtf8(res, MAX_PROCESS_INFO_BODY_BYTES) : answer === "agent" ? await readBoundedUtf8(res, 16 * 1024) : await res.text();
+    raw = answer === "processes" ? await readBoundedUtf8(res, MAX_PROCESS_INFO_BODY_BYTES) : answer === "agent" ? await readBoundedUtf8(res, 16 * 1024) : answer === "agent-control" || answer === "waits" ? await readBoundedUtf8(res, 64 * 1024) : await res.text();
     if (raw === null) {
       return forwardError("answer_unmaskable", `host ${memberId} sent invalid or oversized diagnostic details, so they were not passed on`, 502, { host: memberId });
     }
@@ -770,7 +777,7 @@ export async function forwardToPeer(req: Request, url: URL, deps: ForwardDeps): 
     route,
     forwardParams(url),
     init,
-    kind === "write" ? WRITE_BUDGET_MS : undefined,
+    kind === "write" ? (/^pane\/[^/]+\/agent\/(?:start|rename|prompt)$/.test(route) ? 310_000 : WRITE_BUDGET_MS) : undefined,
   );
   const action = forwardAuditAction(route);
   const paneId = forwardPaneId(route);

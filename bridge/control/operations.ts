@@ -232,6 +232,22 @@ export class OperationStore {
       return { kind: "match", operation: operationView(row) };
     });
   }
+  /** A named action's final original proof can be lost while its completion is persisted.
+   * This only downgrades that exact immutable binding; it never dispatches or samples authority. */
+  async retainOriginalAgentUnknown(requestId: string, binding: PlanBinding, planToken: string): Promise<OperationView | null> {
+    if (binding.capability !== "agentAutomation" || !validBinding(binding) || !bounded(planToken)) throw new Error("invalid original agent binding");
+    return this.serial(async () => {
+      await this.load(); const row = this.receipts.get(requestId);
+      if (!row || !sameBinding(row.binding, binding) || row.planToken !== planToken) return null;
+      if (row.state !== "succeeded") return operationView(row);
+      const { result: _discarded, ...original } = row;
+      const at = this.now();
+      const unknown: OperationReceipt = { ...original, state: "unknown", code: "agent.outcome_unknown", updatedAt: Number.isSafeInteger(at) ? Math.max(at, row.updatedAt) : row.updatedAt };
+      this.receipts.set(requestId, unknown);
+      try { await this.persist(); } catch { this.storageReady = false; throw new Error("operation.persistence_failed"); }
+      return operationView(unknown);
+    });
+  }
   async execute(requestId: string, binding: PlanBinding, planToken: string | null, dispatch: () => Promise<OperationOutcome>): Promise<OperationView> {
     if (!/^[a-zA-Z0-9_-]{1,128}$/.test(requestId) || !validBinding(binding) || (planToken !== null && !bounded(planToken))) throw new Error("invalid operation binding");
     const reservation = await this.serial(async () => {

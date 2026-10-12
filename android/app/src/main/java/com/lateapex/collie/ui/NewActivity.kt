@@ -118,6 +118,9 @@ class NewActivity : AppCompatActivity() {
     private var scopeSelectionInProgress = false
     private var authoritySubscription: AutoCloseable? = null
     private var connectionObservation: Job? = null
+    private var namedAgentPaneDialog: AlertDialog? = null
+    private var namedAgentPaneActor: ScopedReadContext? = null
+    private var namedAgentPaneRetirement: AutoCloseable? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -196,7 +199,14 @@ class NewActivity : AppCompatActivity() {
         }
     }
 
+    override fun onStop() {
+        closeNamedAgentPanePicker()
+        super.onStop()
+    }
+
     override fun onDestroy() {
+        namedAgentPaneRetirement?.close(); namedAgentPaneRetirement = null
+        closeNamedAgentPanePicker()
         authoritySubscription?.close()
         authoritySubscription = null
         pendingEditableForm = null
@@ -393,6 +403,10 @@ class NewActivity : AppCompatActivity() {
         }
         root.addView(runButton, rowParams(6))
         root.addView(recipesButton, rowParams(4))
+        root.addView(MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+            id = R.id.agent_new_existing_pane; text = getString(R.string.agent_control_existing_pane); isAllCaps = false; minHeight = dp(48)
+            setOnClickListener { chooseNamedAgentPane() }
+        }, rowParams(4))
         launchButton = MaterialButton(this).apply {
             text = getString(R.string.new_start)
             isAllCaps = false
@@ -501,6 +515,36 @@ class NewActivity : AppCompatActivity() {
             progress.isVisible = false
             if (result is ApiResult.Success) inventory = result.value
             loadCatalog()
+        }
+    }
+
+    private fun closeNamedAgentPanePicker() = withMainCustodyAck {
+        namedAgentPaneDialog?.dismiss(); namedAgentPaneDialog = null; namedAgentPaneActor = null
+    }
+    private fun chooseNamedAgentPane() {
+        val captured = contextKey ?: return
+        if (!repository.isCurrent(captured) || scopeSelectionInProgress || !lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) return
+        val originalScope = Scope(scope.host, scope.session)
+        namedAgentPaneRetirement?.close()
+        namedAgentPaneRetirement = repository.onReadContextRetired { event -> withRetirementOnMain(event, { namedAgentPaneActor }) { closeNamedAgentPanePicker() } }
+        lifecycleScope.launch {
+            val config = repository.config(originalScope, captured)
+            if (!repository.isCurrent(captured) || contextKey !== captured || scope != originalScope || !lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) return@launch
+            if (config !is ApiResult.Success || config.value.mux?.supportsNew("agentAutomation") != true) { status.setText(R.string.agent_control_unavailable); return@launch }
+            val snapshot = repository.snapshot(originalScope, captured)
+            if (snapshot !is ApiResult.Success || !repository.isCurrent(captured) || contextKey !== captured || scope != originalScope || !lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) return@launch
+            val panes = snapshot.value.shellPanes.take(200)
+            if (panes.isEmpty()) { status.setText(R.string.agent_control_no_shell_panes); return@launch }
+            closeNamedAgentPanePicker()
+            val originalDialog = AlertDialog.Builder(this@NewActivity).setTitle(R.string.agent_control_existing_pane)
+                .setItems(panes.map { it.paneId }.toTypedArray()) { _, selected ->
+                    if (repository.isCurrent(captured) && contextKey === captured && scope == originalScope && lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) {
+                        startActivity(AgentControlActivity.intent(this@NewActivity, com.lateapex.collie.domain.PaneAddress(originalScope, panes[selected].paneId)))
+                    }
+                }.setNegativeButton(android.R.string.cancel, null).create()
+            namedAgentPaneActor = captured; namedAgentPaneDialog = originalDialog
+            originalDialog.setOnDismissListener { if (namedAgentPaneDialog === originalDialog) { namedAgentPaneDialog = null; namedAgentPaneActor = null } }
+            if (repository.isCurrent(captured)) originalDialog.show() else closeNamedAgentPanePicker()
         }
     }
 

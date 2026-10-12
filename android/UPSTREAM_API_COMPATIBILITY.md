@@ -292,3 +292,35 @@ binding or mutation permission. Fresh accepted responses remain mandatory before
 exact declared Collie pairing retirement and original-owner connection retirement wipe it. Actual
 Crew, current physical Pixel, lifecycle/accessibility and B22 provider-retirement integration remain
 pending; local persistence is not a new peer capability or acceptance claim.
+
+## B19 named agent actions and waits
+
+The original `GET /api/pane/:id/agent` B18 identity contract is preserved. B19 adds `/agent/control` for its closed occupant/witness review rather than replacing that existing consumer. All paths carry one original host/session and retain its native read actor through credentials, callbacks and final transport admission. New capability absence fails closed; neither lead capability data nor replacement configuration supplies peer authority.
+
+| Native/HTTP consumer | Exact Herdr method and envelope | Gate |
+|---|---|---|
+| `GET /api/agents/named` | `agent.list` → `agent_list.agents` | paired device-read |
+| `GET /api/pane/:id/agent/control` | `agent.get` → `agent_info.agent`, joined to original `pane.get` and process roots | paired device-read |
+| `/agent/read` | `agent.read` → `pane_read.read` | paired device-read |
+| `/agent/explain` | `agent.explain` → `agent_explain.explain` | paired device-read |
+| `/agent/start` | `agent.start` → `agent_started.agent/argv` | paired + independent current device write |
+| `/agent/rename`, `/agent/focus` | `agent.rename`, `agent.focus` → `agent_info.agent` | write |
+| `/agent/prompt` | `agent.prompt` → `agent_prompted.agent` | write + current composer |
+| `/agent/keys`, `/agent/input` | `agent.send_keys`, `pane.send_input` → `ok`, then original postcondition | write + current composer |
+| `POST /api/waits` lifecycle | `agent.wait` → `agent_info.agent` | paired device-read |
+| output observation | `pane.wait_for_output` → `output_matched.read` | paired device-read |
+| agent-status event observation | `events.wait` → `wait_matched.event.data` | paired device-read |
+| other general event conditions | bounded `events.subscribe` → actual general event envelope; no raw event leaves the bridge | paired device-read |
+| output revision change | bounded passive `pane.read` revision samples of the original occupant | paired device-read |
+| `GET/DELETE /api/waits/:id` | exact bridge receipt poll / observer cancellation; no delivery replay | paired device-read |
+
+Read and result bodies are bounded and checked for duplicate JSON keys, actual primitive types and exact closed shapes. Metadata sequences retain exact unsigned 64-bit decimal strings; missing sequence is unknown and revision zero is valid. Error codes display a closed safe vendor cause without private messages. A prompt wait needs observed activity before settled status; a pre-existing output match carries no delivery claim.
+
+The bridge HMAC is original custody evidence, not vendor compare-and-set. Stock v0.9.3 resolves public pane/name targets inside its handler without an expected-terminal predicate. The actual resolver gap and closed-event removal proof remain required B18/H11/B19 joint work; unknown outcomes and safe refusal do not establish functional closure. Actual canonical/toolchain/Pixel, controlled vendor and Crew acceptance remain pending.
+
+The stock `events.wait` implementation supports only `pane_agent_status_changed`, despite the larger schema enum. The consumer uses actual general subscription events for available equivalents and passive 200-line/32 KiB visible-content comparison for output change (which has no stock subscription variant and returns revision zero in stock v0.9.3). Each subscription has one original registration, no automatic reconnect, a 64 KiB frame, 256-frame and 1 MiB total budget, within the existing finite observation lease. `events_lost`, stream loss, invalid frames, wrong original scope and over-bound data cannot complete an observation. Public-ID-only removal envelopes still lack original terminal provenance; those are required producer branches, not a safe-refusal completion claim.
+
+
+### B19 negotiated original-terminal source extension
+
+The isolated v0.9.3 producer source implements `agent_original_input_v1` and `agent_observation_cursor_v1`; stock capability absence remains failclosed for the stronger contracts. Original dispatch tokens, runtime UUIDs and raw event before-tuples stay between the owning bridge and its producer. They never cross Crew/native as authorization. Exact pending/UNKNOWN IDs are not resent, and moved/closed/detected results grant only neutral observation metadata. See [the full protocol and limits](./AGENT_AUTOMATION.md#original-terminal-producer-extension). ROOT compilation, producer review, actual runtime and canonical shared-source acceptance remain open.

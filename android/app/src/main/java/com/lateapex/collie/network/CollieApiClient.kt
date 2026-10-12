@@ -90,6 +90,13 @@ interface CollieApi {
     suspend fun paneAgentIdentity(connection: Connection, address: PaneAddress): ApiResult<AgentIdentityResponse> = unavailable("Agent identity details")
     suspend fun refresh(connection: Connection, scope: Scope = Scope()): ApiResult<ActionResponse>
     suspend fun pair(origin: CollieOrigin, code: String, label: String): ApiResult<PairResult>
+    suspend fun namedAgentRead(connection: Connection, address: PaneAddress, source: String, lines: Int): ApiResult<NamedAgentReadResponse> = unavailable("Named agent read")
+    suspend fun namedAgentList(connection: Connection, scope: Scope): ApiResult<NamedAgentListResponse> = unavailable("Named agent census")
+    suspend fun namedAgentControl(connection: Connection, address: PaneAddress): ApiResult<AgentAutomationResponse> = unavailable("Named agent control")
+    suspend fun namedAgentExplain(connection: Connection, address: PaneAddress): ApiResult<AgentExplainResponse> = unavailable("Named agent explanation")
+    suspend fun namedAgentAction(connection: Connection, address: PaneAddress, id: String, witness: String, action: NamedAgentAction, expectedText: String?): ApiResult<AgentActionResponse> = unavailable("Named agent action")
+    suspend fun startAgentWait(connection: Connection, address: PaneAddress, id: String, witness: String, condition: NamedAgentWait, timeoutMs: Int): ApiResult<AgentWaitResponse> = unavailable("Bounded agent waits")
+    suspend fun agentWait(connection: Connection, address: PaneAddress, id: String, cancel: Boolean = false): ApiResult<AgentWaitResponse> = unavailable("Bounded agent waits")
     suspend fun controlOperation(connection: Connection, scope: Scope, requestId: String): ApiResult<ControlOperationResponse> = unavailable("Control operations")
     suspend fun hostIntegrations(connection: Connection, scope: Scope): ApiResult<HostIntegrationsResponse> = unavailable("Host integrations")
     suspend fun hostIntegrationStatus(connection: Connection, scope: Scope): ApiResult<HostIntegrationsResponse> = unavailable("Host integration status")
@@ -1655,6 +1662,78 @@ class CollieApiClient(
         is ApiResult.Success -> if (valid(result.value)) result else ApiResult.Failure(ApiFailure.Protocol(message))
         is ApiResult.Failure -> result
         is ApiResult.NotModified -> result
+    }
+
+    override suspend fun namedAgentRead(connection: Connection, address: PaneAddress, source: String, lines: Int): ApiResult<NamedAgentReadResponse> {
+        if (source !in setOf("visible", "recent", "recent_unwrapped", "detection") || lines !in 1..200) return ApiResult.Failure(ApiFailure.Protocol("Invalid bounded named read"))
+        val url = scopedUrl(connection.origin, path("pane", address.paneId, "agent", "read"), address.scope).newBuilder().addQueryParameter("source", source).addQueryParameter("lines", lines.toString()).build()
+        return executeAgentJson(request(connection, url), NamedAgentReadResponse.serializer(), READ_TIMEOUT_SECONDS,
+            { agentReadJson(it, address.paneId) }, { it.ok && it.schema == 1 && it.paneId == address.paneId && it.text.toByteArray().size <= 32 * 1024 })
+    }
+    override suspend fun namedAgentList(connection: Connection, scope: Scope): ApiResult<NamedAgentListResponse> = executeAgentJson(
+        request(connection, scopedUrl(connection.origin, path("agents", "named"), scope)), NamedAgentListResponse.serializer(), READ_TIMEOUT_SECONDS,
+        ::agentListJson, { it.ok && it.schema == 1 && it.agents.size <= 64 && it.agents.all { info -> info.validFor(info.paneId) } })
+    override suspend fun namedAgentControl(connection: Connection, address: PaneAddress): ApiResult<AgentAutomationResponse> = executeAgentJson(
+        request(connection, scopedUrl(connection.origin, path("pane", address.paneId, "agent", "control"), address.scope)),
+        AgentAutomationResponse.serializer(), READ_TIMEOUT_SECONDS, { agentControlJson(it, address.paneId) },
+        { it.ok && it.schema == 1 && it.info.validFor(address.paneId) && it.witness.matches(Regex("[a-f0-9]{64}")) },
+    )
+    override suspend fun namedAgentExplain(connection: Connection, address: PaneAddress): ApiResult<AgentExplainResponse> = executeAgentJson(
+        request(connection, scopedUrl(connection.origin, path("pane", address.paneId, "agent", "explain"), address.scope)),
+        AgentExplainResponse.serializer(), READ_TIMEOUT_SECONDS, { agentExplainJson(it, address.paneId) },
+        { it.ok && it.schema == 1 && it.explain.paneId == address.paneId && it.explain.status in setOf("idle", "working", "blocked", "done", "unknown") },
+    )
+    override suspend fun namedAgentAction(connection: Connection, address: PaneAddress, id: String, witness: String, action: NamedAgentAction, expectedText: String?): ApiResult<AgentActionResponse> {
+        if (!id.matches(Regex("[A-Za-z0-9_-]{1,128}")) || !witness.matches(Regex("[a-f0-9]{64}")) || !action.valid() || (action !is NamedAgentAction.Prompt && action !is NamedAgentAction.Keys && action !is NamedAgentAction.Input && expectedText != null)) return ApiResult.Failure(ApiFailure.Protocol("Invalid named agent intent"))
+        val body = json.encodeToString(kotlinx.serialization.json.buildJsonObject {
+            put("requestId", id); put("witness", witness); put("action", action.body()); put("expectedText", expectedText?.let(::JsonPrimitive) ?: JsonNull)
+        })
+        if (body.toByteArray(Charsets.UTF_8).size > AGENT_AUTOMATION_BODY_BYTES) return ApiResult.Failure(ApiFailure.Protocol("Named agent intent exceeds its wire bound"))
+        return executeAgentJson(post(connection, scopedUrl(connection.origin, path("pane", address.paneId, "agent", action.verb), address.scope), body),
+            AgentActionResponse.serializer(), (action.timeoutMs + 999) / 1000L + 10L,
+            { agentActionJson(it, address.paneId, id, witness) },
+            { it.ok && it.schema == 1 && it.operation.validFor(id) && it.operation.capability == "agentAutomation" && it.operation.targetIdentity == witness && (it.result == null || it.result.validFor(address.paneId)) },
+        )
+    }
+    override suspend fun startAgentWait(connection: Connection, address: PaneAddress, id: String, witness: String, condition: NamedAgentWait, timeoutMs: Int): ApiResult<AgentWaitResponse> {
+        if (!id.matches(Regex("[A-Za-z0-9_-]{1,128}")) || !witness.matches(Regex("[a-f0-9]{64}")) || !condition.valid() || timeoutMs !in 1..300_000) return ApiResult.Failure(ApiFailure.Protocol("Invalid bounded observation"))
+        val body = json.encodeToString(kotlinx.serialization.json.buildJsonObject {
+            put("requestId", id); put("paneId", address.paneId); put("witness", witness); put("condition", condition.body()); put("timeoutMs", timeoutMs)
+        })
+        if (body.toByteArray(Charsets.UTF_8).size > AGENT_AUTOMATION_BODY_BYTES) return ApiResult.Failure(ApiFailure.Protocol("Observation exceeds its wire bound"))
+        return executeAgentJson(post(connection, scopedUrl(connection.origin, path("waits"), address.scope), body), AgentWaitResponse.serializer(), READ_TIMEOUT_SECONDS,
+            { agentWaitJson(it, address.paneId, id) }, { it.ok && it.wait.schema == 1 && it.wait.id == id && it.wait.paneId == address.paneId && (it.wait.result?.info?.validFor(address.paneId) != false) })
+    }
+    override suspend fun agentWait(connection: Connection, address: PaneAddress, id: String, cancel: Boolean): ApiResult<AgentWaitResponse> {
+        if (!id.matches(Regex("[A-Za-z0-9_-]{1,128}"))) return ApiResult.Failure(ApiFailure.Protocol("Invalid observation id"))
+        val builder = requestBuilder(connection, scopedUrl(connection.origin, path("waits", id), address.scope))
+        val request = if (cancel) builder.delete().build() else builder.get().build()
+        return executeAgentJson(request, AgentWaitResponse.serializer(), READ_TIMEOUT_SECONDS,
+            { agentWaitJson(it, address.paneId, id) }, { it.ok && it.wait.schema == 1 && it.wait.id == id && it.wait.paneId == address.paneId && (it.wait.result?.info?.validFor(address.paneId) != false) })
+    }
+    private suspend fun executeClosedAgentObject(request: Request, timeoutSeconds: Long): ApiResult<JsonObject> = executeResponse(request, timeoutSeconds) { response ->
+        if (response.code in REDIRECT_CODES) return@executeResponse ApiResult.Failure(ApiFailure.Redirect(response.code))
+        if (response.isSuccessful && response.header("Content-Type")?.substringBefore(';')?.trim()?.lowercase(java.util.Locale.ROOT) != "application/json") return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Named agent response requires JSON media type"))
+        val body = readBoundedBody(response, AGENT_AUTOMATION_RESPONSE_BYTES)
+            ?: return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Named agent response exceeded its wire limit"))
+        if (!response.isSuccessful) return@executeResponse failure(response, body)
+        val value = ClosedAgentJson.parse(body) ?: return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Malformed closed named agent response"))
+        ApiResult.Success(value, response.code, response.header("ETag"), response.header(BUILD_HEADER), responseAuthority(response))
+    }
+    private suspend fun <T> executeAgentJson(request: Request, serializer: DeserializationStrategy<T>, timeoutSeconds: Long,
+        rawValid: (JsonObject) -> Boolean, valid: (T) -> Boolean): ApiResult<T> {
+        return when (val result = executeClosedAgentObject(request, timeoutSeconds)) {
+            is ApiResult.Failure -> result
+            is ApiResult.NotModified -> ApiResult.Failure(ApiFailure.Protocol("Named actions and waits require a complete current response"))
+            is ApiResult.Success -> try {
+                if (!rawValid(result.value)) ApiResult.Failure(ApiFailure.Protocol("Malformed named agent response"))
+                else {
+                    val decoded = json.decodeFromString(serializer, result.value.toString())
+                    if (!valid(decoded)) ApiResult.Failure(ApiFailure.Protocol("Mismatched named agent response"))
+                    else ApiResult.Success(decoded, result.status, result.etag, result.buildId, result.controlAuthority)
+                }
+            } catch (_: SerializationException) { ApiResult.Failure(ApiFailure.Protocol("Malformed named agent response")) }
+        }
     }
 
     override suspend fun controlOperation(connection: Connection, scope: Scope, requestId: String): ApiResult<ControlOperationResponse> {

@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item name="agent_control_explain" type="id" />
+    <item name="agent_control_reconcile" type="id" />
+    <item name="agent_control_abandon" type="id" />
+    <item name="agent_control_open_waits" type="id" />
+    <item name="agent_control_refresh" type="id" />
+    <item name="agent_control_name" type="id" />
+    <item name="agent_control_kind" type="id" />
+    <item name="agent_control_args" type="id" />
+    <item name="agent_control_start" type="id" />
+    <item name="agent_control_rename" type="id" />
+    <item name="agent_control_prompt_text" type="id" />
+    <item name="agent_control_prompt_wait" type="id" />
+    <item name="agent_control_prompt" type="id" />
+    <item name="agent_new_existing_pane" type="id" />
+    <item name="agent_waits_cancel" type="id" />
+    <item name="agent_waits_mode" type="id" />
+    <item name="agent_waits_status" type="id" />
+    <item name="agent_waits_source" type="id" />
+    <item name="agent_waits_pattern" type="id" />
+    <item name="agent_waits_regex" type="id" />
+    <item name="agent_waits_event" type="id" />
+    <item name="agent_waits_seconds" type="id" />
+    <item name="agent_waits_start" type="id" />
+    <item name="agent_control_focus" type="id" />
+    <item name="agent_control_keys" type="id" />
+    <item name="agent_control_send_keys" type="id" />
+    <item name="agent_control_input" type="id" />
+    <item name="agent_control_census" type="id" />
+    <item name="agent_control_clear_history" type="id" />
+</resources>

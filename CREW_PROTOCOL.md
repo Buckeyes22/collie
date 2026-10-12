@@ -3368,3 +3368,14 @@ allocation. No second client, shell, helper, new dependency or public endpoint i
 The independent source review, canonical native/B10/B26/B22/B38 joins, actual device/fleet/Solo/Crew
 and provider acceptance remain separate gates; unit/CLI/source-capacity evidence does not close them.
 Current Android acceptance targets the physical Pixel with current versions. Historical version-matrix evidence remains archived; it is not a requested rerun or a current acceptance claim.
+
+## B19 additive named-agent and wait routes
+
+The peer allowlist includes `agents/named`, `pane/:id/agent/{control,read,explain,start,rename,prompt,focus,keys,input}` and `waits[/:id]`. Lead and peer use the same typed owning handlers. Census/control/read/explain and wait POST/GET/DELETE are paired device-read; named effects require both original write factors. Lead profile metadata never supplies a missing peer capability.
+
+Answers use closed bounded schemas; output and explain text are masked on member and lead. Native input, patterns, receipts and request IDs are forwarded once without arbitrary RPC fields or borrowed identity headers. Start/prompt use a finite 310-second forwarding ceiling; ordinary polls keep their read budgets. Cancellation only stops that exact owner's observation, not a delivered prompt. Missing or incompatible support refuses precisely and does not retry or substitute the lead runtime.
+
+
+### B19 negotiated original-terminal source extension
+
+The isolated v0.9.3 producer source implements `agent_original_input_v1` and `agent_observation_cursor_v1`; stock capability absence remains failclosed for the stronger contracts. Original dispatch tokens, runtime UUIDs and raw event before-tuples stay between the owning bridge and its producer. They never cross Crew/native as authorization. Exact pending/UNKNOWN IDs are not resent, and moved/closed/detected results grant only neutral observation metadata. See [the full protocol and limits](android/AGENT_AUTOMATION.md#original-terminal-producer-extension). ROOT compilation, producer review, actual runtime and canonical shared-source acceptance remain open.

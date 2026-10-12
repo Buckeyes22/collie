@@ -3268,8 +3268,9 @@ describe("the host gate — `?host=` selects among enrolled members and nothing 
     // worktree removal planning/execution, and the owning workspace's Source read, scoped agent
     // inventory, workspace/tab organization, portable layouts and host integration actions) reach
     // their runtime through the caller's resolver and nothing else.
-    expect([...src.matchAll(/await caller\.resolve\(\);/g)]).toHaveLength(28);
-    // Exactly ten `registry.get(` calls remain, and each is a sanctioned one, named here rather
+    // All scoped routes, including host integrations and named agent operations, resolve only through the captured caller.
+    expect([...src.matchAll(/await caller\.resolve\(\);/g)]).toHaveLength(29);
+    // Twelve registry reads retain the explicitly enumerated uses below.
     // than exempted: assembling THIS collie's own snapshot body; `localRuntime`, the single
     // "(session) → runtime, or 404" helper both callers share; `/api/config`, which reports THIS
     // collie's own multiplexer (M10/06) and is not session-scoped at all; `/api/mux/logo.svg`,
@@ -3285,11 +3286,10 @@ describe("the host gate — `?host=` selects among enrolled members and nothing 
     // swept body instead, exactly as `bridge/crew/notify.ts` does, and writes to no terminal at all;
     // and the hot intent after an input FORWARDED to a member, which tightens THIS collie's primary
     // engine because the sweep that brings the member's answer back rides its tick (CREW_PROTOCOL.md
-    // §10.1). It runs after the forward has answered and writes nothing; and the removal-readiness
-    // helper reads the local runtime only to publish its already-negotiated capability in config;
-    // and the host-control capability in hello advertises only that same local owning port.
-    // An ELEVENTH would be a route reaching past the gate.
-    expect([...src.matchAll(/registry\.get\(/g)]).toHaveLength(10);
+    // §10.1). It runs after the forward has answered and writes nothing; removal readiness
+    // only publishes a capability. B19 adds two original-registry equality checks, never a
+    // fresh resolver or replacement authority source.
+    expect([...src.matchAll(/registry\.get\(/g)]).toHaveLength(12);
     // The mux read is a read of the LOCAL primary — never `?host=`, because a peer's capabilities
     // are its own business and reach the lead over the crew API, never out of this registry.
     expect(src).toContain("const activeMux = registry.get();");

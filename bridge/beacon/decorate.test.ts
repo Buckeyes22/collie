@@ -314,6 +314,14 @@ describe("a decorator preserves the adapter's whole surface", () => {
     readGrid: true,
     processInfo: true,
     agentIdentity: true,
+    agentList: true,
+    agentRead: true,
+    agentControl: true,
+    agentExplain: true,
+    agentAction: true,
+    agentWait: true,
+    agentObservedMove: true,
+    agentObservedTransition: true,
     readLogicalText: true,
     readLayout: true,
     applyPortableLayout: true,
@@ -361,7 +369,7 @@ describe("a decorator preserves the adapter's whole surface", () => {
 
   /** A raw adapter carrying EVERY field, so a decorator dropping any one of them is visible. */
   function fullAdapter(): MuxAdapter {
-    const stub = new StubAdapter();
+    const stub: StubAdapter & Pick<MuxAdapter, "agentList" | "agentRead" | "agentControl" | "agentExplain" | "agentAction" | "agentWait" | "agentObservedMove" | "agentObservedTransition"> = new StubAdapter();
     stub.logo = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"></svg>`;
     stub.hostControl = herdrHostControl;
     stub.readLogicalText = (paneId, lines) => Promise.resolve(muxOk(`${paneId}:${lines}`));
@@ -390,6 +398,14 @@ describe("a decorator preserves the adapter's whole surface", () => {
       paneId, agent: null, status: "unknown", stateAuthority: { observed: false, source: null },
       interactiveReady: null, launchPending: null, stateChangeSeq: null, completionSeq: null,
     }));
+    stub.agentList = async () => ({ ok: false, reason: "refused", detail: "fixture" });
+    stub.agentRead = async () => ({ ok: false, reason: "refused", detail: "fixture" });
+    stub.agentControl = async () => ({ ok: false, reason: "refused", detail: "fixture" });
+    stub.agentExplain = async () => ({ ok: false, reason: "refused", detail: "fixture" });
+    stub.agentAction = async () => ({ ok: false, reason: "refused", detail: "fixture" });
+    stub.agentWait = async () => ({ ok: false, reason: "refused", detail: "fixture" });
+    stub.agentObservedTransition = async () => ({ ok: false, reason: "gone", detail: "fixture" });
+    stub.agentObservedMove = async () => ({ ok: false, reason: "gone", detail: "fixture" });
     return stub;
   }
 
@@ -413,6 +429,39 @@ describe("a decorator preserves the adapter's whole surface", () => {
     const wrapped = withAgentHints(decorate(raw, []), { hooksInstalled: () => false });
     expect(surfaceOf(wrapped)).toEqual(CONTRACT);
     expect(wrapped.logo).toBe(raw.logo);
+  });
+
+  test("actual stacked decorators forward original named action and wait callbacks without recapture", async () => {
+    const raw = fullAdapter(); const original: import("../control/agent-models.ts").AgentOccupant = { paneId: "w1:p1", terminalId: "terminal", workspaceId: "w1", tabId: "w1:t1", runtimeIdentity: "runtime", agent: "codex", sessionIdentity: null, processIdentity: "a".repeat(64), name: "named" };
+    const signal = new AbortController().signal; let admitted = true; let preflights = 0; let actions = 0; let observations = 0;
+    const current = (runtime: string) => admitted && runtime === original.runtimeIdentity;
+    const firstBytes = async () => { preflights++; return current(original.runtimeIdentity); };
+    raw.agentAction = async (_action, expected, finalAdmission, actualSignal, beforeDispatch) => {
+      expect(expected).toBe(original); expect(finalAdmission).toBe(current); expect(actualSignal).toBe(signal); expect(beforeDispatch).toBe(firstBytes); expect(preflights).toBe(0);
+      if (beforeDispatch && await beforeDispatch() && finalAdmission(expected.runtimeIdentity)) actions++;
+      return { ok: false, reason: "refused", detail: "fixture" };
+    };
+    raw.agentWait = async (_condition, expected, timeout, finalAdmission, actualSignal) => { expect(expected).toBe(original); expect(timeout).toBe(1000); expect(finalAdmission).toBe(current); expect(actualSignal).toBe(signal); observations++; return { ok: false, reason: "refused", detail: "fixture" }; };
+    const wrapped = withAgentHints(decorate(raw, []), { hooksInstalled: () => false }); admitted = false;
+    await wrapped.agentAction?.({ kind: "rename", name: "new" }, original, current, signal, firstBytes); expect(actions).toBe(0); expect(preflights).toBe(1);
+    await wrapped.agentWait?.({ kind: "lifecycle", until: ["idle"] }, original, 1000, current, signal); expect(observations).toBe(1);
+    admitted = true; preflights = 0; await wrapped.agentAction?.({ kind: "rename", name: "new" }, original, current, signal, firstBytes); expect(actions).toBe(1);
+  });
+
+  test("stacked decorators preserve the captured observation owner and original moved proof without invoking them", async () => {
+    const raw = fullAdapter(); const original: import("../control/agent-models.ts").AgentOccupant = { paneId: "w1:p1", terminalId: "terminal", workspaceId: "w1", tabId: "w1:t1", runtimeIdentity: "runtime", agent: "codex", sessionIdentity: null, processIdentity: "a".repeat(64), name: "named" };
+    const controller = new AbortController(); let checks = 0; let calls = 0;
+    const current = () => false; const owner = Object.freeze({ current: () => { checks++; return true; } });
+    const moved = { previousPaneId: original.paneId, previousWorkspaceId: original.workspaceId, previousTabId: original.tabId, info: { ...original, paneId: "w1:p2", status: "idle" as const, focused: false, interactiveReady: false, launchPending: false, stateChangeSeq: "0", completionSeq: "0" } };
+    raw.agentWait = async (_condition, expected, timeout, admission, signal, actualOwner) => { expect(expected).toBe(original); expect(timeout).toBe(1000); expect(admission).toBe(current); expect(signal).toBe(controller.signal); expect(actualOwner).toBe(owner); expect(checks).toBe(0); calls++; return { ok: false, reason: "gone", detail: "fixture" }; };
+    raw.agentObservedMove = async (expected, proof, actualOwner) => { expect(expected).toBe(original); expect(proof).toBe(moved); expect(actualOwner).toBe(owner); expect(checks).toBe(0); calls++; return { ok: false, reason: "gone", detail: "fixture" }; };
+    const wrapped = withAgentHints(decorate(raw, []), { hooksInstalled: () => false });
+    await wrapped.agentWait?.({ kind: "event", event: "pane-moved", targetId: original.paneId, workspaceId: null, status: null, agent: null, label: null }, original, 1000, current, controller.signal, owner);
+    await wrapped.agentObservedMove?.(original, moved, owner); expect(calls).toBe(2); expect(checks).toBe(0);
+    const transition = { event: "pane-closed" as const, previousPaneId: original.paneId, previousWorkspaceId: original.workspaceId, previousTabId: original.tabId, terminalId: original.terminalId, after: null };
+    raw.agentObservedTransition = async (expected, proof, actualOwner) => { expect(expected).toBe(original); expect(proof).toBe(transition); expect(actualOwner).toBe(owner); expect(checks).toBe(0); calls++; return { ok: false, reason: "gone", detail: "fixture" }; };
+    const transitionWrapped = withAgentHints(decorate(raw, []), { hooksInstalled: () => false });
+    await transitionWrapped.agentObservedTransition?.(original, transition, owner); expect(calls).toBe(3); expect(checks).toBe(0);
   });
 
   test("an adapter with no unwrapped read does not gain one from a decorator", () => {

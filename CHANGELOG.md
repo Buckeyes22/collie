@@ -1,5 +1,7 @@
 # Changelog
 
+
+- B19 source: retain original-terminal custody through negotiated producer input queues and live scoped transitions; native waits resume the same opaque ID and show moved/closed/detected results without successor actions. Producer compilation/review and physical acceptance remain pending.
 This file tracks all notable changes to Collie, ordered newest version first. The project follows
 [Semantic Versioning](https://semver.org/). From 1.6.0 on, a version's changes are grouped under
 `### Added`, `### Changed`, `### Fixed`, `### Packaging` and `### Docs`, in that order and only
@@ -30,6 +32,8 @@ Running a crew? Update the lead first; members follow on their own. Details:
 - **Share portable pane layouts with a reviewed preview.** Add bounded JSON export/import and exact boolean-path split-ratio controls through capability-gated Herdr routes and Crew; apply plans accept only declared launcher commands and keep plugin-backed commands unavailable pending B32 resolution.
 
 - **Manage Herdr integrations from the native host screen.** Add scoped integration inventory and version status, planned install/removal, manifest inspection/reload and separately confirmed refresh through a typed host-control adapter and Crew route. Letta plans bind to its reported CLI status; active but untrusted hooks and manifest update outcomes stay visible.
+
+- **Named agents and bounded waits keep their original occupant.** Add typed local/Crew orchestration routes, exact Herdr response envelopes and durable one-shot receipts. Recheck original admission after dial and every drain; possible delivered writes remain unknown and are never resent automatically.
 
 - **Opt in to native identity through a configured DPoP gateway.** Add an operator-owned public OIDC profile, independent pairing/device enrollment, bounded replay-protected loopback ingress, final binding/role/access-expiry dispatch fences and durable exact binding-retirement custody. Preserve visible pane read intent without trusting injected phone identity headers. Preserve authenticated browser routing on a separate retained mount; actual issuer/device/Crew and signed retirement acceptance remain pending. Keep ordinary startup unchanged when the optional gateway configuration is absent.
 

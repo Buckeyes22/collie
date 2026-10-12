@@ -1,3 +1,5 @@
+import { serveAgentRoute, AGENT_ACTION_ROUTE, type AgentCaller } from "./control/agents.ts";
+import { AgentWaitStore, serveWaitRoute, WAIT_ACTION_ROUTE } from "./control/waits.ts";
 import { withNativeFinalAdmission } from "./native-access/final-effect.ts";
 import type { GatewayIngress, VerifiedIngressActor } from "./native-access/ingress.ts";
 import { gatewayRefusal } from "./native-access/ingress.ts";
@@ -601,7 +603,7 @@ export function paneGateLevel(action: string | undefined): GateLevel {
 
 /** Process argv and paths stay masked on Crew even when the optional terminal redaction switch is off. */
 export function shouldMaskForwardedAnswer(pathname: string, redact: boolean): boolean {
-  return redact || /^\/api\/pane\/[^/]+\/(?:processes|agent)$/.test(pathname);
+  return redact || pathname === "/api/agents/named" || AGENT_ACTION_ROUTE.test(pathname) || /^\/api\/pane\/[^/]+\/(processes|agent)$/.test(pathname) || WAIT_ACTION_ROUTE.test(pathname);
 }
 
 /**
@@ -1275,6 +1277,7 @@ export async function startServer(opts: {
   const launchReceipts = opts.launchReceipts ?? memoryLaunchReceipts();
   const controlOperations = opts.controlOperations ?? new OperationStore(cfg.stateDir);
   const controlPlans = opts.controlPlans ?? new PlanStore();
+  const agentWaits = new AgentWaitStore(cfg.stateDir);
   const controlHostId = opts.controlHostId ?? opts.crewStatus?.()?.self.id ?? "local";
   await controlOperations.prepare();
   const ownerBoundReady = () => ownerBoundOperationReady(opts.intentReceiptKey, controlOperations.isReady());
@@ -1615,6 +1618,30 @@ export async function startServer(opts: {
     if (hostIntegrationAnswer) {
       if (req.method === "POST") server.timeout(req, WORKTREE_ROUTE_BUDGET_S);
       return hostIntegrationAnswer;
+    }
+
+    if (pathname === "/api/agents/named" || AGENT_ACTION_ROUTE.test(pathname) || WAIT_ACTION_ROUTE.test(pathname)) {
+      // The long one-shot action may legitimately await vendor activity/settling. Observer starts
+      // return immediately; polls and cancellation retain the normal short read budget.
+      if (AGENT_ACTION_ROUTE.test(pathname) && req.method === "POST") server.timeout(req, 310);
+      const agentCaller: AgentCaller = {
+        gate: (level) => caller.gate(level), pairedIdentity: () => caller.pairedIdentity?.() ?? null,
+        receiptKey: caller.intentReceiptKey, redact: cfg.redact,
+        composerSafe: queuedSendScreenSafe, visiblePrompt: (raw) => cfg.redact ? redactAnsi(raw) : raw,
+        audit: (action, paneId, state) => caller.audit.record({ action, paneId, device: caller.device() ?? undefined, detail: { state } }),
+        resolve: async () => {
+          const captured = await caller.resolve(); if (captured instanceof Response) return captured;
+          return { host: controlHostId, session: captured.name, mux: captured.herdr, currentRuntime: () => registry.get(captured.name) === captured, current: (expected) => {
+            if (registry.get(captured.name) !== captured) return false;
+            const pane = [...captured.engine.current().agents, ...captured.engine.current().shellPanes].find((candidate) => candidate.paneId === expected.paneId);
+            return pane !== undefined && pane.terminalIncarnation === expected.terminalId && pane.workspaceId === expected.workspaceId && pane.tabId === expected.tabId;
+          } };
+        },
+      };
+      const agentAnswer = await serveAgentRoute(req, url, agentCaller, controlOperations);
+      if (agentAnswer) return agentAnswer;
+      const waitAnswer = await serveWaitRoute(req, url, agentCaller, agentWaits);
+      if (waitAnswer) return waitAnswer;
     }
 
     const controlled = await serveControlRoute(req, url, {

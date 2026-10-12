@@ -83,6 +83,10 @@ class AuthorityRetirement internal constructor(
     private val processIdentity: String? = ReadCustodyProcess.identity,
     val refusal: AuthorityRefusal? = null,
 ) {
+    /** Immutable original metadata only: no current actor, Connection, credential or callback. */
+    val custodyVersion: ScopedCustodyVersion?
+        get() = owner?.let { ScopedCustodyVersion(it, incarnation, generation, navigation, processIdentity) }
+
     /** Pure original-copy predicate; a pending fence does not require fresh actor allocation. */
     fun affects(context: ScopedReadContext?): Boolean = context != null &&
         context.custodyProcessIdentity == processIdentity &&

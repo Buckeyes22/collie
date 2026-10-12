@@ -538,3 +538,7 @@ second request. A full Node transport queue has already accepted its one payload
 recalled as a proven zero-effect refusal. This local fence does not provide a vendor filesystem
 or occupant CAS. Current user acceptance targets latest versions and the physical Pixel; old
 version/device matrices remain historical evidence and are not current acceptance requirements.
+
+## Named agents and waits
+
+Pane actions open native named-agent control and bounded lifecycle/output/event observers when the selected owning peer declares support. New can choose a current existing shell for a named start. Unknown delivered actions retain encrypted opaque receipts across recreation; observation cancellation never undoes delivered work. See [native agent automation](./AGENT_AUTOMATION.md) for controls, bounds and remaining runtime guarantees.

@@ -415,3 +415,16 @@ unknown and is never automatically resent. The bounded CLI runner discards raw p
 responses and does not log them. See [Herdr integrations](https://herdr.dev/docs/integrations/),
 [CLI reference](https://herdr.dev/docs/cli-reference/) and the pinned
 [0.9.3 integration handler](https://github.com/herdrdev/herdr/blob/v0.9.3/src/app/api/integrations.rs).
+
+The host adapter's existing `health()` boolean now calls the exact vendor `ping` with empty params through `HerdrClient.handshake()`. Only the expected `pong` discriminant, a nonempty version and uint32 protocol are accepted; an arbitrary successful response is unavailable. This replaces the previous workspace-list reachability surrogate. The handshake provides runtime identity, not inferred feature capabilities. The pinned 0.9.3/protocol22 schema and owned-socket fixture validate decoding; live disposable runtime capture remains acceptance evidence to obtain separately.
+
+## Named agent orchestration boundary
+
+[ADR 0104](./.adr/0104-named-agent-delivery-and-observation.md) records the B19 delivery/observation contract. The v0.9.3 named start, rename, focus, read, explain, prompt and key/input methods use their shipped discriminated response envelopes. Original terminal/session/process identity is retained across waits and socket writes; a possible delivered effect remains unknown and is not resent. `agent.wait`, `pane.wait_for_output` and the status-only `events.wait` plus bounded general subscription equivalents are observations, not completion inferred from an old idle state. See the [complete native/HTTP method table](./android/UPSTREAM_API_COMPATIBILITY.md#b19-named-agent-actions-and-waits).
+
+A named alias resolves to its current public pane before capture. This does not eliminate the stock handler's later public-target resolver race. No invented expected-terminal flag, unique alias, bridge lock or HMAC is described as vendor CAS. Actual stock runtime evidence and the producer-side joint guarantee remain required.
+
+
+### B19 negotiated original-terminal source extension
+
+The isolated v0.9.3 producer source implements `agent_original_input_v1` and `agent_observation_cursor_v1`; stock capability absence remains failclosed for the stronger contracts. Original dispatch tokens, runtime UUIDs and raw event before-tuples stay between the owning bridge and its producer. They never cross Crew/native as authorization. Exact pending/UNKNOWN IDs are not resent, and moved/closed/detected results grant only neutral observation metadata. See [the full protocol and limits](android/AGENT_AUTOMATION.md#original-terminal-producer-extension). ROOT compilation, producer review, actual runtime and canonical shared-source acceptance remain open.

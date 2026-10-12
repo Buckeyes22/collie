@@ -3966,6 +3966,12 @@ class PaneActivity : AppCompatActivity() {
             closingRow(getString(R.string.pane_action_cache)) {
                 startActivity(CacheWatchActivity.intent(this@PaneActivity, address))
             }
+            if (currentState.mux?.supportsNew("agentAutomation") == true) {
+                closingRow(getString(R.string.agent_control_title)) { startActivity(AgentControlActivity.intent(this, address)) }
+            }
+            if (currentState.mux?.supportsNew("agentWaits") == true) {
+                closingRow(getString(R.string.agent_waits_title)) { startActivity(WaitsActivity.intent(this, address)) }
+            }
             closingRow(getString(R.string.pane_action_agent_identity)) {
                 startActivity(AgentIdentityActivity.intent(this, address))
             }

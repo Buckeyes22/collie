@@ -72,6 +72,7 @@ class AppContainer(context: Context) {
         AndroidKeystoreCipher(alias = "com.lateapex.collie.launch-intents.v1"),
         json,
     )
+    val agentAutomationCustody = com.lateapex.collie.data.AgentAutomationCustody(context.applicationContext, json = json)
     val machineRuleAttemptStore = EncryptedMachineRuleAttemptStore(
         context.applicationContext,
         AndroidKeystoreCipher(alias = "com.lateapex.collie.machine-rule-attempts.v1"),
@@ -89,6 +90,7 @@ class AppContainer(context: Context) {
         // Registered before Activity/View listeners: encrypted publication closes before any
         // main-thread wipe ACK can begin, with no monitor held across the later callbacks.
         repository.onReadContextRetired { event ->
+            agentAutomationCustody.retire(event)
             com.lateapex.collie.ui.ProxyCallbackHandoff.retire(event)
             proxyCoordinator.retire(event)
             proxyInterceptor.retire(event)

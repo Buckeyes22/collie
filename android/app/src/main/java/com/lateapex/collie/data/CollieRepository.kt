@@ -1187,6 +1187,43 @@ class CollieRepository(
             } else api.paneAgentIdentity(configured, address)
         }
     }
+    suspend fun namedAgentRead(address: PaneAddress, expectedContext: ScopedReadContext, source: String = "recent", lines: Int = 200): ApiResult<com.lateapex.collie.network.NamedAgentReadResponse> =
+        withNamedAgentRead(address, expectedContext, "agentAutomation") { api.namedAgentRead(it, address, source, lines) }
+    suspend fun namedAgentList(scope: Scope, expectedContext: ScopedReadContext): ApiResult<com.lateapex.collie.network.NamedAgentListResponse> =
+        withConnection(scope, expectedContext = expectedContext) { configured ->
+            val configuration = api.config(configured, scope)
+            if (!isCurrent(expectedContext)) staleScope()
+            else if (configuration !is ApiResult.Success) configFailure(configuration)
+            else if (!configured.isPaired || configuration.value.mux?.supportsNew("agentAutomation") != true) ApiResult.Failure(ApiFailure.Http(501, "Named census is unsupported on the original runtime", "capability.unsupported"))
+            else api.namedAgentList(configured, scope)
+        }
+    suspend fun namedAgentControl(address: PaneAddress, expectedContext: ScopedReadContext): ApiResult<com.lateapex.collie.network.AgentAutomationResponse> =
+        withNamedAgentRead(address, expectedContext, "agentAutomation") { api.namedAgentControl(it, address) }
+    suspend fun namedAgentExplain(address: PaneAddress, expectedContext: ScopedReadContext): ApiResult<com.lateapex.collie.network.AgentExplainResponse> =
+        withNamedAgentRead(address, expectedContext, "agentAutomation") { api.namedAgentExplain(it, address) }
+    suspend fun namedAgentAction(address: PaneAddress, expectedContext: ScopedReadContext, id: String, witness: String,
+        action: com.lateapex.collie.network.NamedAgentAction, expectedText: String?): ApiResult<com.lateapex.collie.network.AgentActionResponse> {
+        val config = config(address.scope, expectedContext)
+        if (!isCurrent(expectedContext)) return staleScope()
+        if (config !is ApiResult.Success) return configFailure(config)
+        if (config.value.mux?.supportsNew("agentAutomation") != true || config.value.control?.supportsNew("controlOperations") != true) return ApiResult.Failure(ApiFailure.Http(501, "Named agent actions are unsupported on this runtime", "capability.unsupported"))
+        return withWritableConnection(address.scope, address.paneId, expectedContext) { api.namedAgentAction(it, address, id, witness, action, expectedText) }
+    }
+    suspend fun startAgentWait(address: PaneAddress, expectedContext: ScopedReadContext, id: String, witness: String,
+        condition: com.lateapex.collie.network.NamedAgentWait, timeoutMs: Int): ApiResult<com.lateapex.collie.network.AgentWaitResponse> =
+        withNamedAgentRead(address, expectedContext, "agentWaits") { api.startAgentWait(it, address, id, witness, condition, timeoutMs) }
+    suspend fun agentWait(address: PaneAddress, expectedContext: ScopedReadContext, id: String, cancel: Boolean = false): ApiResult<com.lateapex.collie.network.AgentWaitResponse> =
+        withConnection(address.scope, address.paneId, expectedContext) { api.agentWait(it, address, id, cancel) }
+    private suspend fun <T> withNamedAgentRead(address: PaneAddress, expectedContext: ScopedReadContext, capability: String,
+        block: suspend (com.lateapex.collie.domain.Connection) -> ApiResult<T>): ApiResult<T> =
+        withConnection(address.scope, address.paneId, expectedContext) { configured ->
+            val config = api.config(configured, address.scope)
+            if (!isCurrent(expectedContext)) staleScope()
+            else if (config !is ApiResult.Success) configFailure(config)
+            else if (!configured.isPaired || config.value.mux?.supportsNew(capability) != true) ApiResult.Failure(ApiFailure.Http(501, "Named agent capability is not declared by this original runtime", "capability.unsupported"))
+            else block(configured)
+        }
+
     /** Ordinary paired reads. Change paths remain opaque; the bridge validates repository membership. */
     suspend fun changes(target: ChangesTarget, scope: Scope, lookup: ChangesLookup, expectedContext: ScopedReadContext? = null): ApiResult<ChangesListAnswer> =
         withConnection(scope, target.id, expectedContext) { api.changes(it, target, scope, lookup) }
