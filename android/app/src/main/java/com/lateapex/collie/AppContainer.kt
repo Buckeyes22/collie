@@ -9,6 +9,7 @@ import com.lateapex.collie.data.ScopedImageLoader
 import com.lateapex.collie.data.LaunchIntentStore
 import com.lateapex.collie.data.EncryptedQueuedSendAttemptStore
 import com.lateapex.collie.data.PaneLayoutIntentStore
+import com.lateapex.collie.data.EncryptedMachineRuleAttemptStore
 import com.lateapex.collie.diagnostics.DiagnosticsRecorder
 import com.lateapex.collie.diagnostics.DiagnosticsWriter
 import com.lateapex.collie.network.CollieApi
@@ -71,7 +72,17 @@ class AppContainer(context: Context) {
         AndroidKeystoreCipher(alias = "com.lateapex.collie.launch-intents.v1"),
         json,
     )
-    val repository = CollieRepository(api, connectionStore, originValidator, launchIntentStore = launchIntentStore, intentJson = json)
+    val machineRuleAttemptStore = EncryptedMachineRuleAttemptStore(
+        context.applicationContext,
+        AndroidKeystoreCipher(alias = "com.lateapex.collie.machine-rule-attempts.v1"),
+        json,
+    )
+    val repository = CollieRepository(
+        api, connectionStore, originValidator,
+        launchIntentStore = launchIntentStore,
+        intentJson = json,
+        machineRuleAttemptStore = machineRuleAttemptStore,
+    )
     val imageLoader = ScopedImageLoader(repository)
     init {
         // Registered before Activity/View listeners: encrypted publication closes before any

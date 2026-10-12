@@ -1804,8 +1804,8 @@ export function fetchMachineHistory(id: string, signal?: AbortSignal, since?: nu
  * Replace one machine's alert rules. The body is the WHOLE `MachineAlerts` object: a missing key
  * removes that rule. Returns the rules as the bridge stored them.
  */
-export function setMachineAlerts(id: string, alerts: MachineAlerts): Promise<{ alerts: MachineAlerts }> {
-  return req<{ alerts: MachineAlerts }>(`/api/machines/${encodeURIComponent(id)}/alerts`, {
+export function setMachineAlerts(id: string, alerts: MachineAlerts): Promise<{ alerts: MachineAlerts; rulesRevision?: string; machineIncarnation?: string; extensions?: JsonObject }> {
+  return req<{ alerts: MachineAlerts; rulesRevision?: string; machineIncarnation?: string; extensions?: JsonObject }>(`/api/machines/${encodeURIComponent(id)}/alerts`, {
     method: "POST",
     body: JSON.stringify(alerts),
   });

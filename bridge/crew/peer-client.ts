@@ -25,6 +25,7 @@ import { parseCollisionReport, parsePairingReport, type PairingSync } from "./st
 import type { TakeoverBody } from "./takeover.ts";
 import { parseWarrant, parseWarrantActiveReport, type WarrantPush } from "./warrant.ts";
 import { CREW_VERSION_FIELD } from "../update-action.ts";
+import type { CheckpointFrame } from "./monitoring-checkpoint.ts";
 
 // The LEAD side of a crew link: the client that dials a peer's `/crew/v1/*` surface.
 //
@@ -774,6 +775,15 @@ export class PeerClient {
     );
   }
 
+  /** One authenticated, pinned deputy checkpoint frame; this path is intentionally not generic forwarding. */
+  monitoringCheckpoint(link: CrewLink, frame: CheckpointFrame): Promise<PeerOutcome<JsonValue>> {
+    return this.json(link, "monitoring/checkpoint", undefined, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(frame),
+    }, undefined, false);
+  }
+
   /** A crew call whose JSON body the lead consumes. */
   async json(
     link: CrewLink,
@@ -939,6 +949,7 @@ export class PeerClient {
       // Assigned, never conditionally spread: an unpinned link must carry NO `tls` key at all.
       if (tls) dialInit.tls = tls;
       res = await this.deps.fetch(url, dialInit);
+      if (route === "monitoring/checkpoint") res = await boundedMonitoringResponse(res, controller.signal);
       // A response — ANY response — means the handshake completed and the pool holds a connection the
       // next strict-budget request can ride. Status is irrelevant here; it is read further down.
       this.settle(link, true);
@@ -1468,4 +1479,38 @@ export function parseControlCapabilities(value: JsonValue): Record<string, boole
 export function parseReceiptContextBound(value: JsonValue): boolean | null {
   const rec = asRecord(value);
   return typeof rec?.receiptContextBound === "boolean" ? rec.receiptContextBound : null;
+}
+
+/** The original dial deadline includes the original body, for every status, before JSON allocation. */
+async function boundedMonitoringResponse(response: Response, signal: AbortSignal): Promise<Response> {
+  const max = 16 * 1024;
+  if(parseProtocolHeader(response.headers.get(PROTOCOL_HEADER))!==CREW_PROTOCOL_VERSION || response.status!==200 && response.status!==409) {
+    void response.body?.cancel().catch(()=>{});
+    return new Response(null,{status:response.status,statusText:response.statusText,headers:response.headers});
+  }
+  const reader = response.body?.getReader();
+  if (reader === undefined) throw new Error("checkpoint.response_missing");
+  let abort: (() => void) | undefined;
+  const aborted = new Promise<never>((_, reject) => {
+    abort = () => { void reader.cancel().catch(() => {}); reject(new Error("checkpoint.response_timeout")); };
+    if (signal.aborted) abort(); else signal.addEventListener("abort", abort, { once: true });
+  });
+  try {
+    const mime = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
+    const length = response.headers.get("content-length");
+    if (mime !== "application/json" || length !== null && (!/^\d+$/.test(length) || Number(length) > max)) throw new Error("checkpoint.response_bounds");
+    const bytes = new Uint8Array(max);
+    let size = 0;
+    while (true) {
+      const next = await Promise.race([reader.read(), aborted]);
+      if (next.done) break;
+      if (next.value.byteLength > max - size) throw new Error("checkpoint.response_bounds");
+      bytes.set(next.value,size); size += next.value.byteLength;
+    }
+    if (signal.aborted) throw new Error("checkpoint.response_timeout");
+    return new Response(bytes.subarray(0,size), { status:response.status, statusText:response.statusText, headers:response.headers });
+  } finally {
+    if (abort !== undefined) signal.removeEventListener("abort",abort);
+    void reader.cancel().catch(() => {}); reader.releaseLock();
+  }
 }

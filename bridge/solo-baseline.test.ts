@@ -1093,6 +1093,12 @@ const CREW_STATE_DIR_ENTRIES = [
   // moves. `legacyStateFileNotice` (`crew/trust-store.ts`, ADR 0045) asks whether it is present so a
   // state directory that never saw 1.8.x is named rather than adopted in silence. One `exists()` on
   // the boot path, no open, no rename; a solo instance finds nothing and says nothing.
+  // B27 stage-only deputy custody. Dynamic hash-addressed generation/staging directories are
+  // confined by the checkpoint namespace constructors and tested through physical storage.
+  "monitoring-adoption.marker.json",
+  "monitoring-checkpoint.accepted.json",
+  "monitoring-checkpoint.stage.json",
+  "monitoring-checkpoint.transfer-",
   "pack-trust.json",
   "standby-devices.json",
 ];

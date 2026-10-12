@@ -31,6 +31,8 @@ interface Elsewhere {
 }
 
 const ELSEWHERE: readonly Elsewhere[] = [
+  {file:"bridge/crew/monitoring-fact-index.ts",count:1,why:"bounded disposable SQLite metadata lives in its unique private owner/no-follow namespace; production receives stateDir, standalone verification uses a PID-owned temp namespace; Windows ACL must be positively proven before opening"},
+  {file:"bridge/crew/monitoring-checkpoint.ts",count:2,why:"chunk spool and atomic checkpoint metadata temp paths are constructed beneath the admitted stateDir/private staging directory; no-follow exclusive files and original-owner gate precede publication, with positive Windows owner/ACL validation"},
   { file: "bridge/native-access/private-io.ts", count: 3, why: "fixed operator files and their temp/lease siblings are handed stateDir paths by native-access/config.ts and cli/native-access.ts; each owner-only parent and Windows ACL is validated before IO" },
   { file: "bridge/activity.ts", count: 2, why: "`this.dir` is `cfg.stateDir`, set in the constructor" },
   { file: "bridge/audit.ts", count: 1, why: "the appender is handed `<stateDir>/audit.log` by index.ts and cli/crew.ts" },

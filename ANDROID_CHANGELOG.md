@@ -6,6 +6,7 @@ the first Android release from this fork.
 
 ## Unreleased
 
+- Add native machine alert rule editing with revision and incarnation checks; preserve server-owned rule extensions and require review after conflicts or uncertain outcomes.
 
 - Use current Android APIs and MockWebServer 3 fixtures, and install a version-pinned Android CLI for CI SDK setup. Resolve the update preflight button style through its owning AppCompat resources.
 - Support the current Android 17 release only, with stable SDK 37.2, AGP built-in Kotlin and age-eligible build/runtime dependencies; preserve security and lifecycle tests on SDK 37.

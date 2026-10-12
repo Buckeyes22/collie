@@ -30,6 +30,9 @@ import com.lateapex.collie.network.OriginValidator
 import com.lateapex.collie.network.CrewStatusResponse
 import com.lateapex.collie.network.isValid
 import com.lateapex.collie.network.isValidMachineId
+import com.lateapex.collie.network.isValidForWrite
+import com.lateapex.collie.network.isValidSuccess
+import com.lateapex.collie.network.isValidConflict
 import com.lateapex.collie.network.ChatAfter
 import com.lateapex.collie.network.ChatBefore
 import com.lateapex.collie.network.CacheRulesResponse
@@ -148,6 +151,7 @@ class CollieRepository(
     private val maxPaneCacheEntries: Int = 20,
     private val launchIntentStore: LaunchIntentStore? = null,
     private val intentJson: Json = Json { explicitNulls = false; encodeDefaults = false },
+    private val machineRuleAttemptStore: MachineRuleAttemptStore? = null,
 ) {
     private companion object {
         const val OUTCOME_UNKNOWN_CODE = "launch.outcome_unknown"
@@ -358,10 +362,12 @@ class CollieRepository(
         // A supported legacy record never gains a minted actor merely by reading it.
         if (committed != null && committed.incarnationId == null) return null
         if (configured === retiredCredentialConnection) return null
-        fun sameCommit(): Boolean = if (committed == null) connectionStore.captureCommitted() == null && connection.value === configured
-            else connectionStore.captureCommitted()?.let { it.connection === configured && it.incarnationId == committed.incarnationId } == true
+        fun sameDurableOwner(): Boolean = if (committed == null) connectionStore.captureCommitted() == null && connection.value === configured
+            else connectionStore.captureCommitted()?.let {
+                it.connection === configured && it.incarnationId == committed.incarnationId
+            } == true
         invalidateAuthority(AuthorityInvalidation.CONNECTION_CHANGED, change = {
-            if ((generationConnection === configured && generationIncarnation == committed?.incarnationId) || !sameCommit()) false
+            if ((generationConnection === configured && generationIncarnation == committed?.incarnationId) || !sameDurableOwner()) false
             else {
                 generationConnection = configured
                 generationIncarnation = committed?.incarnationId
@@ -374,7 +380,7 @@ class CollieRepository(
         return synchronized(readAdmissionLock) {
             // Held actors remain allocated during temporary fences, but no new actor is minted.
             if (pendingAuthorityTransitions != 0 || (committed == null && pendingByGeneration.isNotEmpty())) return@synchronized null
-            if (!sameCommit() || generationConnection !== configured ||
+            if (!sameDurableOwner() || generationConnection !== configured ||
                 generationIncarnation != committed?.incarnationId) return@synchronized null
             if (configured === retiredCredentialConnection) return@synchronized null
             val targetScope = scope ?: mutableScope.value
@@ -822,6 +828,125 @@ class CollieRepository(
         if (raw !is ApiResult.Success) return raw
         return if (raw.status == 200 && raw.value.isValid()) raw
         else ApiResult.Failure(ApiFailure.Protocol("Malformed machine history response"))
+    }
+
+    /**
+     * Replace the complete machine rule object using the current unscoped lead actor and the
+     * revision/incarnation captured from that machine row. This is one POST only: a timeout remains
+     * outcome-unknown and callers must reconcile with a fresh census before another deliberate edit.
+     */
+    suspend fun replaceMachineAlerts(
+        expectedContext: ScopedReadContext,
+        machineId: String,
+        alerts: com.lateapex.collie.network.MachineAlerts,
+        rulesRevision: String,
+        machineIncarnation: String,
+        requestId: String,
+        localAttemptId: String,
+        extensions: kotlinx.serialization.json.JsonObject?,
+    ): ApiResult<com.lateapex.collie.network.MachineRuleWriteResponse> {
+        if (!com.lateapex.collie.network.isValidMachineId(machineId) ||
+            !rulesRevision.matches(Regex("(?:0|[1-9][0-9]{0,19})")) || runCatching { rulesRevision.toULong() }.isFailure ||
+            !machineIncarnation.matches(Regex("[0-9a-f]{64}")) ||
+            !requestId.matches(Regex("[A-Za-z0-9_-]{16,96}")) || !localAttemptId.matches(Regex("[0-9a-f]{32}")) ||
+            !alerts.isValidForWrite() || (extensions?.toString()?.toByteArray(Charsets.UTF_8)?.size ?: 0) > 4096) {
+            return ApiResult.Failure(ApiFailure.Protocol("Machine alert rule request is malformed"))
+        }
+        if (expectedContext.key.host != null || expectedContext.key.session != null || expectedContext.key.subjectIdentity != null ||
+            !expectedContext.connection.isPaired || expectedContext.connectionIncarnation == null || !isCurrent(expectedContext)) return staleScope()
+        if (!writesAllowed(Scope(), null)) {
+            return accessFailure?.let { ApiResult.Failure(it) }
+                ?: ApiResult.Failure(ApiFailure.Http(403, "device not authorised", "device.not_authorised"))
+        }
+        val custody = machineRuleAttemptStore ?: return ApiResult.Failure(ApiFailure.Protocol("Machine rule write custody is unavailable"))
+        val ownerDigest = expectedContext.custodyOwner.storageIdentity
+        val existing = custody.unresolved(ownerDigest, expectedContext.connectionIncarnation, machineId)
+            ?: return ApiResult.Failure(ApiFailure.Protocol("Machine rule write custody is unavailable"))
+        if (existing.isNotEmpty()) return ApiResult.Failure(ApiFailure.Protocol("Review the unresolved machine rule write before editing again"))
+        val attempt = MachineRuleAttempt(
+            attemptId = localAttemptId,
+            ownerDigest = ownerDigest,
+            connectionIncarnation = expectedContext.connectionIncarnation,
+            machineId = machineId,
+            machineIncarnation = machineIncarnation,
+            rulesRevision = rulesRevision,
+        )
+        when (custody.reserve(attempt) { commitPrepared ->
+            acknowledgeLocalCustody(expectedContext, commitPrepared)
+        }) {
+            MachineRuleAttemptReservation.Reserved -> Unit
+            MachineRuleAttemptReservation.Retired -> return staleScope()
+            MachineRuleAttemptReservation.Unresolved -> return ApiResult.Failure(ApiFailure.Protocol("Review the unresolved machine rule write before editing again"))
+            MachineRuleAttemptReservation.Unavailable -> return ApiResult.Failure(ApiFailure.Protocol("Machine rule write custody is unavailable"))
+        }
+        var terminalDeletionCommitted = false
+        try {
+            val result = withConnectionOf(
+                expectedContext.connection,
+                Scope(),
+                null,
+                mutation = true,
+                expectedContext = expectedContext,
+            ) { connection ->
+                api.replaceMachineAlerts(connection, machineId, alerts, rulesRevision, machineIncarnation, requestId, extensions)
+            }
+            val terminal = when (result) {
+                is ApiResult.Success -> (result.status == 200 && result.value.isValidSuccess() &&
+                    result.value.machineIncarnation == machineIncarnation && result.value.extensions == extensions) ||
+                    (result.status == 409 && result.value.isValidConflict())
+                is ApiResult.Failure -> result.error is ApiFailure.Http && result.error.code == "machine.rules_unsupported"
+                is ApiResult.NotModified -> false
+            }
+            if (terminal) {
+                terminalDeletionCommitted = custody.settleKnown(
+                    ownerDigest,
+                    expectedContext.connectionIncarnation,
+                    localAttemptId,
+                ) { commitPrepared -> acknowledgeLocalCustody(expectedContext, commitPrepared) }
+            }
+            return result
+        } finally {
+            // Cancellation can occur after dispatch. End the exact process-local attempt first so
+            // a same-process census exposes an honest UNKNOWN even if concurrent journal versions
+            // exhaust durable UNKNOWN preparation. Then best-effort persist UNKNOWN; the disk row
+            // remains PENDING and visibly discloseable until a fresh-read, explicit acknowledgement
+            // clears only that inactive exact tuple. No retry or body reconstruction occurs here.
+            if (!terminalDeletionCommitted) {
+                runCatching { custody.finishLive(ownerDigest, expectedContext.connectionIncarnation, localAttemptId) }
+                runCatching { custody.markUnknown(ownerDigest, expectedContext.connectionIncarnation, localAttemptId) }
+            }
+        }
+    }
+
+    /** Original-owner metadata only; null means this actor has no usable encrypted custody. */
+    fun machineRuleAttempts(expectedContext: ScopedReadContext): List<MachineRuleAttempt>? {
+        val connectionIncarnation = expectedContext.connectionIncarnation ?: return null
+        if (expectedContext.key.host != null || expectedContext.key.session != null || expectedContext.key.subjectIdentity != null ||
+            !isCurrent(expectedContext)) return null
+        return machineRuleAttemptStore?.unresolved(expectedContext.custodyOwner.storageIdentity, connectionIncarnation)
+    }
+
+    /** Explicit user acknowledgement after the caller presented a fresh current census. */
+    fun acknowledgeMachineRuleAttempt(expectedContext: ScopedReadContext, attempt: MachineRuleAttempt): Boolean {
+        val connectionIncarnation = expectedContext.connectionIncarnation ?: return false
+        if (expectedContext.key.host != null || expectedContext.key.session != null || expectedContext.key.subjectIdentity != null ||
+            !isCurrent(expectedContext) || attempt.ownerDigest != expectedContext.custodyOwner.storageIdentity ||
+            attempt.connectionIncarnation != connectionIncarnation) return false
+        return machineRuleAttemptStore?.acknowledgeReviewed(
+            attempt.ownerDigest,
+            connectionIncarnation,
+            attempt.attemptId,
+        ) { commitPrepared -> acknowledgeLocalCustody(expectedContext, commitPrepared) } == true
+    }
+
+    /** Retirement keeps the exact old attempt unknown; it never clears another actor's row. */
+    fun markMachineRuleAttemptUnknown(expectedContext: ScopedReadContext, attemptId: String): Boolean {
+        val connectionIncarnation = expectedContext.connectionIncarnation ?: return false
+        val custody = machineRuleAttemptStore ?: return false
+        val ownerDigest = expectedContext.custodyOwner.storageIdentity
+        val ended = custody.finishLive(ownerDigest, connectionIncarnation, attemptId)
+        val unknown = custody.markUnknown(ownerDigest, connectionIncarnation, attemptId)
+        return ended || unknown
     }
 
     suspend fun history(

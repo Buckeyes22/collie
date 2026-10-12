@@ -838,4 +838,35 @@ Only the declared issuer receives this authorization exchange. Pairing is retain
     <string name="machines_access_check_failed">The access check failed. Review the connection and gateway access.</string>
     <string name="machines_malformed">The server returned invalid machine resource data.</string>
     <string name="machines_unavailable">Machine resources are temporarily unavailable.</string>
+    <string name="machines_edit_alert_rules">Edit alert rules</string>
+    <string name="machines_edit_alert_rules_accessibility">Edit alert rules for %1$s</string>
+    <string name="machines_edit_rules_title">Alert rules for %1$s</string>
+    <string name="machines_enable_metric_rule">Enable %1$s rule</string>
+    <string name="machines_threshold_hint">Threshold percent</string>
+    <string name="machines_threshold_accessibility">%1$s threshold percent</string>
+    <string name="machines_threshold_prompt" formatted="false">Fire at 50–99% after sustained use.</string>
+    <string name="machines_threshold_range">Enter a threshold from 50 to 99 percent.</string>
+    <string name="machines_duration_hint">Minutes</string>
+    <string name="machines_duration_accessibility">%1$s duration in minutes</string>
+    <string name="machines_duration_prompt">Sustain the threshold for 5–120 minutes.</string>
+    <string name="machines_duration_range">Enter a duration from 5 to 120 minutes.</string>
+    <string name="machines_cancel">Cancel</string>
+    <string name="machines_save_rules">Save rules</string>
+    <string name="machines_rules_saving">Saving these rules once…</string>
+    <string name="machines_rules_saved">Alert rules saved.</string>
+    <string name="machines_rules_conflict">Another change won. Current rules are shown; review them before saving again.</string>
+    <string name="machines_rules_unsupported">This server does not provide revision and machine identity checks for rule editing.</string>
+    <string name="machines_rules_refused">The server refused this rule change. Check pairing and device write authorization.</string>
+    <string name="machines_rules_unknown">The save outcome is unknown. Refresh the machine facts and review the current rules before another save.</string>
+    <string name="machines_rules_unknown_retired">This save may have reached the retired connection. Its result is unknown; reconnect and refresh machine facts before editing. This draft was cleared and will not be resent.</string>
+    <string name="machines_rules_unknown_barrier">A previous save may or may not have applied. Review the current rules below and refresh the machine facts before acknowledging this unresolved outcome.</string>
+    <string name="machines_rules_unknown_not_durable">The encrypted journal still says this save was pending when local updates contended. This screen treats it as unknown; the fresh rules do not prove whether it applied.</string>
+    <string name="machines_rules_pending_barrier">A rule save is still in progress for this machine. Editing remains locked until it settles or is reviewed after a fresh read.</string>
+    <string name="machines_rules_acknowledge">Acknowledge after review</string>
+    <string name="machines_rules_ack_title">Acknowledge unresolved save?</string>
+    <string name="machines_rules_ack_message">This fresh read shows the current rules, but cannot prove whether the earlier save applied. Acknowledging clears its local barrier so you may make a new deliberate edit. The old draft will not be resent.</string>
+    <string name="machines_rules_ack_done">Unresolved save acknowledged. Review the current rules before editing.</string>
+    <string name="machines_rules_ack_unavailable">The unresolved save could not be acknowledged. Keep reviewing current rules before trying again.</string>
+    <string name="machines_rules_failed">The rule response could not be verified. Refresh before editing again.</string>
+    <string name="machines_rules_write_unavailable">Connect a paired device with current write authorization to change alert rules.</string>
 </resources>

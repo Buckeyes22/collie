@@ -52,7 +52,10 @@ function crewRoster(): MachineRosterEntry[] {
     ],
     now: NOW,
   });
-  return machineRosterOf(status, { id: "desk", name: "desk.lan" });
+  return machineRosterOf(status, { id: "desk", name: "desk.lan" }).map((entry) => Object.assign({},entry,{
+    fingerprint: entry.isLead ? "a".repeat(64) : "b".repeat(64),
+    enrolledAt: entry.isLead ? T0 : T0 + 1,
+  }));
 }
 
 async function watchOver(roster: MachineRosterEntry[]) {
@@ -88,6 +91,17 @@ const get = (path: string) => new Request(`http://127.0.0.1${path}`);
 const post = (path: string, body: string) =>
   new Request(`http://127.0.0.1${path}`, { method: "POST", body, headers: { "content-type": "application/json" } });
 
+function pairedCaller(identity: { current: string }) {
+  const audited: AuditEntry[] = [];
+  const c: MachineRouteCaller = {
+    gate: () => null,
+    device: () => "phone",
+    pairedIdentity: () => identity.current,
+    audit: (entry) => audited.push(entry),
+  };
+  return { c, audited };
+}
+
 async function answer(req: Request, c: MachineRouteCaller, watch: MachineWatch | undefined): Promise<Response> {
   const res = await serveMachinesRoute(req, new URL(req.url).pathname, c, watch);
   if (res === null) throw new Error(`no machine route answered ${req.url}`);
@@ -108,7 +122,7 @@ describe("a row's id is the crew member id", () => {
 
   test("a solo collie that never enrolled is one row, `local`, and it is the lead", () => {
     expect(machineRosterOf(null, { id: SOLO_MACHINE_ID, name: "bluefin" })).toEqual([
-      { id: "local", name: "bluefin", isLead: true, health: "reachable" },
+      { id: "local", name: "bluefin", isLead: true, health: "reachable", solo: true },
     ]);
   });
 });
@@ -125,8 +139,8 @@ describe("GET /api/machines", () => {
     expect(await res.json()).toEqual({
       ts: NOW,
       machines: [
-        { id: "desk", name: "desk.lan", isLead: true, health: "reachable", sample, sampledAt: NOW - 4000, alerts: {}, firing: [] },
-        { id: "laptop", name: "laptop", isLead: false, health: "unreachable", alerts: {}, firing: [] },
+        { id: "desk", name: "desk.lan", isLead: true, health: "reachable", sample, sampledAt: NOW - 4000, alerts: {}, rulesRevision: "0", machineIncarnation: expect.any(String), firing: [] },
+        { id: "laptop", name: "laptop", isLead: false, health: "unreachable", alerts: {}, rulesRevision: "0", machineIncarnation: expect.any(String), firing: [] },
       ],
     });
   });
@@ -233,7 +247,7 @@ describe("POST /api/machines/:id/alerts — a write, gated and audited", () => {
     const rules = { cpu: { above: 0.9, forMin: 10 }, mem: { above: 0.8, forMin: 30 }, disk: { above: 0.95, forMin: 15 } };
     const res = await answer(post("/api/machines/laptop/alerts", JSON.stringify(rules)), c, watch);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ alerts: rules });
+    expect(await res.json()).toEqual({ alerts: rules, rulesRevision: "1", machineIncarnation: expect.any(String) });
     expect(watch.rows().machines[1]!.alerts).toEqual(rules);
     expect(audited).toEqual([
       {
@@ -259,6 +273,68 @@ describe("POST /api/machines/:id/alerts — a write, gated and audited", () => {
     expect((await answer(post("/api/machines/nas/alerts", "{}"), c, watch)).status).toBe(404);
     expect((await answer(get("/api/machines/laptop/alerts"), c, watch)).status).toBe(405);
     expect(audited).toEqual([]);
+  });
+
+  test("revision CAS and request receipts replay exactly once and refuse stale or rebound requests", async () => {
+    const { watch, dir } = await watchOver(crewRoster());
+    const identity = { current: "private-pairing-record-A" };
+    const { c } = pairedCaller(identity);
+    const row = watch.rows().machines[1]!;
+    const body = {
+      cpu: { above: 0.9, forMin: 10 }, rulesRevision: row.rulesRevision,
+      machineIncarnation: row.machineIncarnation, requestId: "request_000000001",
+    };
+    const first = await answer(post("/api/machines/laptop/alerts", JSON.stringify(body)), c, watch);
+    expect(first.status).toBe(200);
+    const firstResult = await first.json();
+    expect(firstResult).toEqual({ alerts: { cpu: body.cpu }, rulesRevision: "1", machineIncarnation: row.machineIncarnation });
+    const replay = await answer(post("/api/machines/laptop/alerts", JSON.stringify(body)), c, watch);
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toEqual(firstResult);
+    expect(watch.rows().machines[1]!.rulesRevision).toBe("1");
+
+    const rebound = await answer(post("/api/machines/laptop/alerts", JSON.stringify({ ...body, cpu: { above: 0.95, forMin: 10 } })), c, watch);
+    expect(rebound.status).toBe(409);
+    expect(await rebound.json()).toMatchObject({ code: "machine.rules_conflict", current: { rulesRevision: "1", alerts: { cpu: body.cpu } } });
+
+    const stale = await answer(post("/api/machines/laptop/alerts", JSON.stringify({ ...body, requestId: "request_000000002" })), c, watch);
+    expect(stale.status).toBe(409);
+    expect(await stale.json()).toMatchObject({ code: "machine.rules_conflict", current: { rulesRevision: "1" } });
+
+    identity.current = "private-pairing-record-B";
+    const otherOwner = await answer(post("/api/machines/laptop/alerts", JSON.stringify(body)), c, watch);
+    expect(otherOwner.status).toBe(409);
+    const stateFile = await readFile(join(dir, MACHINE_ALERTS_FILE), "utf8");
+    expect(stateFile).not.toContain("private-pairing-record-A");
+  });
+
+  test("duplicate keys, invalid surrogate strings and over-limit streams are refused before parsing", async () => {
+    const { watch } = await watchOver(crewRoster());
+    const { c } = pairedCaller({ current: "pair-A" });
+    expect((await answer(post("/api/machines/laptop/alerts", '{"cpu":{"above":0.9,"forMin":10},"\\u0063pu":{"above":0.8,"forMin":10} }'), c, watch)).status).toBe(400);
+    expect((await answer(post("/api/machines/laptop/alerts", '{"requestId":"\\ud800"}'), c, watch)).status).toBe(400);
+    const tooLarge = new Request("http://127.0.0.1/api/machines/laptop/alerts", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ note: "x".repeat(16 * 1024) }),
+    });
+    expect((await answer(tooLarge, c, watch)).status).toBe(413);
+    expect(watch.rows().machines[1]!.rulesRevision).toBe("0");
+  });
+
+  test("a delayed body cannot capture a replacement owner before the commit", async () => {
+    const { watch } = await watchOver(crewRoster());
+    const identity = { current: "private-pairing-record-A" };
+    const { c } = pairedCaller(identity);
+    const row = watch.rows().machines[1]!;
+    const bytes = new TextEncoder().encode(JSON.stringify({ cpu: { above: 0.9, forMin: 10 }, rulesRevision: row.rulesRevision, machineIncarnation: row.machineIncarnation, requestId: "request_000000003" }));
+    let controller!: ReadableStreamDefaultController<Uint8Array>;
+    const stream = new ReadableStream<Uint8Array>({ start(value) { controller = value; } });
+    const req = new Request("http://127.0.0.1/api/machines/laptop/alerts", { method: "POST", body: stream, headers: { "content-type": "application/json" } });
+    const pending = answer(req, c, watch);
+    identity.current = "private-pairing-record-B";
+    controller.enqueue(bytes); controller.close();
+    const response = await pending;
+    expect(response.status).toBe(403);
+    expect(watch.rows().machines[1]!.rulesRevision).toBe("0");
   });
 });
 

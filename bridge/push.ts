@@ -409,7 +409,7 @@ export class Push {
   }
 
   /** Send a notification instruction (render, clear, or update) to every subscribed device. */
-  async send(message: PushMessage): Promise<void> {
+  async send(message: PushMessage, originalProducerCurrent: () => boolean = () => true): Promise<void> {
     // The SW reads deep-link fields from `data`. `session` is omitted for the primary and `host` for
     // this collie's own sessions (both absent on the message), keeping that payload identical to the
     // pre-multi-session, pre-crew shape.
@@ -424,7 +424,7 @@ export class Push {
     const base =
       msg.type === "update" ? UPDATE_SEND_OPTIONS : msg.type === "machine" ? MACHINE_SEND_OPTIONS : SEND_OPTIONS;
     const options = topic !== undefined && topicIsSendable(topic) ? { ...base, topic } : base;
-    await this.broadcast(JSON.stringify({ ...msg, data }), options);
+    await this.broadcast(JSON.stringify({ ...msg, data }), options, originalProducerCurrent);
   }
 
   /** Convenience for a one-off render (used by the manual push-test script). */
@@ -432,9 +432,10 @@ export class Push {
     await this.send({ title, body, paneId: data.paneId });
   }
 
-  private async broadcast(payload: string, options: SendOptions): Promise<void> {
-    if (!this.enabled) return;
+  private async broadcast(payload: string, options: SendOptions, originalProducerCurrent: () => boolean = () => true): Promise<void> {
+    if (!this.enabled || !originalProducerCurrent()) return;
     if (this.nativeBindings) await this.refreshNativeBindings();
+    if (!originalProducerCurrent()) return;
     const dead: string[] = [];
     // One entry per subscription attempted this round, so the eviction pass below can ask which
     // push services proved themselves healthy before it holds a failure against any one device.
@@ -444,6 +445,7 @@ export class Push {
           if (sub.nativeBinding && (!this.nativeBindings || !this.nativeBindings.current(sub.nativeBinding))) return { sub, err: null };
           // `{ endpoint, keys }` and nothing else: the stored row also carries operator metadata,
           // and web-push serialises what it is handed.
+          if (!originalProducerCurrent()) return { sub, err: null };
           await this.sender({ endpoint: sub.endpoint, keys: sub.keys }, payload, options);
           return { sub, err: null };
         } catch (err) {
@@ -452,6 +454,7 @@ export class Push {
       }),
     );
 
+    if (!originalProducerCurrent()) return;
     // A push service that delivered to SOMEBODY this round has a working VAPID/JWT/network path,
     // so a sibling's failure on that same origin is about that subscription and nothing else.
     const healthy = new Set(

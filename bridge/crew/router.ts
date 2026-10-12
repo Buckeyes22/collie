@@ -19,6 +19,9 @@ import {
   type PeerRunReport,
 } from "../update-action.ts";
 import { CREW_MACHINE_FIELD } from "../machine-stats.ts";
+import { monitoringAuthorityKey } from "./monitoring-authority.ts";
+import { MONITORING_CHECKPOINT_CAPABILITY, MONITORING_CHECKPOINT_RECORD_FORMAT, MONITORING_CHECKPOINT_PATH, type CheckpointAuthority, type MonitoringCheckpointCapabilityReport, type MonitoringCheckpointReceiver } from "./monitoring-checkpoint.ts";
+import { WARRANT_TTL_MS } from "./warrant.ts";
 import type { MachineSample } from "../types.ts";
 import { LEAD_RELEASE_HEADER, UPDATE_TURN_HEADER } from "./follow.ts";
 import { apiPathFor } from "./forward.ts";
@@ -334,6 +337,8 @@ export interface CrewRouterDeps {
   readonly controlCapabilities?: () => Record<string, boolean>;
   /** Additive optional readiness; old peers omit it and therefore fail closed for new receipts. */
   readonly receiptContextBound?: () => boolean;
+  /** Present only on a current pinned deputy; this endpoint never enters the generic forwarding allowlist. */
+  readonly monitoringCheckpoint?: Pick<MonitoringCheckpointReceiver,"receipt"|"handle">;
   /**
    * Whether the listener this handler is mounted on was built pin-enforcing
    * (`bridge/crew/transport.ts`). **Defaults to `false`, which admits nothing but a signed request.**
@@ -575,6 +580,7 @@ type HelloBody = {
   mux?: MuxConfig;
   controlCapabilities?: Record<string, boolean>;
   receiptContextBound?: boolean;
+  monitoringCheckpoint?: MonitoringCheckpointCapabilityReport;
 };
 
 /**
@@ -775,6 +781,35 @@ function resolveDial(
   return null;
 }
 
+function monitoringCheckpointAuthority(
+  data: TrustStoreData | null,
+  callerMemberId: string,
+  standby: StandbySurface | undefined,
+  now: number,
+): CheckpointAuthority | null {
+  if (data === null || data.crew === null || data.lead === null || standby === undefined || !standby.warrantsSelf()) return null;
+  const lead = data.lead;
+  const stored = data.warrant?.warrant;
+  if (lead.status !== "enrolled" || lead.certPem === "" || callerMemberId !== lead.memberId || stored === undefined) return null;
+  if (stored.crewId !== data.crew.crewId || stored.leadMemberId !== lead.memberId || stored.deputyMemberId !== data.self.memberId ||
+    stored.deputyFingerprint !== data.self.fingerprint || now >= stored.refreshedAt + WARRANT_TTL_MS) return null;
+  return {
+    crewId: data.crew.crewId,
+    leadMemberId: lead.memberId,
+    leadFingerprint: lead.fingerprint,
+    deputyMemberId: data.self.memberId,
+    deputyFingerprint: data.self.fingerprint,
+    warrantGeneration: stored.generation,
+    secretGeneration: data.crew.secretGeneration,
+  };
+}
+
+function sameCheckpointAuthority(left: CheckpointAuthority, right: CheckpointAuthority): boolean {
+  return left.crewId === right.crewId && left.leadMemberId === right.leadMemberId && left.leadFingerprint === right.leadFingerprint &&
+    left.deputyMemberId === right.deputyMemberId && left.deputyFingerprint === right.deputyFingerprint &&
+    left.warrantGeneration === right.warrantGeneration && left.secretGeneration === right.secretGeneration;
+}
+
 export function createCrewRouter(deps: CrewRouterDeps): CrewHandler {
   const transportPinned = deps.transportPinned ?? false;
   const membershipChanged = (): void => deps.onMembershipChange?.();
@@ -810,6 +845,8 @@ export function createCrewRouter(deps: CrewRouterDeps): CrewHandler {
     // independent factors, both, always, before routing". An admitted caller asking for a route this
     // build does not implement gets a 404; an unadmitted one cannot tell which routes exist.
     const data = await deps.store.load();
+    const originalTrustRevision=deps.store.monitoringRevision(monitoringAuthorityKey);
+    const originalMonitoringExpiry=data?.warrant?.warrant.refreshedAt===undefined?Infinity:data.warrant.warrant.refreshedAt+WARRANT_TTL_MS;
 
     // §8.6's signature, when one is offered. The BODY is read here — and only here, and only when the
     // header is present — because the digest is part of what was signed. A request without the header
@@ -962,6 +999,16 @@ export function createCrewRouter(deps: CrewRouterDeps): CrewHandler {
       if (receiptContextBound !== undefined) hello.receiptContextBound = receiptContextBound;
       const declared = deps.mux?.() ?? null;
       if (declared !== null) hello.mux = portableMuxBlock(declared);
+      const checkpointAuthority = monitoringCheckpointAuthority(data, verdict.member.memberId, deps.standby, now());
+      if (deps.monitoringCheckpoint !== undefined && checkpointAuthority !== null) {
+        const receipt = await deps.monitoringCheckpoint.receipt(checkpointAuthority, () => {
+          const current = deps.store.current();
+          const actual = monitoringCheckpointAuthority(current, verdict.member.memberId, deps.standby, now());
+          return now()<originalMonitoringExpiry && deps.store.monitoringRevision(monitoringAuthorityKey)===originalTrustRevision && actual !== null && sameCheckpointAuthority(actual, checkpointAuthority);
+        });
+        if(deps.store.monitoringRevision(monitoringAuthorityKey)!==originalTrustRevision) return refuse(pathname,"not-a-crew-member");
+        hello.monitoringCheckpoint = { ...MONITORING_CHECKPOINT_CAPABILITY, recordFormat:MONITORING_CHECKPOINT_RECORD_FORMAT, ...receipt };
+      }
       return new Response(JSON.stringify(hello), {
         status: 200,
         headers: crewResponseHeaders(verdict.self),
@@ -976,6 +1023,20 @@ export function createCrewRouter(deps: CrewRouterDeps): CrewHandler {
     }
     if (pathname === CREW_PAIRING_PATH && req.method === "POST") {
       return pairingSync(req, signedBody, verdict.member, verdict.self, data);
+    }
+    if (pathname === MONITORING_CHECKPOINT_PATH && deps.monitoringCheckpoint !== undefined && (req.method === "GET" || req.method === "POST")) {
+      // Capture the admitted original lead, exact warrant and local deputy identity before the
+      // streamed body is read. Every receiver await rechecks this same immutable authority against
+      // the current trust store; a later caller cannot lend its authority to an older upload.
+      const authority = monitoringCheckpointAuthority(data, verdict.member.memberId, deps.standby, now());
+      if (authority === null) return refuse(pathname, "not-a-crew-member");
+      const stillCurrent = (): boolean => {
+        const current = deps.store.current();
+        if (current === null || current.lead === null) return false;
+        const currentAuthority = monitoringCheckpointAuthority(current, authority.leadMemberId, deps.standby, now());
+        return now()<originalMonitoringExpiry && deps.store.monitoringRevision(monitoringAuthorityKey)===originalTrustRevision && currentAuthority !== null && sameCheckpointAuthority(currentAuthority, authority);
+      };
+      return deps.monitoringCheckpoint.handle(req, authority, stillCurrent);
     }
     if (pathname === CREW_TAKEOVER_PATH && req.method === "POST") {
       // A takeover arriving at a collie that still believes it LEADS is a deposition, not a witness
@@ -1074,6 +1135,15 @@ export function createCrewRouter(deps: CrewRouterDeps): CrewHandler {
       // one, which the lead reads as "not reported", never as an idle machine (§7.1).
       const load = deps.machineStats?.() ?? null;
       const withLoad = load === null ? withVersion : { ...withVersion, [CREW_MACHINE_FIELD]: load };
+      const checkpointAuthority = monitoringCheckpointAuthority(data, verdict.member.memberId, deps.standby, now());
+      const withCheckpoint = deps.monitoringCheckpoint === undefined || checkpointAuthority === null
+        ? withLoad
+        : { ...withLoad, monitoringCheckpoint: { ...MONITORING_CHECKPOINT_CAPABILITY, recordFormat:MONITORING_CHECKPOINT_RECORD_FORMAT, ...(await deps.monitoringCheckpoint.receipt(checkpointAuthority, () => {
+            const current = deps.store.current();
+            const actual = monitoringCheckpointAuthority(current, verdict.member.memberId, deps.standby, now());
+            return now()<originalMonitoringExpiry && deps.store.monitoringRevision(monitoringAuthorityKey)===originalTrustRevision && actual !== null && sameCheckpointAuthority(actual, checkpointAuthority);
+          })) } };
+      if(checkpointAuthority!==null && deps.monitoringCheckpoint!==undefined && deps.store.monitoringRevision(monitoringAuthorityKey)!==originalTrustRevision) return refuse(pathname,"not-a-crew-member");
       // §20's two REQUEST headers, read LAST and answered with nothing. They are additive-optional
       // and absent-means-closed: a build with no `onFollow` ignores both, which is a correct peer,
       // and a peer that reads them still decides for itself. Handed over synchronously and never
@@ -1082,7 +1152,7 @@ export function createCrewRouter(deps: CrewRouterDeps): CrewHandler {
         leadRelease: headerValue(req, LEAD_RELEASE_HEADER),
         turn: headerValue(req, UPDATE_TURN_HEADER),
       });
-      return new Response(JSON.stringify(withLoad), {
+      return new Response(JSON.stringify(withCheckpoint), {
         status: 200,
         headers: crewResponseHeaders(verdict.self),
       });

@@ -21,10 +21,11 @@ newest tag. The phone PWA updates itself within about a minute; no reload needed
 Running a crew? Update the lead first; members follow on their own. Details:
 `docs/crew.md` → *Updating from 1.7.0*.
 
-
 ## [Unreleased]
 
 ### Added
+
+
 
 - **Opt in to native identity through a configured DPoP gateway.** Add an operator-owned public OIDC profile, independent pairing/device enrollment, bounded replay-protected loopback ingress, final binding/role/access-expiry dispatch fences and durable exact binding-retirement custody. Preserve visible pane read intent without trusting injected phone identity headers. Preserve authenticated browser routing on a separate retained mount; actual issuer/device/Crew and signed retirement acceptance remain pending. Keep ordinary startup unchanged when the optional gateway configuration is absent.
 
@@ -44,6 +45,8 @@ Running a crew? Update the lead first; members follow on their own. Details:
 - **Pane reads negotiate a bounded adapter budget.** Publish verified adapter ceilings, report admitted and served rows separately, and refuse a response that exceeds the admitted limit.
 - **Queued sends revalidate their live queue and pane occupant.** Add a closed guarded form to the existing keys route, refuse older Crew peers, and latch duplicate or uncertain attempts without sending queued text.
 - **Organize workspaces and tabs through owner-scoped plans.** Add bounded rename, close, focus, pre-removal ordering and a guarded whole-tab transfer that moves existing processes one at a time with durable receipts, linked-worktree close previews, and explicit same-workspace-only `tab.move` across mux and Crew.
+
+- **Machine rule updates compare the original enrolled machine and rule revision.** Keep lead-local, device-write whole-rule replacements, exact request receipts and bounded inert read extensions. Commit completed-minute history, episodes, reserved clears and the evaluator watermark in one durable generation. The backend exports an original-owner producer port and bounded, integrity-checked deputy checkpoints; the native editor, actual B22 signed enqueue, and B38 activation still require their source joins and actual acceptance.
 
 ### Changed
 
@@ -71,6 +74,12 @@ Running a crew? Update the lead first; members follow on their own. Details:
 - **Fence worktree authority through socket readiness and drain.** Preserve the original caller and runtime at every managed byte-write continuation; zero-byte retirement refuses, while a previously accepted prefix remains uncertain and is never resent automatically.
 - **Worktree uncertainty survives retirement after bytes reach the socket.** Creation and removal receipts retain UNKNOWN after an accepted prefix, while zero-byte refusal stays refused and the same intent is never dispatched again.
 - **The CLI embeds the agent identity operator guide.** Packaged and binary installs can print the guide added with native identity inspection; Gemini doctor fixtures retain the full expanded integration and journal catalog.
+
+- **Retired monitoring work cannot borrow a replacement producer.** Preserve the original role, secret, enrollment and warrant lease across queued writes, settlement and final browser delivery. Refuse stale evaluated rules, retain reserved clears under opening pressure, keep each checkpoint revision immutable, distinguish missing storage from corruption, and verify complete chunks before a usable receipt or idempotent acknowledgement. Stream full-precision records across bounded chunks with a separately declared private external-index budget.
+
+- **Pending monitoring delivery cannot discard another machine’s recovery clear.** Keep an incomplete minute retryable when its opening slot is busy, release failed owned checkpoint transfers, share authoritative event-pair validation with checkpoint readers, and bind acknowledgements to the exact requested revision and digest.
+
+- **Committed monitoring snapshots survive later minute updates.** Complete each immutable observation under its original authority, coalesce the latest revision after its exact receipt, and retain original deputy, warrant and frame deadline checks. A deferred frame never certifies delivery or replays producer work.
 
 ### Packaging
 

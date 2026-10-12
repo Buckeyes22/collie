@@ -30,6 +30,8 @@ import com.lateapex.collie.network.ChangesTarget
 import com.lateapex.collie.network.DevicesResponse
 import com.lateapex.collie.network.MuxConfigResponse
 import com.lateapex.collie.network.MachineHistoryResponse
+import com.lateapex.collie.network.MachineAlerts
+import com.lateapex.collie.network.MachineRuleWriteResponse
 import com.lateapex.collie.network.DeviceAuthorization
 import com.lateapex.collie.network.HealthResponse
 import com.lateapex.collie.network.NotificationState
@@ -57,12 +59,16 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertSame
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 @RunWith(RobolectricTestRunner::class)
 class CollieRepositoryTest {
@@ -124,6 +130,137 @@ class CollieRepositoryTest {
         val maximumId = "a" + "z".repeat(62)
         assertTrue(repository.machineHistory(context, maximumId, since = 0) is ApiResult.Success)
         assertEquals(listOf(maximumId), api.machineHistoryIds)
+    }
+
+    @Test
+    fun machineRuleWriteUsesCurrentUnscopedPairedActorAndRefusesAfterReplacement() = runBlocking {
+        val (rulesRepository, rulesStore) = machineRuleRepository()
+        authorizeWrites(rulesRepository)
+        val context = rulesRepository.machineReadContext()!!
+        val extensionObject = Json.parseToJsonElement("""{"future":{"mode":"hold"}}""").jsonObject
+        val success = MachineRuleWriteResponse(
+            alerts = MachineAlerts(cpu = com.lateapex.collie.network.MachineAlertRule(.9, 10)),
+            rulesRevision = "6", machineIncarnation = "a".repeat(64), extensions = extensionObject,
+        )
+        api.machineRuleResult = ApiResult.Success(success, 200)
+        val result = rulesRepository.replaceMachineAlerts(
+            context, "peer-east", success.alerts!!, "5", "a".repeat(64), "0123456789abcdef0123456789abcdef", "a".repeat(32), extensionObject,
+        )
+        assertTrue(result is ApiResult.Success)
+        assertEquals(1, api.machineRuleCalls)
+        assertEquals("peer-east", api.machineRuleMachineId)
+        assertEquals("5", api.machineRuleRevision)
+        assertEquals("a".repeat(64), api.machineRuleIncarnation)
+        assertEquals(extensionObject, api.machineRuleExtensions)
+        assertEquals("token", api.machineRuleToken)
+
+        rulesStore.save(Connection(connection.origin, "replacement", "replacement-token"))
+        val retired = rulesRepository.replaceMachineAlerts(
+            context, "peer-east", MachineAlerts(), "6", "a".repeat(64), "1123456789abcdef0123456789abcdef", "b".repeat(32), extensionObject,
+        )
+        assertTrue(retired is ApiResult.Failure)
+        assertEquals("Replacement actor cannot dispatch a stale rule write", 1, api.machineRuleCalls)
+    }
+
+    @Test
+    fun machineRuleWriteRequiresWriteGateAndUnscopedCurrentReadActor() = runBlocking {
+        val (rulesRepository, _) = machineRuleRepository()
+        val unverified = rulesRepository.machineReadContext()!!
+        val denied = rulesRepository.replaceMachineAlerts(
+            unverified, "peer-east", MachineAlerts(), "1", "a".repeat(64), "0123456789abcdef0123456789abcdef", "a".repeat(32), null,
+        )
+        assertTrue(denied is ApiResult.Failure)
+        assertEquals("Device write authority must be current before a rule POST", 0, api.machineRuleCalls)
+
+        authorizeWrites(rulesRepository)
+        rulesRepository.selectScope(Scope(host = "peer-east", session = "work"))
+        val scoped = rulesRepository.readContext(Scope(host = "peer-east", session = "work"), null)!!
+        val wrongScope = rulesRepository.replaceMachineAlerts(
+            scoped, "peer-east", MachineAlerts(), "1", "a".repeat(64), "1123456789abcdef0123456789abcdef", "b".repeat(32), null,
+        )
+        assertTrue(wrongScope is ApiResult.Failure)
+        assertEquals("Machine rules remain lead-owned and unscoped", 0, api.machineRuleCalls)
+    }
+
+    @Test
+    fun machineRuleWriteRequiresDurableOriginalConnectionIncarnation() = runBlocking {
+        api.snapshotDevice = DeviceAuthorization(enforced = true, device = "phone", authorized = true)
+        val noDurableWitness = CollieRepository(api, FakeStore(connection), OriginValidator(),
+            machineRuleAttemptStore = FakeMachineRuleAttemptStore())
+        assertTrue(noDurableWitness.snapshot() is ApiResult.Success)
+        val context = noDurableWitness.machineReadContext()!!
+        val result = noDurableWitness.replaceMachineAlerts(
+            context, "peer-east", MachineAlerts(), "1", "a".repeat(64),
+            "0123456789abcdef0123456789abcdef", "a".repeat(32), null,
+        )
+        assertTrue("A volatile actor cannot reserve persistent one-shot custody", result is ApiResult.Failure)
+        assertEquals(0, api.machineRuleCalls)
+    }
+
+    @Test
+    fun uncertainRuleDeliveryRetainsOriginalAttemptAndDoesNotRetry() = runBlocking {
+        val (rulesRepository, _, attempts) = machineRuleRepository()
+        authorizeWrites(rulesRepository)
+        val context = rulesRepository.machineReadContext()!!
+        api.machineRuleResult = ApiResult.Failure(ApiFailure.Network("connection closed after delivery"))
+
+        val result = rulesRepository.replaceMachineAlerts(
+            context, "peer-east", MachineAlerts(), "5", "a".repeat(64),
+            "0123456789abcdef0123456789abcdef", "a".repeat(32), null,
+        )
+
+        assertTrue(result is ApiResult.Failure)
+        assertEquals(1, api.machineRuleCalls)
+        val unresolved = attempts.unresolved(context.custodyOwner.storageIdentity, context.connectionIncarnation!!, "peer-east")!!
+        assertEquals(1, unresolved.size)
+        assertEquals(MachineRuleAttemptState.unknown, unresolved.single().state)
+    }
+
+    @Test
+    fun invalidHttpSuccessCannotSettleOriginalRuleAttempt() = runBlocking {
+        val (rulesRepository, _, attempts) = machineRuleRepository()
+        authorizeWrites(rulesRepository)
+        val context = rulesRepository.machineReadContext()!!
+        val malformedSuccess = MachineRuleWriteResponse(
+            alerts = MachineAlerts(cpu = com.lateapex.collie.network.MachineAlertRule(1.2, 10)),
+            rulesRevision = "6",
+            machineIncarnation = "a".repeat(64),
+        )
+        api.machineRuleResult = ApiResult.Success(malformedSuccess, 200)
+
+        val result = rulesRepository.replaceMachineAlerts(
+            context, "peer-east", MachineAlerts(), "5", "a".repeat(64),
+            "0123456789abcdef0123456789abcdef", "a".repeat(32), null,
+        )
+
+        assertTrue("Repository preserves the malformed transport result for protocol handling", result is ApiResult.Success)
+        assertEquals(1, api.machineRuleCalls)
+        val unresolved = attempts.unresolved(context.custodyOwner.storageIdentity, context.connectionIncarnation!!, "peer-east")!!
+        assertEquals("An invalid 200 response cannot clear the durable uncertainty marker", 1, unresolved.size)
+        assertEquals(MachineRuleAttemptState.unknown, unresolved.single().state)
+    }
+
+    @Test
+    fun machineRuleWriteHeldAcrossPairingReplacementCannotCertifyOrRetryOldActor() = runBlocking {
+        val (rulesRepository, rulesStore) = machineRuleRepository()
+        authorizeWrites(rulesRepository)
+        val context = rulesRepository.machineReadContext()!!
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        api.machineRuleEntered = entered
+        api.machineRuleGate = release
+        val pending = async {
+            rulesRepository.replaceMachineAlerts(
+                context, "peer-east", MachineAlerts(), "5", "a".repeat(64), "0123456789abcdef0123456789abcdef", "a".repeat(32), null,
+            )
+        }
+        entered.await()
+        rulesStore.save(Connection(connection.origin, "replacement", "replacement-token"))
+        release.complete(Unit)
+        assertTrue(pending.await() is ApiResult.Failure)
+        assertTrue(rulesRepository.isActorRetired(context))
+        assertEquals("An in-flight old-owner response is not retried", 1, api.machineRuleCalls)
+        assertEquals("token", api.machineRuleToken)
     }
 
     @Test
@@ -1446,15 +1583,28 @@ class CollieRepositoryTest {
         assertEquals(1, api.changesCalls)
     }
 
-    private suspend fun authorizeWrites() {
+    private suspend fun authorizeWrites(target: CollieRepository = repository) {
         api.snapshotDevice = DeviceAuthorization(enforced = true, device = "phone", authorized = true)
-        repository.snapshot()
+        target.snapshot()
     }
 
-    private class FakeStore(initial: Connection?) : ConnectionStore {
+    private fun machineRuleRepository(): Triple<CollieRepository, FakeStore, FakeMachineRuleAttemptStore> {
+        val durableStore = FakeStore(connection, "11111111-2222-3333-4444-555555555555")
+        val attempts = FakeMachineRuleAttemptStore()
+        val result = CollieRepository(
+            api, durableStore, OriginValidator(),
+            machineRuleAttemptStore = attempts,
+        )
+        return Triple(result, durableStore, attempts)
+    }
+
+    private class FakeStore(initial: Connection?, private val durableIncarnation: String? = null) : ConnectionStore {
         private val mutable = MutableStateFlow(initial)
         override val connection: StateFlow<Connection?> = mutable
         var cleared = false
+
+        override fun captureCommitted(): CommittedConnectionSnapshot? =
+            durableIncarnation?.let { CommittedConnectionSnapshot(1, it, mutable.value) }
 
         override fun compareAndSet(expected: Connection, replacement: Connection): Boolean =
             mutable.compareAndSet(expected, replacement)
@@ -1524,9 +1674,97 @@ class CollieRepositoryTest {
         }
     }
 
+    private class BlockingMachineRuleCipher : SecretCipher {
+        @Volatile var blockNextEmptyCandidate = false
+        val encryptEntered = CountDownLatch(1)
+        val releaseEncrypt = CountDownLatch(1)
+
+        override fun encrypt(plaintext: ByteArray): CipherEnvelope {
+            if (blockNextEmptyCandidate && plaintext.decodeToString().contains("\"rows\":[]")) {
+                blockNextEmptyCandidate = false
+                encryptEntered.countDown()
+                check(releaseEncrypt.await(5, TimeUnit.SECONDS)) { "Test did not release held encryption" }
+            }
+            return CipherEnvelope(ByteArray(12) { it.toByte() }, plaintext.copyOf())
+        }
+
+        override fun decrypt(envelope: CipherEnvelope): ByteArray = envelope.ciphertext.copyOf()
+    }
+
+    private class FakeMachineRuleAttemptStore : MachineRuleAttemptStore {
+        private val rows = linkedMapOf<String, MachineRuleAttempt>()
+        private val live = mutableSetOf<String>()
+        private val usedIds = mutableSetOf<String>()
+        override fun unresolved(ownerDigest: String, connectionIncarnation: String): List<MachineRuleAttempt> = rows.values.filter {
+            it.ownerDigest == ownerDigest && it.connectionIncarnation == connectionIncarnation
+        }.map(::project)
+        override fun unresolved(ownerDigest: String, connectionIncarnation: String, machineId: String): List<MachineRuleAttempt> = unresolved(ownerDigest, connectionIncarnation).filter { it.machineId == machineId }
+        override fun reserve(attempt: MachineRuleAttempt, finalCommit: MachineRuleAttemptFinalCommit): MachineRuleAttemptReservation {
+            if (rows.values.any { it.ownerDigest == attempt.ownerDigest && it.connectionIncarnation == attempt.connectionIncarnation && it.machineId == attempt.machineId }) return MachineRuleAttemptReservation.Unresolved
+            if (rows.containsKey(attempt.attemptId) || attempt.attemptId in usedIds) return MachineRuleAttemptReservation.Unavailable
+            var reserved = false
+            finalCommit {
+                rows[attempt.attemptId] = attempt.copy(state = MachineRuleAttemptState.pending)
+                live.add(attempt.attemptId)
+                usedIds.add(attempt.attemptId)
+                reserved = true
+                true
+            }
+            return if (reserved) MachineRuleAttemptReservation.Reserved else MachineRuleAttemptReservation.Retired
+        }
+        override fun markUnknown(ownerDigest: String, connectionIncarnation: String, attemptId: String): Boolean {
+            if (attemptId in live) return false
+            val row = rows[attemptId]?.takeIf { it.ownerDigest == ownerDigest && it.connectionIncarnation == connectionIncarnation } ?: return false
+            rows[attemptId] = row.copy(state = MachineRuleAttemptState.unknown)
+            return true
+        }
+        override fun finishLive(ownerDigest: String, connectionIncarnation: String, attemptId: String): Boolean {
+            val row = rows[attemptId]?.takeIf { it.ownerDigest == ownerDigest && it.connectionIncarnation == connectionIncarnation } ?: return false
+            return live.remove(row.attemptId)
+        }
+        override fun settleKnown(ownerDigest: String, connectionIncarnation: String, attemptId: String, finalCommit: MachineRuleAttemptFinalCommit): Boolean {
+            if (rows[attemptId]?.let { it.ownerDigest == ownerDigest && it.connectionIncarnation == connectionIncarnation } != true) return false
+            return finalCommit {
+                val row = rows[attemptId]
+                if (row != null && row.ownerDigest == ownerDigest && row.connectionIncarnation == connectionIncarnation && attemptId in live) {
+                    rows.remove(row.attemptId)
+                    live.remove(row.attemptId)
+                    true
+                } else false
+            }
+        }
+        override fun acknowledgeReviewed(ownerDigest: String, connectionIncarnation: String, attemptId: String, finalCommit: MachineRuleAttemptFinalCommit): Boolean {
+            val candidate = rows[attemptId]
+            if (candidate == null || candidate.ownerDigest != ownerDigest || candidate.connectionIncarnation != connectionIncarnation ||
+                attemptId in live || candidate.state !in setOf(MachineRuleAttemptState.unknown, MachineRuleAttemptState.pending)) return false
+            return finalCommit {
+                val row = rows[attemptId]
+                if (row != null && row.ownerDigest == ownerDigest && row.connectionIncarnation == connectionIncarnation && attemptId !in live &&
+                    (row.state == MachineRuleAttemptState.unknown || row.state == MachineRuleAttemptState.pending)) {
+                    rows.remove(row.attemptId)
+                    true
+                } else false
+            }
+        }
+        private fun project(row: MachineRuleAttempt): MachineRuleAttempt = when {
+            row.attemptId in live -> row.copy(state = MachineRuleAttemptState.pending)
+            row.state == MachineRuleAttemptState.pending -> row.copy(state = MachineRuleAttemptState.unknown, durablePendingWarning = true)
+            else -> row.copy()
+        }
+    }
+
     private class FakeApi : CollieApi {
         var machineHistoryCalls = 0
         val machineHistoryIds = mutableListOf<String>()
+        var machineRuleCalls = 0
+        var machineRuleMachineId: String? = null
+        var machineRuleRevision: String? = null
+        var machineRuleIncarnation: String? = null
+        var machineRuleExtensions: kotlinx.serialization.json.JsonObject? = null
+        var machineRuleToken: String? = null
+        var machineRuleResult: ApiResult<MachineRuleWriteResponse> = ApiResult.Failure(ApiFailure.Network("unused"))
+        var machineRuleEntered: CompletableDeferred<Unit>? = null
+        var machineRuleGate: CompletableDeferred<Unit>? = null
         val paneEtags = mutableListOf<String?>()
         val paneLines = mutableListOf<Int>()
         var replyCalls = 0
@@ -1609,6 +1847,25 @@ class CollieRepositoryTest {
             machineHistoryCalls++
             machineHistoryIds += machineId
             return ApiResult.Success(MachineHistoryResponse(0, 60_000, emptyList()), 200)
+        }
+        override suspend fun replaceMachineAlerts(
+            connection: Connection,
+            machineId: String,
+            alerts: MachineAlerts,
+            rulesRevision: String,
+            machineIncarnation: String,
+            requestId: String,
+            extensions: kotlinx.serialization.json.JsonObject?,
+        ): ApiResult<MachineRuleWriteResponse> {
+            machineRuleCalls++
+            machineRuleMachineId = machineId
+            machineRuleRevision = rulesRevision
+            machineRuleIncarnation = machineIncarnation
+            machineRuleExtensions = extensions
+            machineRuleToken = connection.token
+            machineRuleEntered?.complete(Unit)
+            machineRuleGate?.await()
+            return machineRuleResult
         }
         override suspend fun launchers(connection: Connection, scope: Scope): ApiResult<LaunchersResponse> = launchersResult
         override suspend fun checkRun(connection: Connection, scope: Scope, run: String): ApiResult<LaunchCheckResponse> = launchCheckResult

@@ -1,6 +1,7 @@
 // Domain model for the bridge. These are OUR types, decoupled from Herdr's wire shapes
 // (which live only in mux/herdr/client.ts). The rest of the app talks in these terms.
 
+import type { JsonObject } from "./json.ts";
 import type { Confidence } from "./cache/claims.ts";
 import type { PaneCache } from "./cache/engine.ts";
 import type { ApiErrorDetail, ErrorCode } from "./error-codes.ts";
@@ -557,7 +558,7 @@ export type MachineDisk = {
 export type AlertMetric = "cpu" | "mem" | "disk";
 
 /** Push when the metric stays at or above `above` (0.5..0.99) for `forMin` minutes (5..120). */
-export interface AlertRule {
+export type AlertRule = {
   above: number;
   forMin: number;
 }
@@ -583,6 +584,12 @@ export interface MachineRow {
   /** When the answering bridge took or received that sample. Present exactly when `sample` is. */
   sampledAt?: number;
   alerts: MachineAlerts;
+  /** Canonical unsigned decimal rule generation; absent on an older bridge. */
+  rulesRevision?: string;
+  /** SHA-256 of the enrolled machine identity or persisted solo lineage. */
+  machineIncarnation?: string;
+  /** Inert bounded server-owned rule extensions; callers may preserve, never invent, them. */
+  extensions?: JsonObject;
   /** The metrics whose alert episode is open now. */
   firing: AlertMetric[];
   /**
@@ -631,6 +638,10 @@ export interface MachineHistoryResponse {
 /** `POST /api/machines/:id/alerts`. The rules as stored after the write. */
 export interface MachineAlertsResponse {
   alerts: MachineAlerts;
+  rulesRevision?: string;
+  machineIncarnation?: string;
+  /** Inert bounded server-owned rule extensions; callers may preserve, never invent, them. */
+  extensions?: JsonObject;
 }
 
 /**
@@ -1738,6 +1749,8 @@ export interface CacheWatchListResponse {
 export interface BridgeConfig {
   push: boolean;
   vapidPublicKey: string;
+  /** Native conditional whole-rule replacement is available on this bridge. */
+  machineRulesRevision?: 1;
   /** True only when this host can bind receipt IDs to validated pairing identities and payloads. */
   receiptContextBound?: boolean;
   /** Build id of the bundle the bridge is currently serving (for stale-cache detection). */

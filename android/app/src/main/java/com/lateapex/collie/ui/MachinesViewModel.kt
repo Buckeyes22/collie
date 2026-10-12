@@ -9,16 +9,21 @@ import com.lateapex.collie.CollieApplication
 import com.lateapex.collie.data.AuthorityInvalidation
 import com.lateapex.collie.data.CollieRepository
 import com.lateapex.collie.data.ScopedReadContext
+import com.lateapex.collie.data.MachineRuleAttempt
 import com.lateapex.collie.network.ApiFailure
 import com.lateapex.collie.network.ApiResult
 import com.lateapex.collie.network.MachineHistoryPoint
 import com.lateapex.collie.network.MachineHistoryResponse
+import com.lateapex.collie.network.MachineAlerts
 import com.lateapex.collie.network.MachineRow
 import com.lateapex.collie.network.MachinesResponse
 import com.lateapex.collie.network.retiresPairing
+import com.lateapex.collie.domain.Scope
 import com.lateapex.collie.network.MAX_MACHINE_HISTORY_POINTS
 import com.lateapex.collie.network.MACHINE_MINUTE_MS
 import com.lateapex.collie.network.isValid
+import com.lateapex.collie.network.isValidSuccess
+import com.lateapex.collie.network.isValidConflict
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -26,11 +31,14 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.JsonObject
 
 internal enum class MachineScreenError {
     NOT_CONNECTED, NOT_LEAD, UNKNOWN_MACHINE, PAIRING_REQUIRED, GATEWAY_IDENTITY, DEVICE_AUTHORIZATION,
     ACCESS_CHECK_FAILED, MALFORMED, UNAVAILABLE,
 }
+
+internal enum class MachineRuleWriteState { SAVING, SAVED, CONFLICT, UNSUPPORTED, REFUSED, UNKNOWN, UNKNOWN_RETIRED, FAILED }
 
 internal data class MachinesScreenState(
     val loading: Boolean = false,
@@ -39,6 +47,11 @@ internal data class MachinesScreenState(
     val history: MachineHistoryResponse? = null,
     val error: MachineScreenError? = null,
     val historyError: MachineScreenError? = null,
+    val ruleWriteState: MachineRuleWriteState? = null,
+    val ruleWriteMachineId: String? = null,
+    val ruleAttempts: List<MachineRuleAttempt> = emptyList(),
+    val ruleCustodyAvailable: Boolean = false,
+    val ruleReviewReady: Boolean = false,
     val actor: ScopedReadContext? = null,
 )
 
@@ -53,6 +66,7 @@ internal class MachinesViewModel(
     private var readJob: Job? = null
     private var lastHistoryRequestAt = 0L
     @Volatile private var generation = 0L
+    @Volatile private var activeRuleAttemptId: String? = null
     private val invalidation = repository.onReadContextRetired { event ->
         val original = actor ?: return@onReadContextRetired
         if (!event.retiresReadActor || !event.affects(original)) return@onReadContextRetired
@@ -66,7 +80,17 @@ internal class MachinesViewModel(
             AuthorityInvalidation.ACCESS_FROZEN -> MachineScreenError.ACCESS_CHECK_FAILED
             else -> MachineScreenError.UNAVAILABLE
         }
-        mutableState.value = MachinesScreenState(error = failure, actor = actor)
+        val pendingRuleWrite = mutableState.value.ruleWriteState == MachineRuleWriteState.SAVING
+        activeRuleAttemptId?.let { repository.markMachineRuleAttemptUnknown(original, it) }
+        activeRuleAttemptId = null
+        mutableState.value = MachinesScreenState(
+            error = failure,
+            ruleWriteState = if (pendingRuleWrite) MachineRuleWriteState.UNKNOWN_RETIRED else null,
+            ruleWriteMachineId = if (pendingRuleWrite) mutableState.value.ruleWriteMachineId else null,
+            ruleCustodyAvailable = false,
+            ruleReviewReady = false,
+            actor = actor,
+        )
     }
 
     fun startPolling() {
@@ -99,7 +123,7 @@ internal class MachinesViewModel(
             return
         }
         val request = ++generation
-        mutableState.value = mutableState.value.copy(loading = true, error = null)
+        mutableState.value = mutableState.value.copy(loading = true, error = null, ruleReviewReady = false)
         readJob?.cancel()
         readJob = viewModelScope.launch {
             val result = repository.machines(context, spark = 30)
@@ -114,21 +138,30 @@ internal class MachinesViewModel(
                 is ApiResult.Success -> {
                     val response = result.value
                     if (result.status != 200 || !response.isValid()) {
-                        mutableState.value = mutableState.value.copy(loading = false, response = null, error = MachineScreenError.MALFORMED)
+                        mutableState.value = mutableState.value.copy(loading = false, response = null, error = MachineScreenError.MALFORMED, ruleReviewReady = false)
                         return@launch
                     }
                     val selected = mutableState.value.selectedMachineId
+                    val attempts = repository.machineRuleAttempts(context)
                     if (selected != null && response.machines.none { it.id == selected }) {
-                        mutableState.value = MachinesScreenState(response = response, error = null, actor = context)
+                        mutableState.value = MachinesScreenState(
+                            response = response, error = null, actor = context,
+                            ruleAttempts = attempts.orEmpty(), ruleCustodyAvailable = attempts != null,
+                            ruleReviewReady = attempts != null,
+                        )
                     } else {
-                        mutableState.value = mutableState.value.copy(loading = false, response = response, error = null, actor = context)
+                        mutableState.value = mutableState.value.copy(
+                            loading = false, response = response, error = null, actor = context,
+                            ruleAttempts = attempts.orEmpty(), ruleCustodyAvailable = attempts != null,
+                            ruleReviewReady = attempts != null,
+                        )
                         if (selected != null && System.currentTimeMillis() - lastHistoryRequestAt >= HISTORY_POLL_INTERVAL_MS) {
                             loadHistory(context, selected, request)
                         }
                     }
                 }
-                is ApiResult.Failure -> mutableState.value = mutableState.value.copy(loading = false, error = result.error.toMachineScreenError())
-                is ApiResult.NotModified -> mutableState.value = mutableState.value.copy(loading = false, error = MachineScreenError.MALFORMED)
+                is ApiResult.Failure -> mutableState.value = mutableState.value.copy(loading = false, error = result.error.toMachineScreenError(), ruleReviewReady = false)
+                is ApiResult.NotModified -> mutableState.value = mutableState.value.copy(loading = false, error = MachineScreenError.MALFORMED, ruleReviewReady = false)
             }
         }
     }
@@ -149,6 +182,106 @@ internal class MachinesViewModel(
         readJob?.cancel()
         readJob = null
         mutableState.value = mutableState.value.copy(selectedMachineId = null, history = null, historyError = null, loading = false)
+    }
+
+    fun canEditRules(row: MachineRow): Boolean {
+        val context = actor ?: return false
+        return row.rulesRevision != null && row.machineIncarnation != null &&
+            mutableState.value.ruleCustodyAvailable && mutableState.value.ruleAttempts.none { it.machineId == row.id } &&
+            repository.isCurrent(context) && repository.writesAllowed(Scope(), null)
+    }
+
+    fun saveRules(
+        machineId: String,
+        expectedRevision: String,
+        expectedIncarnation: String,
+        expectedExtensions: JsonObject?,
+        alerts: MachineAlerts,
+    ) {
+        val context = actor ?: return
+        val row = mutableState.value.response?.machines?.firstOrNull { it.id == machineId } ?: return
+        val revision = row.rulesRevision ?: return setRuleWriteState(machineId, MachineRuleWriteState.UNSUPPORTED)
+        val incarnation = row.machineIncarnation ?: return setRuleWriteState(machineId, MachineRuleWriteState.UNSUPPORTED)
+        if (revision != expectedRevision || incarnation != expectedIncarnation || row.extensions != expectedExtensions) {
+            setRuleWriteState(machineId, MachineRuleWriteState.CONFLICT)
+            return
+        }
+        if (!canEditRules(row)) return setRuleWriteState(machineId, MachineRuleWriteState.REFUSED)
+        val requestId = java.util.UUID.randomUUID().toString().replace("-", "")
+        val localAttemptId = java.util.UUID.randomUUID().toString().replace("-", "")
+        activeRuleAttemptId = localAttemptId
+        setRuleWriteState(machineId, MachineRuleWriteState.SAVING)
+        viewModelScope.launch {
+            val result = repository.replaceMachineAlerts(context, machineId, alerts, expectedRevision, expectedIncarnation, requestId, localAttemptId, expectedExtensions)
+            if (!repository.isCurrent(context)) return@launch
+            activeRuleAttemptId = null
+            val attempts = repository.machineRuleAttempts(context)
+            val stillUnresolved = attempts?.any { it.attemptId == localAttemptId } == true
+            val outcomeUnknown = attempts == null || stillUnresolved
+            mutableState.value = mutableState.value.copy(
+                ruleAttempts = attempts.orEmpty(),
+                ruleCustodyAvailable = attempts != null,
+                ruleReviewReady = attempts != null && !stillUnresolved,
+            )
+            when (result) {
+                is ApiResult.Success -> {
+                    val response = result.value
+                    val currentRow = mutableState.value.response?.machines?.firstOrNull { it.id == machineId }
+                    val stillEditingSnapshot = currentRow?.rulesRevision == expectedRevision &&
+                        currentRow.machineIncarnation == expectedIncarnation && currentRow.extensions == expectedExtensions
+                    if (!stillEditingSnapshot) {
+                        setRuleWriteState(machineId, if (outcomeUnknown) MachineRuleWriteState.UNKNOWN else MachineRuleWriteState.CONFLICT)
+                    } else if (result.status == 200 && response.isValidSuccess() &&
+                        response.machineIncarnation == expectedIncarnation && response.extensions == expectedExtensions
+                    ) {
+                        updateMachine(machineId) { current -> current.copy(
+                            alerts = checkNotNull(response.alerts),
+                            rulesRevision = response.rulesRevision,
+                            machineIncarnation = response.machineIncarnation,
+                            extensions = response.extensions,
+                        ) }
+                        setRuleWriteState(machineId, if (attempts == null || attempts.any { it.attemptId == localAttemptId })
+                            MachineRuleWriteState.UNKNOWN else MachineRuleWriteState.SAVED)
+                    } else if (result.status == 409 && response.isValidConflict()) {
+                        val current = checkNotNull(response.current)
+                        updateMachine(machineId) { rowNow -> rowNow.copy(
+                            alerts = current.alerts,
+                            rulesRevision = current.rulesRevision,
+                            machineIncarnation = current.machineIncarnation,
+                            extensions = current.extensions,
+                        ) }
+                        setRuleWriteState(machineId, MachineRuleWriteState.CONFLICT)
+                    } else setRuleWriteState(machineId, if (outcomeUnknown) MachineRuleWriteState.UNKNOWN else MachineRuleWriteState.FAILED)
+                }
+                is ApiResult.Failure -> setRuleWriteState(machineId, if (outcomeUnknown) MachineRuleWriteState.UNKNOWN else result.error.toRuleWriteState())
+                is ApiResult.NotModified -> setRuleWriteState(machineId, if (outcomeUnknown) MachineRuleWriteState.UNKNOWN else MachineRuleWriteState.FAILED)
+            }
+        }
+    }
+
+    private fun updateMachine(id: String, transform: (MachineRow) -> MachineRow) {
+        val response = mutableState.value.response ?: return
+        if (response.machines.none { it.id == id }) return
+        mutableState.value = mutableState.value.copy(response = response.copy(
+            machines = response.machines.map { if (it.id == id) transform(it) else it },
+        ))
+    }
+
+    private fun setRuleWriteState(id: String, value: MachineRuleWriteState?) {
+        mutableState.value = mutableState.value.copy(ruleWriteState = value, ruleWriteMachineId = id)
+    }
+
+    fun acknowledgeRuleAttempt(machineId: String, attemptId: String): Boolean {
+        val context = actor ?: return false
+        val response = mutableState.value.response ?: return false
+        if (response.machines.none { it.id == machineId } || !mutableState.value.ruleReviewReady || !repository.isCurrent(context)) return false
+        val attempt = mutableState.value.ruleAttempts.singleOrNull { it.attemptId == attemptId && it.machineId == machineId }
+            ?: return false
+        if (!repository.acknowledgeMachineRuleAttempt(context, attempt)) return false
+        val remaining = repository.machineRuleAttempts(context) ?: return false
+        mutableState.value = mutableState.value.copy(ruleAttempts = remaining, ruleCustodyAvailable = true, ruleReviewReady = true)
+        setRuleWriteState(machineId, null)
+        return true
     }
 
     private suspend fun loadHistory(context: ScopedReadContext, id: String, request: Long) {
@@ -205,6 +338,16 @@ internal class MachinesViewModel(
             return MachinesViewModel(application, repository) as T
         }
     }
+}
+
+private fun ApiFailure.toRuleWriteState(): MachineRuleWriteState = when (this) {
+    is ApiFailure.Http -> when {
+        code == "machine.rules_unsupported" -> MachineRuleWriteState.UNSUPPORTED
+        status in 400..499 -> MachineRuleWriteState.REFUSED
+        else -> MachineRuleWriteState.UNKNOWN
+    }
+    is ApiFailure.Network, ApiFailure.Timeout, is ApiFailure.Redirect -> MachineRuleWriteState.UNKNOWN
+    is ApiFailure.Protocol -> MachineRuleWriteState.FAILED
 }
 
 internal fun ApiFailure.toMachineScreenError(): MachineScreenError = when (this) {

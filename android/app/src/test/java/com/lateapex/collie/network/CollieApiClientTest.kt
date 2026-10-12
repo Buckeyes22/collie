@@ -10,6 +10,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.double
 import okhttp3.ConnectionPool
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
@@ -97,10 +98,14 @@ class CollieApiClientTest {
     @Test
     fun machineReadsUseLeadOwnedMountedEndpointsAndDecodeTheHistoryTuple() = runBlocking {
         val mounted = Connection(CollieOrigin(server.url("/nested/collie/").toString()), "phone", "token")
-        server.enqueue(MockResponse.Builder().body("""{"ts":120000,"machines":[{"id":"lead","name":"Lead","isLead":true,"health":"reachable","sample":{"cpu":0.25,"cores":4,"memUsed":2,"memTotal":8},"sampledAt":60000,"alerts":{},"firing":[],"spark":{"stepMs":60000,"cpu":[0.2,null],"mem":[0.5,null]}}]}""").build())
+        server.enqueue(MockResponse.Builder().body("""{"ts":120000,"machines":[{"id":"lead","name":"Lead","isLead":true,"health":"reachable","sample":{"cpu":0.25,"cores":4,"memUsed":2,"memTotal":8},"sampledAt":60000,"alerts":{},"rulesRevision":"4","machineIncarnation":"${"a".repeat(64)}","extensions":{"future":{"mode":"hold"}},"firing":[],"spark":{"stepMs":60000,"cpu":[0.2,null],"mem":[0.5,null]}}]}""").build())
         val census = api.machines(mounted, spark = 30)
         assertTrue(census is ApiResult.Success)
-        assertEquals(0.25, (census as ApiResult.Success).value.machines.single().sample?.cpu ?: -1.0, 0.0)
+        val censusValue = (census as ApiResult.Success).value
+        assertEquals(0.25, censusValue.machines.single().sample?.cpu ?: -1.0, 0.0)
+        assertEquals("4", censusValue.machines.single().rulesRevision)
+        assertEquals("a".repeat(64), censusValue.machines.single().machineIncarnation)
+        assertTrue(censusValue.machines.single().extensions!!.containsKey("future"))
         val censusRequest = server.takeRequest()
         assertEquals("/nested/collie/api/machines?spark=30", censusRequest.target)
         assertEquals("Bearer token", censusRequest.headers["Authorization"])
@@ -116,6 +121,118 @@ class CollieApiClientTest {
         val historyRequest = server.takeRequest()
         assertEquals("/nested/collie/api/machines/peer-east/history?since=60000", historyRequest.target)
         assertEquals("Bearer token", historyRequest.headers["Authorization"])
+    }
+
+    @Test
+    fun machineRuleReplacementCarriesOpaqueExtensionsAndConditionalIdentityInOneMountedPost() = runBlocking {
+        val mounted = Connection(CollieOrigin(server.url("/nested/collie/").toString()), "phone", "token")
+        val extensions = Json.parseToJsonElement("""{"future":{"mode":"hold","limit":3}}""").jsonObject
+        server.enqueue(jsonResponse("""{"alerts":{"cpu":{"above":0.9,"forMin":10}},"rulesRevision":"5","machineIncarnation":"${"a".repeat(64)}","extensions":{"future":{"mode":"hold","limit":3}}}"""))
+        val result = api.replaceMachineAlerts(
+            mounted, "peer-east", MachineAlerts(cpu = MachineAlertRule(.9, 10)), "4", "a".repeat(64),
+            "0123456789abcdef0123456789abcdef", extensions,
+        )
+        assertTrue(result is ApiResult.Success)
+        val response = (result as ApiResult.Success).value
+        assertTrue(response.isValidSuccess())
+        assertEquals("5", response.rulesRevision)
+        assertEquals(extensions, response.extensions)
+        val request = server.takeRequest()
+        assertEquals("POST", request.method)
+        assertEquals("/nested/collie/api/machines/peer-east/alerts", request.target)
+        assertEquals("Bearer token", request.headers["Authorization"])
+        assertEquals(mounted.origin.headerValue, request.headers["Origin"])
+        val body = Json.parseToJsonElement(request.body!!.utf8()).jsonObject
+        assertEquals("4", body.getValue("rulesRevision").jsonPrimitive.content)
+        assertEquals("a".repeat(64), body.getValue("machineIncarnation").jsonPrimitive.content)
+        assertEquals("0123456789abcdef0123456789abcdef", body.getValue("requestId").jsonPrimitive.content)
+        assertEquals(extensions, body.getValue("extensions").jsonObject)
+        assertEquals(0.9, body.getValue("cpu").jsonObject.getValue("above").jsonPrimitive.double, 0.0)
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test
+    fun machineRuleConflictReturnsCurrentStateAndUnsupported409IsNotTreatedAsAConflict() = runBlocking {
+        val mounted = Connection(CollieOrigin(server.url("/mounted/").toString()), "phone", "token")
+        server.enqueue(MockResponse.Builder().code(409).body(
+            """{"ok":false,"code":"machine.rules_conflict","current":{"alerts":{"mem":{"above":0.8,"forMin":20}},"rulesRevision":"9","machineIncarnation":"${"b".repeat(64)}","extensions":{"future":true}}}""",
+        ).build())
+        val conflict = api.replaceMachineAlerts(mounted, "local", MachineAlerts(), "8", "a".repeat(64), "1123456789abcdef0123456789abcdef", null)
+        assertTrue(conflict is ApiResult.Success && conflict.status == 409 && conflict.value.isValidConflict())
+        val current = (conflict as ApiResult.Success).value.current!!
+        assertEquals("9", current.rulesRevision)
+        assertEquals("b".repeat(64), current.machineIncarnation)
+        assertTrue(current.extensions!!.containsKey("future"))
+        assertEquals("/mounted/api/machines/local/alerts", server.takeRequest().target)
+
+        server.enqueue(MockResponse.Builder().code(409).body("""{"ok":false,"code":"machine.rules_unsupported"}""").build())
+        val unsupported = api.replaceMachineAlerts(mounted, "local", MachineAlerts(), "9", "b".repeat(64), "2123456789abcdef0123456789abcdef", null)
+        assertTrue(unsupported is ApiResult.Failure)
+        assertEquals("/mounted/api/machines/local/alerts", server.takeRequest().target)
+        assertEquals(2, server.requestCount)
+    }
+
+    @Test
+    fun machineRuleSuccessRejectsInvalidReturnedBoundsDurationFiniteValuesAndMissingIdentity() = runBlocking {
+        val mounted = Connection(CollieOrigin(server.url("/mounted/").toString()), "phone", "token")
+        val validPrefix = "\"rulesRevision\":\"6\",\"machineIncarnation\":\"${"a".repeat(64)}\""
+        val bodies = listOf(
+            """{"alerts":{"cpu":{"above":1.2,"forMin":10}},$validPrefix}""",
+            """{"alerts":{"cpu":{"above":1e999,"forMin":10}},$validPrefix}""",
+            """{"alerts":{"cpu":{"above":0.9,"forMin":1}},$validPrefix}""",
+            """{"alerts":{"cpu":{"above":0.9,"forMin":10}},"rulesRevision":"6"}""",
+        )
+        bodies.forEachIndexed { index, body ->
+            server.enqueue(jsonResponse(body))
+            val result = api.replaceMachineAlerts(
+                mounted, "local", MachineAlerts(cpu = MachineAlertRule(.9, 10)), "5", "a".repeat(64),
+                "${index + 4}".padEnd(32, '0'), null,
+            )
+            assertTrue("Malformed HTTP 200 rules cannot be authoritative", result is ApiResult.Failure)
+            assertTrue((result as ApiResult.Failure).error is ApiFailure.Protocol)
+            assertEquals("POST", server.takeRequest().method)
+        }
+        assertEquals("Each malformed response corresponds to only its original one-shot request", 4, server.requestCount)
+    }
+
+    @Test
+    fun machineRuleReplacementRefusesMissingOrMalformedCurrentIdentityBeforeDispatch() = runBlocking {
+        val mounted = Connection(CollieOrigin(server.url("/mounted/").toString()), "phone", "token")
+        val invalid = listOf(
+            Triple("local", "", "a".repeat(64)),
+            Triple("local", "18446744073709551616", "a".repeat(64)),
+            Triple("local", "3", "A".repeat(64)),
+            Triple("../local", "3", "a".repeat(64)),
+        )
+        invalid.forEachIndexed { index, (id, revision, incarnation) ->
+            val result = api.replaceMachineAlerts(
+                mounted, id, MachineAlerts(), revision, incarnation,
+                "${index + 1}".padEnd(32, '0'), null,
+            )
+            assertTrue("Invalid target/revision/incarnation must fail locally", result is ApiResult.Failure)
+        }
+        assertEquals("Missing current identity must never dispatch a legacy whole-object write", 0, server.requestCount)
+    }
+
+    @Test
+    fun uncertainMachineRuleDeliveryIsOneShotAndNeverAutomaticallyReplayed() = runBlocking {
+        val mounted = Connection(CollieOrigin(server.url("/mounted/").toString()), "phone", "token")
+        server.enqueue(MockResponse.Builder()
+            .code(200)
+            .onResponseStart(mockwebserver3.SocketEffect.CloseSocket())
+            .body("{\"alerts\":{},\"rulesRevision\":\"5\",\"machineIncarnation\":\"${"a".repeat(64)}\"}")
+            .build())
+        val result = api.replaceMachineAlerts(
+            mounted, "local", MachineAlerts(cpu = MachineAlertRule(.9, 10)), "4", "a".repeat(64),
+            "3123456789abcdef0123456789abcdef", Json.parseToJsonElement("""{"future":"kept"}""").jsonObject,
+        )
+        assertTrue("Connection loss after POST has an unknown result", result is ApiResult.Failure)
+        assertTrue((result as ApiResult.Failure).error is ApiFailure.Network || result.error is ApiFailure.Timeout)
+        assertEquals("The ambiguous request was delivered exactly once", 1, server.requestCount)
+        val request = server.takeRequest()
+        assertEquals("POST", request.method)
+        assertEquals("3123456789abcdef0123456789abcdef", Json.parseToJsonElement(request.body!!.utf8()).jsonObject
+            .getValue("requestId").jsonPrimitive.content)
     }
 
     @Test

@@ -262,7 +262,15 @@ completed uploads do not persist the provider URI or its grant.
   the foreground. Long lead rosters remain complete and are shown in bounded pages. The fixed
   24-hour chart/table names its time range and lists leading, internal, and trailing gaps. Access
   refusals retain known pairing or gateway-factor meaning; unknown provenance is labeled neutrally.
-  It does not edit alert rules or provide background notification delivery.
+  Current bridges also expose whole-rule CPU, memory and disk editing. Each save carries that row's
+  rules revision and machine incarnation, preserves opaque server extensions and is sent once;
+  conflicts show the server's current rules for review. An uncertain save keeps a bounded encrypted
+  metadata barrier across restart until a fresh read and explicit acknowledgement; screen cancellation
+  ends the exact original process-local attempt before best-effort durable UNKNOWN publication. If
+  journal contention leaves the encrypted row PENDING, the same-process view projects it as UNKNOWN,
+  discloses that durability state, and permits acknowledgement only after fresh review. Final journal
+  updates recheck actor custody and journal version after encryption. The old request is never
+  reconstructed or replayed. Background notification delivery remains a separate feature.
 - The Keys drawer keeps primary keys and modifiers together, wrapping on narrow phones to retain
   48 dp touch targets. Its More sheet holds presets and function keys.
 - The worktree sheet lists a repository's linked worktrees that have no open space; selecting one

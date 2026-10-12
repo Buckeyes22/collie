@@ -14,6 +14,7 @@ import kotlinx.serialization.descriptors.StructureKind
 import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonDecoder
 import kotlinx.serialization.json.JsonEncoder
 import kotlinx.serialization.json.JsonNull
@@ -56,6 +57,9 @@ data class MachineRow(
     val alerts: MachineAlerts = MachineAlerts(),
     val firing: List<String> = emptyList(),
     val spark: MachineSpark? = null,
+    val rulesRevision: String? = null,
+    val machineIncarnation: String? = null,
+    val extensions: JsonObject? = null,
 )
 
 @Serializable
@@ -76,6 +80,26 @@ data class MachineHistoryResponse(
     val ts: Long,
     val stepMs: Long,
     val points: List<MachineHistoryPoint>,
+)
+
+/** Current whole-rule replacement snapshot returned on success and on a 409 conflict. */
+@Serializable
+data class MachineRuleSnapshot(
+    val alerts: MachineAlerts,
+    val rulesRevision: String,
+    val machineIncarnation: String,
+    val extensions: JsonObject? = null,
+)
+
+@Serializable
+data class MachineRuleWriteResponse(
+    val alerts: MachineAlerts? = null,
+    val rulesRevision: String? = null,
+    val machineIncarnation: String? = null,
+    val extensions: JsonObject? = null,
+    val ok: Boolean? = null,
+    val code: String? = null,
+    val current: MachineRuleSnapshot? = null,
 )
 
 /** The wire tuple: minute start, cpu average/max, memory fraction, rx/tx B/s, disk fraction. */
@@ -139,7 +163,8 @@ internal fun MachinesResponse.isValid(): Boolean {
             (row.sample == null) == (row.sampledAt == null) &&
             (row.sample == null || row.sample.isValid()) &&
             (row.spark == null || row.spark.isValid()) &&
-            row.firing.all { it in MACHINE_METRICS } && row.firing.distinct().size == row.firing.size && row.alerts.isValid()
+            row.firing.all { it in MACHINE_METRICS } && row.firing.distinct().size == row.firing.size && row.alerts.isValid() &&
+            row.rulesRevision.validRuleRevisionOrNull() && row.machineIncarnation.validMachineIncarnationOrNull() && row.extensions.validRuleExtensions()
     }
 }
 
@@ -174,6 +199,26 @@ private fun MachineAlerts.isValid(): Boolean = listOfNotNull(cpu, mem, disk).all
     it.above.isFinite() && it.above in .5..0.99 && it.forMin in 5..120
 }
 
+internal fun MachineAlerts.isValidForWrite(): Boolean = isValid()
+
+internal fun MachineRuleSnapshot.isValid(): Boolean =
+    alerts.isValid() && rulesRevision.validRuleRevision() && machineIncarnation.validMachineIncarnation() && extensions.validRuleExtensions()
+
+internal fun MachineRuleWriteResponse.isValidSuccess(): Boolean =
+    alerts?.isValidForWrite() == true && rulesRevision != null && rulesRevision.validRuleRevision() &&
+        machineIncarnation != null && machineIncarnation.validMachineIncarnation() &&
+        extensions.validRuleExtensions() && current == null && ok == null && code == null
+
+internal fun MachineRuleWriteResponse.isValidConflict(): Boolean =
+    ok == false && code == "machine.rules_conflict" && current?.isValid() == true && alerts == null &&
+        rulesRevision == null && machineIncarnation == null && extensions == null
+
+private fun String?.validRuleRevisionOrNull(): Boolean = this == null || validRuleRevision()
+private fun String.validRuleRevision(): Boolean = RULE_REVISION.matches(this) && runCatching { toULong() }.isSuccess
+private fun String?.validMachineIncarnationOrNull(): Boolean = this == null || validMachineIncarnation()
+private fun String.validMachineIncarnation(): Boolean = MACHINE_INCARNATION.matches(this)
+private fun JsonObject?.validRuleExtensions(): Boolean = this == null || toString().toByteArray(Charsets.UTF_8).size <= MAX_RULE_EXTENSIONS_BYTES
+
 private fun Double.fraction() = isFinite() && this in 0.0..1.0
 private fun Double?.fractionOrNull() = this == null || this.fraction()
 private fun Double?.nonNegativeOrNull() = this == null || (isFinite() && this >= 0.0)
@@ -186,3 +231,6 @@ const val MAX_MACHINE_DISKS = 4
 private val MACHINE_HEALTH = setOf("reachable", "unreachable", "incompatible", "conflicted")
 private val MACHINE_METRICS = setOf("cpu", "mem", "disk")
 private val MACHINE_ID = Regex("[a-z0-9][a-z0-9-]{0,62}")
+private val RULE_REVISION = Regex("(?:0|[1-9][0-9]{0,19})")
+private val MACHINE_INCARNATION = Regex("[0-9a-f]{64}")
+private const val MAX_RULE_EXTENSIONS_BYTES = 4096

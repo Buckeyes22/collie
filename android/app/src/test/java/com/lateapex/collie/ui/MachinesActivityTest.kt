@@ -7,9 +7,11 @@ import android.view.ViewGroup
 import android.widget.TextView
 import androidx.core.content.ContextCompat
 import androidx.test.core.app.ApplicationProvider
+import com.google.android.material.button.MaterialButton
 import com.lateapex.collie.CollieApplication
 import com.lateapex.collie.R
 import com.lateapex.collie.network.MachineSpark
+import com.lateapex.collie.network.MachineRow
 import com.lateapex.collie.network.MachinesResponse
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
@@ -97,6 +99,43 @@ class MachinesActivityTest {
     }
 
     @Test
+    fun machinesEditorRemainsReadOnlyWhenBridgeDoesNotAdvertiseConditionalRuleIdentity() {
+        val app = ApplicationProvider.getApplicationContext<CollieApplication>()
+        assertEquals("Fire at 50–99% after sustained use.", app.getString(R.string.machines_threshold_prompt))
+        val activity = Robolectric.buildActivity(MachinesActivity::class.java).create().get()
+        val row = MachineRow("lead", "Desk", true, "reachable")
+        val render = MachinesActivity::class.java.getDeclaredMethod("render", MachinesScreenState::class.java).apply { isAccessible = true }
+        render.invoke(activity, MachinesScreenState(response = MachinesResponse(120_000, listOf(row)), selectedMachineId = row.id))
+        val edit = descendants(activity.window.decorView).filterIsInstance<MaterialButton>()
+            .single { it.text == app.getString(R.string.machines_edit_alert_rules) }
+        assertTrue("Legacy bridges stay read-only for whole-rule replacement", !edit.isEnabled)
+        assertTrue("The editor explains why conditional writes are unavailable", findText(activity.window.decorView, app.getString(R.string.machines_rules_unsupported)))
+    }
+
+    @Test
+    fun currentRulesAndFiringRemainReviewableWhenMachineSampleIsUnavailable() {
+        val app = ApplicationProvider.getApplicationContext<CollieApplication>()
+        val activity = Robolectric.buildActivity(MachinesActivity::class.java).create().get()
+        val row = MachineRow("lead", "Desk", true, "unreachable", alerts = com.lateapex.collie.network.MachineAlerts(
+            cpu = com.lateapex.collie.network.MachineAlertRule(.9, 10),
+        ), firing = listOf("cpu"), rulesRevision = "4", machineIncarnation = "a".repeat(64))
+        val render = MachinesActivity::class.java.getDeclaredMethod("render", MachinesScreenState::class.java).apply { isAccessible = true }
+        render.invoke(activity, MachinesScreenState(response = MachinesResponse(120_000, listOf(row)), selectedMachineId = row.id))
+
+        val firingLine = app.getString(R.string.machines_current_alerts, "CPU")
+        val ruleLine = app.getString(R.string.machines_alert_rule, app.getString(R.string.machines_metric_cpu),
+            java.text.NumberFormat.getPercentInstance(java.util.Locale.getDefault()).apply { maximumFractionDigits = 1 }.format(.9), 10)
+        assertTrue("The same facts card exposes current health, unavailable telemetry, firing, rules and sample time",
+            findFactsCard(activity.window.decorView, listOf(
+                app.getString(R.string.machines_health, row.health),
+                app.getString(R.string.machines_resources_unavailable),
+                firingLine,
+                ruleLine,
+                app.getString(R.string.machines_sample_time_unknown),
+            )))
+    }
+
+    @Test
     fun chartExposesAnAccessibleDescriptionAndDrawsMissingSamplesAsGaps() {
         val app = ApplicationProvider.getApplicationContext<CollieApplication>()
         val chart = ResourceChartView(app)
@@ -118,6 +157,14 @@ class MachinesActivityTest {
     private fun findText(view: View, expected: String): Boolean {
         if (view is TextView && view.text.toString() == expected) return true
         if (view is ViewGroup) for (index in 0 until view.childCount) if (findText(view.getChildAt(index), expected)) return true
+        return false
+    }
+
+    private fun findFactsCard(view: View, exactLines: List<String>): Boolean {
+        if (view is TextView && view.text.toString().lines().containsAll(exactLines)) return true
+        if (view is ViewGroup) for (index in 0 until view.childCount) {
+            if (findFactsCard(view.getChildAt(index), exactLines)) return true
+        }
         return false
     }
 }

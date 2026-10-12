@@ -194,8 +194,8 @@ import { SttCancelledError, type SttProvider } from "./stt/provider.ts";
 import { uploadTooLarge } from "./uploads.ts";
 import { agentCapabilities } from "./agent-capabilities.ts";
 import { MUX_LOGO_PATH, OPERATOR_FONTS_PATH, journalAgentOf, toPaneWire } from "./types.ts";
-import type { LaunchCheckResponse, MachineAlertsResponse } from "./types.ts";
-import { parseMachineAlerts } from "./machine-parse.ts";
+import type { LaunchCheckResponse, MachineAlerts, MachineAlertsResponse } from "./types.ts";
+import { MACHINE_RULE_BODY_MAX_BYTES, parseMachineRuleRequest, parseMachineStrictJson } from "./machine-parse.ts";
 import { SPARK_MAX_MINUTES } from "./machine-history.ts";
 import type { MachineSurface } from "./machines.ts";
 import type {
@@ -909,6 +909,7 @@ export function bridgeConfigBody(opts: {
   vapidPublicKey: string;
   build: string;
   receiptContextBound?: boolean;
+  machineRulesRevision?: 1;
   mode: CrewRuntime["mode"];
   /**
    * The active adapter, when there is one. Optional so the crew-mode assertions below (and any
@@ -970,6 +971,7 @@ export function bridgeConfigBody(opts: {
     vapidPublicKey: opts.vapidPublicKey,
     build: opts.build,
   };
+  if (opts.machineRulesRevision === 1) wire.machineRulesRevision = 1;
   if (opts.receiptContextBound !== undefined) wire.receiptContextBound = opts.receiptContextBound;
   // Assigned, never conditionally spread: a solo instance's body must carry NEITHER key, byte for
   // byte as before the crew existed (CREW_PROTOCOL.md §11).
@@ -2596,6 +2598,7 @@ export async function startServer(opts: {
             vapidPublicKey: push.publicKey,
             build: await buildId(),
             mode: crew.mode,
+            machineRulesRevision: scoped?.kind === "peer" || machines?.replaceRules === undefined ? undefined : 1,
             operatorCommands: mine,
             operatorKeys: myKeys,
             operatorQuickReplies: myReplies,
@@ -3154,6 +3157,7 @@ export async function startServer(opts: {
         {
           gate: currentCallerGate,
           device: () => whois(req).device,
+          pairedIdentity: () => pairedIdentityOf(req, pairingGate),
           audit: (entry) => audit.record(entry),
         },
         machines,
@@ -6062,6 +6066,8 @@ export interface MachineRouteCaller {
   gate(level: "read" | "write"): Response | null;
   /** The requesting device's name across both gates, or `null` when neither names one. */
   device(): string | null;
+  /** Stable private paired-record identity, captured before any request-body/store await. */
+  pairedIdentity?(): string | null;
   audit(entry: AuditEntry): void;
 }
 
@@ -6071,6 +6077,41 @@ function queryCount(req: Request, key: string, min: number, max: number): number
   if (raw === null || !/^\d{1,16}$/.test(raw)) return null;
   const n = Number(raw);
   return n >= min && n <= max ? n : null;
+}
+
+async function boundedMachineRuleBody(req: Request): Promise<{ readonly value: JsonValue } | { readonly status: 400 | 413 }> {
+  const declared = req.headers.get("content-length");
+  if (declared !== null && /^\d+$/.test(declared) && Number(declared) > MACHINE_RULE_BODY_MAX_BYTES) return { status: 413 };
+  if (req.body === null) return { status: 400 };
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > MACHINE_RULE_BODY_MAX_BYTES) {
+        await reader.cancel().catch(() => {});
+        return { status: 413 };
+      }
+      chunks.push(value);
+    }
+  } catch {
+    return { status: 400 };
+  } finally {
+    reader.releaseLock();
+  }
+  try {
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+    const source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    const value = parseMachineStrictJson(source);
+    return value === null ? { status: 400 } : { value };
+  } catch {
+    return { status: 400 };
+  }
 }
 
 /** The three machine routes, or `null` when `pathname` is none of them. */
@@ -6101,6 +6142,8 @@ export async function serveMachinesRoute(
   // takes the device gates a send takes, and it is audited.
   const denied = caller.gate(isHistory ? "read" : "write");
   if (denied) return denied;
+  const originalActor = caller.pairedIdentity?.() ?? null;
+  const hasActorWitness = caller.pairedIdentity !== undefined;
   if (machines === undefined) return jsonError(apiError("crew.not_lead"), 404, ae);
   const unknownMachine = () => jsonError(apiError("host.unknown", { host: id }), 404, ae);
   if (isHistory) {
@@ -6112,19 +6155,52 @@ export async function serveMachinesRoute(
   }
   const entry = machines.entry(id);
   if (entry === undefined) return unknownMachine();
-  let raw: JsonValue;
-  try {
-    // SAFETY: `Request.json()` output IS a JsonValue by construction; `parseMachineAlerts` re-checks
-    // every field of it before any of it is used.
-    raw = (await req.json()) as JsonValue;
-  } catch {
-    return text("bad request", 400);
+  const originalEnrollment = JSON.stringify([entry.id, entry.fingerprint ?? null, entry.enrolledAt ?? null, entry.solo ?? false]);
+  const parsedBody = await boundedMachineRuleBody(req);
+  if ("status" in parsedBody) return text(parsedBody.status === 413 ? "payload too large" : "bad request", parsedBody.status);
+  const request = parseMachineRuleRequest(parsedBody.value);
+  if (request === null) return text("bad alerts", 400);
+  if (request.requestId !== undefined && machines.replaceRules === undefined) return json({ ok: false, code: "machine.rules_unsupported" }, ae, 409);
+  if (request.requestId !== undefined && (originalActor === null || !hasActorWitness)) return text("paired identity unavailable", 503);
+  const currentAuthority = (): boolean => {
+    const gate = caller.gate("write");
+    if (gate !== null) return false;
+    const currentEntry = machines.entry(id);
+    if (currentEntry === undefined || JSON.stringify([currentEntry.id, currentEntry.fingerprint ?? null, currentEntry.enrolledAt ?? null, currentEntry.solo ?? false]) !== originalEnrollment) return false;
+    return !hasActorWitness || (caller.pairedIdentity?.() ?? null) === originalActor;
+  };
+  if (!currentAuthority()) return text("write authority changed", 403);
+  let stored: MachineAlerts;
+  let rulesRevision: string | undefined;
+  let machineIncarnation: string | undefined;
+  let extensions: JsonObject | undefined;
+  if (machines.replaceRules !== undefined) {
+    const input:Parameters<NonNullable<typeof machines.replaceRules>>[0]={id,alerts:request.alerts,actor:originalActor,observedAt:Date.now()};
+    if(request.rulesRevision!==undefined)input.rulesRevision=request.rulesRevision;
+    if(request.machineIncarnation!==undefined)input.machineIncarnation=request.machineIncarnation;
+    if(request.requestId!==undefined)input.requestId=request.requestId;
+    if(request.extensions!==undefined)input.extensions=request.extensions;
+    const outcome=await machines.replaceRules(input,currentAuthority);
+    if(!currentAuthority()) return text("write authority changed",403);
+    if (outcome.kind === "retired") return unknownMachine();
+    if (outcome.kind === "unavailable") return json({ ok: false, code: "machine.monitoring_state_unavailable" }, ae, 503);
+    if(outcome.kind==="conflict") {
+      const current:MachineAlertsResponse={alerts:outcome.current.rules,rulesRevision:outcome.current.rulesRevision,machineIncarnation:outcome.current.machineIncarnation};
+      if(outcome.current.extensions!==undefined)current.extensions=outcome.current.extensions;
+      return json({ok:false,code:"machine.rules_conflict",current},ae,409);
+    }
+    stored = outcome.current.rules;
+    rulesRevision = outcome.current.rulesRevision;
+    machineIncarnation = outcome.current.machineIncarnation;
+    extensions = outcome.current.extensions;
+  } else {
+    const finalDenied = caller.gate("write"); if (finalDenied) return finalDenied;
+    if (hasActorWitness && (caller.pairedIdentity?.() ?? null) !== originalActor) return text("write authority changed", 403);
+    const legacy = await machines.setAlerts(id, request.alerts);
+    if(!currentAuthority()) return text("write authority changed",403);
+    if (legacy === null) return unknownMachine();
+    stored = legacy;
   }
-  const alerts = parseMachineAlerts(raw);
-  if (alerts === null) return text("bad alerts", 400);
-  const finalDenied = caller.gate("write"); if (finalDenied) return finalDenied;
-  const stored = await machines.setAlerts(id, alerts);
-  if (stored === null) return unknownMachine();
   // The machine rides the envelope's `host`, absent for this collie's own machine as on every other
   // line, and the rule rides as numbers, which no `audit.content` setting redacts.
   const detail: AuditDetail = {};
@@ -6145,7 +6221,11 @@ export async function serveMachinesRoute(
   if (device !== null) row.device = device;
   if (!entry.isLead) row.host = id;
   caller.audit(row);
-  return json({ alerts: stored } satisfies MachineAlertsResponse, ae);
+  const response:MachineAlertsResponse={alerts:stored};
+  if(rulesRevision!==undefined)response.rulesRevision=rulesRevision;
+  if(machineIncarnation!==undefined)response.machineIncarnation=machineIncarnation;
+  if(extensions!==undefined)response.extensions=extensions;
+  return json(response,ae);
 }
 
 // GET /api/cache-rules — the rule catalog behind every cache chip on THIS host, plus the overrides

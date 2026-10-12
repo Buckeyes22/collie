@@ -145,6 +145,114 @@ class CommittedConnectionStoreTest {
         }
     }
 
+    @Test fun sameConnectionIncarnationRecommitKeepsOriginalActorAndRuleCustodyCurrent() {
+        Fixture().use { f ->
+            f.store.save(f.a)
+            val repository = CollieRepository(emptyApi(), f.store, f.validator)
+            val original = repository.readContext()!!
+            val prefs = f.context.getSharedPreferences("rule-harmless-${System.nanoTime()}", Context.MODE_PRIVATE)
+            val attempts = EncryptedMachineRuleAttemptStore(f.context, f.cipher, Json, prefs)
+            val attempt = MachineRuleAttempt(
+                attemptId = java.util.UUID.randomUUID().toString().replace("-", ""),
+                ownerDigest = original.custodyOwner.storageIdentity,
+                connectionIncarnation = original.connectionIncarnation!!,
+                machineId = "peer-east", machineIncarnation = "a".repeat(64), rulesRevision = "4",
+            )
+            assertEquals(MachineRuleAttemptReservation.Reserved, attempts.reserve(attempt) { commit ->
+                repository.acknowledgeLocalCustody(original, commit)
+            })
+            assertTrue(attempts.finishLive(attempt.ownerDigest, attempt.connectionIncarnation, attempt.attemptId))
+            assertTrue(attempts.markUnknown(attempt.ownerDigest, attempt.connectionIncarnation, attempt.attemptId))
+
+            val before = original.committedSnapshot!!
+            f.store.save(f.a)
+            val after = f.store.captureCommitted()
+            assertSame(f.a, after.connection)
+            assertEquals(before.incarnationId, after.incarnationId)
+            assertEquals(before.revision + 1, after.revision)
+            assertTrue("A harmless same-incarnation save keeps the original scoped actor current", repository.isCurrent(original))
+            assertTrue("Original rule custody can be explicitly settled after same-owner recommit", attempts.acknowledgeReviewed(
+                attempt.ownerDigest, attempt.connectionIncarnation, attempt.attemptId,
+            ) { commit -> repository.acknowledgeLocalCustody(original, commit) })
+            assertTrue(attempts.unresolved(attempt.ownerDigest, attempt.connectionIncarnation)!!.isEmpty())
+        }
+    }
+
+    @Test fun realEncryptedStoreHeldPublicationAbaMintsNewIncarnationAndFencesOldRuleActor() {
+        Fixture().use { f ->
+            f.store.save(f.a)
+            val repository = CollieRepository(emptyApi(), f.store, f.validator)
+            val original = repository.readContext()!!
+            val prefs = f.context.getSharedPreferences("rule-aba-${System.nanoTime()}", Context.MODE_PRIVATE)
+            val attempts = EncryptedMachineRuleAttemptStore(f.context, f.cipher, Json, prefs)
+            val attempt = MachineRuleAttempt(
+                attemptId = java.util.UUID.randomUUID().toString().replace("-", ""),
+                ownerDigest = original.custodyOwner.storageIdentity,
+                connectionIncarnation = original.connectionIncarnation!!,
+                machineId = "peer-east", machineIncarnation = "b".repeat(64), rulesRevision = "7",
+            )
+            assertEquals(MachineRuleAttemptReservation.Reserved, attempts.reserve(attempt) { commit ->
+                repository.acknowledgeLocalCustody(original, commit)
+            })
+            assertTrue(attempts.finishLive(attempt.ownerDigest, attempt.connectionIncarnation, attempt.attemptId))
+            assertTrue(attempts.markUnknown(attempt.ownerDigest, attempt.connectionIncarnation, attempt.attemptId))
+
+            val baselinePublished = CountDownLatch(1)
+            val baselineObserver = f.store.observeCommitted {
+                if (it.revision >= original.committedSnapshot!!.revision) baselinePublished.countDown()
+            }
+            assertTrue("Initial durable A witness has completed publication", baselinePublished.await(2, TimeUnit.SECONDS))
+            baselineObserver.close()
+
+            val entered = CountDownLatch(1)
+            val release = CountDownLatch(1)
+            val holdOnce = AtomicBoolean(true)
+            val publisherFailure = AtomicReference<Throwable?>()
+            val publisherFinished = CountDownLatch(1)
+            f.store.beforePublicationForTesting = {
+                if (holdOnce.compareAndSet(true, false)) {
+                    try {
+                        entered.countDown()
+                        check(release.await(2, TimeUnit.SECONDS)) { "Held ABA publication was not released" }
+                    } catch (failure: Throwable) {
+                        publisherFailure.set(failure)
+                    } finally {
+                        publisherFinished.countDown()
+                    }
+                }
+            }
+            try {
+                repository.beforeReadContextCaptureForTesting = {
+                    f.store.clear()
+                    assertTrue("Clear publication is held after durable commit", entered.await(2, TimeUnit.SECONDS))
+                    f.store.save(f.a)
+                }
+                assertNull("Capture hook cannot mint an actor across a real A→clear→same-A transition", repository.readContext())
+                repository.beforeReadContextCaptureForTesting = {}
+                val returned = f.store.captureCommitted()
+                assertSame(f.a, returned.connection)
+                assertNotEquals("Production clear and re-add mints a new durable incarnation", original.connectionIncarnation, returned.incarnationId)
+
+                assertFalse("Original actor is retired from the durable witness before observers run", repository.isCurrent(original))
+                assertFalse("Old original-owner journal deletion is fenced before publication", attempts.acknowledgeReviewed(
+                    attempt.ownerDigest, attempt.connectionIncarnation, attempt.attemptId,
+                ) { commit -> repository.acknowledgeLocalCustody(original, commit) })
+                val fresh = repository.readContext()
+                assertNotNull("Fresh direct capture can adopt the newly committed incarnation while publication is held", fresh)
+                assertNotEquals(original.connectionIncarnation, fresh!!.connectionIncarnation)
+                assertTrue(repository.isCurrent(fresh))
+                assertEquals(listOf(attempt.copy(state = MachineRuleAttemptState.unknown)),
+                    attempts.unresolved(attempt.ownerDigest, attempt.connectionIncarnation, attempt.machineId))
+            } finally {
+                repository.beforeReadContextCaptureForTesting = {}
+                release.countDown()
+                f.store.beforePublicationForTesting = {}
+            }
+            assertTrue("Held publisher callback completed after controlled release", publisherFinished.await(2, TimeUnit.SECONDS))
+            assertNull("A daemon publisher failure must fail this test", publisherFailure.get())
+        }
+    }
+
     @Test fun writesAllowedRejectsCommittedSameObjectABAImmediatelyWithoutAReadOrPublication() {
         Fixture().use { f ->
             f.store.save(f.a)

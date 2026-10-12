@@ -19,6 +19,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.serialization.DeserializationStrategy
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -103,6 +104,16 @@ interface CollieApi {
     /** Lead-owned census. The machine id is response data, never a request origin or crew selector. */
     suspend fun machines(connection: Connection, spark: Int = MAX_MACHINE_SPARK_MINUTES): ApiResult<MachinesResponse> = unavailable("Machine resources")
     suspend fun machineHistory(connection: Connection, machineId: String, since: Long? = null): ApiResult<MachineHistoryResponse> = unavailable("Machine history")
+    /** One-shot full-rule replacement bound to the exact revision and machine incarnation read by the editor. */
+    suspend fun replaceMachineAlerts(
+        connection: Connection,
+        machineId: String,
+        alerts: MachineAlerts,
+        rulesRevision: String,
+        machineIncarnation: String,
+        requestId: String,
+        extensions: JsonObject?,
+    ): ApiResult<MachineRuleWriteResponse> = unavailable("Machine alert rules")
     /** [etag] from the last answer to the same read: an unchanged page comes back as NotModified. */
     suspend fun history(
         connection: Connection,
@@ -601,6 +612,46 @@ class CollieApiClient(
             executeJson(request(connection, url), MachineHistoryResponse.serializer(), READ_TIMEOUT_SECONDS, maxResponseBytes = MAX_MACHINE_RESPONSE_BYTES),
             "Malformed machine history response",
         ) { it.isValid(since) }
+    }
+
+    override suspend fun replaceMachineAlerts(
+        connection: Connection,
+        machineId: String,
+        alerts: MachineAlerts,
+        rulesRevision: String,
+        machineIncarnation: String,
+        requestId: String,
+        extensions: JsonObject?,
+    ): ApiResult<MachineRuleWriteResponse> {
+        if (!isValidMachineId(machineId) || !rulesRevision.matches(Regex("(?:0|[1-9][0-9]{0,19})")) ||
+            runCatching { rulesRevision.toULong() }.isFailure || !machineIncarnation.matches(Regex("[0-9a-f]{64}")) ||
+            !requestId.matches(Regex("[A-Za-z0-9_-]{16,96}")) || !alerts.isValidForWrite() ||
+            (extensions?.toString()?.toByteArray(StandardCharsets.UTF_8)?.size ?: 0) > MAX_MACHINE_RULE_EXTENSIONS_BYTES
+        ) return ApiResult.Failure(ApiFailure.Protocol("Machine alert rule request is malformed"))
+        val fields = linkedMapOf<String, JsonElement>()
+        alerts.cpu?.let { fields["cpu"] = json.encodeToJsonElement(MachineAlertRule.serializer(), it) }
+        alerts.mem?.let { fields["mem"] = json.encodeToJsonElement(MachineAlertRule.serializer(), it) }
+        alerts.disk?.let { fields["disk"] = json.encodeToJsonElement(MachineAlertRule.serializer(), it) }
+        fields["rulesRevision"] = JsonPrimitive(rulesRevision)
+        fields["machineIncarnation"] = JsonPrimitive(machineIncarnation)
+        fields["requestId"] = JsonPrimitive(requestId)
+        extensions?.let { fields["extensions"] = it }
+        val body = json.encodeToString(JsonObject.serializer(), JsonObject(fields))
+        val url = url(connection.origin, path("machines", machineId, "alerts"))
+        return executeResponse(post(connection, url, body), MUTATION_TIMEOUT_SECONDS) { response ->
+            if (response.code in REDIRECT_CODES) return@executeResponse ApiResult.Failure(ApiFailure.Redirect(response.code))
+            val wire = readBoundedBody(response, MAX_MACHINE_RULE_RESPONSE_BYTES)
+                ?: return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Machine alert rule response exceeded its size limit"))
+            if (response.code == 200 || response.code == 409) {
+                val decoded = decode(MachineRuleWriteResponse.serializer(), wire)
+                if (decoded != null && ((response.code == 200 && decoded.isValidSuccess()) ||
+                        (response.code == 409 && decoded.isValidConflict()))) {
+                    return@executeResponse ApiResult.Success(decoded, response.code, response.header("ETag"), response.header(BUILD_HEADER), responseAuthority(response))
+                }
+            }
+            if (!response.isSuccessful) return@executeResponse failure(response, wire)
+            ApiResult.Failure(ApiFailure.Protocol("Malformed machine alert rule response"))
+        }
     }
 
     override suspend fun history(
@@ -1947,6 +1998,8 @@ class CollieApiClient(
         private const val MAX_PROCESS_INFO_TEXT_CHARS = 220 * 1024
         private const val MAX_PROCESS_INFO_BODY_BYTES = 1_000_000
         internal const val MAX_MACHINE_RESPONSE_BYTES = 1_000_000
+        private const val MAX_MACHINE_RULE_RESPONSE_BYTES = 16_384
+        private const val MAX_MACHINE_RULE_EXTENSIONS_BYTES = 4_096
         internal const val MAX_LAYOUT_RESPONSE_BYTES = 1_000_000
         private const val MAX_CACHE_RULES_BODY_BYTES = 256_000
         private const val MAX_CACHE_WATCH_LIST_BODY_BYTES = 256_000

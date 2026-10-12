@@ -3,6 +3,7 @@
 
 import type { ApiErrorCode, ApiErrorDetail } from "@/lib/api-error-codes";
 import { t } from "@/lib/i18n";
+import type { JsonObject } from "./json";
 
 export type AgentStatus = "idle" | "working" | "blocked" | "done" | "unknown";
 
@@ -543,6 +544,11 @@ export interface MachineRow {
   sample?: MachineSample;
   sampledAt?: number;
   alerts: MachineAlerts;
+  /** Original whole-rule generation and machine incarnation, absent on an older bridge. */
+  rulesRevision?: string;
+  machineIncarnation?: string;
+  /** Inert server-owned extension facts; no client authority. */
+  extensions?: JsonObject;
   /** Episodes open now. */
   firing: MachineMetric[];
   /** The last complete minutes for the small charts; only when asked for with `?spark=N`. */

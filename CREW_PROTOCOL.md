@@ -3251,3 +3251,100 @@ linked checkout and never deletes the branch or the main checkout. A lost reply 
 durable result; same-ID reconciliation reads the existing receipt and never dispatches a second
 removal. The lead forwards the same closed neutral request body and preserves owner/device/session
 scope; no raw vendor method, arbitrary path or trust option crosses the link.
+## Machine rules and monitoring checkpoints (B27 additive backend contract)
+
+The existing mounted `POST /api/machines/:id/alerts` remains lead-local and device-write. It is
+unforwardable. A declared `machineRulesRevision:1` requires an actual conditional `replaceRules`
+implementation; an older structural surface cannot accept a revisioned request through its legacy
+setter. The closed modern body carries cpu/mem/disk rules, `rulesRevision` and
+`machineIncarnation`, and an explicit `requestId`; legacy unrevisioned writes still serialize and
+advance the revision. Refuse duplicate keys, malformed Unicode, nonfinite numbers, extra mutation
+keys and more than 16 KiB before JSON allocation. Each rule is exactly `{above,forMin}` within the
+existing bounds. A conflict returns the current exact revision/incarnation/rules. Bounded server
+extensions are inert, preserved when omitted, and returned unchanged on machine reads, successful
+writes and current conflicts; callers cannot invent or change them. They are limited to 4 KiB,
+64 values and depth four. They confer no provider or recipient authority.
+
+A monitoring job captures its original local ownership publication, role, secret generation,
+enrolled incarnations and original warrant expiry before awaiting. The local ownership revision
+changes on actual authority-key changes, including A → B → the same original A; a harmless
+refresh of the same warrant preserves it and never extends a captured expiry. No revision is
+ordered across processes. Store commit, outbox settlement and actual browser dispatch recheck the
+original witness; dispatch also retains its original slot high-water and episode custody. The
+completed-minute judgement, exact history snapshot, episode transitions, outbox and watermark
+commit together. Failed or incomplete judgement does not advance the watermark. Required clears
+use the headroom reserved on opening and commit ahead of openings under pressure. A pending original slot refuses only its new opening, preserving other reserved clears and leaving the completed-minute watermark retryable; its old sequence and episode are never replaced. Pending events
+remain bounded to 8 MiB, at most 4096 bytes each. Their exact lineage/slot/uint64 sequence, event ID,
+semantic hash and created content are retried unchanged. The narrow B22 producer object includes
+an `originalProducerCurrent` closure which must be checked at the actual durable enqueue boundary
+and is never serialized. Actual B22 signing/registration receipts and provider delivery are required
+later source joins; a swallowed browser-send exception never certifies native settlement.
+
+The optional deputy declaration is
+`monitoringCheckpoint:{schema:1,maxChunkBytes:262144,maxGenerationBytes:67108864,recordFormat:"jsonl-continuation-v1"}`.
+Only an admitted current lead with the exact current warrant, deputy fingerprint and secret may
+use `GET|POST /crew/v1/monitoring/checkpoint`. The lead requires the exact record-format declaration;
+absence, malformed bounds, an old aligned-reader declaration or a different format is unsupported.
+`begin` additionally carries this exact `recordFormat`; an absent/different marker is explicitly
+refused. This is feature negotiation within the existing protocol integer, not an app/server
+version change. The original 18-field schema-1 manifest remains closed and binds authority,
+lineage, revision, immutable `createdAt`, history bounds, sorted roster/rule/producer digests and
+at most 256 exact ordered chunk descriptors under its root digest.
+
+Chunks fill by bytes. UTF-8 scalars and JSONL records may span chunk boundaries; the streaming
+reader retains at most one complete 512 KiB record and a 256 KiB decoded chunk. It rejects invalid
+Unicode, duplicate keys, nonfinite JSON, unknown record kinds, noncanonical encoding, ordering,
+truncation and mismatched hashes. No host, minute or required Float64 value is silently removed to
+fit the transport. Every live machine/history must match the complete enrolled roster and original
+incarnation. History carries its incarnation explicitly. Rules, receipts, events, reservations and
+high-water facts must agree. The authoritative store and checkpoint reader share one per-slot predicate: at most two events, exactly an adjacent alert/clear pair for the same original episode/owner when two exist; an alert alone requires its adjacent reserved clear, while a clear alone has no reservation. Two clears or two alerts cannot form an accepted generation. A closed tombstone retains only the original persisted member,
+fingerprint, enrollment time, incarnation and rule revision with bounded outstanding clear or
+receipt custody. It cannot make an unlisted live machine or history valid or mint a new recipient.
+A retired alert is admissible only with its exact original dominating clear; old cleanup cannot
+replace current enrolled B facts. Actual v1 bare nine-number history rows and open episodes migrate
+in one authoritative generation with original precision and a reserved clear, without reannouncing
+an opening. Malformed or enrollment-unresolvable legacy custody fails closed without resetting disk.
+
+A revision's source snapshot includes its committed roster/history and timestamp; live samples do
+not mutate it. The source captures that snapshot's own committed revision after waiting for prior
+writes. Later minute, rule and outbox commits do not revoke this observational snapshot: it completes
+under its original role, enrollment/roster, secret, warrant-generation and unextended warrant-expiry
+lease. A role/deposition, store replacement/unavailability or original authority ABA still retires it.
+This does not relax the separate original-current rule/episode/slot predicates for producer enqueue
+or settlement. An exact older receipt certifies only its captured revision and root. The lead coalesces
+new data to the latest next capture after acceptance, even before another sweep; a replacement deputy
+requires a fresh admitted sweep and never borrows an older link. The existing per-frame PeerClient
+budget (default 1200 ms) still includes the bounded response body. A timed-out commit is deferred,
+never accepted on silence; its already-owned receiver verification may finish only under its original
+authority, and a later exact verified receipt can report that observation. Subsequent current work
+uses a new snapshot, not a producer replay. Retries use identical manifest/chunk bytes. Receipt and `already_current` report usable
+data only after all exact chunks are present, private and hash-verified. A protected accepted head
+records successful closed-record/cross-set verification of that exact root and format. Unchanged
+chunk hashes preserve that prior proof; corruption, unreadable storage or an unverified legacy head
+is unavailable, not first use. Exact admitted bytes can repair a damaged/unverified generation.
+Begin admission and accepted commit acknowledgements require the exact requested checkpointRevision and rootDigest; already_current also requires both fields. Chunk acknowledgement retains its exact index and sha256. Missing or mismatched phase facts are deferred and never certify the generation. Reverification for read-only B38 preparation remains complete; its durable marker stays `paused`,
+and confers no takeover authority or activation. Actual B38 activation is still required source work.
+
+The original settlement allowed 128 MiB accepted/staging payload plus 1 MiB metadata/temp disk
+headroom and one decoded record/chunk/manifest scratch. Preserve that historical settlement. The
+corrective contract explicitly replaces its metadata allowance with **128 MiB aggregate private
+SQLite verification/sorting scratch**, separately from the unchanged **128 MiB payload** allowance.
+There are at most two owned index handles; 32 KiB pages keep bounded rule/receipt/event records inline, and hard page limits reserve schema pages before creation and account for aggregate growth,
+no WAL exists, and index values retain bounded compressed records. Record work buffers are bounded
+to a decoded 512 KiB record, encoded 512 KiB + 1024-byte compression ceiling, 256 KiB chunk and
+bounded 256 KiB manifest. SQLite cache/spill/temp/mmap settings are tuning, not a hard RSS proof.
+Require at least 193 MiB free space before index admission (128 MiB index + 64 MiB incoming payload
++ 1 MiB metadata headroom). Source ordering uses bounded synchronous 64-record SQL batches, committed before each cooperative yield, and checks the original owner;
+receiver verification retains external cross-facts rather than a full in-memory generation.
+Use private owner roots, exclusive no-follow files and bounded descriptor reads. `finally` closes
+statements and deletes owned scratch. Failed source builds use that same exact-owned transfer cleanup to release both the physical spool and its registry reservation on validation, authority or file-I/O refusal. Startup removes only typed private scratch of an observably
+exited process. Source transfer spools carry their original PID and are removed only after an observed process-exit witness; anonymous legacy transfers remain charged and preserved. Live/unknown/unowned files remain unavailable custody. Windows ACL/exit/RSS,
+physical interruption and real service peak-resource acceptance remain OPEN.
+
+The production peer dial retains its original timeout through the original response body, checks
+protocol/status/MIME and declared or chunked bytes before JSON allocation, and caps checkpoint
+responses at 16 KiB for every consumed status. Refused or foreign bodies are canceled without
+allocation. No second client, shell, helper, new dependency or public endpoint is introduced.
+The independent source review, canonical native/B10/B26/B22/B38 joins, actual device/fleet/Solo/Crew
+and provider acceptance remain separate gates; unit/CLI/source-capacity evidence does not close them.
+Current Android acceptance targets the physical Pixel with current versions. Historical version-matrix evidence remains archived; it is not a requested rerun or a current acceptance claim.
