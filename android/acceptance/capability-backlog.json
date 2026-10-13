@@ -32159,5 +32159,16 @@
     "physical_vs_headless_evidence": "Headless API/APK checks do not prove visible UI acceptance. Record actual foreground launch and feature-specific physical behavior.",
     "implementation_and_toolchain_changes": "Remove obsolete support as the canonical implementation advances; recording this policy is not proof that SDK/dependency/support changes have been completed."
   },
-  "updated_at": "2026-10-12T19:26:22.987396+00:00"
+  "updated_at": "2026-10-12T19:26:22.987396+00:00",
+  "current_scope_review": {
+    "date": "2026-10-13",
+    "authority": "/home/chris/git/collie/android/acceptance/course-correction-2026-10-13.md",
+    "crosswalk": "/home/chris/git/collie/android/acceptance/course-correction-2026-10-13.json",
+    "goal_prompt": "/home/chris/git/collie/android/acceptance/completion-goal-2026-10-13.txt",
+    "herdr_development_required": false,
+    "speech_to_text_required": false,
+    "old_counts_are_completion_conditions": false,
+    "historical_statuses_are_current_acceptance": false,
+    "note": "Retain prior source requirements and evidence as history; execute the corrected crosswalk, not the expanded former backlog. No goal has been activated."
+  }
 }

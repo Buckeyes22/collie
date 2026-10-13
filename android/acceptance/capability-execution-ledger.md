@@ -1,5 +1,7 @@
 # Capability execution ledger
 
+> **Execution scope superseded, 2026-10-13.** Use `/home/chris/git/collie/android/acceptance/course-correction-2026-10-13.md` and its JSON crosswalk for the remaining Android work. Speech-to-text is excluded. The former all41/75/132/102 closure counts and private Herdr producer requirements are historical, not the current completion goal. Preserve this document as the earlier plan/evidence.
+
 B41 kickoff ledger. Coverage is derived from the source registers below; the ranked scheduler and integration remain parent-owned.
 
 ## Snapshot and disposition

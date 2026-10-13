@@ -1,0 +1,706 @@
+{
+  "date": "2026-10-13",
+  "purpose": "Preparation only; implementation and goal activation have not begun.",
+  "audited_main": "7477ffd6ff7489bcd63ec2d5945114cc026cbc3e",
+  "audited_branches": {
+    "work/b33-operator-controls": "6cc9335a",
+    "work/b34-session-observation": "9f1f4b2a"
+  },
+  "official_target": {
+    "collie_tag": "v1.21.0",
+    "collie_commit": "b55b9d2f2aaa7426d7b97dbfdd2c6b196e58082f",
+    "herdr_tag": "v0.9.4",
+    "herdr_commit": "7e26bad94044eba205033111a0ce8033ede7e24f",
+    "freeze_rule": "Use these fixed released contracts. Do not restart scope when a newer release appears; address new releases only when necessary to fix a target defect."
+  },
+  "decisions": {
+    "product": "Independent native Kotlin Android client with full user-facing Collie parity, retaining explicit fork decisions.",
+    "herdr": "Unmodified released runtime; no producer development or private protocol dependency.",
+    "language": "English-only per accepted ADR0037; arbitrary Unicode terminal/agent/operator content preserved.",
+    "android": "Current project API37 toolchain and owned Pixel; no legacy Android matrix.",
+    "push": "Reuse approved B22 UnifiedPush with operator-configured self-hosted ntfy; real native delivery required.",
+    "scope_authority": "This reviewed crosswalk and prioritized work packages supersede expanded old closure counts. Historical requirements/evidence are preserved, not silently declared complete.",
+    "speech_to_text": "Excluded by explicit user instruction during this review: skip speech to text. No implementation, model/runtime setup, voice parity or STT acceptance gates. Preserve existing source."
+  },
+  "items": [
+    {
+      "id": "B01",
+      "title": "Establish scoped contracts, admission and Crew dispatch",
+      "scope_decision": "required",
+      "current_source_status": "Current source anchors located; bounded source/documentation review only. Fresh integrated functional acceptance is pending.",
+      "historical_implementation_status": "in_progress",
+      "historical_review_status": "bounded_foundation_passed_joint_review_pending",
+      "historical_acceptance_status": "pending",
+      "current_code_paths": [
+        "/home/chris/git/collie/bridge/server.ts",
+        "/home/chris/git/collie/bridge/control/contracts.ts",
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/network/CollieApiClient.kt"
+      ],
+      "remaining_action": "Keep paired read/write gates, origin/mount and host/session targeting. Reconcile upstream v1.21 contracts without adding stronger vendor guarantees that stock Herdr does not offer.",
+      "pixel_check": "Wrong-host responses, revoked device, server restart and cancelled requests never admit a write.",
+      "official_reference": "https://github.com/AltanS/collie/blob/v1.21.0/docs/security.md"
+    },
+    {
+      "id": "B02",
+      "title": "Persist launch intents and reconcile uncertain outcomes",
+      "scope_decision": "required",
+      "current_source_status": "Current source anchors located; bounded source/documentation review only. Fresh integrated functional acceptance is pending.",
+      "historical_implementation_status": "Reviewed corrected5 source and preview6 integrated with all60 preimage guards; exact preview allfive 777/0,99 suites,411 held inputs",
+      "historical_review_status": "Independent Sol/high corrected5+integration6 approved; source findings closed",
+      "historical_acceptance_status": "pending; physical/vendor/Crew/joint acceptance remains",
+      "current_code_paths": [
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/NewActivity.kt",
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/data/LaunchIntentStore.kt",
+        "/home/chris/git/collie/bridge/launch-receipts.ts"
+      ],
+      "remaining_action": "Reconcile existing launch receipts against upstream requestId semantics. Resolve uncertainty without duplicate launches; prove process-death behavior.",
+      "pixel_check": "Launch once, interrupt response, restart app and reconcile the same request without a second pane.",
+      "official_reference": "https://github.com/AltanS/collie/blob/v1.21.0/docs/configure.md"
+    },
+    {
+      "id": "B03",
+      "title": "Make refresh, freshness and read depth truthful",
+      "scope_decision": "required",
+      "current_source_status": "Current source anchors located; bounded source/documentation review only. Fresh integrated functional acceptance is pending.",
+      "historical_implementation_status": "reviewed_exact3_beacon_readLimits_runtime_fix_integrated_into_current_private_Main_ad344",
+      "historical_review_status": "independent_whole3_approved_exact_correction_original_whole_approvals_preserved",
+      "historical_acceptance_status": "pending",
+      "current_code_paths": [
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PaneViewModel.kt",
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PaneScrollback.kt",
+        "/home/chris/git/collie/bridge/mux/herdr/adapter.ts"
+      ],
+      "remaining_action": "Check truthful refresh and read-depth limits against stock backends; preserve viewport during reads and show stale/unavailable state.",
+      "pixel_check": "Refresh after host-side changes and page through output without losing position or moving host focus.",
+      "official_reference": "https://github.com/AltanS/collie/blob/v1.21.0/docs/multiplexers.md"
+    },
+    {
+      "id": "B04",
+      "title": "Show authenticated journal images",
+      "scope_decision": "required",
+      "current_source_status": "Current source anchors located; bounded source/documentation review only. Fresh integrated functional acceptance is pending.",
+      "historical_implementation_status": "reviewed_correction31_integrated_combined739_all_five_native_passed",
+      "historical_review_status": "independent_correction31_and_integration_preview31_approved",
+      "historical_acceptance_status": "pending",
+      "current_code_paths": [
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/AuthenticatedImageView.kt",
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/HistoryTurnRenderer.kt"
+      ],
+      "remaining_action": "Validate current authenticated image projection, decode bounds and original host/session after integration.",
+      "pixel_check": "Open real journal images; switch hosts and revoke pairing while an image loads.",
+      "official_reference": "https://github.com/AltanS/collie/blob/v1.21.0/docs/configure.md"
+    },
+    {
+      "id": "B05",
+      "title": "Render complete tool, question and denial details",
+      "scope_decision": "required",
+      "current_source_status": "Current source anchors located; bounded source/documentation review only. Fresh integrated functional acceptance is pending.",
+      "historical_implementation_status": "integrated_current_native_gates_passed_acceptance_pending",
+      "historical_review_status": "independent_corrective_review_approved",
+      "historical_acceptance_status": "pending",
+      "current_code_paths": [
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/StructuredToolPresentation.kt",
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/HistoryTurnRenderer.kt"
+      ],
+      "remaining_action": "Bring tool, question and denial cards to v1.21 behavior, including answered question context and new data-based asks.",
+      "pixel_check": "View tools/denials/questions and answer harmless prompts; stale cards cannot act on a new question.",
+      "official_reference": "https://github.com/AltanS/collie/blob/v1.21.0/docs/configure.md"
+    },
+    {
+      "id": "B06",
+      "title": "Expose safe Send queued now",
+      "scope_decision": "required",
+      "current_source_status": "Current source anchors located; bounded source/documentation review only. Fresh integrated functional acceptance is pending.",
+      "historical_implementation_status": "Reviewed35-path current B08 integration completed; allfive814/0 across416 held inputs",
+      "historical_review_status": "Independent Sol whole R1\u2013R7 joined+exact B08 source approved",
+      "historical_acceptance_status": "pending; all required runtime/Crew/device/platform/joint acceptance remains",
+      "current_code_paths": [
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/CodexAcceptedReplies.kt",
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PaneViewModel.kt"
+      ],
+      "remaining_action": "Verify Send queued now only when the current supported Codex workflow offers it; preserve unknown outcome handling.",
+      "pixel_check": "Queue and send one harmless message, including disconnect during submission.",
+      "official_reference": "https://github.com/AltanS/collie/blob/v1.21.0/docs/configure.md"
+    },
+    {
+      "id": "B07",
+      "title": "Persist version-specific update dismissal",
+      "scope_decision": "required",
+      "current_source_status": "Current source anchors located; bounded source/documentation review only. Fresh integrated functional acceptance is pending.",
+      "historical_implementation_status": "reviewed_current_join_integrated_427_native_inputs_853_tests_zero_failures",
+      "historical_review_status": "independent_whole_current_join_source_approved",
+      "historical_acceptance_status": "pending",
+      "current_code_paths": [
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/UpdatesActivity.kt",
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/SettingsServerControls.kt"
+      ],
+      "remaining_action": "Verify version-specific offer/crew dismissal, snooze and restart persistence with current official update responses.",
+      "pixel_check": "Dismiss a version, reopen app, then show a genuinely newer offer.",
+      "official_reference": "https://github.com/AltanS/collie/blob/v1.21.0/docs/upgrading.md"
+    },
+    {
+      "id": "B08",
+      "title": "Inspect foreground processes, directories and restore failures",
+      "scope_decision": "retain_subset",
+      "current_source_status": "Current source anchors located; bounded source/documentation review only. Fresh integrated functional acceptance is pending.",
+      "historical_implementation_status": "Reviewed39-path joined corrective3 integrated; allfive786/0 across413 held inputs; current MAIN further includes reviewed B06",
+      "historical_review_status": "Independent Luna whole isolated and exact joined corrective3 approved",
+      "historical_acceptance_status": "pending; all required runtime/Crew/device/platform/joint acceptance remains",
+      "current_code_paths": [
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PaneHeaderPresentation.kt",
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PaneProcessesActivity.kt"
+      ],
+      "remaining_action": "Keep documented pane cwd/agent/session/restore information. Do not require a comprehensive Herdr process-inspection product for parity.",
+      "pixel_check": "Pane headers, restored panes and missing session state remain accurate on stock Herdr.",
+      "official_reference": "https://github.com/AltanS/collie/blob/v1.21.0/docs/multiplexers.md"
+    },
+    {
+      "id": "B09",
+      "title": "Close all harness registry and semantic gaps",
+      "scope_decision": "retain_subset",
+      "current_source_status": "Current source anchors located; bounded source/documentation review only. Fresh integrated functional acceptance is pending.",
+      "historical_implementation_status": "root_join_corrective3_all_gates_passed",
+      "historical_review_status": "different_luna_joined69_review_queued",
+      "historical_acceptance_status": "pending",
+      "current_code_paths": [
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/terminal/AgentSemanticParser.kt",
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/ShippedAgentCommands.kt",
+        "/home/chris/git/collie/bridge/journal/registry.ts"
+      ],
+      "remaining_action": "Match the v1.21 shipped harness and journal support, including OpenClaw journal changes. Remove the requirement to invent journals/actions/media for every Herdr-detected kind. Preserve truthful raw fallback.",
+      "pixel_check": "Exercise supported semantic interactions and journal readers with harmless captures/current available vendors; unknown harness remains usable safely as documented.",
+      "official_reference": "https://github.com/AltanS/collie/blob/v1.21.0/docs/claude-code-on-your-phone.md"
+    },
+    {
+      "id": "B10",
+      "title": "Add Files, source navigation and inert previews",
+      "scope_decision": "required",
+      "current_source_status": "Current source anchors located; bounded source/documentation review only. Fresh integrated functional acceptance is pending.",
+      "historical_implementation_status": "reviewed_canonical_source_integrated",
+      "historical_review_status": "independent_Sol_source_approved",
+      "historical_acceptance_status": "pending; modern native original55 and controlled Solo/Crew HTTPS Pixel passed; full joints remain",
+      "current_code_paths": [
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/FilesActivity.kt",
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/FilePreviewRenderer.kt",
+        "/home/chris/git/collie/bridge/files-view.ts"
+      ],
+      "remaining_action": "Verify Files tree, previews/images, nested roots and source navigation; reuse integrated code.",
+      "pixel_check": "Navigate folders/files/images on solo and Crew; reject traversal and keep the selected original host.",
+      "official_reference": "https://github.com/AltanS/collie/blob/v1.21.0/docs/changes.md"
+    },
+    {
+      "id": "B11",
+      "title": "Add Changes, diffs and last-commit inspection",
+      "scope_decision": "required",
+      "current_source_status": "Current source anchors located; bounded source/documentation review only. Fresh integrated functional acceptance is pending.",
+      "historical_implementation_status": "in_progress",
+      "historical_review_status": "whole Luna source approved; actual acceptance pending",
+      "historical_acceptance_status": "pending",
+      "current_code_paths": [
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/ChangesActivity.kt",
+        "/home/chris/git/collie/bridge/changes.ts"
+      ],
+      "remaining_action": "Verify diff, changed/untracked files and last-commit behavior against the official Files/Changes page.",
+      "pixel_check": "Inspect changed files, diff and last commit without modifying the repository.",
+      "official_reference": "https://github.com/AltanS/collie/blob/v1.21.0/docs/changes.md"
+    },
+    {
+      "id": "B12",
+      "title": "Control pane splits, resize, zoom and movement",
+      "scope_decision": "retain_subset",
+      "current_source_status": "Current source anchors located; bounded source/documentation review only. Fresh integrated functional acceptance is pending.",
+      "historical_implementation_status": "in_progress",
+      "historical_review_status": "independentSolwhole48approved andintegrated",
+      "historical_acceptance_status": "pending",
+      "current_code_paths": [
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/LayoutActivity.kt",
+        "/home/chris/git/collie/bridge/control/layout.ts"
+      ],
+      "remaining_action": "Retain documented create-beside and explicit Show in terminal behavior. Extra splits/resize/zoom/movement are not release requirements solely because Herdr has them; keep stock-compatible existing extras only after bounded review.",
+      "pixel_check": "Create beside and Show in terminal work; passive navigation does not steal terminal focus.",
+      "official_reference": "https://github.com/AltanS/collie/blob/v1.21.0/docs/multiplexers.md"
+    },
+    {
+      "id": "B13",
+      "title": "Organize workspaces and tabs",
+      "scope_decision": "retain_subset",
+      "current_source_status": "Current source anchors located; bounded source/documentation review only. Fresh integrated functional acceptance is pending.",
+      "historical_implementation_status": "reviewed_canonical_join7_integrated",
+      "historical_review_status": "independent_Luna_source_approved_current_acceptance_pending",
+      "historical_acceptance_status": "pending",
+      "current_code_paths": [
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/OrganizeSpacesActivity.kt",
+        "/home/chris/git/collie/bridge/control/organization.ts"
+      ],
+      "remaining_action": "Require the official create/rename/close spaces/tabs flows. Reordering/moving extra host structures does not become mandatory by inclusion in this backlog.",
+      "pixel_check": "Create, rename and close disposable tabs/spaces with capability-aware confirmations.",
+      "official_reference": "https://github.com/AltanS/collie/blob/v1.21.0/docs/multiplexers.md"
+    },
+    {
+      "id": "B14",
+      "title": "Complete New, folders, favorites and recents",
+      "scope_decision": "required",
+      "current_source_status": "Current source anchors located; bounded source/documentation review only. Fresh integrated functional acceptance is pending.",
+      "historical_implementation_status": "Reviewed20-path New source and4-path expanded sheet fix integrated;427 inputs byte-equal reviewed allfive853/0",
+      "historical_review_status": "Independent Luna New review and Sol HIGH exact expanded correction approved; acceptance separate",
+      "historical_acceptance_status": "pending",
+      "current_code_paths": [
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/NewActivity.kt",
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/FolderPickerView.kt"
+      ],
+      "remaining_action": "Verify launcher rows, agent choices, favorite/recent folders and folder previews. Add v1.21 program starter rows with the upstream restrictions.",
+      "pixel_check": "Choose folders, favorite/recent entries and launch a supported starter exactly once.",
+      "official_reference": "https://github.com/AltanS/collie/blob/v1.21.0/docs/configure.md"
+    },
+    {
+      "id": "B15",
+      "title": "Complete worktree planning, creation and safe removal",
+      "scope_decision": "required",
+      "current_source_status": "Current source anchors located; bounded source/documentation review only. Fresh integrated functional acceptance is pending.",
+      "historical_implementation_status": "reviewed_combined62_integrated; modern native joint checks active",
+      "historical_review_status": "independent_Sol_whole62_source_approved",
+      "historical_acceptance_status": "pending; actual worktree/vendor/Crew/platform and canonical modern Pixel acceptance remain",
+      "current_code_paths": [
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/WorktreePlanPresentation.kt",
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/WorktreeUiLease.kt",
+        "/home/chris/git/collie/bridge/worktree-folder.ts"
+      ],
+      "remaining_action": "Verify official worktree plan/create/open/remove workflow. Keep path containment, current target checks and uncertainty; do not claim stock vendor compare-and-set.",
+      "pixel_check": "Create/open/remove disposable worktree; cancel plan and interrupt create response without replay.",
+      "official_reference": "https://github.com/AltanS/collie/blob/v1.21.0/docs/configure.md"
+    },
+    {
+      "id": "B16",
+      "title": "Manage recipes and one-off runs",
+      "scope_decision": "required",
+      "current_source_status": "Current source anchors located; bounded source/documentation review only. Fresh integrated functional acceptance is pending.",
+      "historical_implementation_status": "in_progress",
+      "historical_review_status": "independent Sol fixture approved; actual whole acceptance pending",
+      "historical_acceptance_status": "pending",
+      "current_code_paths": [
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/LaunchRecipeActivity.kt",
+        "/home/chris/git/collie/bridge/launcher-recipes.ts"
+      ],
+      "remaining_action": "Verify added recipes and rename/remove, allowed one-off runs, preflight, recent run removal and clear.",
+      "pixel_check": "Save/use/rename/remove a recipe and run one harmless allowed command exactly once.",
+      "official_reference": "https://github.com/AltanS/collie/blob/v1.21.0/docs/configure.md"
+    },
+    {
+      "id": "B17",
+      "title": "Upload bounded documents and text attachments",
+      "scope_decision": "required",
+      "current_source_status": "Current source anchors located; bounded source/documentation review only. Fresh integrated functional acceptance is pending.",
+      "historical_implementation_status": "in_progress",
+      "historical_review_status": "wholeproduction20approved/integrated; native55rootinstrumenttestreviewpending",
+      "historical_acceptance_status": "pending",
+      "current_code_paths": [
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/DocumentAttachment.kt",
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/ComposerMedia.kt",
+        "/home/chris/git/collie/bridge/uploads.ts"
+      ],
+      "remaining_action": "Verify supported image/document/text attachment MIME, size, authorization and cancellation. Preserve terminal semantics rather than exposing a raw local source path. Speech/audio transcription is excluded.",
+      "pixel_check": "Attach a supported document/image and cancel/switch pane before upload completion.",
+      "official_reference": "https://github.com/AltanS/collie/blob/v1.21.0/docs/configure.md"
+    },
+    {
+      "id": "B18",
+      "title": "Expose authoritative agent identity, sessions and resume state",
+      "scope_decision": "retain_subset",
+      "current_source_status": "Current source anchors located; bounded source/documentation review only. Fresh integrated functional acceptance is pending.",
+      "historical_implementation_status": "canonical_join13_safe_foundation_only_integrated_FULL_H11_FALSE_R1_required_open",
+      "historical_review_status": "independent_Sol_partial_foundation_approved_full_feature_NOT_APPROVED",
+      "historical_acceptance_status": "pending",
+      "current_code_paths": [
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/AgentIdentityActivity.kt",
+        "/home/chris/git/collie/bridge/mux/herdr/agent-control.ts"
+      ],
+      "remaining_action": "Require official pane identity, session selection and available history. Stop requiring stronger original-terminal identity/CAS proofs beyond upstream guarantees as a new runtime dependency.",
+      "pixel_check": "Switch sessions/panes and verify the displayed agent/history; identity uncertainty never enables a guessed action.",
+      "official_reference": "https://github.com/AltanS/collie/blob/v1.21.0/docs/configure.md"
+    },
+    {
+      "id": "B19",
+      "title": "Implement named agent actions, atomic prompts and waits",
+      "scope_decision": "retain_subset",
+      "current_source_status": "Current source anchors located; bounded source/documentation review only. Fresh integrated functional acceptance is pending.",
+      "historical_implementation_status": "producer39_consumer56_frozen; Root5file_Rust_compiler_fix_pass; modern_join49_compile3_pass",
+      "historical_review_status": "pending_independent_whole_consumer_and_producer_review",
+      "historical_acceptance_status": "pending; actual guarded runtime/Crew/waits/Windows/Pixel and full native gates",
+      "current_code_paths": [
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/AgentControlActivity.kt",
+        "/home/chris/git/collie/bridge/mux/herdr/agent-control.ts",
+        "/home/chris/git/collie/bridge/mux/herdr/client.ts"
+      ],
+      "remaining_action": "Remove private agent_original_input_v1 and agent_observation_cursor_v1 requirements from mandatory app flows. Use existing official Collie reply/keys and v1.21 durable send/abort/answer; retire unavailable automation entry points without deleting preserved source.",
+      "pixel_check": "Prompt/reply/keys and durable controls work with an unmodified backend; no private handshake flag is required.",
+      "official_reference": "https://github.com/AltanS/collie/blob/v1.21.0/docs/multiplexers.md"
+    },
+    {
+      "id": "B20",
+      "title": "Expose cache/model/git context and cache-watch lifecycle",
+      "scope_decision": "required",
+      "current_source_status": "Current source anchors located; bounded source/documentation review only. Fresh integrated functional acceptance is pending.",
+      "historical_implementation_status": "reviewed_join31_integrated_private_basis66cd5dcc",
+      "historical_review_status": "author_and_join_independent_luna_approved",
+      "historical_acceptance_status": "pending",
+      "current_code_paths": [
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/CacheContextPresentation.kt",
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/CacheWatchActivity.kt"
+      ],
+      "remaining_action": "Verify cache/model/git context, watch registration/removal and user-visible cache countdown against current docs.",
+      "pixel_check": "Start/stop a cache watch and compare context/countdown with the current host state.",
+      "official_reference": "https://github.com/AltanS/collie/blob/v1.21.0/docs/configure.md"
+    },
+    {
+      "id": "B21",
+      "title": "Search the whole owning-session journal within explicit bounds",
+      "scope_decision": "retain_subset",
+      "current_source_status": "Current source anchors located; bounded source/documentation review only. Fresh integrated functional acceptance is pending.",
+      "historical_implementation_status": "in_progress",
+      "historical_review_status": "changes_required",
+      "historical_acceptance_status": "pending",
+      "current_code_paths": [
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/HistoryActivity.kt",
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/HistoryHighlight.kt",
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/OutputFind.kt"
+      ],
+      "remaining_action": "Match official bounded Chat/History search and navigation. Whole-session indexing outside upstream capabilities is not a prerequisite. Verify local search/copy behavior without server-side text mutation.",
+      "pixel_check": "Search visible/history content, load older pages and reopen the owning session without changing scope.",
+      "official_reference": "https://github.com/AltanS/collie/blob/v1.21.0/docs/configure.md"
+    },
+    {
+      "id": "B22",
+      "title": "Deliver real background push and all five notification preferences",
+      "scope_decision": "required",
+      "current_source_status": "Current source anchors located; bounded source/documentation review only. Fresh integrated functional acceptance is pending.",
+      "historical_implementation_status": "in_progress",
+      "historical_review_status": "corrective4_bounded_fixture_author_active_full_join_required",
+      "historical_acceptance_status": "pending",
+      "current_code_paths": [
+        "/home/chris/git/collie/bridge/native-push-contract.ts",
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/notifications/NativePushPayload.kt",
+        "/home/chris/git/collie/android/app/src/main/AndroidManifest.xml"
+      ],
+      "remaining_action": "Implement real native delivery using the already specified UnifiedPush/self-hosted ntfy baseline. Add Collie registration/delivery and Android connector/receiver/channel/permission lifecycle. Use documented Web Push encryption/connector contracts; reuse prepared payload models where compatible. No FCM/provider expansion.",
+      "pixel_check": "Receive blocked/done/update notifications while app is closed; test permission denial, doze, replacement, revoke, clear/dedupe and exact-pane tap without granting write authority.",
+      "official_reference": "https://github.com/AltanS/collie/blob/v1.21.0/docs/voice-and-push.md"
+    },
+    {
+      "id": "B23",
+      "title": "Add safe links, share import, QR pairing and configured-host App Links",
+      "scope_decision": "required",
+      "current_source_status": "Current source anchors located; bounded source/documentation review only. Fresh integrated functional acceptance is pending.",
+      "historical_implementation_status": "root_corrective13_frozen_native1141_zero_failures",
+      "historical_review_status": "new_different_whole61_pending",
+      "historical_acceptance_status": "pending",
+      "current_code_paths": [
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/CollieDeepLink.kt",
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/OpenLinkActivity.kt"
+      ],
+      "remaining_action": "Verify pane/history links, sharing/import and pairing QR as native equivalents. App Links only for operator-controlled configured hosts with verified associations.",
+      "pixel_check": "Import a link/share and QR; reject malformed/foreign origins and require pairing before protected reads.",
+      "official_reference": "https://github.com/AltanS/collie/blob/v1.21.0/docs/security.md"
+    },
+    {
+      "id": "B24",
+      "title": "Implement identity-aware native proxy access",
+      "scope_decision": "retain_subset",
+      "current_source_status": "Current source anchors located; bounded source/documentation review only. Fresh integrated functional acceptance is pending.",
+      "historical_implementation_status": "in_progress",
+      "historical_review_status": "corrective6_checkpoint3_whole76_source_approved_and_private_canonical_integrated_actual_pending",
+      "historical_acceptance_status": "pending",
+      "current_code_paths": [
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/ProxySignInActivity.kt",
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/auth/ProxySignInCoordinator.kt"
+      ],
+      "remaining_action": "Support documented operator-configured front doors using the existing native authentication work where applicable. Do not make a new universal issuer/DPoP gateway deployment a prerequisite for ordinary paired HTTPS users. Preserve credentials and refusal boundaries.",
+      "pixel_check": "Pair through supported configured ingress; fail safely on auth expiry/foreign callbacks without leaking the bearer.",
+      "official_reference": "https://github.com/AltanS/collie/blob/v1.21.0/docs/deployment.md"
+    },
+    {
+      "id": "B25",
+      "title": "Restore opt-in encrypted offline dashboard, panes and Chat",
+      "scope_decision": "required",
+      "current_source_status": "Current source anchors located; bounded source/documentation review only. Fresh integrated functional acceptance is pending.",
+      "historical_implementation_status": "corrective3_full26_frozen; compile3_pass; focused151_1_original_retained_screen_draw_failure",
+      "historical_review_status": "independent_whole26_FALSE_R11; R9_R10_current_newcases_pass",
+      "historical_acceptance_status": "pending; original lifecycle failure correction, full native, Pixel and canonical/provider joins",
+      "current_code_paths": [
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/OfflineContentUi.kt",
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/RetentionSettingsSection.kt"
+      ],
+      "remaining_action": "Verify opt-in encrypted saved dashboard/pane/Chat reads and lifecycle. Recheck the historical retained-screen failure against the current consolidated source; old failure/review labels are not current test results.",
+      "pixel_check": "Enable saved reads, go offline/restart/reconnect; cached data never authorizes writes and opt-out removes owned saved data.",
+      "official_reference": "https://github.com/AltanS/collie/blob/v1.21.0/docs/configure.md"
+    },
+    {
+      "id": "B26",
+      "title": "Show machine resources and history",
+      "scope_decision": "required",
+      "current_source_status": "Current source anchors located; bounded source/documentation review only. Fresh integrated functional acceptance is pending.",
+      "historical_implementation_status": "canonical_current2_corrective1_frozen65_native_all6_passed_1234_zero_failures",
+      "historical_review_status": "fresh_independent_whole65_required",
+      "historical_acceptance_status": "pending",
+      "current_code_paths": [
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/MachinesActivity.kt",
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/ResourceChartView.kt",
+        "/home/chris/git/collie/bridge/machines.ts"
+      ],
+      "remaining_action": "Verify current machine cards and historical resources, metrics availability and Crew scope.",
+      "pixel_check": "Read solo/Crew resource charts and handle a member going unavailable.",
+      "official_reference": "https://github.com/AltanS/collie/blob/v1.21.0/docs/crew.md"
+    },
+    {
+      "id": "B27",
+      "title": "Implement machine alert rules and durable monitoring checkpoints",
+      "scope_decision": "retain_subset",
+      "current_source_status": "Current source anchors located; bounded source/documentation review only. Fresh integrated functional acceptance is pending.",
+      "historical_implementation_status": "exact_reviewed_current_Main55_integrated; native1260_bridge5886_Crew68_pass",
+      "historical_review_status": "independent_whole55_APPROVED_all553_seals_consumed",
+      "historical_acceptance_status": "pending; physical Pixel editor/custody, provider/producer, takeover and Windows acceptance",
+      "current_code_paths": [
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/MachinesActivity.kt",
+        "/home/chris/git/collie/bridge/crew/monitoring-checkpoint.ts"
+      ],
+      "remaining_action": "Retain official machine alert settings and event delivery. New durable monitoring/checkpoint guarantees beyond official functionality are not independent release gates. Join required notification events with B22.",
+      "pixel_check": "Set/change/remove an alert rule; show a harmless controlled alert through the configured native provider.",
+      "official_reference": "https://github.com/AltanS/collie/blob/v1.21.0/docs/crew.md"
+    },
+    {
+      "id": "B28",
+      "title": "Complete independent APK discovery, download and installation",
+      "scope_decision": "required",
+      "current_source_status": "Current source anchors located; bounded source/documentation review only. Fresh integrated functional acceptance is pending.",
+      "historical_implementation_status": "candidate5_focused50_zero_and_fullunit1207_zero_fullgates_lint_failed_review_sourcefindings_open",
+      "historical_review_status": "whole36_active_two_lifecycle_schedules_and_actual_lint_finding",
+      "historical_acceptance_status": "pending",
+      "current_code_paths": [
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/UpdatesActivity.kt",
+        "/home/chris/git/collie/scripts/android-release.sh",
+        "/home/chris/git/collie/.github/workflows/android-release.yml"
+      ],
+      "remaining_action": "Finish the native app update equivalent: independent Android release discovery/link, download checks and Android-confirmed install with matching package/signer and increasing versionCode. Keep server/Crew updates separate. No new generic distribution/signing service.",
+      "pixel_check": "Install the signed candidate and a same-signer higher-version upgrade while preserving pairing/preferences.",
+      "official_reference": "https://github.com/AltanS/collie/blob/v1.21.0/docs/upgrading.md"
+    },
+    {
+      "id": "B29",
+      "title": "Export and apply portable layouts and recipes",
+      "scope_decision": "exclude_expansion",
+      "current_source_status": "Current source anchors located; bounded source/documentation review only. Fresh integrated functional acceptance is pending.",
+      "historical_implementation_status": "corrective1_Luna_HIGH_author_active; focused117_pass_after_initial_whole29_FALSE_and_Kotlin_failure",
+      "historical_review_status": "pending_current_independent_review; prior_R1_R5_open_until_reconciliation",
+      "historical_acceptance_status": "pending; current native/runtime/Pixel/Crew/B32 integration",
+      "current_code_paths": [
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/LayoutRecipesActivity.kt"
+      ],
+      "remaining_action": "Portable Herdr layout administration is outside native Collie parity. Preserve reviewed source and any safe working extra; do not require new runtime protocols or host layout import/export for release.",
+      "pixel_check": "Only verify it if retained visibly; it must not obstruct required Collie workflows.",
+      "official_reference": "https://github.com/AltanS/collie/blob/v1.21.0/docs/multiplexers.md"
+    },
+    {
+      "id": "B30",
+      "title": "Manage integrations and manifest reloads",
+      "scope_decision": "exclude_expansion",
+      "current_source_status": "Current source anchors located; bounded source/documentation review only. Fresh integrated functional acceptance is pending.",
+      "historical_implementation_status": "Luna_HIGH_author_active; B01_B18_interfaces_verified; typed_backend_and_native_source_in_progress",
+      "historical_review_status": "pending_independent_Luna_review",
+      "historical_acceptance_status": "pending; complete implementation, compiler/current runtime/Crew/Pixel acceptance",
+      "current_code_paths": [
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/IntegrationsActivity.kt",
+        "/home/chris/git/collie/bridge/host-control/integrations.ts"
+      ],
+      "remaining_action": "Full Herdr integration/manifest administration is outside the app completion goal. Keep ordinary Collie backend/harness capability reporting; hide unsupported optional administrative entry points.",
+      "pixel_check": "Required agent launch and conversation flows function with stock integration configuration.",
+      "official_reference": "https://github.com/AltanS/collie/blob/v1.21.0/docs/multiplexers.md"
+    },
+    {
+      "id": "B31",
+      "title": "Expose bounded metadata and declarative agent views",
+      "scope_decision": "exclude_expansion",
+      "current_source_status": "Current source anchors located; bounded source/documentation review only. Fresh integrated functional acceptance is pending.",
+      "historical_implementation_status": "todo",
+      "historical_review_status": "pending",
+      "historical_acceptance_status": "pending",
+      "current_code_paths": [
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/AgentMetadataActivity.kt",
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/AgentViewActivity.kt",
+        "/home/chris/git/collie/bridge/host-control/agent-views.ts"
+      ],
+      "remaining_action": "Remove pane_original_metadata_v1 and agent_view_read_v1 as app prerequisites. Keep documented display metadata; preserve custom authoring source as history and remove/hide unavailable custom editor entry points.",
+      "pixel_check": "Normal pane metadata and conversations work without agent.view.get or custom metadata RPCs.",
+      "official_reference": "https://github.com/AltanS/collie/blob/v1.21.0/docs/multiplexers.md"
+    },
+    {
+      "id": "B32",
+      "title": "Manage plugins and their runtime controls",
+      "scope_decision": "exclude_expansion",
+      "current_source_status": "Current source anchors located; bounded source/documentation review only. Fresh integrated functional acceptance is pending.",
+      "historical_implementation_status": "todo",
+      "historical_review_status": "pending",
+      "historical_acceptance_status": "pending",
+      "current_code_paths": [
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PluginsActivity.kt",
+        "/home/chris/git/collie/bridge/host-control/herdr.ts"
+      ],
+      "remaining_action": "Remove plugin_user_dirs_v1 and plugin_owner_operations_v1 dependencies from required app paths. Keep documented Collie update/restart actions; full plugin marketplace/config editing is outside parity.",
+      "pixel_check": "Server update UI works by supported Collie contract; no private plugin plan/apply endpoints are required.",
+      "official_reference": "https://github.com/AltanS/collie/blob/v1.21.0/docs/upgrading.md"
+    },
+    {
+      "id": "B33",
+      "title": "Complete operator scroll, copy, search, links and host UI actions",
+      "scope_decision": "retain_subset",
+      "current_source_status": "Current source anchors located; bounded source/documentation review only. Fresh integrated functional acceptance is pending.",
+      "historical_implementation_status": "todo",
+      "historical_review_status": "pending",
+      "historical_acceptance_status": "pending",
+      "current_code_paths": [
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/OutputFind.kt",
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PrintedPathLinks.kt"
+      ],
+      "remaining_action": "Select native copy/find/link/scroll UX pieces from work/b33-operator-controls only where needed. Use admitted Collie content and Android selection/scroll/link handling; do not merge pane.*.original_v1 or private popup/action protocols. Host terminal scroll/edit/UI controls are outside parity.",
+      "pixel_check": "Copy/find/open safe links and scroll the native mirror; host terminal focus/scroll state stays unchanged except explicit supported actions.",
+      "official_reference": "https://github.com/AltanS/collie/blob/v1.21.0/docs/configure.md"
+    },
+    {
+      "id": "B34",
+      "title": "Add rendered observation and concrete history/media equivalents",
+      "scope_decision": "retain_subset",
+      "current_source_status": "Current source anchors located; bounded source/documentation review only. Fresh integrated functional acceptance is pending.",
+      "historical_implementation_status": "in_progress",
+      "historical_review_status": "whole98_source_rejected_native_observer_focus_passed_joint_canonical_pending",
+      "historical_acceptance_status": "pending",
+      "current_code_paths": [
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/HistoryActivity.kt",
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/AuthenticatedImageView.kt"
+      ],
+      "remaining_action": "Select stock-compatible fixes for official Chat/History/media only. A new persistent recorder, observer product, custom media producer and invented journals for all detected agents are outside parity. Preserve the branch until safe extraction is committed.",
+      "pixel_check": "History and supported journal images work for documented harnesses; absent journals remain honestly unavailable.",
+      "official_reference": "https://github.com/AltanS/collie/blob/v1.21.0/docs/configure.md"
+    },
+    {
+      "id": "B35",
+      "title": "Manage saved machines through scoped host administration",
+      "scope_decision": "retain_subset",
+      "current_source_status": "Current source anchors located; bounded source/documentation review only. Fresh integrated functional acceptance is pending.",
+      "historical_implementation_status": "todo",
+      "historical_review_status": "pending",
+      "historical_acceptance_status": "pending",
+      "current_code_paths": [
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PackActivity.kt",
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PackFormation.kt"
+      ],
+      "remaining_action": "Require official Crew membership/status and host navigation. Full Herdr saved-machine administration is outside parity; do not build it to close an old ledger row.",
+      "pixel_check": "Select correct host, inspect Crew state and handle unavailable members.",
+      "official_reference": "https://github.com/AltanS/collie/blob/v1.21.0/docs/crew.md"
+    },
+    {
+      "id": "B36",
+      "title": "Complete named sessions, persistence, backup/restore and handoff",
+      "scope_decision": "retain_subset",
+      "current_source_status": "Current source anchors located; bounded source/documentation review only. Fresh integrated functional acceptance is pending.",
+      "historical_implementation_status": "todo",
+      "historical_review_status": "pending",
+      "historical_acceptance_status": "pending",
+      "current_code_paths": [
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PaneSwitcherModel.kt",
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/SpaceViewModel.kt",
+        "/home/chris/git/collie/bridge/sessions.ts"
+      ],
+      "remaining_action": "Require documented multi-session selection/state. Herdr backup/restore/handoff administration is outside native parity; display upstream restore failures honestly.",
+      "pixel_check": "Switch and reopen owning sessions; handle stale/gone session without redirecting a write.",
+      "official_reference": "https://github.com/AltanS/collie/blob/v1.21.0/docs/configure.md"
+    },
+    {
+      "id": "B37",
+      "title": "Close Windows Crew, private-state, build and action gaps",
+      "scope_decision": "retain_subset",
+      "current_source_status": "Current source anchors located; bounded source/documentation review only. Fresh integrated functional acceptance is pending.",
+      "historical_implementation_status": "todo",
+      "historical_review_status": "pending",
+      "historical_acceptance_status": "pending",
+      "current_code_paths": [
+        "/home/chris/git/collie/android/UPSTREAM_API_COMPATIBILITY.md",
+        "/home/chris/git/collie/bridge/owner-only.ts"
+      ],
+      "remaining_action": "Consume the documented Windows Collie contract and capability limits; do not develop new Windows Herdr/Crew/build/service features. Retain applicable existing private-state protections.",
+      "pixel_check": "Document an unavailable Windows environment honestly; a fixture does not prove live Windows behavior.",
+      "official_reference": "https://github.com/AltanS/collie/blob/v1.21.0/docs/windows.md"
+    },
+    {
+      "id": "B38",
+      "title": "Expose verified deputy ingress and native takeover",
+      "scope_decision": "required",
+      "current_source_status": "Current source anchors located; bounded source/documentation review only. Fresh integrated functional acceptance is pending.",
+      "historical_implementation_status": "todo",
+      "historical_review_status": "pending",
+      "historical_acceptance_status": "pending",
+      "current_code_paths": [
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PackActivity.kt",
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PackFormation.kt",
+        "/home/chris/git/collie/bridge/crew/standby.ts"
+      ],
+      "remaining_action": "Implement/verify the official deputy/standby takeover user workflow through trusted configured HTTPS. No new Herdr takeover APIs or general HA platform.",
+      "pixel_check": "On an isolated Crew, test lead loss, user-confirmed takeover and lead return without duplicate terminal actions.",
+      "official_reference": "https://github.com/AltanS/collie/blob/v1.21.0/docs/crew.md"
+    },
+    {
+      "id": "B39",
+      "title": "Complete local settings, operator fonts, pins and keypad editing",
+      "scope_decision": "required",
+      "current_source_status": "Current source anchors located; bounded source/documentation review only. Fresh integrated functional acceptance is pending.",
+      "historical_implementation_status": "todo",
+      "historical_review_status": "pending",
+      "historical_acceptance_status": "pending",
+      "current_code_paths": [
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/SettingsLocalPreferences.kt",
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PreferredTypeface.kt",
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/CollieKeyRow.kt"
+      ],
+      "remaining_action": "Verify themes, Zen, fonts/operator fonts, pins, quick replies, commands/keypad, draft preferences and masks as native workflows. Keep explicit English-only decision.",
+      "pixel_check": "Change settings/restart, use operator-defined rows, and check both themes, large text, TalkBack and IME.",
+      "official_reference": "https://github.com/AltanS/collie/blob/v1.21.0/docs/configure.md"
+    },
+    {
+      "id": "B40",
+      "title": "Complete configuration, masking, uploads and access diagnostics; exclude STT",
+      "scope_decision": "required",
+      "current_source_status": "Current source anchors located; bounded source/documentation review only. Fresh integrated functional acceptance is pending.",
+      "historical_implementation_status": "todo",
+      "historical_review_status": "pending",
+      "historical_acceptance_status": "pending",
+      "current_code_paths": [
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/SettingsServerControls.kt",
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/ComposerMedia.kt",
+        "/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/network/CollieApiClient.kt"
+      ],
+      "remaining_action": "Verify config-driven controls, secret masking, upload limits and authorization/refusal diagnostics against official Collie behavior. Speech-to-text, voice input, speech model/engine setup and their acceptance checks are explicitly excluded; preserve existing speech source.",
+      "pixel_check": "Verify masked output, configured upload limits and useful refusal diagnostics without recording or transcription.",
+      "official_reference": "https://github.com/AltanS/collie/blob/v1.21.0/docs/configure.md"
+    },
+    {
+      "id": "B41",
+      "title": "Reconcile documentation and close the complete capability ledger",
+      "scope_decision": "required",
+      "current_source_status": "Current source anchors located; bounded source/documentation review only. Fresh integrated functional acceptance is pending.",
+      "historical_implementation_status": "in_progress",
+      "historical_review_status": "pending",
+      "historical_acceptance_status": "pending",
+      "current_code_paths": [
+        "/home/chris/git/collie/android/acceptance/capability-execution-ledger.json",
+        "/home/chris/git/collie/android/RELEASING.md",
+        "/home/chris/git/collie/android/UPSTREAM_API_COMPATIBILITY.md"
+      ],
+      "remaining_action": "Use this corrected scope, not all41/75/132/102 as immutable acceptance counts. Update existing docs/evidence to current integrated source and run release checks; no new evidence framework.",
+      "pixel_check": "Acceptance records name actual commit/APK/hash/device/backend and distinguish fixture, JVM and live checks.",
+      "official_reference": "https://github.com/AltanS/collie/blob/v1.21.0/docs/security.md"
+    }
+  ],
+  "limitations": [
+    "This is a source/documentation scope review, not a fresh compile, runtime or device acceptance run.",
+    "SSH to dell-7680 returned success, but adb was not found through the noninteractive PATH or four common SDK locations. Pixel availability/API remains unverified; use the existing recorded device runner during execution before asking for help.",
+    "Signing key, release-environment credentials and native push deployment availability were not inspected in this preparation. Check existing supported access during execution; do not create/rekey/install an unrelated service to hide a limitation.",
+    "Additional-RPC JSON files compare the Collie adapter and exact schema literals only. A missing literal in generated schema source does not prove that a stock method is absent. Custom capability/producer contracts are the decisive evidence for private dependencies."
+  ]
+}

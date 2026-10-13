@@ -3477,5 +3477,16 @@
       "existing": false
     }
   ],
-  "closure_policy": "Every required unit and required finding needs implemented native workflow, matching contracts/adapters/gates/Crew semantics, meaningful tests and all specified acceptance evidence. Missing evidence stays pending; no API-only, decoder-only or documentation-only closure."
+  "closure_policy": "Every required unit and required finding needs implemented native workflow, matching contracts/adapters/gates/Crew semantics, meaningful tests and all specified acceptance evidence. Missing evidence stays pending; no API-only, decoder-only or documentation-only closure.",
+  "current_scope_review": {
+    "date": "2026-10-13",
+    "authority": "/home/chris/git/collie/android/acceptance/course-correction-2026-10-13.md",
+    "crosswalk": "/home/chris/git/collie/android/acceptance/course-correction-2026-10-13.json",
+    "goal_prompt": "/home/chris/git/collie/android/acceptance/completion-goal-2026-10-13.txt",
+    "herdr_development_required": false,
+    "speech_to_text_required": false,
+    "old_counts_are_completion_conditions": false,
+    "historical_statuses_are_current_acceptance": false,
+    "note": "Retain prior source requirements and evidence as history; execute the corrected crosswalk, not the expanded former backlog. No goal has been activated."
+  }
 }

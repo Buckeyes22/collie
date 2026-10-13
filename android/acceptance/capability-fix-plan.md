@@ -1,5 +1,7 @@
 # Complete capability gap closure plan — 2026-10-10
 
+> **Execution scope superseded, 2026-10-13.** Use `/home/chris/git/collie/android/acceptance/course-correction-2026-10-13.md` and its JSON crosswalk for the remaining Android work. Speech-to-text is excluded. The former all41/75/132/102 closure counts and private Herdr producer requirements are historical, not the current completion goal. Preserve this document as the earlier plan/evidence.
+
 Every genuine gap in the four capability reports is required work. Herdr layouts, pane movement, process inspection, waits, integrations, plugins and host/session administration have the same closure requirement as missing native consumers of existing Collie endpoints. A missing bridge contract adds implementation steps; it does not move a feature out of scope. Earlier labels such as “optional,” “candidate,” “separate product intent,” and “deliberate boundary” do not waive functional gaps in this plan.
 
 This is a code-grounded implementation plan, not a claim that the features have been implemented. The completed Kotlin alignment remains independently recorded in [/home/chris/git/collie/android/acceptance/audit-kotlin-alignment.md](/home/chris/git/collie/android/acceptance/audit-kotlin-alignment.md). Existing tests establish the starting point and do not close these new work items.
