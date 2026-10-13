@@ -78,3 +78,6 @@ android/.kotlin/
 android/**/build/
 android/local.properties
 .superpowers/
+
+# Local reference documentation, source inventory, and refresh tooling.
+/.project-docs/

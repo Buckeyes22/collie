@@ -112,3 +112,7 @@ disk on each invocation.
 ---
 
 [← back to the README](../README.md)
+
+## Native identity gateway
+
+`collie native-access` configures and runs the opt-in native identity gateway. Its `configure`, `profile`, `enroll`, `revoke`, `list` and `serve` subcommands use the explicit operator profile and existing pairing catalog. Read [Native identity gateway](./native-identity-gateway.md) before changing the front-door mounts; enrollment keeps identity and pairing independent.

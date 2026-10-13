@@ -27,6 +27,43 @@ import org.robolectric.Shadows.shadowOf
 @RunWith(RobolectricTestRunner::class)
 class SpaceActivityTest {
     @Test
+    fun savedCopyRefreshFailureKeepsItsAgeAndStaleDispositionVisible() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val workspace = WorkspaceSummary("w1", 1, "StormLens", true, "t1", 1, 1, host = "desk")
+        val activity = Robolectric.buildActivity(
+            SpaceActivity::class.java,
+            SpaceActivity.intent(context, workspace, "work"),
+        ).create().start().resume().get()
+        val content = SpaceContent(workspace, emptyList(), emptyList(), emptyList())
+        val capturedAt = System.currentTimeMillis() - 120_000
+        SpaceActivity::class.java.getDeclaredMethod("render", SpaceUiState::class.java).apply {
+            isAccessible = true
+        }.invoke(activity, SpaceUiState(
+            loading = false,
+            content = content,
+            error = "offline",
+            paired = true,
+            writeAuthorized = false,
+            readSource = ReadSourceState.SavedCopy(capturedAt, 1),
+        ))
+
+        val subtitle = activity.findViewById<TextView>(R.id.space_subtitle).text.toString()
+        val banner = activity.findViewById<TextView>(R.id.space_read_only_banner).text.toString()
+        assertTrue(subtitle.contains("snapshot read:"))
+        assertTrue(subtitle.contains("ago"))
+        assertFalse(subtitle.contains("snapshot: not read"))
+        assertTrue(banner.startsWith("Saved copy from "))
+    }
+
+    @Test
+    fun spaceHeaderExposesAccessibleChangesEntry() {
+        val activity = launchSpace(workspaces = 1, tabs = 1, currentTab = 0)
+        val changes = activity.findViewById<View>(R.id.changes_button)
+        assertTrue(changes.hasOnClickListeners())
+        assertEquals(activity.getString(R.string.changes_open_space_accessibility), changes.contentDescription)
+    }
+
+    @Test
     fun intentCarriesTheCompleteScopedWorkspaceIdentity() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val workspace = WorkspaceSummary(
@@ -46,6 +83,27 @@ class SpaceActivityTest {
         assertEquals("desk", intent.getStringExtra(SpaceActivity.EXTRA_HOST))
         assertEquals("work", intent.getStringExtra(SpaceActivity.EXTRA_SESSION))
         assertEquals("Native client", intent.getStringExtra(SpaceActivity.EXTRA_TITLE))
+    }
+
+    @Test
+    fun spaceHeaderOpensNewWorkflowWithTheSameHostAndSession() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val workspace = WorkspaceSummary(
+            workspaceId = "w1", number = 1, label = "Project", focused = true,
+            activeTabId = "t1", tabCount = 1, paneCount = 0, host = "build-machine",
+        )
+        val controller = Robolectric.buildActivity(SpaceActivity::class.java, SpaceActivity.intent(context, workspace, "review"))
+            .create().start().resume()
+        try {
+            val activity = controller.get()
+            activity.findViewById<View>(R.id.new_workflow_button).performClick()
+            val opened = shadowOf(activity).nextStartedActivity
+            assertEquals(NewActivity::class.java.name, opened.component?.className)
+            assertEquals("build-machine", opened.getStringExtra("host"))
+            assertEquals("review", opened.getStringExtra("session"))
+        } finally {
+            controller.destroy()
+        }
     }
 
     @Test
@@ -181,7 +239,8 @@ class SpaceActivityTest {
     @Test
     fun overviewCardIsGoneAndSubtitleCarriesCounts() {
         val activity = launchSpace(workspaces = 2, tabs = 3, currentTab = 0)
-        assertEquals("3 tabs · 3 panes", activity.findViewById<TextView>(R.id.space_subtitle).text.toString())
+        assertTrue(activity.findViewById<TextView>(R.id.space_subtitle).text.toString()
+            .startsWith("3 tabs · 3 panes · topology timing: not declared · snapshot: not read"))
     }
 
     @Test

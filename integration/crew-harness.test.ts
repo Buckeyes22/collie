@@ -682,6 +682,46 @@ describe("the TLS factor is enforced at the handshake", () => {
 // ── The merged snapshot and the proxied read ─────────────────────────────────
 
 describe("the lead speaks for the crew", () => {
+  test("scoped foundation refresh and operation reads traverse the mounted real Crew handlers", async () => {
+    const peerId = peer.store()!.self.memberId;
+    const local = await lead.api("/api/refresh", { method: "POST" });
+    expect(local.status).toBe(200);
+    const remote = await lead.api(`/api/refresh?host=${peerId}`, { method: "POST" });
+    expect(remote.status).toBe(200);
+    expect(await remote.json()).toEqual({ ok: true });
+    const wrongSession = await lead.api(`/api/refresh?host=${peerId}&session=not-a-session`, { method: "POST" });
+    expect(wrongSession.status).toBe(404);
+    const malformed = await lead.api(`/api/refresh?host=${peerId}&session=one&session=two`, { method: "POST" });
+    expect(malformed.status).toBe(400);
+    const localOperation = await lead.apiWrite("/api/control/operations/missing?session=default");
+    expect(localOperation.status).toBe(404);
+    const operation = await lead.apiWrite(`/api/control/operations/missing?host=${peerId}`);
+    expect(operation.status).toBe(404);
+    expect(await operation.json()).toMatchObject({ code: "operation.not_found", source: "collie", factor: "operation" });
+    const forged = await lead.apiWrite(`/api/control/operations/missing?host=${peerId}`, {
+      headers: { "x-crew-paired-identity": "not-a-valid-pairing-digest" },
+    });
+    expect(forged.status).toBe(404);
+    expect(await forged.json()).toMatchObject({ code: "operation.not_found", factor: "operation" });
+    expect(existsSync(join(lead.stateDir, "control-operations.json"))).toBe(false);
+    expect(existsSync(join(peer.stateDir, "control-operations.json"))).toBe(false);
+  }, 30_000);
+
+  test("receipt readiness is local to each owning host and crosses only after a mounted hello", async () => {
+    const peerId = peer.store()!.self.memberId;
+    const local = await lead.apiWrite("/api/config");
+    expect(local.status).toBe(200);
+    expect((await local.json()).receiptContextBound).toBe(true);
+    let remoteReady = false;
+    await waitFor(async () => {
+      const response = await lead.apiWrite(`/api/config?host=${peerId}`);
+      if (response.status !== 200) return false;
+      remoteReady = (await response.json()).receiptContextBound === true;
+      return remoteReady;
+    }, 10_000, "the lead never learned the peer's own receipt readiness from hello");
+    expect(remoteReady).toBe(true);
+  }, 30_000);
+
   test("the merged snapshot carries both hosts' sessions, host-tagged", async () => {
     const body = await snapshotOf(lead);
     await waitFor(

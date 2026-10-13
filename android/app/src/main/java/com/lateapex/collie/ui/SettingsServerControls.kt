@@ -30,6 +30,7 @@ import com.lateapex.collie.network.DeviceRecord
 import com.lateapex.collie.network.DevicesResponse
 import com.lateapex.collie.network.NotifyPreferences
 import com.lateapex.collie.network.NotifyPreferencesPatch
+import com.lateapex.collie.network.CacheWatchListResponse
 import com.lateapex.collie.network.CrewStatusResponse
 import com.lateapex.collie.network.PairResult
 import com.lateapex.collie.network.UpdateCheckResponse
@@ -104,6 +105,8 @@ internal class SettingsServerControls(
     private var bridgeSaysUnpaired = false
     private lateinit var notifyCard: LinearLayout
     private lateinit var snoozeCard: LinearLayout
+    private lateinit var cacheWatchCard: LinearLayout
+    private lateinit var cacheWatchRows: LinearLayout
     private lateinit var updateSummary: TextView
     private lateinit var packCard: LinearLayout
     private lateinit var packSummary: TextView
@@ -154,6 +157,19 @@ internal class SettingsServerControls(
                 R.drawable.ic_composer_quick,
             ))
             addNotifyRows(it, null)
+            parent.addView(it)
+        }
+        cacheWatchCard = card().also {
+            it.id = R.id.settings_cache_watch_card
+            it.addView(header(
+                text(R.string.settings_cache_watches_title),
+                text(R.string.settings_cache_watches_description),
+                R.drawable.ic_history_info,
+            ))
+            cacheWatchRows = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+            it.addView(divider())
+            it.addView(cacheWatchRows)
+            renderCacheWatchList(null)
             parent.addView(it)
         }
         snoozeCard = card().also {
@@ -243,6 +259,7 @@ internal class SettingsServerControls(
             coroutineScope {
                 val devices = async { repository.devices() }
                 val prefs = async { repository.notificationPreferences() }
+                val cacheWatches = async { repository.cacheWatchList() }
                 val snapshot = async { repository.snapshot() }
                 val update = async { repository.updateState() }
                 val pack = async { repository.crew() }
@@ -252,6 +269,7 @@ internal class SettingsServerControls(
                 val snapshotResult = snapshot.await()
                 renderDevices(devices.await(), repository.writesAllowed())
                 renderNotify(prefs.await())
+                renderCacheWatchList(cacheWatches.await())
                 val snoozedUntil = (snapshotResult as? ApiResult.Success)?.value?.notifications?.snoozedUntil
                 renderSnooze(snoozeCard, snoozedUntil)
                 renderUpdate(update.await())
@@ -299,6 +317,8 @@ internal class SettingsServerControls(
             Triple(R.id.settings_notify_blocked_switch, text(R.string.settings_notify_needs_input), prefs?.blocked),
             Triple(R.id.settings_notify_done_switch, text(R.string.settings_notify_finished), prefs?.done),
             Triple(R.id.settings_notify_updates_switch, text(R.string.settings_notify_updates), prefs?.updates),
+            Triple(R.id.settings_notify_machines_switch, text(R.string.settings_notify_machines), prefs?.machines),
+            Triple(R.id.settings_notify_cache_switch, text(R.string.settings_notify_cache), prefs?.cache),
         )
         rows.forEachIndexed { index, (id, label, checked) ->
             if (index == 0) card.addView(divider())
@@ -306,7 +326,9 @@ internal class SettingsServerControls(
                 val patch = when (id) {
                     R.id.settings_notify_blocked_switch -> NotifyPreferencesPatch(blocked = next)
                     R.id.settings_notify_done_switch -> NotifyPreferencesPatch(done = next)
-                    else -> NotifyPreferencesPatch(updates = next)
+                    R.id.settings_notify_updates_switch -> NotifyPreferencesPatch(updates = next)
+                    R.id.settings_notify_machines_switch -> NotifyPreferencesPatch(machines = next)
+                    else -> NotifyPreferencesPatch(cache = next)
                 }
                 mutate(text(R.string.settings_notify_updating)) { repository.setNotificationPreferences(patch) }
             })
@@ -321,6 +343,64 @@ internal class SettingsServerControls(
         addNotifyRows(notifyCard, (result as? ApiResult.Success)?.value)
         if (result is ApiResult.Failure) {
             showStatus(errorText(text(R.string.settings_notify_subject), result.error), error = true)
+        }
+    }
+
+    internal fun renderCacheWatchList(result: ApiResult<CacheWatchListResponse>?) {
+        cacheWatchRows.removeAllViews()
+        when (result) {
+            null -> cacheWatchRows.addView(message(text(R.string.settings_cache_watches_loading)))
+            is ApiResult.Failure -> {
+                val http = result.error as? ApiFailure.Http
+                cacheWatchRows.addView(message(text(if (http?.status == 404) {
+                    R.string.settings_cache_watches_unsupported
+                } else R.string.settings_cache_watches_failed)))
+            }
+            is ApiResult.NotModified -> cacheWatchRows.addView(message(text(R.string.settings_cache_watches_failed)))
+            is ApiResult.Success -> {
+                val entries = result.value.entries
+                if (entries.isEmpty()) {
+                    cacheWatchRows.addView(message(text(R.string.settings_cache_watches_empty)))
+                } else entries.forEach { entry ->
+                    val address = CacheWatchListPresenter.address(entry)
+                    val row = LinearLayout(activity).apply {
+                        orientation = LinearLayout.VERTICAL
+                        setPadding(dp(12), dp(6), dp(12), dp(6))
+                    }
+                    if (address != null) {
+                        val target = listOfNotNull(entry.host, entry.session).joinToString(" · ")
+                        row.addView(MaterialButton(activity, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+                            text = listOf(entry.label, target).filter(String::isNotBlank).joinToString(" · ")
+                            isAllCaps = false
+                            minHeight = dp(48)
+                            contentDescription = text(R.string.settings_cache_watches_open, entry.label)
+                            setOnClickListener {
+                                activity.startActivity(Intent(activity, PaneActivity::class.java).apply {
+                                    putExtra(PaneActivity.EXTRA_PANE_ID, address.paneId)
+                                    putExtra(PaneActivity.EXTRA_HOST, address.scope.host)
+                                    putExtra(PaneActivity.EXTRA_SESSION, address.scope.session)
+                                    putExtra(PaneActivity.EXTRA_TITLE, entry.label)
+                                })
+                            }
+                        })
+                    } else {
+                        row.addView(message(text(R.string.settings_cache_watches_orphan, entry.label)))
+                    }
+                    row.addView(actionButton(
+                        View.generateViewId(),
+                        text(R.string.settings_cache_watches_forget),
+                    ) {
+                        mutate(
+                            progress = text(R.string.settings_cache_watches_forgetting),
+                            target = status,
+                            onSuccess = { refresh() },
+                            action = { repository.forgetCacheWatch(entry.id) },
+                        )
+                    })
+                    cacheWatchRows.addView(row)
+                    if (entry != entries.last()) cacheWatchRows.addView(divider())
+                }
+            }
         }
     }
 
@@ -356,7 +436,7 @@ internal class SettingsServerControls(
                     mutate(text(R.string.settings_snoozing_notifications)) {
                         repository.setNotificationSnooze(System.currentTimeMillis() + minutes * 60_000)
                     }
-                }, LinearLayout.LayoutParams(0, dp(44), 1f).apply { marginEnd = dp(6) })
+                }, LinearLayout.LayoutParams(0, dp(48), 1f).apply { marginEnd = dp(6) })
             }
         }
         card.addView(actions)
@@ -446,6 +526,8 @@ internal class SettingsServerControls(
         }
         val code = com.google.android.material.textfield.TextInputEditText(codeLayout.context).apply {
             id = R.id.settings_pair_code
+            isSaveEnabled = false
+            importantForAutofill = View.IMPORTANT_FOR_AUTOFILL_NO
             isSingleLine = true
             maxEms = 12
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS or
@@ -466,6 +548,7 @@ internal class SettingsServerControls(
         val label = com.google.android.material.textfield.TextInputEditText(labelLayout.context).apply {
             id = R.id.settings_pair_label
             isSingleLine = true
+            filters = arrayOf(InputFilter.LengthFilter(com.lateapex.collie.domain.DeviceLabel.MAX_CHARS))
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
             setText(pairLabelDraft)
             doAfterTextChanged { pairLabelDraft = it?.toString().orEmpty() }
@@ -554,8 +637,9 @@ internal class SettingsServerControls(
             mutate(
                 progress = text(R.string.settings_revoking, device.label),
                 onSuccess = {
-                    if (device.current) {
-                        repository.demoteToReadOnly()
+                    if (device.current && repository.credentialRetirementFailure != null) {
+                        showStatus(text(R.string.pairing_storage_retained), error = true)
+                    } else if (device.current) {
                         activity.startActivity(
                             Intent(activity, MainActivity::class.java).addFlags(
                                 Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP,
@@ -602,6 +686,18 @@ internal class SettingsServerControls(
         updateSummary.text = when (result) {
             is ApiResult.Success -> when {
                 UpdateNativePresentation.hasActiveRun(result.value) -> text(R.string.settings_update_running)
+                UpdateNativePresentation.dismissibleOfferVersion(result.value)?.let {
+                    result.value.dismissedVersion == it
+                } == true -> text(
+                    R.string.settings_update_offer_dismissed,
+                    UpdateNativePresentation.dismissibleOfferVersion(result.value).orEmpty(),
+                )
+                UpdateNativePresentation.dismissibleCrewVersion(result.value)?.let {
+                    result.value.dismissedCrewVersion == it
+                } == true -> text(
+                    R.string.settings_update_crew_dismissed,
+                    UpdateNativePresentation.dismissibleCrewVersion(result.value).orEmpty(),
+                )
                 UpdateNativePresentation.peersBehind(result.value) > 0 -> {
                     val count = UpdateNativePresentation.peersBehind(result.value)
                     activity.resources.getQuantityString(R.plurals.settings_update_peers_behind, count, count)
@@ -784,7 +880,7 @@ internal class SettingsServerControls(
             this.id = id
             text = label
             isAllCaps = false
-            minHeight = dp(44)
+            minHeight = dp(48)
             setOnClickListener { if (!mutationGate.busy) action() }
         }, enabled)
 

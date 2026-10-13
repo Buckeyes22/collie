@@ -15,10 +15,12 @@ The app follows the agents already running on your server.
 - Find agents waiting for input from the dashboard.
 - Browse spaces, tabs and panes across your configured hosts and sessions.
 - Read transcript history or the terminal mirror, and search older turns.
+- Browse listed Git changes, inspect bounded file diffs, and read the latest commit from panes or spaces.
 - Answer supported agent prompts, send replies, attach images, and use terminal keys.
 - Pair the phone for read and write access and revoke devices through Settings.
 - Use voice input when your server has speech-to-text configured.
 - Inspect Crew state and manage **server** updates.
+- Use New to start a declared worktree-capable agent from the default branch or a chosen ref, with a server-validated parent folder; on supported Herdr runtimes, review and remove an exact linked checkout while preserving its branch.
 
 Background push notifications are not implemented in the native app. Server updates do not
 update the Android APK. Some agent interactions depend on the bridge's journal and multiplexer
@@ -30,7 +32,7 @@ You need a reachable Collie HTTPS server as well as an Android phone.
 
 | Requirement | Details |
 | --- | --- |
-| Android | Android 8.0 / API 26 or newer |
+| Android | Current Android 17 / API 37 |
 | Server | A self-hosted Collie deployment; the current development baseline is server 1.19.0 |
 | Network | Usually Tailscale on the host and phone, with access to the same tailnet |
 | Device access | A short-lived pairing code generated on the host with `collie pair` |
@@ -59,7 +61,7 @@ cd collie/android
 ./gradlew --no-daemon assembleDebug
 ```
 
-Use JDK 21 and an Android SDK containing platform 36 and Build Tools 36.0.0. Set `ANDROID_HOME`
+Use JDK 21 and an Android SDK containing stable platform 37.2 and Build Tools 37.0.0. Set `ANDROID_HOME`
 to your SDK directory. The APK appears under `app/build/outputs/apk/debug/app-debug.apk`;
 it installs as `com.lateapex.collie.debug` and can coexist with the release app.
 
@@ -102,3 +104,5 @@ the separate [Android workflow](.github/workflows/android-release.yml).
 Collie is released under the [MIT license](LICENSE), with the original upstream copyright notice
 preserved. See [Acknowledgments](ACKNOWLEDGMENTS.md) for the upstream project and the native app's
 bundled asset notices. Product names and marks belong to their respective owners.
+
+Native access through browser SSO requires an explicitly configured [OIDC/PKCE/DPoP identity gateway](docs/native-identity-gateway.md). Native Tailscale access remains unchanged; arbitrary cookie-only proxies are not claimed supported.

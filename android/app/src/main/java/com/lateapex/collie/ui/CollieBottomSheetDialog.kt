@@ -18,6 +18,7 @@ import com.lateapex.collie.R
 class CollieBottomSheetDialog(
     context: Context,
     title: CharSequence,
+    initiallyExpanded: Boolean = false,
 ) : BottomSheetDialog(context) {
     private val panel: LinearLayout
     private val titleView: TextView
@@ -36,6 +37,8 @@ class CollieBottomSheetDialog(
         ViewCompat.setAccessibilityHeading(titleView, true)
         shell.findViewById<ImageButton>(R.id.collie_sheet_close).setOnClickListener { dismiss() }
         super.setContentView(shell)
+        behavior.maxHeight = (context.resources.displayMetrics.heightPixels * MAX_HEIGHT_FRACTION).toInt()
+        if (initiallyExpanded) behavior.state = com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_EXPANDED
 
         val baseBottom = content.paddingBottom
         ViewCompat.setOnApplyWindowInsetsListener(panel) { _, insets ->
@@ -52,7 +55,6 @@ class CollieBottomSheetDialog(
         }
         setOnShowListener {
             window?.setDimAmount(0.5f)
-            behavior.maxHeight = (context.resources.displayMetrics.heightPixels * MAX_HEIGHT_FRACTION).toInt()
             findViewById<FrameLayout>(com.google.android.material.R.id.design_bottom_sheet)
                 ?.setBackgroundColor(Color.TRANSPARENT)
             panel.applyAppTypeface()

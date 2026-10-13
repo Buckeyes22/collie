@@ -3,6 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { createClaudeReducer } from "./claude.ts";
 import { createCodexReducer } from "./codex.ts";
 import { createGrokReducer } from "./grok.ts";
+import { createGeminiReducer } from "./gemini.ts";
 import { createHermesReducer } from "./hermes.ts";
 import { createMuseReducer } from "./muse.ts";
 import { createOpencodeReducer } from "./opencode.ts";
@@ -96,6 +97,46 @@ describe("claude", () => {
     ]);
     expect(names(tally.parts)).toEqual(["web_search_result"]);
     expect(describeUnknowns(tally)).toBe("part types web_search_result (1)");
+  });
+});
+
+describe("gemini", () => {
+  test("counts unknown structural Part fields by key across message, patch, and replacement paths", () => {
+    const tally = tallyOf(createGeminiReducer(), [
+      row({ id: "m1", type: "user", content: [{ text: "known text" }] }),
+      row({ id: "m2", type: "future_message", content: "ignored" }),
+      row({ id: "m3", type: "gemini", content: [{ futurePart: { private_payload: "DO_NOT_ECHO" } }] }),
+      row({ $patch: { updates: [{ id: "m1", content: [{ futurePatchPart: { private_payload: "DO_NOT_ECHO" } }] }] } }),
+      row({ $set: { messages: [{ id: "m4", type: "future_snapshot_message", content: [{ futureSnapshotPart: { private_payload: "DO_NOT_ECHO" } }] }] } }),
+    ]);
+    expect(names(tally.rows)).toEqual(["future_message", "future_snapshot_message"]);
+    expect(names(tally.parts)).toEqual(["futurePart", "futurePatchPart", "futureSnapshotPart"]);
+    expect(describeUnknowns(tally)).toBe("row types future_message (1), future_snapshot_message (1); part types futurePart (1), futurePatchPart (1), futureSnapshotPart (1)");
+    expect(describeUnknowns(tally)).not.toContain("DO_NOT_ECHO");
+  });
+
+  test("the reviewed SDK structural Part fields are recognized while only text is projected", () => {
+    const knownFields = [
+      "audioTranscription", "codeExecutionResult", "executableCode", "fileData", "functionCall",
+      "functionResponse", "inlineData", "mediaProcessing", "mediaResolution", "partMetadata",
+      "speechMetadata", "text", "thought", "thoughtSignature", "toolCall", "toolResponse", "videoMetadata",
+    ];
+    const content = knownFields.map((field) => ({ [field]: field === "text" ? "visible text" : { private_payload: "DO_NOT_ECHO" } }));
+    const reducer = createGeminiReducer();
+    const projected = reducer.push(row({ id: "known", type: "gemini", content }));
+    expect(projected.added[0]?.parts).toEqual([{ kind: "text", text: "visible text" }]);
+    expect(JSON.stringify(projected)).not.toContain("DO_NOT_ECHO");
+    expect(describeUnknowns(reducer.unknowns())).toBe("");
+  });
+
+  test("the registered Gemini adapter exposes structural-field drift to the root canary", () => {
+    const registry = buildJournalRegistry({ claude: [], codex: [], gemini: [], pi: [], opencode: [], grok: [], hermes: [], muse: [] });
+    const reducer = registry.gemini!.reducer();
+    reducer.push(row({ id: "m1", type: "gemini", content: [{ futureSdkPart: { secret: "private" } }] }));
+    const tally = reducer.unknowns();
+    expect(tally.parts.get("futureSdkPart")).toBe(1);
+    expect(describeUnknowns(tally)).toBe("part types futureSdkPart (1)");
+    expect(describeUnknowns(tally)).not.toContain("private");
   });
 });
 
@@ -456,8 +497,8 @@ describe("the counter itself", () => {
 // An eighth adapter cannot land without a tally: the canary's gate reads every registered adapter's
 // reducer, and one that answered nothing would be an agent whose drift nobody is watching.
 test("every registered journal adapter's reducer answers a tally", () => {
-  const registry = buildJournalRegistry({ claude: [], codex: [], pi: [], opencode: [], grok: [], hermes: [], muse: [] });
-  expect(journalAgents(registry)).toHaveLength(7);
+  const registry = buildJournalRegistry({ claude: [], codex: [], gemini: [], pi: [], opencode: [], grok: [], hermes: [], muse: [] });
+  expect(journalAgents(registry)).toHaveLength(8);
   for (const [agent, adapter] of Object.entries(registry)) {
     const tally = adapter.reducer().unknowns();
     expect(tally.rows.size, agent).toBe(0);

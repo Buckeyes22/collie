@@ -84,6 +84,14 @@ describe("nothing is shown before it is measured", () => {
     expect(evaluate({ rule: rule("claude.api", 300), memo, now: NOW })?.cache.state).toBe("warm");
   });
 
+  test("a cache rule's sourced label rides the pane wire with a bounded length", () => {
+    const source = { ...rule("claude.api", 300), label: "Sourced prompt cache" };
+    const out = evaluate({ rule: source, probe: probe(), now: NOW });
+    expect(out?.cache.label).toBe("Sourced prompt cache");
+    expect(evaluate({ rule: { ...source, label: "x".repeat(400) }, probe: probe(), now: NOW })?.cache.label).toHaveLength(256);
+    expect(evaluate({ probe: probe({ observedTtlSeconds: sourced(3600, "observed") }), now: NOW })?.cache.label).toBeUndefined();
+  });
+
   test("a rule with no probe and a memo that never measured anything still yields undefined", () => {
     const memo: CacheMemo = { lastTurnId: "", lastRequestAt: 0, lastColdAt: 0, observedTtlSeconds: 0 };
     expect(evaluate({ rule: rule("claude.api", 300), memo, now: NOW })).toBeUndefined();

@@ -36,8 +36,8 @@ Object.defineProperty(globalThis, "__BUILD_INFO__", { value: { version: "0.0.0",
 const { MACHINE_SPARK_MINUTES, machinesListLoader, machinesLoader } = await import("../web/src/lib/loaders.ts");
 
 const ROSTER: MachineRosterEntry[] = [
-  { id: "desk", name: "desk.lan", isLead: true, health: "reachable" },
-  { id: "laptop", name: "laptop", isLead: false, health: "unreachable" },
+  { id: "desk", name: "desk.lan", isLead: true, health: "reachable", fingerprint: "a".repeat(64), enrolledAt: NOW },
+  { id: "laptop", name: "laptop", isLead: false, health: "unreachable", fingerprint: "b".repeat(64), enrolledAt: NOW + 1 },
 ];
 
 const caller: MachineRouteCaller = { gate: () => null, device: () => "phone", audit: () => {} };
@@ -91,7 +91,7 @@ afterAll(async () => {
 
 describe("the phone's Machines fetchers read the bridge's real answers", () => {
   test("the census: a stale sample stays on an unreachable row, an older member has neither key", async () => {
-    const watch = await watchOf([...ROSTER, { id: "pantry", name: "pantry", isLead: false, health: "reachable" }]);
+    const watch = await watchOf([...ROSTER, { id: "pantry", name: "pantry", isLead: false, health: "reachable", fingerprint: "c".repeat(64), enrolledAt: NOW + 2 }]);
     const sample = { cpu: 0.4, cores: 8, memUsed: 3e9, memTotal: 8e9, load1: 1.2, rxBps: 1000, txBps: 200 };
     watch.observe("desk", sample, NOW - 4000);
     watch.observe("laptop", { cpu: 0.1, cores: 2, memUsed: 1e9, memTotal: 4e9 }, NOW - 20 * MINUTE_MS);
@@ -102,7 +102,7 @@ describe("the phone's Machines fetchers read the bridge's real answers", () => {
     expect(desk).toMatchObject({ id: "desk", name: "desk.lan", isLead: true, health: "reachable", sample, sampledAt: NOW - 4000, alerts: {}, firing: [] });
     expect(laptop).toMatchObject({ id: "laptop", health: "unreachable", sampledAt: NOW - 20 * MINUTE_MS });
     expect(laptop!.sample).toEqual({ cpu: 0.1, cores: 2, memUsed: 1e9, memTotal: 4e9 });
-    expect(pantry).toEqual({ id: "pantry", name: "pantry", isLead: false, health: "reachable", alerts: {}, firing: [] });
+    expect(pantry).toEqual({ id: "pantry", name: "pantry", isLead: false, health: "reachable", alerts: {}, rulesRevision: "0", machineIncarnation: expect.any(String), firing: [] });
     expect("sample" in pantry!).toBe(false);
   });
 
@@ -215,10 +215,14 @@ describe("the rules the phone posts are the rules the bridge keeps", () => {
   test("every threshold and duration the control offers is accepted and read back unchanged", async () => {
     const watch = await watchOf(ROSTER);
     serve(watch);
+    const initial = (await fetchMachines()).machines[0]!;
+    let revision = BigInt(initial.rulesRevision ?? "0");
+    const incarnation = initial.machineIncarnation!;
     for (const above of ALERT_THRESHOLDS) {
       for (const forMin of ALERT_DURATIONS) {
         const stored = await setMachineAlerts("desk", { cpu: { above, forMin }, mem: { above, forMin } });
-        expect(stored).toEqual({ alerts: { cpu: { above, forMin }, mem: { above, forMin } } });
+        revision += 1n;
+        expect(stored).toEqual({ alerts: { cpu: { above, forMin }, mem: { above, forMin } }, rulesRevision: revision.toString(), machineIncarnation: incarnation });
       }
     }
     const census = await fetchMachines();
@@ -231,10 +235,13 @@ describe("the rules the phone posts are the rules the bridge keeps", () => {
   test("the body is the WHOLE rule set: a missing key removes that rule, and {} removes both", async () => {
     const watch = await watchOf(ROSTER);
     serve(watch);
+    const incarnation = (await fetchMachines()).machines.find((row) => row.id === "laptop")!.machineIncarnation;
+    expect(incarnation).toBeString();
     await setMachineAlerts("laptop", { cpu: { above: 0.9, forMin: 10 }, mem: { above: 0.9, forMin: 10 } });
-    expect(await setMachineAlerts("laptop", { mem: { above: 0.8, forMin: 5 } })).toEqual({ alerts: { mem: { above: 0.8, forMin: 5 } } });
+    const second = await setMachineAlerts("laptop", { mem: { above: 0.8, forMin: 5 } });
+    expect(second).toEqual({ alerts: { mem: { above: 0.8, forMin: 5 } }, rulesRevision: "2", machineIncarnation: incarnation });
     expect((await fetchMachines()).machines[1]!.alerts).toEqual({ mem: { above: 0.8, forMin: 5 } });
-    expect(await setMachineAlerts("laptop", {})).toEqual({ alerts: {} });
+    expect(await setMachineAlerts("laptop", {})).toEqual({ alerts: {}, rulesRevision: "3", machineIncarnation: incarnation });
     expect((await fetchMachines()).machines[1]!.alerts).toEqual({});
   });
 });

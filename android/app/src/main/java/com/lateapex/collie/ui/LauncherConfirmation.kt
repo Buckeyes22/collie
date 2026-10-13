@@ -11,7 +11,8 @@ import kotlin.coroutines.resume
 import kotlinx.coroutines.suspendCancellableCoroutine
 
 /** The server marks launchers that skip the agent's permission prompts. */
-internal suspend fun confirmLauncher(context: Context, launcher: Launcher, machine: String): Boolean {
+internal suspend fun confirmLauncher(context: Context, launcher: Launcher, machine: String, worktreeLease: WorktreeUiLease? = null): Boolean {
+    if (worktreeLease != null && !worktreeLease.current()) return false
     if (!launcher.noPrompts) return true
     return suspendCancellableCoroutine { continuation ->
         val dialog = CollieBottomSheetDialog(context, context.getString(R.string.launch_no_prompts_title))
@@ -25,14 +26,22 @@ internal suspend fun confirmLauncher(context: Context, launcher: Launcher, machi
                 text = context.getString(R.string.launch_no_prompts_start)
                 isAllCaps = false
                 setOnClickListener {
-                    if (continuation.isActive) continuation.resume(true)
+                    val allowed = worktreeLease?.current() != false
+                    if (allowed) worktreeLease?.handoff(dialog)
+                    if (continuation.isActive) continuation.resume(allowed)
                     dialog.dismiss()
                 }
             }, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         }
         dialog.setSheetContent(content)
-        dialog.setOnDismissListener { if (continuation.isActive) continuation.resume(false) }
-        continuation.invokeOnCancellation { dialog.dismiss() }
+        val dismissed = { if (continuation.isActive) continuation.resume(false) }
+        if (worktreeLease == null) dialog.setOnDismissListener { dismissed() }
+        if (worktreeLease != null && !worktreeLease.bind(dialog, content, dismissed)) {
+            if (continuation.isActive) continuation.resume(false)
+            return@suspendCancellableCoroutine
+        }
         dialog.show()
+        // Registration immediately runs for an already cancelled caller, after show.
+        continuation.invokeOnCancellation { dialog.dismiss() }
     }
 }

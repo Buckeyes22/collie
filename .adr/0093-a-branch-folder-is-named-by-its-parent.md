@@ -1,6 +1,7 @@
 # 0093: A branch's folder is named by its parent, and checked on every use
 
 - **Status:** Accepted
+- **Amended in scope by:** [ADR 0103](./0103-owner-scoped-worktree-removal-is-separate-from-lead-local-creation.md) — only explicit owner-scoped removal crosses Crew; plan/create/list/open retain their existing lead-local semantics.
 - **Date:** 2026-10-09
 - **Shipped in:** pending (1.19.0)
 - **Relates to:** [ADR 0089](./0089-a-second-agent-on-a-branch.md) (the worktree create, its

@@ -1330,6 +1330,9 @@ export const en = {
   "apiError.launch.unknown_harness": "This machine does not start {harness}.",
   "apiError.launch.bad_folder": "That folder cannot be used. A folder path may not contain .. or control characters.",
   "apiError.launch.folder_missing": "There is no folder {folder} on this machine.",
+  "apiError.launch.request_mismatch": "This request ID belongs to a different intent.",
+  "apiError.launch.receipts_unavailable": "Owner-bound launch receipts are unavailable on this bridge.",
+  "apiError.launch.outcome_unknown": "The launch may have started, but its receipt could not be saved. Inspect the session before retrying.",
   "apiError.launch.pane_unknown": "That pane is gone, nothing was launched",
   // Rows added from a phone (ADR 0094). `{field}` is `command` or `label`; `{problem}` is `empty`,
   // `too_long` or `forbidden_character`. Both stay in English: they are codes, shown as they are.

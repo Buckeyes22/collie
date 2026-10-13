@@ -1,5 +1,6 @@
+import type {StoredMachineAlerts} from "./machine-parse.ts";
 import { afterAll, describe, expect, test } from "bun:test";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -255,8 +256,8 @@ function rig(
   const watch = new MachineWatch({
     now: () => state.now,
     roster: () => [
-      { id: "desk", name: "desk", isLead: true, health: "reachable" },
-      ...(state.laptop ? [{ id: "laptop", name: "laptop", isLead: false, health: state.health }] : []),
+      { id: "desk", name: "desk", isLead: true, health: "reachable", fingerprint: "a".repeat(64), enrolledAt: T0 },
+      ...(state.laptop ? [{ id: "laptop", name: "laptop", isLead: false, health: state.health, fingerprint: "b".repeat(64), enrolledAt: T0 + 1 }] : []),
     ],
     history,
     alerts,
@@ -276,6 +277,11 @@ function rig(
       // watch lifts `judging` in promise callbacks that run after the write settles, all before a timer.
       await Promise.all(writes.splice(0));
       await Bun.sleep(0);
+      // Deterministic fixture for the separate native producer receipt port. This does not claim
+      // B22 production integration; it lets repeated episodes exercise the reserved slot lifecycle.
+      await alerts.enqueuePendingMonitoringEvents(async (event) => ({
+        kind: "accepted", eventId: event.eventId, payloadHash: event.payloadHash, receiptDigest: "f".repeat(64),
+      }), () => true);
     }
   };
   return { state, sent, watch, run, dir };
@@ -298,7 +304,19 @@ describe("MachineWatch — one push per episode, and a restart does not push twi
     expect(r.watch.rows().machines.find((m) => m.id === "laptop")?.firing).toEqual([]);
 
     await r.run("laptop", Array(5).fill(0.95));
-    expect(r.sent.length).toBe(2);
+    expect(r.sent.map((m) => m.type)).toEqual(["machine", "clear", "machine"]);
+  });
+
+  test("removing a rule clears its open notification only after the new rules are durable", async () => {
+    const dir = await tempDir();
+    const r = rig(dir, new MachineHistory(), await MachineAlertStore.load(dir));
+    await r.watch.setAlerts("laptop", { cpu: { above: 0.9, forMin: 5 } });
+    await r.run("laptop", Array(5).fill(0.95));
+    expect(r.sent.map((m) => m.type)).toEqual(["machine"]);
+
+    await r.watch.setAlerts("laptop", {});
+    expect(r.sent.at(-1)).toEqual({ type: "clear", tag: "collie:machine:laptop:cpu" });
+    expect((await MachineAlertStore.load(dir)).rules("laptop")).toEqual({});
   });
 
   test("an episode open before a restart is still open after it, and nothing is sent again", async () => {
@@ -540,6 +558,7 @@ describe("the sample rate follows the phone, and an idle bridge still fills ever
         await Bun.sleep(0);
         r.state.now += tickMs;
       }
+      await r.watch.flush();
       // The first reading only primes the counters, so the count starts at the second minute.
       const complete = history.minutes("desk", T0 + MINUTE_MS, end);
       expect(complete.map((m) => m.t)).toEqual(Array.from({ length: 12 }, (_, i) => T0 + (i + 1) * MINUTE_MS));
@@ -573,6 +592,7 @@ describe("the sample rate follows the phone, and an idle bridge still fills ever
       r.watch.tick();
       await Bun.sleep(0);
     }
+    await r.watch.flush();
     // The lead heard the same sample on most sweeps and recorded each one once.
     expect(observed).toBeGreaterThan(400);
     expect(history.minutes("laptop", T0 + MINUTE_MS, end).map((m) => m.t)).toEqual(
@@ -603,6 +623,95 @@ describe("MachineAlertStore — written on a change only", () => {
   test("an unreadable file is no rule at all", async () => {
     const dir = await tempDir();
     await Bun.write(join(dir, MACHINE_ALERTS_FILE), "[]");
-    expect((await MachineAlertStore.load(dir)).rules("desk")).toEqual({});
+    const corrupt = await MachineAlertStore.load(dir);
+    expect(corrupt.rules("desk")).toEqual({});
+    expect(corrupt.available()).toBe(false);
+  });
+
+  test("a completed-minute generation atomically carries exact history, evaluator state and reserved alert/clear events", async () => {
+    const dir = await tempDir();
+    const history = new MachineHistory();
+    const store = await MachineAlertStore.load(dir);
+    let now = T0;
+    store.attachHistory(history, () => now);
+    expect(store.currentCheckpointRevision()).toBe("0");
+    const incarnation = "a".repeat(64);
+    await store.replaceRules({ id: "desk", incarnation, rules: { cpu: RULE }, actor: "private-pair-record" }, () => true);
+    const afterRule = store.currentCheckpointRevision();
+    for (let i = 0; i < 10; i++) {
+      now = T0 + (i + 1) * MINUTE_MS;
+      history.record("desk", hot(0.95), now - 1);
+    }
+    await store.apply({ opened: [{ id: "desk", name: "desk", metric: "cpu", rule: RULE, value: 0.95, machineIncarnation: incarnation, rulesRevision: "1" }], closed: [] }, now);
+    await store.commitGeneration(now - MINUTE_MS);
+    expect(BigInt(store.currentCheckpointRevision())).toBeGreaterThan(BigInt(afterRule));
+
+    const first = store.pendingMonitoringEvents();
+    expect(first).toHaveLength(1);
+    expect(first[0]).toMatchObject({ schema: 1, producerLineage: store.producerLineage(), machineIncarnation: incarnation, metric: "cpu", rulesRevision: "1", kind: "alert" });
+    const persisted = JSON.parse(await readFile(join(dir, MACHINE_ALERTS_FILE), "utf8"));
+    expect(persisted.schema).toBe(1);
+    expect(persisted.checkpointRevision).toBe(store.currentCheckpointRevision());
+    expect(persisted.evaluatedThrough).toBe(now - MINUTE_MS);
+    expect(persisted.history.desk[0].cpu).toBe(0.95);
+    expect(persisted.reservedClear[first[0]!.slot].sequence).toBe("2");
+
+    const restarted = await MachineAlertStore.load(dir);
+    expect(restarted.available()).toBe(true);
+    expect(restarted.currentCheckpointRevision()).toBe(store.currentCheckpointRevision());
+    expect(restarted.pendingMonitoringEvents()).toEqual(first);
+    await restarted.enqueuePendingMonitoringEvents(async () => ({ kind: "deferred", reason: "fixture retains the producer obligation" }), () => true);
+    expect(restarted.pendingMonitoringEvents()).toEqual(first);
+    await restarted.enqueuePendingMonitoringEvents(async (event) => ({
+      kind: "accepted", eventId: event.eventId, payloadHash: event.payloadHash, receiptDigest: "b".repeat(64),
+    }), () => true);
+    expect(restarted.pendingMonitoringEvents()).toEqual([]);
+    expect((await MachineAlertStore.load(dir)).available()).toBe(true);
+  });
+
+  test("a clear uses its reserved sequence and alert slot and survives restart without opening a second episode", async () => {
+    const dir = await tempDir();
+    const store = await MachineAlertStore.load(dir);
+    const incarnation = "c".repeat(64);
+    await store.replaceRules({ id: "desk", incarnation, rules: { cpu: RULE }, actor: "A" }, () => true);
+    await store.apply({ opened: [{ id: "desk", name: "desk", metric: "cpu", rule: RULE, value: 0.95, machineIncarnation: incarnation, rulesRevision: "1" }], closed: [] }, T0);
+    const alert = store.pendingMonitoringEvents()[0]!;
+    await store.apply({ opened: [], closed: [{ id: "desk", metric: "cpu", machineIncarnation: incarnation, rulesRevision: "1" }] }, T0 + MINUTE_MS);
+    const events = store.pendingMonitoringEvents();
+    expect(events.map((event) => [event.kind, event.producerSequence, event.slot, event.message.tag])).toEqual([
+      ["alert", "1", alert.slot, "collie:machine:desk:cpu"],
+      ["clear", "2", alert.slot, "collie:machine:desk:cpu"],
+    ]);
+    expect((await MachineAlertStore.load(dir)).pendingMonitoringEvents()).toEqual(events);
+    await expect(store.apply({ opened: [{ id: "desk", name: "desk", metric: "cpu", rule: RULE, value: 0.95, machineIncarnation: incarnation, rulesRevision: "1" }], closed: [] }, T0 + 2 * MINUTE_MS)).rejects.toThrow("machine.monitoring_slot_pending");
+  });
+
+  test("a full outbox still has reserved space to persist a future clear", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "machine-alerts-reservation-"));
+    dirs.push(dir);
+    const count = 1500;
+    const incarnation = (index: number) => index.toString(16).padStart(64, "0");
+    const entries = new Map<string,StoredMachineAlerts>(Array.from({ length: count }, (_, index):[string,StoredMachineAlerts] => [`host_${index}`, {
+      rules: { cpu: { above: 0.9, forMin: 10 } }, open: [], rulesRevision: "1", machineIncarnation: incarnation(index),
+    }]));
+    // Pressure candidates are configured original owners, not invented unlisted hosts.
+    for (let index = 0; index < 500; index++) entries.set(`overflow_${index}`, {
+      rules: { cpu: { above: 0.9, forMin: 10 } }, open: [], rulesRevision: "1", machineIncarnation: incarnation(index + count),
+    });
+    const store = new MachineAlertStore(dir, entries, { lineage: "a".repeat(64) });
+    const opened = Array.from({ length: count }, (_, index) => ({ id: `host_${index}`, name: `Host ${index}`, metric: "cpu" as const,
+      rule: { above: 0.9, forMin: 10 }, value: 0.95, machineIncarnation: incarnation(index), rulesRevision: "1" }));
+    await store.apply({ opened, closed: [] }, 1000);
+    const before = store.pendingMonitoringEvents().length;
+    expect(before).toBe(count);
+
+    const overflow = Array.from({ length: 500 }, (_, index) => ({ id: `overflow_${index}`, name: `Overflow ${index}`, metric: "cpu" as const,
+      rule: { above: 0.9, forMin: 10 }, value: 0.95, machineIncarnation: (index + count).toString(16).padStart(64, "0"), rulesRevision: "1" }));
+    await expect(store.apply({ opened: overflow, closed: [] }, 1001)).rejects.toThrow("machine.monitoring_outbox_full");
+    expect(store.pendingMonitoringEvents()).toHaveLength(before);
+
+    await store.apply({ opened: [], closed: [{ id: "host_0", metric: "cpu", machineIncarnation: incarnation(0), rulesRevision: "1" }] }, 1002);
+    expect(store.pendingMonitoringEvents()).toHaveLength(before + 1);
+    expect((await MachineAlertStore.load(dir)).available()).toBe(true);
   });
 });

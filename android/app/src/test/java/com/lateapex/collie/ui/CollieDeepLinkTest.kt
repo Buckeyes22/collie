@@ -50,4 +50,19 @@ class CollieDeepLinkTest {
         assertNull(CollieDeepLink.parse(Uri.parse("https://example.com/pane/w1:p1"), host))
         assertNull(CollieDeepLink.parse(Uri.parse("https://$host/admin"), host))
     }
+    @Test
+    fun mountedRoutesRequireTheConfiguredAuthorityAndWholePathPrefix() {
+        val origin = com.lateapex.collie.domain.CollieOrigin("https://$host:9443/nested/collie/")
+        assertEquals(
+            CollieDeepLink.Pane("w1:p2", Scope(session = "work"), history = true),
+            CollieDeepLink.parse(Uri.parse("https://$host:9443/nested/collie/pane/w1%3Ap2/history?s=work"), origin),
+        )
+        listOf(
+            "https://$host/nested/collie/pane/p1",
+            "https://$host:9443/pane/p1",
+            "https://$host:9443/nested/collie-other/pane/p1",
+            "https://user@$host:9443/nested/collie/pane/p1",
+        ).forEach { assertNull(CollieDeepLink.parse(Uri.parse(it), origin)) }
+    }
+
 }

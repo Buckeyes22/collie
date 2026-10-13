@@ -102,6 +102,8 @@ export interface PaneCache {
   expiresAt?: number;
   ttlSeconds: number;
   ruleId: string;
+  /** Sourced display label from the selected cache rule; omitted when no rule supplied the TTL. */
+  label?: string;
   confidence: Confidence;
   lastRequestAt?: number;
   measuredAt?: number;
@@ -326,6 +328,7 @@ export function evaluate(
     confidence: ttl.confidence,
     lastRequestAt,
   };
+  if (rule !== undefined) cache.label = Array.from(rule.label).slice(0, 256).join("");
   if (measuredAt !== undefined) cache.measuredAt = measuredAt;
   if (ttl === overrideTtl) cache.overridden = true;
   if (coldReason !== undefined) cache.coldReason = coldReason;

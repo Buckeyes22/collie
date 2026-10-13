@@ -647,6 +647,8 @@ export function fsTrustStoreIo(stateDir: string): TrustStoreIo {
  * the promise rejects and the caller decides.
  */
 export class TrustStore {
+  private committedRevision = 0n;
+  private monitoringPublication: {keyOf:(data:TrustStoreData|null)=>string;key:string;revision:bigint}|null=null;
   private cached: TrustStoreData | null = null;
   private loaded = false;
   private writeChain: Promise<unknown> = Promise.resolve();
@@ -680,6 +682,15 @@ export class TrustStore {
   }
 
   /** The last loaded value without touching the disk. `null` before {@link load} has been called. */
+  /** Local committed-publication witness; never serialized or compared across processes. */
+  currentRevision(): bigint { return this.committedRevision; }
+  /** One bounded local ownership domain. No observer, timer, or callback-time authority capture. */
+  monitoringRevision(keyOf:(data:TrustStoreData|null)=>string):bigint {
+    if(this.monitoringPublication===null)this.monitoringPublication={keyOf,key:keyOf(this.cached),revision:0n};
+    if(this.monitoringPublication.keyOf!==keyOf)throw new Error("crew.monitoring_domain_mismatch");
+    return this.monitoringPublication.revision;
+  }
+
   current(): TrustStoreData | null {
     return this.cached;
   }
@@ -697,6 +708,9 @@ export class TrustStore {
       const outcome = fn(this.cached);
       if (outcome === null) return null;
       await this.io.write(this.path, serializeTrustStore(outcome.next));
+      this.committedRevision++;
+      const domain=this.monitoringPublication;
+      if(domain!==null){const key=domain.keyOf(outcome.next);if(key!==domain.key){domain.key=key;domain.revision++;}}
       this.cached = outcome.next;
       return outcome.result;
     };

@@ -376,6 +376,32 @@ describe("PairingStore", () => {
     expect(store.resolve(claimed.token)?.label).toBe("phone");
   });
 
+  test("pairing identity is opaque, stable for the pairing and changes when the same label is re-paired", async () => {
+    const { io, state } = memoryIo({ pending: newPending("ABCD2345", 0) });
+    const store = new PairingStore(io, () => 1000, fixedRandom(0x41));
+    const first = await store.claim("ABCD2345", "phone");
+    if (!first.ok) throw new Error(`expected success, got ${first.reason}`);
+    const firstIdentity = store.identity(first.token);
+    expect(firstIdentity).toMatch(/^[0-9a-f]{64}$/u);
+    expect(firstIdentity).not.toBe(sha256Hex(first.token));
+    expect(store.identity(first.token)).toBe(firstIdentity);
+
+    const firstDevice = state.registry!.devices[0]!;
+    state.registry = { devices: [] };
+    state.pending = newPending("EFGH2345", 0);
+    const second = await new PairingStore(io, () => 1000, fixedRandom(0x42)).claim("EFGH2345", "phone");
+    if (!second.ok) throw new Error(`expected success, got ${second.reason}`);
+    expect(new PairingStore(io, () => 1000).identity(second.token)).not.toBe(firstIdentity);
+    expect(firstDevice.label).toBe("phone");
+  });
+
+  test("malformed immutable pairing time has no bound identity", () => {
+    const { io } = memoryIo({
+      registry: { devices: [{ label: "phone", tokenHash: sha256Hex("token"), createdAt: Number.NaN, lastSeenAt: 0 }] },
+    });
+    expect(new PairingStore(io, () => 1000).identity("token")).toBeNull();
+  });
+
   test("a code is single-use — the pending file is destroyed on success", async () => {
     const { io, state } = memoryIo({ pending: newPending("ABCD2345", 0) });
     const store = new PairingStore(io, () => 1000);

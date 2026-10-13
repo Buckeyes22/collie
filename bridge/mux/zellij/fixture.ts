@@ -117,6 +117,12 @@ export class FakeZellij implements ZellijExec {
     return this.recorded;
   }
 
+  /** Replace retained history for bounded pane-read fixtures. */
+  setScrollback(paneId: string, rows: readonly string[]): void {
+    const pane = this.panes.find((candidate) => candidate.paneId === paneId);
+    if (pane !== undefined) pane.scrollback = [...rows];
+  }
+
   /**
    * The connection drops and comes back.
    *

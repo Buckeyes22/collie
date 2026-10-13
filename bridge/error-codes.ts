@@ -98,7 +98,12 @@ export const ERROR_CODES = {
   "launch.bad_folder": "the folder cannot be used: no .. and no control characters",
   /** A launch's folder is not a directory on the machine that runs it. Nothing was created. */
   "launch.folder_missing": "there is no folder {folder} on this machine",
-
+  /** A request id already names a different device, operation, runtime or payload. */
+  "launch.request_mismatch": "request id is already bound to another intent",
+  /** The receipt binding key or authenticated pairing identity is unavailable. */
+  "launch.receipts_unavailable": "owner-bound launch receipts are unavailable on this bridge",
+  /** The create happened but its receipt could not be made durable; inspect before any retry. */
+  "launch.outcome_unknown": "the launch may have started, but its receipt could not be saved; inspect the session before retrying",
   // ── One-off runs and their history: POST /api/launch `{ run }`, /api/launch/recent/* (ADR 0095) ──
   /** A one-off run came with no paired device to attribute it to. Nothing ran. */
   "launch.no_device": "this request names no paired device",

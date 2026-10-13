@@ -31,10 +31,18 @@ internal sealed interface HistoryPart {
     data class Tool(
         val name: String,
         val summary: String,
+        val callId: String?,
+        val call: ToolCallPresentation?,
+        val callTruncated: Boolean,
         val result: String?,
-        val resultIsError: Boolean,
+        val resultStatus: ToolResultStatus,
         val resultTruncated: Boolean,
-    ) : HistoryPart
+        val image: Image? = null,
+    ) : HistoryPart {
+        val resultImageUrl: String? get() = image?.reference
+    }
+
+    data class Image(val reference: String?, val description: String, val mimeType: String? = null) : HistoryPart
 }
 
 internal sealed interface HistoryMarkdownBlock {
@@ -314,13 +322,23 @@ internal object HistoryPresentation {
         }
     }
 
-    private fun part(part: TranscriptPart, resources: Resources): HistoryPart = if (part.kind == "tool") {
+    private fun part(part: TranscriptPart, resources: Resources): HistoryPart = if (part.kind == "image") {
+        HistoryPart.Image(part.url, part.text?.trim()?.takeIf(String::isNotEmpty) ?: resources.getString(R.string.history_image), part.mimeType)
+    } else if (part.kind == "tool") {
         HistoryPart.Tool(
-            name = part.name?.trim()?.takeIf(String::isNotEmpty) ?: resources.getString(R.string.history_tool),
-            summary = part.summary.orEmpty(),
-            result = part.result?.text,
-            resultIsError = part.result?.isError == true,
-            resultTruncated = part.result?.truncated == true,
+            name = part.name?.trim()?.takeIf(String::isNotEmpty)?.take(StructuredToolPresentation.MAX_TEXT)
+                ?: resources.getString(R.string.history_tool),
+            summary = part.summary.orEmpty().take(StructuredToolPresentation.MAX_TEXT),
+            callId = part.id?.take(StructuredToolPresentation.MAX_TEXT),
+            call = StructuredToolPresentation.call(part),
+            callTruncated = part.truncated,
+            result = part.result?.text?.take(MAX_TOOL_RESULT_CHARS),
+            resultStatus = StructuredToolPresentation.resultStatus(part),
+            resultTruncated = part.result?.truncated == true || (part.result?.text?.length ?: 0) > MAX_TOOL_RESULT_CHARS,
+            image = part.result?.imageUrl?.let {
+                val toolName = part.name?.trim()?.takeIf(String::isNotEmpty)?.take(StructuredToolPresentation.MAX_TEXT) ?: resources.getString(R.string.history_tool)
+                HistoryPart.Image(it, resources.getString(R.string.history_tool_image, toolName), part.mimeType)
+            },
         )
     } else {
         val text = part.text.orEmpty()
@@ -375,6 +393,7 @@ internal object HistoryPresentation {
     private val UNORDERED = Regex("""\s*[-*+]\s+(.*)""")
     private val ORDERED = Regex("""\s*\d+[.)]\s+(.*)""")
     private val TABLE_DELIMITER = Regex("""\s*\|?(?:\s*:?-+:?\s*\|)+\s*(?::?-+:?\s*\|?)?\s*""")
+    private const val MAX_TOOL_RESULT_CHARS = 16_000
     private val INLINE = Regex(
         """(`+)([^`]+?)\1|\*\*(\S(?:[^\n]*?\S)?)\*\*|\*(\S(?:[^\n*]*?\S)?)\*|\[([^\]\n]*)\]\(([^)\s]+)\)""",
     )

@@ -91,6 +91,7 @@ export class TernMux implements MuxAdapter {
     ],
     spaces: "many",
     topologyLatency: { kind: "push" },
+    readLimits: { maxRequestedLines: 10_000 },
     unsupportedKeys: [...TERN_UNSENDABLE_KEYS, ...EXTENDED_ONLY_CHORDS],
   });
 
@@ -411,7 +412,6 @@ export class TernMux implements MuxAdapter {
             agent: "shell",
             status: "unknown",
             terminalTitle: b.title ?? undefined,
-            readableLines: (b.rows ?? 24) + 10000,
           };
           panes.push(pane);
         }

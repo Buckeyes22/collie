@@ -102,6 +102,7 @@ function capture(): Io & { stdout: string[]; stderr: string[] } {
 describe("the verb table", () => {
   test("covers every verb the shell dispatches, plus help", () => {
     expect(COMMANDS.map((c) => c.name)).toEqual([
+      "native-access",
       ...SHELL_VERBS,
       ...DIAGNOSTIC_VERBS,
       ...LINK_VERBS,
@@ -350,6 +351,8 @@ describe("exit codes", () => {
   // `version` and `help` are the only verbs this file may run: they read, they never write.
   test("every verb is dispatchable, and only the two read-only ones may be run here", () => {
     const worldTouching = [
+      // The opt-in gateway changes private state or owns a listener; dedicated fixtures own it.
+      "native-access",
       "start",
       "stop",
       "restart",

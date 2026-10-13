@@ -1,5 +1,6 @@
 package com.lateapex.collie.ui.terminal
 
+import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -64,6 +65,19 @@ class TerminalComposerSemanticsTest {
     }
 
     @Test
+    fun museReadsOnlyItsBareComposerAndNeverOffersCollapsedPasteTokensForTakeover() {
+        assertNull(TerminalComposerSemantics.terminalDraft("muse", fixture("muse--fresh-idle.txt")))
+        assertEquals("hello muse draft", TerminalComposerSemantics.terminalDraft("muse", fixture("muse--draft-single.txt"))?.text)
+
+        val pasted = TerminalComposerSemantics.terminalDraft("muse", fixture("muse--draft-paste-token.txt"))
+        assertEquals("[Pasted Content 3003 chars]", pasted?.text)
+        assertTrue(pasted!!.opaque)
+
+        assertNull(TerminalComposerSemantics.terminalDraft("muse", fixture("muse--ask-toppings.txt")))
+        assertNull(TerminalComposerSemantics.terminalDraft("muse", fixture("muse--ask-toppings-notes-open.txt")))
+    }
+
+    @Test
     fun stableDraftNeedsTwoObservationsAcrossTheMinimumAgeAndHandledTextStaysHidden() {
         var time = 0L
         val tracker = StableTerminalDraft { time }
@@ -82,5 +96,11 @@ class TerminalComposerSemanticsTest {
         time += StableTerminalDraft.STABLE_MIN_AGE_MS
         assertEquals("different", tracker.observe(TerminalDraft("different"))?.text)
         assertNull(tracker.observe(null))
+    }
+
+    private fun fixture(name: String): String {
+        val file = File("../../web/src/fixtures/panes/$name")
+        check(file.isFile) { "Missing shared web fixture: ${file.absolutePath}" }
+        return file.readText()
     }
 }

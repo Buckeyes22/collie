@@ -93,7 +93,17 @@ function routeRegexSources(): string[] {
  * checked against the regex itself in the test, so a shape this expander gets wrong fails loudly.
  */
 function samplesOf(source: string): string[] {
-  let variants = [source.replace(/^\^/, "").replace(/\$$/, "").replaceAll("([^/]+)", "id1")];
+  // The pane dispatcher has one nested optional action grammar for the agent read and its scoped
+  // lifecycle routes; expand those concrete paths directly rather than mistaking its inner group
+  // for the outer optional action group.
+  if (source.includes("agent\\/(?:state|session|release|authority\\/clear)")) {
+    return [
+      "/api/pane/id1",
+      ...["reply", "keys", "upload", "close", "rename", "history", "chat", "changes", "files", "focus", "processes", "agent"].map((action) => `/api/pane/id1/${action}`),
+      ...["state", "session", "release", "authority/clear"].map((action) => `/api/pane/id1/agent/${action}`),
+    ];
+  }
+  let variants = [source.replace(/^\^/, "").replace(/\$$/, "").replaceAll("([^/]+)", "id1").replaceAll("[^/]+", "id1")];
   const expand = (re: RegExp, alts: (inner: string) => string[]): void => {
     let changed = true;
     while (changed) {
@@ -112,6 +122,7 @@ function samplesOf(source: string): string[] {
     }
   };
   expand(/\(\?:\\\/\(([^()]*)\)\)\?/, (inner) => ["", ...inner.split("|").map((a) => `\\/${a}`)]);
+  expand(/\(\?:([^()]*)\)/, (inner) => inner.split("|"));
   expand(/\(([^()?]*)\)/, (inner) => inner.split("|"));
   return variants.map((v) => v.replaceAll("\\/", "/").replaceAll("\\.", "."));
 }
@@ -132,6 +143,12 @@ describe("the route table read off server.ts", () => {
       "/api/snapshot",
       "/api/devices/revoke",
       "/api/pane/id1/reply",
+      "/api/pane/id1/processes",
+      "/api/pane/id1/agent",
+      "/api/pane/id1/agent/state",
+      "/api/pane/id1/agent/session",
+      "/api/pane/id1/agent/release",
+      "/api/pane/id1/agent/authority/clear",
       "/api/workspace/id1/worktrees",
       // The Files existence check (ADR 0088): a POST read, refused without a token like every route.
       "/api/pane/id1/files/exist",
@@ -212,9 +229,12 @@ describe("the dispatcher's wiring, pinned by source", () => {
     const gateAt = SERVER_CODE.indexOf("apiFrontGate(req, pathname, cfg, pairingGate)", fetchStart);
     expect(fetchStart).toBeGreaterThan(0);
     expect(gateAt).toBeGreaterThan(fetchStart);
-    // The only `/api/` literal the fetch handler reads before the gate is the health route's own.
+    // ADR 0098 adds only two configured-ingress refusal predicates before pairing.
+    // Neither predicate dispatches a resource; the health exception remains the sole route.
     const before = [...SERVER_CODE.slice(fetchStart, gateAt).matchAll(/"(\/api\/[^"]*)"/g)].map((m) => m[1]);
-    expect(before).toEqual(["/api/health"]);
+    expect(before).toEqual(["/api/", "/api/", "/api/health"]);
+    expect(SERVER_CODE.slice(fetchStart, gateAt)).toContain("opts.nativeIngress.ingress.verify(req, identity, pathname)");
+    expect(SERVER_CODE.slice(fetchStart, gateAt)).toContain('gatewayRefusal("device", "device.ingress_required", 403)');
     // Nothing before the gate dispatches into the shared route block or a route regex.
     const head = SERVER_CODE.slice(fetchStart, gateAt);
     expect(head).not.toContain("serveSessionRoute(");
@@ -512,7 +532,7 @@ describe("the local credential: reads only, from this host through nothing", () 
     expect(guard(throughServe, cfg, "read", gate)?.status).toBe(403);
   });
 
-  test("it stays read-only on every bind: a write, the Files read, files/image and files/exist all 403", async () => {
+  test("it stays read-only on every bind: a write, Files reads and agent identity all 403", async () => {
     for (const [bind, peer] of [
       [LOOPBACK_BIND, "127.0.0.1"],
       [CONCRETE_BIND, "100.64.0.8"],
@@ -521,8 +541,8 @@ describe("the local credential: reads only, from this host through nothing", () 
       const write = guard(request("POST", "/api/tab", { ...bearer, origin: "http://127.0.0.1:8787" }), config(), "write", gate)!;
       expect(write.status).toBe(403);
       expect(await write.text()).toBe("device not paired");
-      // The three Files routes ask `device-read` (pinned by source below); each is refused.
-      for (const path of ["/api/pane/w1/files", "/api/pane/w1/files/image?path=x.png", "/api/workspace/w1/files/exist"]) {
+      // Files and owner identity ask `device-read` (pinned by source below); each is refused.
+      for (const path of ["/api/pane/w1/files", "/api/pane/w1/files/image?path=x.png", "/api/workspace/w1/files/exist", "/api/pane/w1/agent"]) {
         const method = path.endsWith("/exist") ? "POST" : "GET";
         const denied = guard(request(method, path, { ...bearer, origin: "http://127.0.0.1:8787" }), config(), "device-read", gate);
         expect({ bind, path, status: denied?.status }).toEqual({ bind, path, status: 403 });
@@ -531,15 +551,15 @@ describe("the local credential: reads only, from this host through nothing", () 
     }
   });
 
-  test("the Files read, files/image and files/exist routes ask device-read, never read (by source)", () => {
+  test("Files and scoped agent identity routes ask device-read, never read (by source)", () => {
     for (const route of ["WORKSPACE_FILES_ROUTE", "PANE_FILES_EXIST_ROUTE", "PANE_FILES_IMAGE_ROUTE"]) {
       const at = SERVER_CODE.indexOf(`pathname.match(${route})`);
       expect({ route, found: at > 0 }).toEqual({ route, found: true });
       const nextGate = SERVER_CODE.slice(at).match(/caller\.gate\("([a-z-]+)"\)/);
       expect({ route, level: nextGate?.[1] }).toEqual({ route, level: "device-read" });
     }
-    // The pane Files read takes its level from the action table.
-    expect(SERVER_CODE).toContain('if (action === "files") return "device-read";');
+    // Pane Files, process and agent identity reads take their level from the action table.
+    expect(SERVER_CODE).toContain('if (action === "files" || action === "processes" || action === "agent") return "device-read";');
   });
 
   test("the host's addresses are asked only once the secret matched, on a concrete bind, and read fresh each time", async () => {

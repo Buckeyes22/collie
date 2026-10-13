@@ -239,16 +239,22 @@ the same handlers. There is no second handler set, no second semantic, and no He
 
 | Method | Path | Backs onto (Verified) | Lead treatment |
 |---|---|---|---|
+| `POST` | `/crew/v1/refresh` | `POST /api/refresh?session=` | forwarded as a **read** — asks the addressed member to run its owning-mux refresh and coalesced census before the matching snapshot. The phone's paired read admission is preserved; the lead does not refresh its own runtime on a peer-scoped request. An older peer's 404 is returned unchanged, so the phone labels its subsequent ordinary snapshot reload as fallback rather than claiming a look-now succeeded |
 | `GET` | `/crew/v1/snapshot` | `GET /api/snapshot` (`bridge/server.ts:177`) | **merged** — the only merged route |
 | `GET` | `/crew/v1/pane/:id` | `GET /api/pane/:id` (`:276`) | proxied byte-for-byte |
 | `GET` | `/crew/v1/pane/:id/history` | `GET …/history` (`:277`) | proxied byte-for-byte |
 | `GET` | `/crew/v1/pane/:id/chat` | `GET …/chat` | proxied byte-for-byte — additive-optional (§7.1), added 2026-09-30 (M41/08). The live half of `history`: the same session log on the member that owns the pane, asked "anything after this?" rather than "show me this". The query (`after`, `before`, `limit`) rides through untouched, and `if-none-match` is already forwarded (§6), so the peer answers its own 304 and the lead re-emits it. A read, so it is attempted against a stale member rather than refused (§10.3). A lead that predates it never calls it, and a peer that predates it answers **404** to a lead that does — which the phone must read as "update this member", never as an empty session |
-| `GET` | `/crew/v1/pane/:id/changes` | `GET …/changes` | proxied byte-for-byte — additive-optional (§7.1). Read-only git over the folder of the pane's WORKSPACE on the machine that owns it (ADR 0065); the query (`depth`, `nested`, `repo`, `path`, and `view=commit` for the repo's last commit) rides through untouched. A lead that predates it never calls it, and a peer that predates it answers 404 to a lead that does |
-| `GET` | `/crew/v1/workspace/:id/changes` | `GET …/workspace/:id/changes` | proxied byte-for-byte — additive-optional (§7.1). The same list asked by workspace rather than by pane (ADR 0065), with the same query. A lead that predates it never calls it, and a peer that predates it answers 404 to a lead that does |
+| `GET` | `/crew/v1/pane/:id/changes` | `GET …/changes` | proxied byte-for-byte — additive-optional (§7.1). Read-only git over the folder of the pane's WORKSPACE on the machine that owns it (ADR 0065); the query (`depth`, `nested`, `repo`, `path`, `view=commit` for a selected commit, and bounded `view=history` page coordinates `head`, `offset`, and `limit`) rides through untouched. A lead that predates it never calls it, and a peer that predates it answers 404 to a lead that does |
+| `GET` | `/crew/v1/workspace/:id/changes` | `GET …/workspace/:id/changes` | proxied byte-for-byte — additive-optional (§7.1). The same list asked by workspace rather than by pane (ADR 0065), with the same query and pinned first-parent history paging. A lead that predates it never calls it, and a peer that predates it answers 404 to a lead that does |
 | `GET` | `/crew/v1/pane/:id/files` | `GET …/files` | proxied byte-for-byte — additive-optional (§7.1), added 2026-10-05 (M45/03). One folder (`?dir=`) or one text file (`?path=`) under the same root the pane's Changes list reads, off **the member's own disk** (ADR 0083); the query rides through untouched. A READ for forwarding (attempted against a stale member, read budget, audited on neither side), but the member answers it only for a device its **own** device policy authorises, exactly as for a write (§12): `crewGate` takes its write branch for it. A lead that predates it never calls it, and a peer that predates it answers **404** to a lead that does, which the phone must read as "update this member", never as a missing file. A refused path is the member's own `404 { "error": "unknown-path" }`, told apart by its body. A listing row may carry `ignored: true` (additive-optional, added 2026-10-05): git says the entry is ignored in the repository that holds the folder, asked once per listing by the member over its own disk. A member that predates it, one with no repository there, and one whose git did not answer in time all send no field, and the phone then hides nothing for it. The phone hides flagged rows by default; it is a view filter, and an ignored file still reads |
+| `GET` | `/crew/v1/pane/:id/processes` | `GET …/processes` | additive-optional (§7.1). The member reads sensitive argv and paths from the runtime owning the pane; both ends require an authorised device and the lead re-masks the response even when terminal-content redaction is off. A member predating the route answers 404, which is unsupported-version evidence, not an empty process list. |
+| `GET` | `/crew/v1/pane/:id/agent` | `GET …/agent` | additive-optional (§7.1). The owning member brackets keyed `agent.get(target=paneId)` with bounded `pane.get` reads and requires the same exact pane/terminal occupant and matching agent/status/session. Session provenance remains distinct from unknown lifecycle authority. The lead masks the bounded JSON and the route requires `device-read`; a member predating it answers 404. |
+| `POST` | `/crew/v1/pane/:id/agent/{state,session,release,authority/clear}` | matching scoped pane route | additive-optional (§7.1), write-gated by the owning member. Registered custom-source intents are bounded and checked against the current pane/session, but Herdr 0.9.3 has no atomic occupant compare-and-set; the member returns a typed unsupported refusal without sending a report. Global authority clear is never forwarded. |
 | `GET` | `/crew/v1/workspace/:id/files` | `GET …/workspace/:id/files` | proxied byte-for-byte — additive-optional (§7.1), added 2026-10-05 (M45/03). The same Files view asked by workspace, with the same query, gate and 404 reading as the pane row above |
 | `GET` | `/crew/v1/pane/:id/files/image` | `GET …/files/image` | proxied byte-for-byte — additive-optional (§7.1), added 2026-10-07 (ADR 0090). One picture (`?path=`) under the same root as the pane's Files read, as its own bytes, off **the member's own disk**; the member reads the type off the bytes (PNG, JPEG, GIF, WebP, AVIF) and answers `413` past 16 MiB and `415` for anything else. The same gate as the Files read (§12, `crewGate`'s write branch), a READ for forwarding, audited on neither side. The lead does not relay the member's cache or security headers: it sets `no-store`, `default-src 'none'; sandbox` and `inline` itself on whatever comes back. It does relay the plain-data `X-Collie-File-Size` and `X-Collie-File-Mtime` the member sends, the picture's version, so the phone can hold the picture in memory; a member that sends neither gets neither. A peer that predates it answers **404**, which the phone reads as "no picture" and shows the file's size instead |
 | `GET` | `/crew/v1/workspace/:id/files/image` | `GET …/workspace/:id/files/image` | proxied byte-for-byte — additive-optional (§7.1), added 2026-10-07 (ADR 0090). The same picture asked by workspace, with the same query, gate, statuses and headers as the pane row above |
+| `POST` | `/crew/v1/pane/:id/files/exist` | `POST …/files/exist` | proxied byte-for-byte — additive-optional (§7.1), added 2026-10-10 (ADR 0088). Checks at most 64 root-relative printed paths against the member's own Files root; it does not accept a root or return file contents. It is a read for forwarding and an authorised-device `device-read` at both lead and peer. A peer that predates it answers **404** and the client keeps those references as plain text |
+| `POST` | `/crew/v1/workspace/:id/files/exist` | `POST …/workspace/:id/files/exist` | proxied byte-for-byte — additive-optional (§7.1), added 2026-10-10 (ADR 0088). The same bounded existence check asked by workspace, with the same gate and older-peer behavior |
 | `POST` | `/crew/v1/pane/:id/reply` | `POST …/reply` (`:279`) | forwarded |
 | `POST` | `/crew/v1/pane/:id/keys` | `POST …/keys` (`:280`) | forwarded |
 | `POST` | `/crew/v1/pane/:id/upload` | `POST …/upload` (`:281`) | forwarded (§13) |
@@ -258,8 +264,16 @@ the same handlers. There is no second handler set, no second semantic, and no He
 | `POST` | `/crew/v1/tab` | `POST /api/tab` (`:218`) | forwarded |
 | `POST` | `/crew/v1/tab/:id/rename\|close` | `TAB_ACTION_ROUTE` (`:102`, matched `:234`) | forwarded |
 | `POST` | `/crew/v1/workspace` | `POST /api/workspace` (`:225`) | forwarded |
+| `GET` | `/crew/v1/workspace/:id/worktree/remove-plan` | `GET /api/workspace/:id/worktree/remove-plan` | additive-optional — an owner-host read that resolves the exact discovered linked checkout and binds its real paths, branch, Git status and current pane identities into a short-lived plan. Dirty worktrees require a second plan with explicit `force=true`; the lead never resolves a caller path or substitutes its own runtime |
+| `POST` | `/crew/v1/workspace/:id/worktree/remove` | `POST /api/workspace/:id/worktree/remove` | additive-optional — an owner-host write carrying only `{ requestId, planToken, force }`; the peer repeats discovery and status/pane checks before one removal call and keeps a durable result/unknown receipt. The route never forwards a Herdr method or trust flag. The owner retains paired-device/write gates; unsupported or old peers return their typed refusal |
 | `POST` | `/crew/v1/launch` | `POST /api/launch` | forwarded — additive-optional (§7.1). Runs an allowlisted `launchers.toml` row **on the peer**, from that peer's own rows; a lead that predates it never calls it, and a peer that predates it answers 404 to a lead that does. Since 1.19.0 (ADR 0091) the body may instead name `harness` (an id from that peer's own `harnesses` list) or `shell: true`, plus `cwd` and `requestId`, all optional and additive: the receipt lives on the peer that made the pane. Since 1.19.0 (ADR 0095) the body may instead name `run`, a one-off line the peer checks against its own `[phone] run` switch and character rule and types into a fresh shell; the answer may carry `noPrompts`, and a run that worked joins that peer's own `commands-recent.json`. A peer that predates them answers 400 to a body without `command`, which the phone never sends to it, because that peer's launchers answer carries no `harnesses` |
 | `GET` | `/crew/v1/launchers` | `GET /api/launchers` | forwarded — additive-optional (§7.1), same pairing as above. Rows must come from the host that runs them, so this is a READ crossing the link rather than a second copy of `config`'s `launchers` field, which is why that field was retired from `/api/config` in the same change. Since 1.19.0 (ADR 0091) the answer may carry `harnesses: [{ id, label, found }]`, the agents that peer starts and whether each binary is on its login PATH; additive-optional, and its absence is how the phone tells an older peer apart. Since 1.19.0 (ADR 0094) it may also carry `adding` (that peer's `[phone]` switches, its `launchers.toml` path, its recipe table and the added rows it holds back), and each row may carry `source`, `id`, `kind`, `harness`, `noPrompts`, `addedBy`, `addedAt` and `addedAs`, all additive-optional. Since 1.19.0 (ADR 0095) it may also carry `recentRuns` (that peer's one-off command history) and `adding.run` (its `[phone] run` switch), additive-optional |
+| `GET` | `/crew/v1/agents/capabilities` | `GET /api/agents/capabilities` | forwarded — additive-optional (§7.1). A paired, session-scoped READ answered by the owning runtime. It reports the canonical 24-kind catalog separately from executable registrations; per-kind detection/session counts require exact identities and references in that runtime's current snapshot. Registered binaries may receive only a fixed, bounded `--version` probe; executable paths and raw command output never cross the API. `media: interface-ready` means only that a bounded producer can call the owner port; it is not end-to-end ingestion or recorder acceptance. A lead that predates this route never calls it, and an older peer answers 404. |
+| `GET` | `/crew/v1/host/integrations` | `GET /api/host/integrations` | forwarded — additive-optional (§7.1). Host-only paired read of the owning member's declared integration rows; session selectors are rejected. The lead never substitutes its own host-control capability or inventory. |
+| `GET` | `/crew/v1/host/integrations/status` | `GET /api/host/integrations/status` | forwarded — additive-optional (§7.1), `device-read` at both lead and peer. Bounded integration versions/state are returned without config paths or raw CLI output. |
+| `GET` | `/crew/v1/host/agent-manifests` | `GET /api/host/agent-manifests` | forwarded — additive-optional (§7.1), `device-read` at both lead and peer. Returns active/cached versions, source kind, warnings and update outcome, with path text redacted. |
+| `POST` | `/crew/v1/host/integrations/:target/{install,uninstall}[/plan]` | matching `POST /api/host/integrations/...` | forwarded — additive-optional (§7.1). Only the exact Herdr integration target enum crosses, plus a separate `letta` CLI-only adapter. Plan creation is a read; the final install/removal is write-gated, owner-state revalidated, explicitly confirmed and backed by a durable one-shot receipt. |
+| `POST` | `/crew/v1/host/agent-manifests/{reload,refresh}[/plan]` | matching `POST /api/host/agent-manifests/...` | forwarded — additive-optional (§7.1). Reload and remote fetch are distinct planned effects; plans are reads and the final effect is a write. Unknown outcomes are never retried automatically. |
 | `POST` | `/crew/v1/launchers/added` | `POST /api/launchers/added` | forwarded — additive-optional (§7.1), since 1.19.0 (ADR 0094). A WRITE on that member's own `launchers-added.json`: a row built from the member's own recipe table, or a free line when the member's operator allows it. Refused before it is attempted when the member is not taking writes (§10.3) and by the member's own device gate (§12). The row records the forwarded `X-Crew-Device` and that it came over the link. Rows are never copied between machines; a peer that predates it answers 404 |
 | `POST` | `/crew/v1/launchers/added/remove` | `POST /api/launchers/added/remove` | forwarded — additive-optional (§7.1), since 1.19.0 (ADR 0094). Removes one added row from that member's own store, as above |
 | `POST` | `/crew/v1/launchers/added/rename` | `POST /api/launchers/added/rename` | forwarded — additive-optional (§7.1), since 1.19.0 (ADR 0094). Renames one added row on that member, as above |
@@ -372,7 +386,10 @@ answering build:
   and `snapshot` is polled every 1500 ms (§10.1). `logoUrl` is deliberately **not** carried: the mark
   is a path, and a path only answers on the machine that serves it. It names no secret, and it is
   admissible here for `member`'s reason, being the same block that member already serves to every
-  read client of its own front door.
+  read client of its own front door. The `guardedQueuedSend` key is a stricter additive write
+  declaration: a missing/older member refuses that guarded `/api/pane/:id/keys` form before
+  forwarding; it must never fall back to an unbound keys write, even though other absent mux fields
+  retain their legacy lead-answer behavior.
 
 `hello` gains nothing else. It is what an *admitted* member uses to confirm a link, so it must not
 become a place to learn something an unadmitted caller wants; a version is admissible there for the
@@ -441,6 +458,7 @@ Every request on a crew link, and every response:
 | `X-Crew-Protocol: 1` | both | Protocol version. Required on every request **and** every response (§7). |
 | `X-Crew-Member: <member-id>` | both | Who is speaking. On a request, the lead's id; on a response, the peer's. Informational — identity is proven by the pinned certificate, never by this header. |
 | `X-Crew-Device: <device-id>` | request | The operator's device identity, forwarded for the peer's audit trail (§12). Absent when the lead's device gate is off. Printable ASCII as itself, any other id in RFC 8187 form (§12). |
+| `X-Crew-Paired-Identity: <sha256>` | request | **Optional**, additive B02 attribution/binding value. Only the lead may derive it from the validated paired-device record and inject it; never copy a phone-supplied header. It is not an authentication factor. A peer uses it only after pinned TLS and crew-secret admission. Missing/malformed values disable owner-bound receipt and operation reconciliation; labels are never a fallback. |
 | `X-Crew-Preflight: fresh` | request | **Optional**, added 2026-09-04 (§19). On `GET /crew/v1/snapshot` only: a REQUEST that the answering member re-run its own `collie update --check --local` before it answers. `fresh` is the only value with meaning; anything else reads as absent. A member that ignores it is a **correct member** — its answer is then simply older, and `asOf` says so. Honoured at most once per `PREFLIGHT_TTL_MS` per member. |
 | `X-Crew-Lead-Release: <x.y.z>` | request | **Optional**, added 2026-09-04 (§20). On `GET /crew/v1/snapshot` only: the bare version the LEAD is itself running, sent only while that version is a strict release and the lead's own health gate has settled it. Absent means the lead is on a dev or prerelease build, or is mid-run — and absent means the receiving member does nothing. It is a statement about the sender and carries no ref, no URL and no command. |
 | `X-Crew-Update-Turn: <member-name>;<run-id>` | request | **Optional**, added 2026-09-04 (§20). On `GET /crew/v1/snapshot` only: who may take that release now, and the id of the `UpdateRun` the operator confirmed on the lead. Sent to **at most one member at a time**. A member ignores a turn that does not name itself. Absent means it is not this member's turn. |
@@ -514,6 +532,15 @@ and peer are separately updated machines, so skew is the steady state, not an ed
   is surfaced verbatim in the UI and in `collie crew status`.
 
 ### 7.1 Version skew inside a protocol version
+
+`hello.hostControlCapabilities` is an additive-optional boolean map independent of both `hello.mux`
+and `hello.controlCapabilities`. A member advertises its own host-local administration only after
+its Herdr runtime has a compatible version/protocol handshake; missing, malformed or false entries
+mean unsupported. The lead publishes only that member's map in its host-scoped config and never
+borrows its own declaration. Older members omit the field and remain reachable for existing routes.
+The host integration routes in §5 always resolve on the member that owns the selected host; their
+target and durable outcome semantics stay in the Collie HTTP layer. No Herdr method name or socket
+address crosses the crew link.
 
 Two version numbers ride a crew link and they are **not the same kind of thing**. `X-Crew-Protocol`
 is a *contract*: it says which grammar the bytes are in. A Collie build version (`1.0.0-alpha.11`) is
@@ -3164,3 +3191,193 @@ A member that predates this amendment ignores both headers and omits the field. 
 are the closed one, and none of them refuses anything. A lead that predates it sends neither header,
 which is the state every crew is in until an operator confirms an update. The protocol integer is
 still the only thing that refuses (§7.1).
+
+
+## Scoped control foundation (additive protocol 2 fields)
+
+`hello.controlCapabilities` is an optional boolean map independent of `hello.mux`. Missing, malformed or false new declarations mean unsupported/unknown; the lead never lends its own control capabilities to a peer. The receipt reader declares `controlOperations:true` only after validated local and forwarded paired-identity producers are integrated. The isolated B01 seam currently declares false and refuses ownership-bound reads without that identity; a display label is never a fallback. This does not declare downstream mutation verbs or host administration.
+
+`hello.receiptContextBound` is a separate additive-optional boolean. A peer sets it only when its own protected receipt HMAC key is available and valid. The lead publishes that peer's value in `/api/config?host=<peer>`; it never substitutes the lead's key/readiness. Missing, malformed, or false values mean unsupported. A same-owner host retains its key across lead/deputy role changes. The pairing identity remains stable only for the same synchronized pairing record; revoke/re-pair creates a different identity even when the operator reuses a display label. A member predating these fields ignores the dedicated header and omits readiness, so native replay remains disabled there.
+
+`POST /api/refresh?host=&session=` has no body and crosses the link as a **read**, with the originating device and one session selector preserved. Both lead and owning peer apply read admission before resolving the session or refreshing its mux. A paired device without terminal write permission can refresh; Files remain `device-read`. An older peer's 404 is returned intact so native Space labels its ordinary snapshot reload.
+
+`GET /api/control/operations/<opaque-request-id>?host=&session=` also crosses as a **read**. The owning peer additionally matches the originating paired-device identity and canonical local host/session; wrong owners see not found. Its redacted response contains state, capability, target identity and times, never bearer, payload, plan token or evidence. The file is created only when a handler reserves a mutation. Legacy launch/worktree/add receipts retain their existing POST replay contract.
+
+Typed `X-Collie-Error-Source`, `X-Collie-Error-Factor` and `X-Collie-Error-Code` survive the allowlisted forward response. Configured device refusal at either dispatch boundary carries `collie/device/device.not_authorised`. Authoritative pairing refusal carries `collie/pairing/pairing.expired` or `pairing.unpaired`; generic proxy status/prose is insufficient evidence to retire a bearer.
+
+Merged Crew snapshots add optional `controlAuthority: {leadId, epoch}`. The epoch is an opaque non-secret incarnation identifier generated when a lead instance is constructed; a takeover/restart changes it. The answering lead also stamps `X-Collie-Lead-Id` and `X-Collie-Lead-Epoch` on responses, including forwarded peer reads and 304s; it replaces any upstream values. Native increments its local lead generation and discards the first changed-incarnation result before accepting a fresh scoped snapshot. Older snapshots can only supply lead-ID change detection through their existing `servers` rows. Solo snapshots omit this field and retain their byte contract. These additive fields need no protocol-version bump.
+
+See [ADR 0096](.adr/0096-control-authority-is-scoped-and-positive.md). Live older-peer/vendor and joint acceptance remain separately evidenced.
+
+
+## Pane layout control routes
+
+The additive B12 layout family is forwarded only through the existing route allowlist: `GET /api/pane/:id/layout`, `GET …/neighbor?direction=`, `GET …/edges`, `POST …/layout/plan`, and the typed action routes `split`, `resize`, `zoom`, `swap`, `move`, and `focus-direction`. Layout inspection and plan creation are classified as reads; action POSTs remain writes. Plan creation is non-mutating and requires the positive layout/action capability plus durable owner-bound operation readiness. Old peers or peers missing the declaration fail closed.
+
+Each final action carries a caller-held request ID, exact action, and short-lived plan token. The owning peer validates current target/layout evidence and reserves the shared durable operation record before the single mux effect. A stored same-ID result is returned without dispatch; pending or unknown is never resent automatically. A successful pane move includes only the new pane ID and previous pane/tab/workspace aliases so native navigation can discard the old pane scope and refresh topology. Crew forwarding keeps these contracts within the existing protocol; no raw mux RPC is carried over the link.
+
+### Optional automatic Files discovery admission
+
+Under §7.1, an owning bridge may advertise `controlCapabilities.filesDiscovery=true` in hello; the lead publishes only that member’s stored declaration in host-scoped config. Absence or false never enables automatic discovery. A pane read may carry `filesReadReady` as a strict boolean, computed after its grid read from the owning caller’s device-read gate. It is included in the response ETag and preserved by lead masking; a lead never substitutes its own verdict. Clients require both positive declarations under the same captured host/session/pane, connection and navigation actor. This adds no route, config forwarding, bypass or filesystem read. Existing Files endpoints still enforce both factors at dispatch.
+
+The control route forwarder carries pane/workspace metadata GET as `device-read`, their POST reports as `write`, and host-only agent-view GET/POST/DELETE as `device-read`/`write`/`write`, respectively. It preserves the exact host/session query and bounded JSON body. These additions do not change `hello` or its protocol version; peers that lack the route return their own unsupported response without RPC fallback.
+
+## Workspace and tab organization control routes
+
+## Portable layout control routes
+
+B29 adds `GET /api/tab/:id/layout/export`, `POST /api/layout/plan`, `POST /api/layout/apply`, and `POST /api/tab/:id/layout/split-ratio` to the same allowlisted host/session forwarding contract. The peer owns the mux capability, launcher declaration, current workspace folder, exact plan evidence and durable receipt. The lead forwards only the closed recipe DTO, opaque plan token and request ID; vendor RPC names stay inside the member's local adapter. Layout requests use ordinary device read/write gates and the existing `controlOperations` readiness, and old peers fail closed.
+
+The split path remains `boolean[]` end to end. A plan binds owner, host/session, runtime incarnation, target workspace/tab and current exported tree; apply revalidates immediately before its one upstream effect. Pending or unknown results are inspectable and never retried automatically. The API response can expose only redacted preview effects and bounded created-pane identities. No process transcript, environment secret or raw layout RPC is forwarded. Plugin-backed imports remain disabled pending B32's resolver; schema and source records alone do not establish runtime acceptance.
+
+The B13 organization family crosses the existing allowlist under `workspace/:id/{rename,close,move,focus}`,
+`workspaces/reorder`, `tab/:id/{rename,close,move,focus}`, and `POST tab/:id/transfer/plan`.
+Plans are POST requests classified and admitted as reads; final requests are writes and retain the
+member's own device policy, paired-device identity, host and session. Only the closed action body,
+plan token and request ID cross the link; vendor RPC names never do. An older peer that does not
+implement the additive routes or positive mux capability refuses them as unsupported. Existing
+one-step tab rename/close callers remain accepted at the peer while the native organizer uses the
+planned operation form. A timed-out operation stays unknown and is not replayed. The supported
+`tab.move` is same-workspace only. Whole-tab transfer is a separate additive route that returns the
+owner-scoped complete roster and deterministic reflow. Each existing pane then moves through the B12
+guarded `pane.move` plan and durable operation receipt; no replacement shell, batch write, or
+automatic continuation is sent. The transfer plan stays a read on both lead and peer, while each
+final pane move is a write forwarded to the exact owning peer. An older peer refuses this route and
+cannot fall back to an unbound move.
+### Configured native identity ingress (ADR 0098)
+
+Native OAuth access/refresh tokens, DPoP proofs and private gateway MACs end at the configured lead front door. They never cross the Crew wire. After current local identity/binding and ordinary pairing/device admission, existing Crew routing derives only the approved device decision and opaque paired incarnation through its pinned TLS/secret surface; peer read/device-read/write gates remain independent. The native gateway does not exempt a Crew handler or convert identity login into terminal authority. Actual configured-gateway three-node acceptance remains pending.
+
+For configured native ingress, immediately before an awaited route hands its named request to Crew,
+the lead rechecks the original MAC-covered bounded seconds lease (never later than verified access
+expiry), binding revision, paired incarnation, current device gate and role. A replacement map
+cannot adopt the pending request. The only reconstructed phone `X-Collie-*` read intent is
+`X-Collie-Seen: 1` on pane/history/chat GETs; it grants no authority and does not convey native
+identity claims. Final local checks do not assert peer/vendor atomic compare-and-send; uncertain
+responses retain the existing no-automatic-retry policy.
+
+
+### Owner-scoped worktree removal (B15)
+
+The neutral `/api/workspace/:id/worktree/remove-plan` read and `/remove` write are the only
+worktree routes that cross Crew. Existing folder-plan/create/list/open remain lead-local and are
+never inferred from the generic launch route. On the addressed owner, the plan resolves the linked
+checkout from its snapshot and worktree listing, records real repository/checkout paths, branch,
+bounded Git status and pane/terminal identities, then repeats those reads before dispatch. Git
+status and pane identity are advisory rechecks: Herdr 0.9.3's removal operation has no expected-state
+or compare-and-set argument, so this route does not claim an atomic precondition. A busy operation,
+changed snapshot, substituted path or changed Git evidence refuses; unsupported muxes and peers
+fail closed. A clean plan leaves force false. A dirty plan requires a separate explicit force plan
+and product confirmation naming the discarded changes. The method removes only Herdr's discovered
+linked checkout and never deletes the branch or the main checkout. A lost reply is an unknown
+durable result; same-ID reconciliation reads the existing receipt and never dispatches a second
+removal. The lead forwards the same closed neutral request body and preserves owner/device/session
+scope; no raw vendor method, arbitrary path or trust option crosses the link.
+## Machine rules and monitoring checkpoints (B27 additive backend contract)
+
+The existing mounted `POST /api/machines/:id/alerts` remains lead-local and device-write. It is
+unforwardable. A declared `machineRulesRevision:1` requires an actual conditional `replaceRules`
+implementation; an older structural surface cannot accept a revisioned request through its legacy
+setter. The closed modern body carries cpu/mem/disk rules, `rulesRevision` and
+`machineIncarnation`, and an explicit `requestId`; legacy unrevisioned writes still serialize and
+advance the revision. Refuse duplicate keys, malformed Unicode, nonfinite numbers, extra mutation
+keys and more than 16 KiB before JSON allocation. Each rule is exactly `{above,forMin}` within the
+existing bounds. A conflict returns the current exact revision/incarnation/rules. Bounded server
+extensions are inert, preserved when omitted, and returned unchanged on machine reads, successful
+writes and current conflicts; callers cannot invent or change them. They are limited to 4 KiB,
+64 values and depth four. They confer no provider or recipient authority.
+
+A monitoring job captures its original local ownership publication, role, secret generation,
+enrolled incarnations and original warrant expiry before awaiting. The local ownership revision
+changes on actual authority-key changes, including A → B → the same original A; a harmless
+refresh of the same warrant preserves it and never extends a captured expiry. No revision is
+ordered across processes. Store commit, outbox settlement and actual browser dispatch recheck the
+original witness; dispatch also retains its original slot high-water and episode custody. The
+completed-minute judgement, exact history snapshot, episode transitions, outbox and watermark
+commit together. Failed or incomplete judgement does not advance the watermark. Required clears
+use the headroom reserved on opening and commit ahead of openings under pressure. A pending original slot refuses only its new opening, preserving other reserved clears and leaving the completed-minute watermark retryable; its old sequence and episode are never replaced. Pending events
+remain bounded to 8 MiB, at most 4096 bytes each. Their exact lineage/slot/uint64 sequence, event ID,
+semantic hash and created content are retried unchanged. The narrow B22 producer object includes
+an `originalProducerCurrent` closure which must be checked at the actual durable enqueue boundary
+and is never serialized. Actual B22 signing/registration receipts and provider delivery are required
+later source joins; a swallowed browser-send exception never certifies native settlement.
+
+The optional deputy declaration is
+`monitoringCheckpoint:{schema:1,maxChunkBytes:262144,maxGenerationBytes:67108864,recordFormat:"jsonl-continuation-v1"}`.
+Only an admitted current lead with the exact current warrant, deputy fingerprint and secret may
+use `GET|POST /crew/v1/monitoring/checkpoint`. The lead requires the exact record-format declaration;
+absence, malformed bounds, an old aligned-reader declaration or a different format is unsupported.
+`begin` additionally carries this exact `recordFormat`; an absent/different marker is explicitly
+refused. This is feature negotiation within the existing protocol integer, not an app/server
+version change. The original 18-field schema-1 manifest remains closed and binds authority,
+lineage, revision, immutable `createdAt`, history bounds, sorted roster/rule/producer digests and
+at most 256 exact ordered chunk descriptors under its root digest.
+
+Chunks fill by bytes. UTF-8 scalars and JSONL records may span chunk boundaries; the streaming
+reader retains at most one complete 512 KiB record and a 256 KiB decoded chunk. It rejects invalid
+Unicode, duplicate keys, nonfinite JSON, unknown record kinds, noncanonical encoding, ordering,
+truncation and mismatched hashes. No host, minute or required Float64 value is silently removed to
+fit the transport. Every live machine/history must match the complete enrolled roster and original
+incarnation. History carries its incarnation explicitly. Rules, receipts, events, reservations and
+high-water facts must agree. The authoritative store and checkpoint reader share one per-slot predicate: at most two events, exactly an adjacent alert/clear pair for the same original episode/owner when two exist; an alert alone requires its adjacent reserved clear, while a clear alone has no reservation. Two clears or two alerts cannot form an accepted generation. A closed tombstone retains only the original persisted member,
+fingerprint, enrollment time, incarnation and rule revision with bounded outstanding clear or
+receipt custody. It cannot make an unlisted live machine or history valid or mint a new recipient.
+A retired alert is admissible only with its exact original dominating clear; old cleanup cannot
+replace current enrolled B facts. Actual v1 bare nine-number history rows and open episodes migrate
+in one authoritative generation with original precision and a reserved clear, without reannouncing
+an opening. Malformed or enrollment-unresolvable legacy custody fails closed without resetting disk.
+
+A revision's source snapshot includes its committed roster/history and timestamp; live samples do
+not mutate it. The source captures that snapshot's own committed revision after waiting for prior
+writes. Later minute, rule and outbox commits do not revoke this observational snapshot: it completes
+under its original role, enrollment/roster, secret, warrant-generation and unextended warrant-expiry
+lease. A role/deposition, store replacement/unavailability or original authority ABA still retires it.
+This does not relax the separate original-current rule/episode/slot predicates for producer enqueue
+or settlement. An exact older receipt certifies only its captured revision and root. The lead coalesces
+new data to the latest next capture after acceptance, even before another sweep; a replacement deputy
+requires a fresh admitted sweep and never borrows an older link. The existing per-frame PeerClient
+budget (default 1200 ms) still includes the bounded response body. A timed-out commit is deferred,
+never accepted on silence; its already-owned receiver verification may finish only under its original
+authority, and a later exact verified receipt can report that observation. Subsequent current work
+uses a new snapshot, not a producer replay. Retries use identical manifest/chunk bytes. Receipt and `already_current` report usable
+data only after all exact chunks are present, private and hash-verified. A protected accepted head
+records successful closed-record/cross-set verification of that exact root and format. Unchanged
+chunk hashes preserve that prior proof; corruption, unreadable storage or an unverified legacy head
+is unavailable, not first use. Exact admitted bytes can repair a damaged/unverified generation.
+Begin admission and accepted commit acknowledgements require the exact requested checkpointRevision and rootDigest; already_current also requires both fields. Chunk acknowledgement retains its exact index and sha256. Missing or mismatched phase facts are deferred and never certify the generation. Reverification for read-only B38 preparation remains complete; its durable marker stays `paused`,
+and confers no takeover authority or activation. Actual B38 activation is still required source work.
+
+The original settlement allowed 128 MiB accepted/staging payload plus 1 MiB metadata/temp disk
+headroom and one decoded record/chunk/manifest scratch. Preserve that historical settlement. The
+corrective contract explicitly replaces its metadata allowance with **128 MiB aggregate private
+SQLite verification/sorting scratch**, separately from the unchanged **128 MiB payload** allowance.
+There are at most two owned index handles; 32 KiB pages keep bounded rule/receipt/event records inline, and hard page limits reserve schema pages before creation and account for aggregate growth,
+no WAL exists, and index values retain bounded compressed records. Record work buffers are bounded
+to a decoded 512 KiB record, encoded 512 KiB + 1024-byte compression ceiling, 256 KiB chunk and
+bounded 256 KiB manifest. SQLite cache/spill/temp/mmap settings are tuning, not a hard RSS proof.
+Require at least 193 MiB free space before index admission (128 MiB index + 64 MiB incoming payload
++ 1 MiB metadata headroom). Source ordering uses bounded synchronous 64-record SQL batches, committed before each cooperative yield, and checks the original owner;
+receiver verification retains external cross-facts rather than a full in-memory generation.
+Use private owner roots, exclusive no-follow files and bounded descriptor reads. `finally` closes
+statements and deletes owned scratch. Failed source builds use that same exact-owned transfer cleanup to release both the physical spool and its registry reservation on validation, authority or file-I/O refusal. Startup removes only typed private scratch of an observably
+exited process. Source transfer spools carry their original PID and are removed only after an observed process-exit witness; anonymous legacy transfers remain charged and preserved. Live/unknown/unowned files remain unavailable custody. Windows ACL/exit/RSS,
+physical interruption and real service peak-resource acceptance remain OPEN.
+
+The production peer dial retains its original timeout through the original response body, checks
+protocol/status/MIME and declared or chunked bytes before JSON allocation, and caps checkpoint
+responses at 16 KiB for every consumed status. Refused or foreign bodies are canceled without
+allocation. No second client, shell, helper, new dependency or public endpoint is introduced.
+The independent source review, canonical native/B10/B26/B22/B38 joins, actual device/fleet/Solo/Crew
+and provider acceptance remain separate gates; unit/CLI/source-capacity evidence does not close them.
+Current Android acceptance targets the physical Pixel with current versions. Historical version-matrix evidence remains archived; it is not a requested rerun or a current acceptance claim.
+
+## B19 additive named-agent and wait routes
+
+The peer allowlist includes `agents/named`, `pane/:id/agent/{control,read,explain,start,rename,prompt,focus,keys,input}` and `waits[/:id]`. Lead and peer use the same typed owning handlers. Census/control/read/explain and wait POST/GET/DELETE are paired device-read; named effects require both original write factors. Lead profile metadata never supplies a missing peer capability.
+
+Answers use closed bounded schemas; output and explain text are masked on member and lead. Native input, patterns, receipts and request IDs are forwarded once without arbitrary RPC fields or borrowed identity headers. Start/prompt use a finite 310-second forwarding ceiling; ordinary polls keep their read budgets. Cancellation only stops that exact owner's observation, not a delivered prompt. Missing or incompatible support refuses precisely and does not retry or substitute the lead runtime.
+
+
+### B19 negotiated original-terminal source extension
+
+The isolated v0.9.3 producer source implements `agent_original_input_v1` and `agent_observation_cursor_v1`; stock capability absence remains failclosed for the stronger contracts. Original dispatch tokens, runtime UUIDs and raw event before-tuples stay between the owning bridge and its producer. They never cross Crew/native as authorization. Exact pending/UNKNOWN IDs are not resent, and moved/closed/detected results grant only neutral observation metadata. See [the full protocol and limits](android/AGENT_AUTOMATION.md#original-terminal-producer-extension). ROOT compilation, producer review, actual runtime and canonical shared-source acceptance remain open.

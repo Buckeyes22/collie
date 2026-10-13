@@ -1,7 +1,10 @@
 package com.lateapex.collie.ui
 
 import com.lateapex.collie.network.PreflightCheck
+import com.lateapex.collie.network.ApiResult
 import com.lateapex.collie.network.UpdateCheckResponse
+import com.lateapex.collie.network.UpdateDismissalScope
+import com.lateapex.collie.network.UpdateInfo
 import com.lateapex.collie.network.UpdateCrewMember
 import com.lateapex.collie.network.UpdatePeerLeg
 import com.lateapex.collie.network.UpdateRun
@@ -23,10 +26,47 @@ internal data class NativeUpdatePeerRow(
     val inFlight: Boolean,
 )
 
+internal data class UpdateDismissalReconciliation(
+    val state: UpdateCheckResponse,
+    val acknowledged: Boolean,
+    val failed: Boolean,
+)
+
 /** Pure presentation rules shared with the web UpdateCard contract. */
 internal object UpdateNativePresentation {
     val activeStates = setOf("preflight", "staging", "restarting", "verifying")
     private val failedPeerStates = setOf("rolled-back", "unreachable", "stuck", "interrupted")
+
+    /** The one version the visible local update offer names. */
+    fun dismissibleOfferVersion(value: UpdateCheckResponse): String? =
+        (value.latest?.takeIf { value.releaseAvailable } ?: value.majorAvailable)?.takeIf { it.isNotBlank() }
+
+    /** Only hide a notice when the paired bridge confirms that exact scope and version. */
+    fun reconcileDismissal(
+        current: UpdateCheckResponse,
+        version: String,
+        scope: UpdateDismissalScope,
+        result: ApiResult<UpdateInfo>,
+    ): UpdateDismissalReconciliation {
+        if (result !is ApiResult.Success) return UpdateDismissalReconciliation(current, acknowledged = false, failed = true)
+        val info = result.value
+        val acknowledged = when (scope) {
+            UpdateDismissalScope.OFFER -> info.dismissedVersion == version
+            UpdateDismissalScope.CREW -> info.dismissedCrewVersion == version
+        }
+        val state = if (acknowledged) current.copy(
+            dismissedVersion = info.dismissedVersion,
+            dismissedCrewVersion = info.dismissedCrewVersion,
+        ) else current
+        return UpdateDismissalReconciliation(state, acknowledged, failed = !acknowledged)
+    }
+
+    /** Only a settled failed crew leg is a standing crew notice; live work cannot be dismissed. */
+    fun dismissibleCrewVersion(value: UpdateCheckResponse): String? {
+        if (value.settledAt == null || hasActiveRun(value)) return null
+        val failed = peerLegs(value).any { it.state in failedPeerStates }
+        return value.peersTo?.takeIf { failed && it.isNotBlank() }
+    }
 
     fun visibleRun(value: UpdateCheckResponse): UpdateRun? = value.run?.takeUnless { it.state == "idle" }
 

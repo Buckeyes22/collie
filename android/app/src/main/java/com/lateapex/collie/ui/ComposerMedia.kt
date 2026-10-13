@@ -10,6 +10,7 @@ import com.lateapex.collie.network.ApiFailure
 import com.lateapex.collie.network.ApiResult
 import com.lateapex.collie.network.BridgeConfigResponse
 import com.lateapex.collie.network.ImageUpload
+import com.lateapex.collie.network.UploadSource
 import com.lateapex.collie.network.SttCapability
 import com.lateapex.collie.network.SttResponse
 import com.lateapex.collie.network.UploadResponse
@@ -70,6 +71,10 @@ internal interface ComposerMediaText {
     val imageUnreadable: String
     val imageTooLarge: String
     val imageEmpty: String
+    val attachmentAdded: String
+    val attachmentUploadSubject: String
+    val attachmentUploadNoResult: String
+    val attachmentUploadRefused: String
     fun providerUnavailable(provider: String): String
     fun failure(subject: String, failure: ApiFailure): String
 }
@@ -89,6 +94,10 @@ internal class AndroidComposerMediaText(context: Context) : ComposerMediaText {
     override val imageUnreadable get() = resources.getString(com.lateapex.collie.R.string.composer_media_image_unreadable)
     override val imageTooLarge get() = resources.getString(com.lateapex.collie.R.string.composer_media_image_too_large)
     override val imageEmpty get() = resources.getString(com.lateapex.collie.R.string.composer_media_image_empty)
+    override val attachmentAdded get() = resources.getString(com.lateapex.collie.R.string.composer_media_attachment_added)
+    override val attachmentUploadSubject get() = resources.getString(com.lateapex.collie.R.string.composer_media_attachment_upload)
+    override val attachmentUploadNoResult get() = resources.getString(com.lateapex.collie.R.string.composer_media_attachment_no_result)
+    override val attachmentUploadRefused get() = resources.getString(com.lateapex.collie.R.string.composer_media_attachment_refused)
     override fun providerUnavailable(provider: String): String =
         resources.getString(com.lateapex.collie.R.string.composer_media_provider_unavailable, provider)
     override fun failure(subject: String, failure: ApiFailure): String = resources.getString(
@@ -114,8 +123,8 @@ internal class ComposerMediaActions(
         is ApiResult.NotModified -> SpeechAvailability.Hidden
     }
 
-    suspend fun uploadImage(selected: ImageUpload): ComposerMediaResult =
-        when (val result = upload(selected)) {
+    suspend fun uploadImage(selected: ImageUpload, dispatch: suspend (ImageUpload) -> ApiResult<UploadResponse> = upload): ComposerMediaResult =
+        when (val result = dispatch(selected)) {
             is ApiResult.Success -> {
                 val path = result.value.path
                 if (path.isNullOrBlank()) {
@@ -131,8 +140,22 @@ internal class ComposerMediaActions(
             is ApiResult.NotModified -> ComposerMediaResult.Failure(text.imageUploadNoResult)
         }
 
-    suspend fun transcribe(audio: AudioUpload): ComposerMediaResult =
-        when (val result = transcribeRequest(audio)) {
+    suspend fun uploadDocument(
+        selected: UploadSource,
+        dispatch: suspend (UploadSource) -> ApiResult<UploadResponse>,
+    ): ComposerMediaResult = when (val result = dispatch(selected)) {
+        is ApiResult.Success -> {
+            val path = result.value.path
+            if (!result.value.ok) ComposerMediaResult.Failure(text.attachmentUploadRefused)
+            else if (path.isNullOrBlank()) ComposerMediaResult.Failure(text.attachmentUploadNoResult)
+            else ComposerMediaResult.Draft(path, text.attachmentAdded)
+        }
+        is ApiResult.Failure -> ComposerMediaResult.Failure(failureMessage(text.attachmentUploadSubject, result.error))
+        is ApiResult.NotModified -> ComposerMediaResult.Failure(text.attachmentUploadNoResult)
+    }
+
+    suspend fun transcribe(audio: AudioUpload, dispatch: suspend (AudioUpload) -> ApiResult<SttResponse> = transcribeRequest): ComposerMediaResult =
+        when (val result = dispatch(audio)) {
             is ApiResult.Success -> {
                 val transcript = result.value.text
                 if (transcript.isNullOrBlank()) {
@@ -163,15 +186,27 @@ internal class ComposerMediaActions(
 internal object ComposerMedia {
     /** A square thumbnail of an image's bytes, or null when they do not decode. */
     fun thumbnail(bytes: ByteArray, sizePx: Int): android.graphics.Bitmap? {
+        require(sizePx in 1..MAX_THUMBNAIL_EDGE)
         val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
         android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
-        var sample = 1
-        while (bounds.outWidth / (sample * 2) >= sizePx && bounds.outHeight / (sample * 2) >= sizePx) sample *= 2
+        val sample = thumbnailSample(bounds.outWidth, bounds.outHeight, sizePx)
         val decoded = android.graphics.BitmapFactory.decodeByteArray(
             bytes, 0, bytes.size, android.graphics.BitmapFactory.Options().apply { inSampleSize = sample },
         ) ?: return null
-        return android.media.ThumbnailUtils.extractThumbnail(decoded, sizePx, sizePx)
+        return android.media.ThumbnailUtils.extractThumbnail(
+            decoded, sizePx, sizePx, android.media.ThumbnailUtils.OPTIONS_RECYCLE_INPUT,
+        )
+    }
+
+    /** Bound both decode dimensions, including very wide panoramas with a tiny short edge. */
+    internal fun thumbnailSample(width: Int, height: Int, sizePx: Int): Int {
+        require(width > 0 && height > 0 && sizePx in 1..MAX_THUMBNAIL_EDGE)
+        val edge = maxOf(sizePx, MAX_THUMBNAIL_DECODE_EDGE)
+        var sample = 1
+        val longest = maxOf(width, height)
+        while (longest / sample > edge) sample *= 2
+        return sample
     }
 
     suspend fun imageUpload(
@@ -270,6 +305,8 @@ internal object ComposerMedia {
         substringAfterLast('/').substringAfterLast('\\').filterNot(Char::isISOControl)
             .trim().take(MAX_FILE_NAME_CHARS).takeIf(String::isNotEmpty)
 
+    private const val MAX_THUMBNAIL_EDGE = 2048
+    private const val MAX_THUMBNAIL_DECODE_EDGE = 1024
     private const val BUFFER_BYTES = 16 * 1024
     private const val MAX_FILE_NAME_CHARS = 120
 }

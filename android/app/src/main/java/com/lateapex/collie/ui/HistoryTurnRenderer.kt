@@ -20,9 +20,13 @@ import android.widget.TableLayout
 import android.widget.TableRow
 import android.widget.TextView
 import androidx.core.content.ContextCompat
+import androidx.core.view.AccessibilityDelegateCompat
 import androidx.core.view.ViewCompat
+import androidx.core.view.accessibility.AccessibilityNodeInfoCompat
 import androidx.core.view.isVisible
 import com.lateapex.collie.R
+import com.lateapex.collie.data.ScopedImageLoader
+import com.lateapex.collie.data.ScopedReadContext
 import java.util.Locale
 
 /**
@@ -36,6 +40,9 @@ internal class HistoryTurnRenderer(
     private val expandedTools: MutableSet<Pair<String, Int>>,
     private val onToolToggle: (uuid: String, partIndex: Int) -> Unit,
     private val registerTextTarget: (HistorySearchKey, HistoryTextTarget) -> Unit = { _, _ -> },
+    private val imageLoader: ScopedImageLoader? = null,
+    private val readContext: ScopedReadContext? = null,
+    private val readContextForEntry: (String) -> ScopedReadContext? = { readContext },
 ) {
     fun turnView(turn: HistoryTurn, showHeader: Boolean): View {
         val outer = FrameLayout(context).apply {
@@ -98,6 +105,13 @@ internal class HistoryTurnRenderer(
     private fun partView(uuid: String, partIndex: Int, part: HistoryPart): View = when (part) {
         is HistoryPart.Prose -> markdownView(uuid, partIndex, part)
         is HistoryPart.Tool -> toolView(uuid, partIndex, part)
+        is HistoryPart.Image -> imageView(uuid, part)
+    }
+
+    private fun imageView(uuid: String, part: HistoryPart.Image): View = AuthenticatedImageView(
+        context, imageLoader, readContextForEntry(uuid), part.reference, part.description, part.mimeType,
+    ).apply {
+        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(6) }
     }
 
     private fun markdownView(uuid: String, partIndex: Int, part: HistoryPart.Prose) = LinearLayout(context).apply {
@@ -237,11 +251,12 @@ internal class HistoryTurnRenderer(
             11f,
             monospace = true,
         ).apply {
-            setTextColor(color(if (part.resultIsError) R.color.collie_error else R.color.collie_foreground))
+            setTextColor(color(if (part.resultStatus == ToolResultStatus.FAILED || part.resultStatus == ToolResultStatus.DENIED) R.color.collie_error else R.color.collie_foreground))
             setPadding(dp(8), dp(6), dp(8), dp(6))
             setBackgroundColor(color(R.color.collie_background))
             isVisible = false
         }
+        val hasResultText = !part.result.isNullOrEmpty() || part.resultTruncated
         val chevron = ImageView(context).apply { setImageResource(R.drawable.ic_history_chevron_right) }
         val headerText = SpannableStringBuilder(part.name).apply {
             setSpan(StyleSpan(Typeface.BOLD), 0, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
@@ -255,42 +270,155 @@ internal class HistoryTurnRenderer(
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
         }
+        val hasDetails = part.call != null || part.callId != null || part.callTruncated
+        val hasContent = hasDetails || part.result != null || part.resultTruncated || part.image != null
+        val details = LinearLayout(context).apply {
+            orientation = LinearLayout.VERTICAL
+            isVisible = false
+            toolDetailBlocks(part).forEachIndexed { index, block ->
+                val detailText = contentText(block.text, 12f, monospace = block.code).apply {
+                    setPadding(dp(8), dp(6), dp(8), dp(6))
+                    if (block.code) setBackgroundResource(R.drawable.bg_history_code)
+                    if (block.code) tag = TOOL_CODE_BLOCK_TAG
+                }
+                val detailView = if (block.code) HorizontalScrollView(context).apply {
+                    isFillViewport = false
+                    isHorizontalScrollBarEnabled = false
+                    addView(detailText, ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+                } else detailText
+                addView(detailView, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    if (index > 0) topMargin = dp(4)
+                })
+            }
+        }
+        val outcome = part.resultStatus.takeIf { it != ToolResultStatus.NONE }?.let { status ->
+            contentText(context.getString(when (status) {
+                ToolResultStatus.COMPLETED -> R.string.history_tool_completed
+                ToolResultStatus.DENIED -> R.string.history_tool_denied
+                ToolResultStatus.FAILED -> R.string.history_tool_failed
+                ToolResultStatus.NONE -> R.string.history_tool_completed
+            }), 11f).apply {
+                setTextColor(color(if (status == ToolResultStatus.COMPLETED) R.color.collie_muted else R.color.collie_error))
+                setPadding(dp(8), dp(4), dp(8), 0)
+                isVisible = false
+            }
+        }
         val header = LinearLayout(context).apply {
             gravity = Gravity.CENTER_VERTICAL
             orientation = LinearLayout.HORIZONTAL
-            minimumHeight = dp(44)
-            isClickable = part.result != null
-            isFocusable = part.result != null
+            minimumHeight = dp(48)
+            isClickable = hasContent
+            isFocusable = hasContent
+            ViewCompat.setAccessibilityDelegate(this, object : AccessibilityDelegateCompat() {
+                override fun onInitializeAccessibilityNodeInfo(host: View, info: AccessibilityNodeInfoCompat) {
+                    super.onInitializeAccessibilityNodeInfo(host, info)
+                    info.className = android.widget.Button::class.java.name
+                    info.isClickable = hasContent
+                    if (hasContent) info.addAction(AccessibilityNodeInfoCompat.AccessibilityActionCompat.ACTION_CLICK)
+                }
+            })
             foreground = ContextCompat.getDrawable(context, android.R.drawable.list_selector_background)
             setPadding(dp(8), 0, dp(8), 0)
             addView(ImageView(context).apply {
-                setImageResource(if (part.resultIsError) R.drawable.ic_history_warning else R.drawable.ic_history_wrench)
+                setImageResource(if (part.resultStatus == ToolResultStatus.FAILED || part.resultStatus == ToolResultStatus.DENIED) R.drawable.ic_history_warning else R.drawable.ic_history_wrench)
                 contentDescription = null
             }, LinearLayout.LayoutParams(dp(14), dp(14)).apply { marginEnd = dp(6) })
             addView(headerLabel, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-            if (part.result != null) addView(chevron, LinearLayout.LayoutParams(dp(14), dp(14)).apply { marginStart = dp(6) })
+            if (hasContent) addView(chevron, LinearLayout.LayoutParams(dp(14), dp(14)).apply { marginStart = dp(6) })
         }
         val expansionKey = uuid to partIndex
         val expanded = expansionKey in expandedTools
         header.contentDescription = context.getString(
             if (expanded) R.string.history_tool_expanded else R.string.history_tool_collapsed,
-            headerText.toString(),
+            headerText.toString() + part.resultStatus.label(context),
         )
-        result.isVisible = expanded && part.result != null
+        details.isVisible = expanded && hasDetails
+        result.isVisible = expanded && hasResultText
+        outcome?.isVisible = expanded
         chevron.rotation = if (expanded) 90f else 0f
-        header.setOnClickListener { if (part.result != null) onToolToggle(uuid, partIndex) }
+        header.setOnClickListener { if (hasContent) onToolToggle(uuid, partIndex) }
         addView(header)
-        addView(result)
+        if (outcome != null) addView(outcome)
+        if (hasDetails) addView(details)
+        if (expanded) part.image?.let { addView(imageView(uuid, it)) }
+        if (hasResultText) addView(result)
         registerHistoryText(HistorySearchKey(uuid, partIndex, HistorySearchRegion.TOOL_HEADER), headerLabel, headerText)
-        if (part.result != null) {
+        if (hasResultText) {
             registerHistoryText(
                 HistorySearchKey(uuid, partIndex, HistorySearchRegion.TOOL_RESULT),
                 result,
-                result.text,
+                part.result.orEmpty(),
             ) {
                 if (expansionKey !in expandedTools) onToolToggle(uuid, partIndex)
             }
         }
+    }
+
+    private data class ToolDetailBlock(val text: CharSequence, val code: Boolean = false)
+
+    private fun toolCallBlocks(call: ToolCallPresentation?): List<ToolDetailBlock> = when (call) {
+        null -> emptyList()
+        is ToolCallPresentation.Edit -> buildList {
+            add(ToolDetailBlock(context.getString(R.string.history_call_edit, call.path, call.added ?: 0, call.removed ?: 0)))
+            if (call.created == true) add(ToolDetailBlock(context.getString(R.string.history_call_created)))
+            if (call.diff.isNotEmpty()) add(ToolDetailBlock(call.diff.joinToString("\n"), code = true))
+        }
+        is ToolCallPresentation.Execute -> buildList {
+            call.description?.takeIf(String::isNotBlank)?.let { add(ToolDetailBlock(it)) }
+            if (call.command.isNotEmpty()) add(ToolDetailBlock(call.command, code = true))
+            call.exitCode?.let { add(ToolDetailBlock(context.getString(R.string.history_call_exit_code, it))) }
+        }
+        is ToolCallPresentation.Read -> listOf(ToolDetailBlock(context.getString(
+            R.string.history_call_read,
+            call.path,
+            call.range?.let { " (${it[0]}–${it[1]})" }.orEmpty(),
+        )))
+        is ToolCallPresentation.Search -> listOf(ToolDetailBlock(context.getString(
+            R.string.history_call_search,
+            call.query,
+            call.where?.let { " · $it" }.orEmpty(),
+            call.hits?.let { " · $it" }.orEmpty(),
+        )))
+        is ToolCallPresentation.Fetch -> listOf(ToolDetailBlock(context.getString(R.string.history_call_fetch, call.url)))
+        is ToolCallPresentation.Delete -> listOf(ToolDetailBlock(context.getString(R.string.history_call_delete, call.path)))
+        is ToolCallPresentation.Move -> listOf(ToolDetailBlock(context.getString(R.string.history_call_move, call.path, call.to.orEmpty())))
+        is ToolCallPresentation.Task -> listOf(ToolDetailBlock(context.getString(R.string.history_call_task, call.agent, call.summary)))
+        is ToolCallPresentation.Question -> listOf(ToolDetailBlock(buildString {
+            append(context.getString(R.string.history_call_question, call.name, call.summary))
+            call.questions.forEachIndexed { index, question ->
+                append("\n\n")
+                question.header?.takeIf(String::isNotBlank)?.let { append(it).append("\n") }
+                append(context.getString(R.string.history_call_question_number, index + 1, question.question))
+                if (question.multiple) append(" · ").append(context.getString(R.string.history_call_multiple_allowed))
+                question.options.forEach { option ->
+                    append("\n• ").append(option.label)
+                    option.description?.takeIf(String::isNotBlank)?.let { append(" — ").append(it) }
+                }
+                call.answers?.getOrNull(index)?.takeIf { it.isNotEmpty() }?.let { answers ->
+                    append("\n").append(context.getString(R.string.history_call_answer, answers.joinToString(", ")))
+                }
+            }
+        }))
+        is ToolCallPresentation.Other -> buildList {
+            add(ToolDetailBlock(context.getString(R.string.history_call_unknown, call.name, call.summary)))
+            call.inertJson?.let { add(ToolDetailBlock(it, code = true)) }
+        }
+    }
+
+    private fun toolDetailBlocks(part: HistoryPart.Tool): List<ToolDetailBlock> = buildList {
+        addAll(toolCallBlocks(part.call))
+        part.callId?.let {
+            add(ToolDetailBlock(context.getString(R.string.history_call_id, it)))
+        }
+        val fallbackTruncated = (part.call as? ToolCallPresentation.Other)?.projectionTruncated == true
+        if (part.callTruncated || fallbackTruncated) add(ToolDetailBlock(context.getString(R.string.history_call_truncated)))
+    }
+
+    private fun ToolResultStatus.label(context: Context): String = when (this) {
+        ToolResultStatus.NONE -> ""
+        ToolResultStatus.COMPLETED -> " · ${context.getString(R.string.history_tool_completed)}"
+        ToolResultStatus.DENIED -> " · ${context.getString(R.string.history_tool_denied)}"
+        ToolResultStatus.FAILED -> " · ${context.getString(R.string.history_tool_failed)}"
     }
 
     private fun inlineText(spans: List<HistoryInline>): SpannableStringBuilder = SpannableStringBuilder().apply {
@@ -344,6 +472,10 @@ internal class HistoryTurnRenderer(
     private fun rule() = View(context).apply { setBackgroundColor(color(R.color.collie_border)) }
     private fun color(id: Int): Int = ContextCompat.getColor(context, id)
     private fun dp(value: Int): Int = (value * context.resources.displayMetrics.density).toInt()
+
+    companion object {
+        internal const val TOOL_CODE_BLOCK_TAG = "tool-code-block"
+    }
 }
 
 internal data class HistoryTextTarget(

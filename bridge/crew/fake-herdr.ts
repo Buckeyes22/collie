@@ -99,6 +99,7 @@ export function startFakeHerdr(opts: FakeHerdrOptions): FakeHerdr {
   });
 
   const answer = (method: string, params: JsonObject): JsonValue => {
+    if (method === "ping") return { type: "pong", version: "0.7.5", protocol: 1 };
     if (method === "session.snapshot") return { type: "snapshot", snapshot: snapshot() };
     if (method === "workspace.list") return { workspaces: snapshot().workspaces };
     if (method === "tab.list") return { tabs: snapshot().tabs };

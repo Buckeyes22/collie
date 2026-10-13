@@ -1,5 +1,8 @@
-import { mkdir, rename, writeFile } from "node:fs/promises";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { constants } from "node:fs";
+import { mkdir, open, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { HOST } from "./host.ts";
 
 import type { JsonObject, JsonValue } from "./json.ts";
 import type { WorktreeCreateResponse } from "./types.ts";
@@ -12,21 +15,21 @@ import type { WorktreeCreateResponse } from "./types.ts";
 // worktree on a second branch, or a refusal because the path is taken, while the first one sits
 // there unseen.
 //
-// So the phone mints a `requestId` (a UUID) per intent and sends it with the create. The bridge keeps
-// the outcome of every create that SUCCEEDED under that id, in `worktree-receipts.json` beside the
-// other state files, and a POST that names a known id gets the stored outcome back with
-// `replayed: true` and runs nothing. A create still in flight is joined, not repeated: the second
-// request waits for the first one's answer.
+// The phone mints a `requestId` (a UUID) per intent and sends it with the create. This bounded file
+// keeps recent successful response bodies for convenient replay. The shared durable OperationStore
+// separately holds non-evicting owner-bound intent tombstones before the multiplexer effect; if a
+// response body was evicted, a retry answers unknown and never creates a second worktree. A create
+// still in flight is joined, not repeated: the second request waits for the first one's answer.
 //
 // ── WHAT IS STORED, AND WHAT IS NOT ─────────────────────────────────────────────
 // Ids, the checkout path, the branch and whether the launcher started. No command line, no screen
 // text. A refusal stores nothing, because nothing was made: the same id may simply be tried again.
 //
 // ── BOUNDED ─────────────────────────────────────────────────────────────────────
-// At most {@link MAX_RECEIPTS}; the oldest goes first. A receipt only has to outlive the retry it
-// guards, which is seconds to minutes, so two hundred is far past any real need and keeps the file
-// small. The file is written on a create and on nothing else, so a bridge nobody asks for a worktree
-// writes no file at all (solo-baseline.test.ts counts the written entries).
+// At most {@link MAX_RECEIPTS}; the oldest response body goes first. Non-evicting duplicate
+// prevention belongs to OperationStore, not this cache. The file is written on a create and on
+// nothing else, so a bridge nobody asks for a worktree writes no file at all (solo-baseline.test.ts
+// counts the written entries).
 
 /** The most receipts kept. A 201st drops the oldest. */
 export const MAX_RECEIPTS = 200;
@@ -59,6 +62,122 @@ export interface WorktreeReceipt {
   path: string;
   branch: string;
   launcherStarted: boolean;
+  /** Absent on pre-binding receipts; they cannot promise owner-bound replay. */
+  binding?: IntentReceiptBinding;
+}
+
+/** Metadata which makes a receipt specific to one paired caller, operation, runtime, and payload. */
+export interface IntentReceiptBinding extends JsonObject {
+  deviceIdentity: string;
+  /** Stable owning-host id for new B02 receipts; absent only on pre-binding rows. */
+  owningHost?: string;
+  operation: string;
+  runtime: string;
+  /** HMAC-SHA-256 over the canonical request body. The HMAC key is never stored in a receipt. */
+  intentFingerprint: string;
+}
+
+export type ReceiptBindingMatch = "match" | "legacy-unbound" | "mismatch";
+
+/** The protected state file holding the stable HMAC key used for receipt intent fingerprints. */
+export const INTENT_RECEIPT_KEY_FILE = "intent-receipt-hmac-key";
+
+/**
+ * Read or create the server-owned key only when an owner-bound receipt is first needed. A malformed
+ * or too-permissive existing file fails closed and is never replaced, preserving old fingerprints.
+ */
+export async function loadOrCreateIntentReceiptKey(stateDir: string): Promise<Uint8Array> {
+  await mkdir(stateDir, { recursive: true, mode: 0o700 });
+  const path = join(stateDir, INTENT_RECEIPT_KEY_FILE);
+  try {
+    return await readReceiptKey(path);
+  } catch (error) {
+    if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error;
+  }
+  const key = randomBytes(32);
+  let handle;
+  try {
+    handle = await open(path, "wx", 0o600);
+    await handle.writeFile(key);
+    await handle.sync();
+    return key;
+  } catch (error) {
+    if (!(error instanceof Error) || !("code" in error) || error.code !== "EEXIST") throw error;
+    return await readReceiptKey(path);
+  } finally {
+    await handle?.close();
+  }
+}
+
+async function readReceiptKey(path: string): Promise<Uint8Array> {
+  const noFollow = HOST.platform === "win32" ? 0 : constants.O_NOFOLLOW;
+  const handle = await open(path, constants.O_RDONLY | noFollow);
+  try {
+    const metadata = await handle.stat();
+    if (!metadata.isFile() || metadata.size !== 32) {
+      throw new Error("intent receipt key is invalid; refusing owner-bound receipts");
+    }
+    if (HOST.platform !== "win32" && (metadata.mode & 0o077) !== 0) {
+      throw new Error("intent receipt key must be private to the owner");
+    }
+    // Read at most one byte beyond the required key length. `readFile()` could allocate without
+    // bound if the same inode grows after the metadata check; keeping the descriptor open also
+    // means an attacker cannot swap a different pathname target between stat and read.
+    const key = Buffer.alloc(33);
+    const { bytesRead } = await handle.read(key, 0, key.byteLength, 0);
+    const after = await handle.stat();
+    if (bytesRead !== 32 || after.size !== 32 || !after.isFile()) {
+      throw new Error("intent receipt key is invalid; refusing owner-bound receipts");
+    }
+    return key.subarray(0, 32);
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
+ * Fingerprint a request body with a stable server-owned secret. Callers must supply a key which is
+ * persisted in the owner's protected state directory; do not use a pairing token or a rotating key.
+ */
+export function keyedIntentFingerprint(key: Uint8Array, body: JsonValue): string {
+  if (key.byteLength < 32) throw new Error("receipt fingerprint key must contain at least 256 bits");
+  const canonical = canonicalJson(body);
+  return createHmac("sha256", key).update("collie-intent-v1\0", "utf8").update(canonical, "utf8").digest("hex");
+}
+
+/** Stable JSON for the request's already-parsed JSON value: object key order is immaterial. */
+export function canonicalJson(value: JsonValue): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return "[" + value.map((entry) => canonicalJson(entry)).join(",") + "]";
+  const fields: string[] = [];
+  for (const key of Object.keys(value).toSorted((a, b) => a < b ? -1 : a > b ? 1 : 0)) {
+    const entry = value[key];
+    if (entry === undefined) continue;
+    fields.push(JSON.stringify(key) + ":" + canonicalJson(entry));
+  }
+  return "{" + fields.join(",") + "}";
+}
+
+/** Classify a replay without treating legacy ID-only receipts as an owner-bound guarantee. */
+export function matchReceiptBinding(
+  stored: IntentReceiptBinding | undefined,
+  incoming: IntentReceiptBinding | undefined,
+): ReceiptBindingMatch {
+  if (stored === undefined) return "legacy-unbound";
+  if (incoming === undefined) return "mismatch";
+  const a = bindingBytes(stored);
+  const b = bindingBytes(incoming);
+  return a.length === b.length && timingSafeEqual(a, b) ? "match" : "mismatch";
+}
+
+function bindingBytes(binding: IntentReceiptBinding): Buffer {
+  return Buffer.from(JSON.stringify([
+    binding.deviceIdentity,
+    binding.owningHost ?? null,
+    binding.operation,
+    binding.runtime,
+    binding.intentFingerprint,
+  ]), "utf8");
 }
 
 /**
@@ -69,12 +188,14 @@ export interface WorktreeReceipt {
 export interface ReceiptSurface<R extends { requestId: string }, A> {
   /** The receipt stored under `requestId`, if any. */
   get(requestId: string): R | undefined;
-  /** Store one receipt. Never throws: a failed write costs the replay, never the create. */
+  /** Store one receipt. A failed durable write must reach the route as an unknown outcome. */
   record(receipt: R): Promise<void>;
   /** The answer a request with this id is still working on, if one is. */
   inflight(requestId: string): Promise<A> | undefined;
+  /** Binding captured before dispatch, including while the success receipt is not yet durable. */
+  inflightBinding(requestId: string): IntentReceiptBinding | undefined;
   /** Mark `answer` as the request in flight for `requestId` until it settles. */
-  track(requestId: string, answer: Promise<A>): void;
+  track(requestId: string, answer: Promise<A>, binding?: IntentReceiptBinding): void;
 }
 
 /** What the worktree route needs of the store. `bridge/server.ts` holds this, never the class. */
@@ -84,13 +205,26 @@ export type WorktreeReceiptSurface = ReceiptSurface<WorktreeReceipt, WorktreeCre
 function coerceReceipt(raw: JsonValue): WorktreeReceipt | null {
   const r = asJsonRecord(raw);
   if (r === null) return null;
-  const { requestId, at, workspaceId, paneId, path, branch, launcherStarted } = r;
+  const { requestId, at, workspaceId, paneId, path, branch, launcherStarted, binding } = r;
   if (!isRequestId(requestId)) return null;
   if (typeof at !== "number" || !Number.isFinite(at)) return null;
   if (typeof workspaceId !== "string" || typeof paneId !== "string") return null;
   if (typeof path !== "string" || typeof branch !== "string") return null;
   if (typeof launcherStarted !== "boolean") return null;
-  return { requestId, at, workspaceId, paneId, path, branch, launcherStarted };
+  if (binding !== undefined && !isIntentReceiptBinding(binding)) return null;
+  const receipt: WorktreeReceipt = { requestId, at, workspaceId, paneId, path, branch, launcherStarted };
+  if (binding !== undefined) receipt.binding = binding;
+  return receipt;
+}
+
+export function isIntentReceiptBinding(value: JsonValue): value is IntentReceiptBinding {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const binding: JsonObject = value;
+  return typeof binding.deviceIdentity === "string" && binding.deviceIdentity !== "" && binding.deviceIdentity.length <= 2048 &&
+    (binding.owningHost === undefined || (typeof binding.owningHost === "string" && binding.owningHost !== "" && binding.owningHost.length <= 2048)) &&
+    typeof binding.operation === "string" && binding.operation !== "" && binding.operation.length <= 128 &&
+    typeof binding.runtime === "string" && binding.runtime !== "" && binding.runtime.length <= 2048 &&
+    typeof binding.intentFingerprint === "string" && /^[0-9a-f]{64}$/u.test(binding.intentFingerprint);
 }
 
 /** The receipts a parsed file holds, oldest first, capped, each read by `coerce`. */
@@ -117,18 +251,26 @@ export function withReceipt<R extends { requestId: string }>(receipts: readonly 
   return next.slice(-MAX_RECEIPTS);
 }
 
+type InflightEntry<A> = { answer: Promise<A>; binding?: IntentReceiptBinding };
+
 /** The in-flight half, shared by every store: it never touches a file. */
 class Inflight<A> {
-  private readonly running = new Map<string, Promise<A>>();
+  private readonly running = new Map<string, InflightEntry<A>>();
 
   get(requestId: string): Promise<A> | undefined {
-    return this.running.get(requestId);
+    return this.running.get(requestId)?.answer;
   }
 
-  track(requestId: string, answer: Promise<A>): void {
-    this.running.set(requestId, answer);
+  binding(requestId: string): IntentReceiptBinding | undefined {
+    return this.running.get(requestId)?.binding;
+  }
+
+  track(requestId: string, answer: Promise<A>, binding?: IntentReceiptBinding): void {
+    const entry: InflightEntry<A> = { answer };
+    if (binding !== undefined) entry.binding = binding;
+    this.running.set(requestId, entry);
     const clear = () => {
-      if (this.running.get(requestId) === answer) this.running.delete(requestId);
+      if (this.running.get(requestId)?.answer === answer) this.running.delete(requestId);
     };
     answer.then(clear, clear);
   }
@@ -174,9 +316,10 @@ export class ReceiptFileStore<R extends { requestId: string }, A> implements Rec
     try {
       await this.save();
     } catch (err) {
-      // The thing exists; the receipt is a convenience for a retry. It stays in memory, so a retry
-      // against this process still replays, and reaches disk with the next write that works.
       this.warn(`[${this.tag}] could not save ${this.file}: ${err instanceof Error ? err.message : String(err)}`);
+      // Keep the in-memory receipt to prevent a duplicate during this process, but tell the route
+      // that restart recovery is not guaranteed. The native journal must retain an unknown outcome.
+      throw err;
     }
   }
 
@@ -184,8 +327,12 @@ export class ReceiptFileStore<R extends { requestId: string }, A> implements Rec
     return this.running.get(requestId);
   }
 
-  track(requestId: string, answer: Promise<A>): void {
-    this.running.track(requestId, answer);
+  inflightBinding(requestId: string): IntentReceiptBinding | undefined {
+    return this.running.binding(requestId);
+  }
+
+  track(requestId: string, answer: Promise<A>, binding?: IntentReceiptBinding): void {
+    this.running.track(requestId, answer, binding);
   }
 
   /** Queue one write of whatever the list holds when its turn comes. */
@@ -224,7 +371,8 @@ export function memoryReceipts<R extends { requestId: string }, A>(): ReceiptSur
       return Promise.resolve();
     },
     inflight: (requestId) => running.get(requestId),
-    track: (requestId, answer) => running.track(requestId, answer),
+    inflightBinding: (requestId) => running.binding(requestId),
+    track: (requestId, answer, binding) => running.track(requestId, answer, binding),
   };
 }
 

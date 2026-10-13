@@ -1,7 +1,10 @@
+import { controlGate } from "../control/contracts.ts";
+import { INTEGRATION_TARGETS } from "../host-control/types.ts";
 import type { JsonObject } from "../json.ts";
 import { MASK_VERSION } from "../redact.ts";
+import { MAX_PROCESS_INFO_BODY_BYTES } from "../process-info-limits.ts";
 import { MAX_UPLOAD_OVERHEAD, uploadTooLarge } from "../uploads.ts";
-import { DEVICE_HEADER, encodeDeviceHeader } from "./admission.ts";
+import { DEVICE_HEADER, PAIRED_IDENTITY_HEADER, encodeDeviceHeader } from "./admission.ts";
 import { type CrewLink, type PeerFailure, type PeerOutcome, WRITE_BUDGET_MS } from "./peer-client.ts";
 import { HOST_PARAM, type PeerState } from "./registry.ts";
 
@@ -24,7 +27,7 @@ import { HOST_PARAM, type PeerState } from "./registry.ts";
 // ── THE ONE BODY IT READS: TEXT THE PHONE WILL SHOW ──────────────────────────
 // A member masks secrets in its own text before it answers (bridge/redact.ts), but a member one
 // release behind does not, and the phone must not get a key in clear because of a member's version.
-// So five answers are masked again on the lead, with the injected {@link AnswerMask} (the same
+// So six answers are masked again on the lead, with the injected {@link AnswerMask} (the same
 // functions the local routes use, through `bridge/crew/mask.ts`): the mirror, History, Chat, a
 // Changes diff and a Files body ({@link textAnswerOf}). The mask is idempotent, so an answer a member
 // already masked comes back byte for byte. Every other route, a picture and a blob included, still
@@ -62,15 +65,34 @@ export function crewRouteFor(pathname: string): string | null {
  * but not across a link (or, worse, the reverse).
  */
 const FORWARDABLE: readonly RegExp[] = [
-  /^pane\/[^/]+(?:\/(?:reply|keys|upload|close|rename|history|chat|changes|files|focus))?$/,
+  /^refresh$/,
+  /^pane\/[^/]+\/agent\/(?:control|explain|read|start|rename|prompt|focus|keys|input)$/,
+  /^waits(?:\/[A-Za-z0-9_-]{1,128})?$/,
+  /^control\/operations\/[a-zA-Z0-9_-]{1,128}$/,
+  /^host\/agent-view$/,
+  /^pane\/[^/]+(?:\/(?:reply|keys|upload|close|rename|history|chat|changes|files|focus|processes|agent|agent\/(?:state|session|release|authority\/clear)))?$/,
+  /^pane\/[^/]{1,128}\/metadata$/,
+  /^pane\/[^/]+\/layout(?:\/(?:neighbor|edges|plan|split|resize|zoom|swap|move|focus-direction))?$/,
+  /^tab\/[^/]+\/layout\/(?:export|split-ratio)$/,
+  /^layout\/(?:plan|apply)$/,
   // One picture under the Files root, as bytes (ADR 0090): off the disk of the member that owns the
   // pane or the space, like the Files read it sits beside. Mirrors `PANE_FILES_IMAGE_ROUTE` and
   // `WORKSPACE_FILES_IMAGE_ROUTE` in bridge/server.ts one-for-one. Additive-optional (§7.1).
   /^pane\/[^/]+\/files\/image$/,
   /^workspace\/[^/]+\/files\/image$/,
+  // A bounded, read-only existence check for printed source links (ADR 0088). It is a
+  // device-read because it reveals paths under the selected Files root.
+  /^pane\/[^/]+\/files\/exist$/,
+  /^workspace\/[^/]+\/files\/exist$/,
   /^tab$/,
-  /^tab\/[^/]+\/(?:rename|close)$/,
+  /^tab\/[^/]+\/(?:rename|close)(?:\/plan)?$/,
+  /^tab\/[^/]+\/transfer\/plan$/,
+  /^tab\/[^/]+\/(?:move|focus)(?:\/plan)?$/,
   /^workspace$/,
+  /^workspace\/[^/]+\/(?:rename|close|move|focus)(?:\/plan)?$/,
+  /^workspace\/[^/]{1,128}\/metadata$/,
+  /^workspace\/[^/]+\/worktree\/(?:remove-plan|remove)$/,
+  /^workspaces\/reorder(?:\/plan)?$/,
   // The Changes view asked by workspace (ADR 0065): read-only git over the folder of a space that
   // lives on ONE member, so a `?host=` call is proxied like `pane/:id/changes`. Mirrors
   // `WORKSPACE_CHANGES_ROUTE` in bridge/server.ts one-for-one.
@@ -83,6 +105,18 @@ const FORWARDABLE: readonly RegExp[] = [
   // lead's. Both ride the crew link exactly like `workspace` does.
   /^launch$/,
   /^launchers$/,
+  /^agents\/capabilities$/,
+  // Host administration is an explicit paired HTTP surface. The peer invokes typed Herdr methods;
+  // the lead never turns these into a generic RPC envelope.
+  /^host\/integrations(?:\/status)?$/,
+  new RegExp(`^host/integrations/(?:${INTEGRATION_TARGETS.join("|")}|letta)/(?:install|uninstall)(?:/plan)?$`),
+  /^host\/agent-manifests(?:\/(?:reload|refresh)(?:\/plan)?)?$/,
+  /^host\/plugins$/,
+  /^host\/plugins\/[^/]{1,120}\/(?:actions|logs|config)$/,
+  /^host\/plugins\/[^/]{1,120}\/(?:enable|disable|unlink|uninstall(?:\/plan)?|actions\/[^/]{1,120}\/invoke|panes\/open|panes\/[^/]{1,128}\/focus|panes\/[^/]{1,128}\/close|config\/(?:plan|apply|prepare(?:\/plan)?))$/,
+  /^host\/plugins\/(?:install(?:\/plan)?|link(?:\/(?:plan|selections))?|operations\/[A-Za-z0-9_-]{1,128})$/,
+
+  /^agents\/named$/,
   // The rows a phone adds, removes and renames (ADR 0094). Each machine keeps its own store, so a
   // `?host=` write lands in THAT member's `launchers-added.json` and nowhere else; no row is ever
   // copied between machines. `forget-device` is the lead's own call when it revokes a device; the
@@ -113,13 +147,18 @@ const FORWARDABLE: readonly RegExp[] = [
  * by pane or by space. A picture (`files/image`) and a blob are bytes, never text, and stay byte for
  * byte, and so does every write's answer.
  */
-export type TextAnswer = "pane" | "history" | "chat" | "changes" | "files";
+export type TextAnswer = "pane" | "history" | "chat" | "changes" | "files" | "processes" | "agent" | "agent-control" | "waits";
 
 /** Which {@link TextAnswer} a crew route answers with, or `null` for a route whose answer is not text. */
 export function textAnswerOf(route: string): TextAnswer | null {
   if (/^pane\/[^/]+$/.test(route)) return "pane";
   if (/^pane\/[^/]+\/history$/.test(route)) return "history";
   if (/^pane\/[^/]+\/chat$/.test(route)) return "chat";
+  if (/^pane\/[^/]+\/processes$/.test(route)) return "processes";
+  if (/^pane\/[^/]+\/agent$/.test(route)) return "agent";
+  if (/^pane\/[^/]+\/agent\/(?:control|explain|read|start|rename|prompt|focus|keys|input)$/.test(route)) return "agent-control";
+  if (route === "agents/named") return "agent-control";
+  if (/^waits(?:\/[A-Za-z0-9_-]{1,128})?$/.test(route)) return "waits";
   if (/^(?:pane|workspace)\/[^/]+\/changes$/.test(route)) return "changes";
   if (/^(?:pane|workspace)\/[^/]+\/files$/.test(route)) return "files";
   return null;
@@ -131,16 +170,16 @@ export function textAnswerOf(route: string): TextAnswer | null {
  * this module still reads no journal and touches no disk; absent when the lead's own `COLLIE_REDACT`
  * is off, which leaves every answer byte for byte.
  */
-export type AnswerMask = (answer: TextAnswer, body: string) => string | null;
+export type AnswerMask = (answer: TextAnswer, body: string, expectedPaneId?: string) => string | null;
 
 /** `workspace/<id>/changes`, `.../files` and `.../files/image` — the workspace routes that are reads. */
 function isWorkspaceRead(route: string): boolean {
-  return /^workspace\/[^/]+\/(?:changes|files|files\/image)$/.test(route);
+  return /^workspace\/[^/]+\/(?:changes|files(?:\/(?:image|exist))?)$/.test(route);
 }
 
 /** The pane actions that only read, as bridge/server.ts's `isPaneReadAction` lists them. */
-function isPaneRead(action: string | undefined): action is undefined | "history" | "chat" | "changes" | "files" {
-  return action === undefined || action === "history" || action === "chat" || action === "changes" || action === "files";
+function isPaneRead(action: string | undefined): action is undefined | "history" | "chat" | "changes" | "files" | "processes" | "agent" {
+  return action === undefined || action === "history" || action === "chat" || action === "changes" || action === "files" || action === "processes" || action === "agent";
 }
 
 /** The inverse of {@link crewRouteFor}, for the peer dispatching a crew route into its own routes. */
@@ -156,11 +195,14 @@ export type ForwardKind = "read" | "write";
  * READ despite being an action segment — it only ever reads a log off disk — and everything else with
  * an action segment types into or restructures a terminal.
  */
-export function forwardKind(route: string): ForwardKind {
+export function forwardKind(route: string, method = "POST"): ForwardKind {
+  const control = controlGate(`/api/${route}`, method);
+  if (control !== null) return control === "write" ? "write" : "read";
+  if (route === "refresh" || route.startsWith("control/operations/")) return "read";
   // A GET that changes nothing, exactly like `pane/:id/history` — attempted even against a member
   // this lead has not heard from in a while, never refused before it is tried (§10.3's "a READ to a
   // dead member is still attempted").
-  if (route === "launchers") return "read";
+  if (route === "launchers" || route === "agents/capabilities") return "read";
   // The line check is a POST that changes nothing: attempted even against a stale member, never refused
   // before it is tried (§10.3).
   if (route === "launch/check") return "read";
@@ -177,6 +219,7 @@ export function forwardKind(route: string): ForwardKind {
   // attempted against a stale member and rides the read budget like any other read.
   if (isWorkspaceRead(route)) return "read";
   if (!route.startsWith("pane/")) return "write";
+  if (/^pane\/[^/]+\/agent\/(?:state|session|release|authority\/clear)$/.test(route)) return "write";
   const action = route.split("/")[2];
   // `changes` is read-only git over the owning member's folder (ADR 0065): a read, like history.
   // `chat` is the same log `history` reads, asked for its newest end (journal/live.ts): a read too,
@@ -205,6 +248,17 @@ export function forwardPaneId(route: string): string | undefined {
  * lead's line would have nothing to be read against.
  */
 export function forwardAuditAction(route: string): string | null {
+  if (route === "refresh" || route.startsWith("control/operations/")) return null;
+  if (route.endsWith("/plan")) return null;
+  const hostIntegration = /^host\/integrations\/(letta|[a-z_]+)\/(install|uninstall)$/.exec(route);
+  if (hostIntegration) {
+    const target = hostIntegration[1]!;
+    const action = hostIntegration[2] === "install" ? "Install" : "Uninstall";
+    return target === "letta" ? `letta${action}` : `integration${action}`;
+  }
+  if (route === "host/agent-manifests/reload") return "manifestReload";
+  if (route === "host/agent-manifests/refresh") return "manifestRefresh";
+  if (route.startsWith("host/")) return null;
   if (route === "tab") return "tab.create";
   if (route === "workspace") return "workspace.create";
   // `launch` writes either `workspace.launch` or `tab.launch`, decided by the body a route string
@@ -218,6 +272,11 @@ export function forwardAuditAction(route: string): string | null {
   if (route === "folders" || route === "folders/star") return null; // a read, and a preference
   if (route.startsWith("blobs/")) return null; // a read
   if (isWorkspaceRead(route)) return null; // a read
+  if (route.startsWith("workspaces/reorder")) return "workspace.reorder";
+  const tabOrganization = /^tab\/[^/]+\/(move|focus|rename|close)(?:\/plan)?$/.exec(route);
+  if (tabOrganization) return `tab.${tabOrganization[1]}`;
+  const workspaceOrganization = /^workspace\/[^/]+\/(rename|close|move|focus)(?:\/plan)?$/.exec(route);
+  if (workspaceOrganization) return `workspace.${workspaceOrganization[1]}`;
   if (route.startsWith("tab/")) return route.endsWith("/close") ? "tab.close" : "tab.rename";
   const action = route.split("/")[2];
   if (isPaneRead(action)) return null; // reads, and a read is audited on neither side
@@ -282,7 +341,7 @@ export type ForwardAuditEntry = {
  * that polls a peer's snapshot has no phone behind it. Absent when the lead's device gate is off,
  * matching how the audit field is omitted rather than nulled today.
  */
-export function forwardHeaders(req: Request, device?: string | null): Headers {
+export function forwardHeaders(req: Request, device?: string | null, pairedIdentity?: string | null): Headers {
   const headers = new Headers();
   for (const name of ["if-none-match", "x-collie-seen", "content-type"]) {
     const value = req.headers.get(name);
@@ -290,6 +349,9 @@ export function forwardHeaders(req: Request, device?: string | null): Headers {
   }
   if (device !== null && device !== undefined && device !== "") {
     headers.set(DEVICE_HEADER, encodeDeviceHeader(device));
+  }
+  if (pairedIdentity !== null && pairedIdentity !== undefined && /^[0-9a-f]{64}$/u.test(pairedIdentity)) {
+    headers.set(PAIRED_IDENTITY_HEADER, pairedIdentity);
   }
   headers.set("accept-encoding", "identity");
   return headers;
@@ -315,6 +377,9 @@ const PROXIED_RESPONSE_HEADERS = [
   "vary",
   // The picture's version, as plain data (ADR 0090): a file's size and mtime. Without them a member's
   // picture reaches the phone with no key to hold it under, so the phone would never keep it.
+  "x-collie-error-source",
+  "x-collie-error-factor",
+  "x-collie-error-code",
   "x-collie-file-size",
   "x-collie-file-mtime",
 ];
@@ -514,6 +579,8 @@ export interface ForwardDeps {
   readonly onExchange?: (receivedAt: number) => void;
   /** The operator's device, as the LEAD resolved it — forwarded as `X-Crew-Device` (§12). */
   readonly device?: string | null;
+  /** The lead-derived identity for the authenticated pairing; never read from phone headers. */
+  readonly pairedIdentity?: string | null;
   /**
    * The LEAD's own upload cap in bytes (`cfg.maxUploadBytes`), for the §13 pre-check below. Passed
    * in rather than imported because it is no longer a constant — it is this host's setting, and a
@@ -547,17 +614,20 @@ export interface ForwardDeps {
  * mirror poll would then cost a full body. No
  * `content-length` is copied ({@link proxiedResponse}), so the new body is framed by its own length.
  */
-async function maskedAnswer(res: Response, answer: TextAnswer, mask: AnswerMask, memberId: string): Promise<Response> {
+async function maskedAnswer(res: Response, answer: TextAnswer, mask: AnswerMask, memberId: string, expectedPaneId?: string): Promise<Response> {
   if (res.status < 200 || res.status >= 300 || res.status === 204 || res.body === null) return res;
-  let raw: string;
+  let raw: string | null;
   try {
-    raw = await res.text();
+    raw = answer === "processes" ? await readBoundedUtf8(res, MAX_PROCESS_INFO_BODY_BYTES) : answer === "agent" ? await readBoundedUtf8(res, 16 * 1024) : answer === "agent-control" || answer === "waits" ? await readBoundedUtf8(res, 64 * 1024) : await res.text();
+    if (raw === null) {
+      return forwardError("answer_unmaskable", `host ${memberId} sent invalid or oversized diagnostic details, so they were not passed on`, 502, { host: memberId });
+    }
   } catch (err) {
     return forwardError("host_unreachable", `host ${memberId}: the answer broke off (${String(err)})`, 503, {
       host: memberId,
     });
   }
-  const masked = mask(answer, raw);
+  const masked = mask(answer, raw, expectedPaneId);
   if (masked === null) {
     return forwardError(
       "answer_unmaskable",
@@ -567,6 +637,39 @@ async function maskedAnswer(res: Response, answer: TextAnswer, mask: AnswerMask,
     );
   }
   return new Response(masked, { status: res.status, headers: res.headers });
+}
+
+/** Read process JSON incrementally; a peer may not control the lead's response allocation. */
+async function readBoundedUtf8(response: Response, limit: number): Promise<string | null> {
+  const reader = response.body?.getReader();
+  if (!reader) return "";
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const next = await reader.read();
+      if (next.done) break;
+      total += next.value.byteLength;
+      if (total > limit) {
+        await reader.cancel();
+        return null;
+      }
+      chunks.push(next.value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -625,7 +728,7 @@ export async function forwardToPeer(req: Request, url: URL, deps: ForwardDeps): 
     });
   }
 
-  const kind = forwardKind(route);
+  const kind = forwardKind(route, req.method);
   if (kind === "write") {
     const refusal = refuseWriteBeforeAttempt(deps.state);
     if (refusal !== null) return refusal;
@@ -650,7 +753,7 @@ export async function forwardToPeer(req: Request, url: URL, deps: ForwardDeps): 
 
   // `duplex` is required by the Fetch spec for a stream body; the DOM lib's `RequestInit` predates
   // it, so the streaming half of this init is typed here rather than asserted at the assignment.
-  const headers = forwardHeaders(req, deps.device);
+  const headers = forwardHeaders(req, deps.device, deps.pairedIdentity);
   // Text the phone will show is masked here, whatever the member's version (§9.1). Every other answer
   // is not read at all. A masked answer's tag carries the mask's version, both ways ({@link saltTag}).
   const answer = deps.mask === undefined ? null : textAnswerOf(route);
@@ -681,7 +784,7 @@ export async function forwardToPeer(req: Request, url: URL, deps: ForwardDeps): 
     route,
     forwardParams(url),
     init,
-    kind === "write" ? WRITE_BUDGET_MS : undefined,
+    kind === "write" ? (/^pane\/[^/]+\/agent\/(?:start|rename|prompt)$/.test(route) ? 310_000 : WRITE_BUDGET_MS) : undefined,
   );
   const action = forwardAuditAction(route);
   const paneId = forwardPaneId(route);
@@ -719,9 +822,30 @@ export async function forwardToPeer(req: Request, url: URL, deps: ForwardDeps): 
   const answered =
     answer === null || deps.mask === undefined
       ? outcome.value
-      : withSaltedTag(await maskedAnswer(outcome.value, answer, deps.mask, deps.link.memberId));
+      : withSaltedTag(await maskedAnswer(outcome.value, answer, deps.mask, deps.link.memberId, paneId));
   // The phone's own `accept-encoding` — never the peer's, which was pinned to `identity` on the way
   // out. Compression is decided once per hop (.adr/0023).
   return proxiedResponse(answered, req.headers.get("accept-encoding"));
 }
 
+
+/** Explicit admission, shared by lead and peer; transport read budgets alone are not permission. */
+export function forwardGate(route: string, method: string): "read" | "device-read" | "write" {
+  const control = controlGate(`/api/${route}`, method);
+  if (control) return control;
+  if (/^(?:pane|workspace)\/[^/]+\/files(?:\/(?:image|exist))?$/.test(route)) return "device-read";
+  if (/^pane\/[^/]+\/(?:processes|agent)$/.test(route)) return "device-read";
+  return forwardKind(route);
+}
+
+/** Apply the lead's route-specific caller gate immediately before its one peer dispatch. */
+export async function admitCrewForward(
+  pathname: string,
+  method: string,
+  gate: (level: "read" | "device-read" | "write") => Response | null,
+  forward: () => Promise<Response>,
+): Promise<Response> {
+  const route = pathname.startsWith("/api/") ? pathname.slice("/api/".length) : pathname;
+  const denied = gate(forwardGate(route, method));
+  return denied ?? await forward();
+}

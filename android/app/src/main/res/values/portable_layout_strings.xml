@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="portable_layout_title">Portable layouts</string>
+    <string name="portable_layout_intro">Export a bounded layout as JSON, share it, or import one after reviewing the processes it will start and replace.</string>
+    <string name="portable_layout_export">Export this tab</string>
+    <string name="portable_layout_import">Import layout JSON</string>
+    <string name="portable_layout_ratio">Edit a split ratio</string>
+    <string name="portable_layout_share">Share portable layout</string>
+    <string name="portable_layout_json_hint">Paste a portable layout JSON document</string>
+    <string name="portable_layout_import_message">Imported layouts start new pane processes. Existing tab processes are closed only after the replacement layout succeeds.</string>
+    <string name="portable_layout_preview">Preview</string>
+    <string name="portable_layout_apply">Apply layout</string>
+    <string name="portable_layout_confirm_title">Review layout changes</string>
+    <string name="portable_layout_effects">The host will start and replace these processes. Review the host preview before applying:
+
+%1$s</string>
+    <string name="portable_layout_path_hint">Split path: 0 follows first, 1 follows second</string>
+    <string name="portable_layout_ratio_confirm">Change split ratio</string>
+    <string name="portable_layout_ratio_effects">Split path %1$s will use ratio %2$.3f. The path is read again before the one-shot change.</string>
+    <string name="portable_layout_invalid">This layout or split ratio is malformed or outside the supported bounds.</string>
+    <string name="portable_layout_stale">The selected pane or layout changed. Return to the current pane and try again.</string>
+    <string name="portable_layout_unavailable">Portable layout support is unavailable or the host refused this request.</string>
+    <string name="portable_layout_read_only">Export is available. Import and ratio changes require the host’s positive layout capability and durable operation receipts.</string>
+    <string name="portable_layout_retired">This screen ended because its connection scope or authority changed.</string>
+    <string name="portable_layout_pending">A layout operation is unresolved. Check its receipt before starting another one.</string>
+    <string name="portable_layout_unknown">The host may have applied this operation. Its receipt is unknown; it will not be sent again automatically.</string>
+    <string name="portable_layout_refused">The host refused the layout operation. Refresh the tab before planning another change.</string>
+    <string name="portable_layout_applied">Layout applied. Refresh to see the new panes.</string>
+    <string name="portable_layout_ratio_applied">Split ratio changed.</string>
+</resources>

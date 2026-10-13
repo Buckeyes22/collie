@@ -1,0 +1,798 @@
+{
+  "audit_date": "2026-10-10",
+  "baseline_commit": "8cc67d40d6195b5a5189d038ff2ec8409e0692de",
+  "working_tree": "local and uncommitted; pre-existing changes preserved",
+  "source_inventory": {
+    "files": 403,
+    "current_hash_mismatches": [],
+    "ledger": "/home/chris/git/collie/android/acceptance/audit-file-ledger.json",
+    "ledger_sha256": "3a77324eb8b7bbd1ea160a690a9d44a11cd280e57e6a3a0c4492a9dd29057689"
+  },
+  "documentation_inventory": {
+    "documents": 13235,
+    "metadata_groups": 122,
+    "collections": 123,
+    "applicable": 19,
+    "partially_applicable": 55,
+    "unrelated": 49,
+    "scope": "selected relevant references mapped for all 74 applicable/partial collections; not all pages reviewed"
+  },
+  "native_unit_tests": {
+    "suites": 90,
+    "tests": 607,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "robolectric_sdk": 35,
+    "retained_xml": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-alignment/native-unit-test-results.tar.gz",
+    "retained_xml_sha256": "ee8cd2d9117f9e9c23ae49588bd95a17d13ba5c1c70a17126ccc61b3265dc70d"
+  },
+  "native_gate": {
+    "tasks": [
+      "testDebugUnitTest",
+      "lintDebug",
+      "lintRelease",
+      "assembleDebug",
+      "assembleDebugAndroidTest",
+      "assembleRelease"
+    ],
+    "exit_code": 0,
+    "lint": {
+      "debug": {
+        "warnings": 179,
+        "errors": 0
+      },
+      "release": {
+        "warnings": 179,
+        "errors": 0
+      }
+    }
+  },
+  "apks": [
+    {
+      "path": "/home/chris/git/collie/android/app/build/outputs/apk/debug/app-debug.apk",
+      "sha256": "033bc0917a16604c0a9c3923d1824c1c69ce2128753092acd483579782672564",
+      "retained_artifact": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-alignment/app-debug.apk"
+    },
+    {
+      "path": "/home/chris/git/collie/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk",
+      "sha256": "c5e588051cb53e1c621442c31a1d6feb4615941fc5b41c76cf1982f6377caf7a",
+      "retained_artifact": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-alignment/app-debug-androidTest.apk"
+    },
+    {
+      "path": "/home/chris/git/collie/android/app/build/outputs/apk/release/app-release-unsigned.apk",
+      "sha256": "2228f49e8f221f36e8a540033282778efc192b31cd247b13baee273f46600568",
+      "retained_artifact": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-alignment/app-release-unsigned.apk"
+    }
+  ],
+  "server_tests": {
+    "bridge_pass": 5406,
+    "cli_pass": 1956,
+    "cli_windows_skip": 1,
+    "scripts_pass": 294,
+    "scripts_windows_skip": 46,
+    "shell_and_packaging": "passed",
+    "exit_code": 0,
+    "fixture_TMPDIR": "/var/tmp/collie-audit-fixtures"
+  },
+  "web_tests": {
+    "logic": {
+      "files": 56,
+      "passed": 14313,
+      "expected_fail": 33,
+      "todo": 44
+    },
+    "dom": {
+      "files": 325,
+      "passed": 6321
+    },
+    "pool": "threads with two workers",
+    "exit_code": 0
+  },
+  "static_checks": {
+    "root_typescript": 0,
+    "web_typescript": 0,
+    "oxlint": 0,
+    "native_policy_including_merged_manifest": 0,
+    "notices": 0,
+    "versions": 0,
+    "license_byte_comparison": 0,
+    "documentation_links": {
+      "exit_code": 0,
+      "markdown_files": 206,
+      "log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-alignment/collie-kotlin-alignment-final-doc-links.log.gz"
+    },
+    "whitespace": 0
+  },
+  "isolated_builds": {
+    "checkout": "/tmp/collie-comprehensive-audit-server",
+    "cli_exit_code": 0,
+    "web_exit_code": 0,
+    "compared_server_web_input_paths": 2159,
+    "input_mismatches": 0
+  },
+  "dependencies": {
+    "grype_version": "0.116.1",
+    "database_built": "2026-10-10T06:30:01Z",
+    "locked_release_modules": 80,
+    "matches": 0,
+    "scan_exit_code": 0,
+    "scope": "locked-runtime SBOM, not complete R8 APK contents or proof of absence of unknown vulnerabilities"
+  },
+  "bundled_notice_texts": {
+    "/home/chris/git/collie/android/app/src/main/res/raw/dependency_notices.txt": {
+      "present_byte_for_byte": true,
+      "apk_entries": [
+        "res/IE.txt"
+      ]
+    },
+    "/home/chris/git/collie/android/app/src/main/res/raw/license_collie.txt": {
+      "present_byte_for_byte": true,
+      "apk_entries": [
+        "res/l7.txt"
+      ]
+    },
+    "/home/chris/git/collie/android/app/src/main/res/raw/third_party_notices.txt": {
+      "present_byte_for_byte": true,
+      "apk_entries": [
+        "res/iG.txt"
+      ]
+    },
+    "/home/chris/git/collie/android/app/src/main/res/raw/license_aldrich.txt": {
+      "present_byte_for_byte": true,
+      "apk_entries": [
+        "res/n9.txt"
+      ]
+    },
+    "/home/chris/git/collie/android/app/src/main/res/raw/license_jetbrains_mono.txt": {
+      "present_byte_for_byte": true,
+      "apk_entries": [
+        "res/MF.txt"
+      ]
+    }
+  },
+  "protected_assets": {
+    "checked_files": 76,
+    "hash_mismatches": 0,
+    "manifest": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-comprehensive-final/collie-audit-protected-assets.json",
+    "live_binary_sha256": "ed5fd5adaa4a20f4d331494294d6e2f5b32830437baeec818bdd84c7f4423838"
+  },
+  "remaining_dispositions": {
+    "blocked": "physical/live read and real Codex queue/journal runtime evidence",
+    "unperformed": [
+      "audible TalkBack traversal",
+      "real audio/provider delivery",
+      "OEM Keystore invalidation/restore",
+      "physical radio/VPN",
+      "battery measurements",
+      "production-signed APK smoke"
+    ]
+  },
+  "interim_failures": [
+    "Existing /tmp/.git polluted initial root fixtures; clean fixture rerun passed.",
+    "Subagent report-writing variable error overwrote Robolectric properties; exact sdk=35 contents restored and full gates rerun.",
+    "Baseline first run had two unmet fontScale=2 prerequisites; 200% rerun passed.",
+    "Final interaction attempt: 50/51 passed; navigation case passed individually and complete 51-case rerun then passed without source change. Retained timing variability remains a limitation.",
+    "Two intermediate builds cancelled while final supported tool versions were corrected.",
+    "Incorrect baseline class arguments caused ClassNotFound; corrected actual classes passed all 10.",
+    "First full interaction attempt passed 50/51: typed field contained FFixture codex reply. Same case passed individually and unchanged full 51-case rerun passed. Cause unproven; input/timing variability remains a limitation."
+  ],
+  "doclayer": {
+    "result": "unanswerable",
+    "flags": [
+      "stale indexing/sync failure",
+      "live verification unavailable"
+    ],
+    "source": "path@cad2899a",
+    "gap": "gap-99e23283932f9d69d726",
+    "local_tools": "JDK 21.0.12.1 and SDK/emulator checked locally"
+  },
+  "retained_evidence_directory": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-alignment",
+  "logs": [
+    {
+      "original_log": "/tmp/collie-kotlin-alignment-agp-locks.log",
+      "sha256_uncompressed": "c167cbec8f59e514721ebedba551b65bbda816024d75a99c4f899e5c54af8aee",
+      "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-alignment/collie-kotlin-alignment-agp-locks.log.gz",
+      "sha256_retained": "02da6c5186a2f2343678d5a912804874431039e46fe3a86855e69da93ce00741"
+    },
+    {
+      "original_log": "/tmp/collie-kotlin-alignment-codex-binding-recheck.log",
+      "sha256_uncompressed": "bca4791a9ed3701184ce3bdccd5a7bfb10ffcf322018bfe6ec12e313bbd485ae",
+      "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-alignment/collie-kotlin-alignment-codex-binding-recheck.log.gz",
+      "sha256_retained": "d99f2e4d0a08c0e710e2eb6c20dbc30a16c2d9a4284e5024e846ece5e039b531"
+    },
+    {
+      "original_log": "/tmp/collie-kotlin-alignment-emulator-baseline-wrong-class-args.log",
+      "sha256_uncompressed": "8196adb595a704df4b9503c4791ab0da3ab442105b57ab57bed4e9d070480577",
+      "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-alignment/collie-kotlin-alignment-emulator-baseline-wrong-class-args.log.gz",
+      "sha256_retained": "d95f5e74a79688d7da27c4539a542691364801c4a85e3e69e785ff588c9b233f"
+    },
+    {
+      "original_log": "/tmp/collie-kotlin-alignment-emulator-baseline.log",
+      "sha256_uncompressed": "9a76a8715647f4c5b7c79b236ba9c5bdb7136b93ac7c7b9074144d48fd7f6283",
+      "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-alignment/collie-kotlin-alignment-emulator-baseline.log.gz",
+      "sha256_retained": "8930e45bb6c7443be06a827a49f0068613f9c0a182491b2b06126710de7e6692"
+    },
+    {
+      "original_log": "/tmp/collie-kotlin-alignment-emulator-cleanup.log",
+      "sha256_uncompressed": "c8688fc34ee1d36f2e975dad0607555ba84d8951ccb39e69b7ab7a5d159ec81f",
+      "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-alignment/collie-kotlin-alignment-emulator-cleanup.log.gz",
+      "sha256_retained": "49545f6ba7d08013b86c4b4f02b3559e296b8f4d37a29e287d649a727da3f9bb"
+    },
+    {
+      "original_log": "/tmp/collie-kotlin-alignment-emulator-install.log",
+      "sha256_uncompressed": "50daa2ba76a5c9784728abf9461823bc72d3c4835986fc7ba7cdd96abebea397",
+      "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-alignment/collie-kotlin-alignment-emulator-install.log.gz",
+      "sha256_retained": "8677271344e6b2c6a5a0a5337bd99e01eb5e63ad4eac1864b85615560fbe6d44"
+    },
+    {
+      "original_log": "/tmp/collie-kotlin-alignment-emulator-interactions-final.log",
+      "sha256_uncompressed": "2313154569fdd575a270b6c6bbc44d7016cbbee8360f713d61dcc619fecd64b7",
+      "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-alignment/collie-kotlin-alignment-emulator-interactions-final.log.gz",
+      "sha256_retained": "0dfef5bc396bf678a388cf69e133f2551069498a2a568c231d4cfd6fb20cf291"
+    },
+    {
+      "original_log": "/tmp/collie-kotlin-alignment-emulator-interactions.log",
+      "sha256_uncompressed": "2376a5e1c8edab7a40d5fc2973190f6c6a8d86a9531f473b7d92f76537672e2e",
+      "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-alignment/collie-kotlin-alignment-emulator-interactions.log.gz",
+      "sha256_retained": "cdaa0066faa64f8065dbd1a5d905f5b7a834f3ca2592986713a87fded34000d9"
+    },
+    {
+      "original_log": "/tmp/collie-kotlin-alignment-final-lint.log",
+      "sha256_uncompressed": "641e4701fb4d5bb20bc306eb390832554271908c4eab628f3cb56d6889c689d5",
+      "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-alignment/collie-kotlin-alignment-final-lint.log.gz",
+      "sha256_retained": "4161129a4dda1a056e1fbe171d280827d372bdf76e40a93288703c15bb150f05"
+    },
+    {
+      "original_log": "/tmp/collie-kotlin-alignment-final-locks.log",
+      "sha256_uncompressed": "6db8a1786cb525d08f61811aa876043e5cf39afe2f05fad828cb4d41f0b053c8",
+      "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-alignment/collie-kotlin-alignment-final-locks.log.gz",
+      "sha256_retained": "24ef7a1a031d3fefdf9bab71040858ce0f7ba30cd7fac7a0214cf84f91993c59"
+    },
+    {
+      "original_log": "/tmp/collie-kotlin-alignment-final-native-gates.log",
+      "sha256_uncompressed": "b8e022c10f7456ef3fd78084bf6e9315506acf9376b224fa5183616a4b37baf2",
+      "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-alignment/collie-kotlin-alignment-final-native-gates.log.gz",
+      "sha256_retained": "7bf732f4b20f47ae07877169042f6799a02313cbca9c8a68207f3576faa12a17"
+    },
+    {
+      "original_log": "/tmp/collie-kotlin-alignment-final-notices.log",
+      "sha256_uncompressed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-alignment/collie-kotlin-alignment-final-notices.log.gz",
+      "sha256_retained": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64"
+    },
+    {
+      "original_log": "/tmp/collie-kotlin-alignment-final-policy.log",
+      "sha256_uncompressed": "594f6572cb57a02ac04c3e9d2846fb4b6e424cf4d3b8b269f20f09565d6c5361",
+      "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-alignment/collie-kotlin-alignment-final-policy.log.gz",
+      "sha256_retained": "f39db6386b868ec56b0e26d490c3109d19a36a1729bb986ae4b73725219b5ceb"
+    },
+    {
+      "original_log": "/tmp/collie-kotlin-alignment-final-r8-version.log",
+      "sha256_uncompressed": "54304e601a1862b3300a998a534ef8560f26c43181684ec0cc2fb5f7efb32a6c",
+      "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-alignment/collie-kotlin-alignment-final-r8-version.log.gz",
+      "sha256_retained": "a4976d0f1e4130e5d92a3faccdb2fe2bd54ac959c609092c7b2bdeafcb3b1c55"
+    },
+    {
+      "original_log": "/tmp/collie-kotlin-alignment-final-root-typecheck.log",
+      "sha256_uncompressed": "67c4b854c29a8fcf5d65995e433a6a0739370b5ad8bf6ed252797203be409b36",
+      "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-alignment/collie-kotlin-alignment-final-root-typecheck.log.gz",
+      "sha256_retained": "dd19bb32279b4e74e77eeaddaf4f4848f9a1964c75c65712fb6c98115aa1b2ec"
+    },
+    {
+      "original_log": "/tmp/collie-kotlin-alignment-final-script-tests.log",
+      "sha256_uncompressed": "8f23ece0c415dac111a762751e5e6d3892635cda8f16360bea5bc9edcae8def0",
+      "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-alignment/collie-kotlin-alignment-final-script-tests.log.gz",
+      "sha256_retained": "07f71a1759f92927316afbba55847976997d7892f17db342aa74df53f974f212"
+    },
+    {
+      "original_log": "/tmp/collie-kotlin-alignment-final-version.log",
+      "sha256_uncompressed": "785e2ad9bcbdbdd1869d31856f0e5a2e01fd38ec47783263b20a109e9b2e8667",
+      "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-alignment/collie-kotlin-alignment-final-version.log.gz",
+      "sha256_retained": "82751bbf632ff1958b360dd2bb4ee41266bc9f0aaedf2f659ebaf5142c1a816c"
+    },
+    {
+      "original_log": "/tmp/collie-kotlin-alignment-final-web-typecheck.log",
+      "sha256_uncompressed": "aeb576518caebc12e6bb36adc8ead2698dcb650fc6330c970493584ae227f951",
+      "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-alignment/collie-kotlin-alignment-final-web-typecheck.log.gz",
+      "sha256_retained": "adc0bd93f45247cc01e3025e14d790a9c2848eb79409c3bbe5e96cc85c1e7e99"
+    },
+    {
+      "original_log": "/tmp/collie-kotlin-alignment-grype.log",
+      "sha256_uncompressed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-alignment/collie-kotlin-alignment-grype.log.gz",
+      "sha256_retained": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64"
+    },
+    {
+      "original_log": "/tmp/collie-kotlin-alignment-interim-2210-gates.log",
+      "sha256_uncompressed": "5b0e1a001c6803775e124bcc660a7c95e1f17dcb23e7ee989fc10bc99119c228",
+      "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-alignment/collie-kotlin-alignment-interim-2210-gates.log.gz",
+      "sha256_retained": "5562336623c4723c450a0d3f4a6be76f0affc3843e7612e03551685c87a309d7"
+    },
+    {
+      "original_log": "/tmp/collie-kotlin-alignment-isolated-cli-build.log",
+      "sha256_uncompressed": "f8440c30586a3f97cf3486e1e3e5beca48c48b3eb42c4dc3ec38375229ebeb9c",
+      "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-alignment/collie-kotlin-alignment-isolated-cli-build.log.gz",
+      "sha256_retained": "b1a0ede2ca88601441425148ef4867d80a615ba89a07c313390a49aeeef5cffd"
+    },
+    {
+      "original_log": "/tmp/collie-kotlin-alignment-isolated-web-build.log",
+      "sha256_uncompressed": "b2843aea89de86c17607fb84c9f6bb6713c08e2fd515d5069d0a6bde06912185",
+      "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-alignment/collie-kotlin-alignment-isolated-web-build.log.gz",
+      "sha256_retained": "9a5fa19277ca05a7d8558aa960d993ca5fbe73180fce189cb7b5715956fd6cff"
+    },
+    {
+      "original_log": "/tmp/collie-kotlin-alignment-lint.log",
+      "sha256_uncompressed": "641e4701fb4d5bb20bc306eb390832554271908c4eab628f3cb56d6889c689d5",
+      "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-alignment/collie-kotlin-alignment-lint.log.gz",
+      "sha256_retained": "4161129a4dda1a056e1fbe171d280827d372bdf76e40a93288703c15bb150f05"
+    },
+    {
+      "original_log": "/tmp/collie-kotlin-alignment-lock-validation.log",
+      "sha256_uncompressed": "6de7db9a8386ba4d3f1acb64cda2249f7bc3e7f0154f133b61781cb0f764bf22",
+      "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-alignment/collie-kotlin-alignment-lock-validation.log.gz",
+      "sha256_retained": "55b8c961085bff0f9e018b89fa646282e7555937941c5a580c770ba7b1875e6b"
+    },
+    {
+      "original_log": "/tmp/collie-kotlin-alignment-locks.log",
+      "sha256_uncompressed": "5408cddcac32e78c9697c77993a09ac2e115db13517d27e28423ed8011b65c0f",
+      "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-alignment/collie-kotlin-alignment-locks.log.gz",
+      "sha256_retained": "3de99d8d5f1bd693f4bf357d125f87a719e3ddad9b6e82c8dda32abb13299008"
+    },
+    {
+      "original_log": "/tmp/collie-kotlin-alignment-native-gates.log",
+      "sha256_uncompressed": "28b7186835e63c2887669d36fb97b8db5615d2b08037d5c9cb1105ea7b085ee3",
+      "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-alignment/collie-kotlin-alignment-native-gates.log.gz",
+      "sha256_retained": "3f8d7c084be1229ec6f5a5786d71a1ae42fed2e6bb1425d7611d757ee38180e0"
+    },
+    {
+      "original_log": "/tmp/collie-kotlin-alignment-policy-tests.log",
+      "sha256_uncompressed": "1d8fe02cad33dc883f37ce0fbf1d617a6f3aefe6914b65c90075e96cf2765d19",
+      "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-alignment/collie-kotlin-alignment-policy-tests.log.gz",
+      "sha256_retained": "db1bd29ba7df160c92d1be1c79cdb51ba8d3c4915c48038a4faca86b43ad045a"
+    },
+    {
+      "original_log": "/tmp/collie-kotlin-alignment-policy.log",
+      "sha256_uncompressed": "594f6572cb57a02ac04c3e9d2846fb4b6e424cf4d3b8b269f20f09565d6c5361",
+      "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-alignment/collie-kotlin-alignment-policy.log.gz",
+      "sha256_retained": "f39db6386b868ec56b0e26d490c3109d19a36a1729bb986ae4b73725219b5ceb"
+    },
+    {
+      "original_log": "/tmp/collie-kotlin-alignment-r8-version.log",
+      "sha256_uncompressed": "46e5b84196a34e91ea8146f50c2a4b2127bdd9a77ebf07ffea4b0da23b1e5940",
+      "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-alignment/collie-kotlin-alignment-r8-version.log.gz",
+      "sha256_retained": "8768289e2bc03830429d13b9851456ecf9a79f9ecf269d511207be08a8aad911"
+    },
+    {
+      "original_log": "/tmp/collie-kotlin-alignment-root-tests.log",
+      "sha256_uncompressed": "ff6f84dfc87c74849aee64b6d40cca0f1144bf373b0198b55843ec64248371c5",
+      "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-alignment/collie-kotlin-alignment-root-tests.log.gz",
+      "sha256_retained": "3e268fd3468db6a857428a266f6210de4d5a7fcb07e7e3450146f445f8e278a5"
+    },
+    {
+      "original_log": "/tmp/collie-kotlin-alignment-root-typecheck.log",
+      "sha256_uncompressed": "67c4b854c29a8fcf5d65995e433a6a0739370b5ad8bf6ed252797203be409b36",
+      "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-alignment/collie-kotlin-alignment-root-typecheck.log.gz",
+      "sha256_retained": "dd19bb32279b4e74e77eeaddaf4f4848f9a1964c75c65712fb6c98115aa1b2ec"
+    },
+    {
+      "original_log": "/tmp/collie-kotlin-alignment-sbom.log",
+      "sha256_uncompressed": "0bf52b88c4e9ab747fff93788bfe423fd01d491470121b4c8bd25becab7816fb",
+      "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-alignment/collie-kotlin-alignment-sbom.log.gz",
+      "sha256_retained": "5f4334af5f042015cd0154058819fa559b0cfec02ca8371c4c6f023a2a22454f"
+    },
+    {
+      "original_log": "/tmp/collie-kotlin-alignment-script-tests.log",
+      "sha256_uncompressed": "69f57b7c12ee26c29b010ee7d5d8a8e3a7aa70a975b6753b48021f4bda85f341",
+      "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-alignment/collie-kotlin-alignment-script-tests.log.gz",
+      "sha256_retained": "4d4364801c90fb5354917c5c9a6a5bcb9aff9efa07cf1a43ba0475e7178e6ad3"
+    },
+    {
+      "original_log": "/tmp/collie-kotlin-alignment-web-typecheck.log",
+      "sha256_uncompressed": "aeb576518caebc12e6bb36adc8ead2698dcb650fc6330c970493584ae227f951",
+      "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-alignment/collie-kotlin-alignment-web-typecheck.log.gz",
+      "sha256_retained": "adc0bd93f45247cc01e3025e14d790a9c2848eb79409c3bbe5e96cc85c1e7e99"
+    },
+    {
+      "original_log": "/tmp/collie-kotlin-alignment-final-doc-links.log",
+      "sha256_uncompressed": "af61908441f3a3aeab7d66f67f4c57cc3dd3427f93ac02f57ccdfadd4d656a94",
+      "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-alignment/collie-kotlin-alignment-final-doc-links.log.gz",
+      "sha256_retained": "619f1ee1caf903598fc8e7403be369fa0c13da7fff402ca891d06b0410ef6f05"
+    }
+  ],
+  "commands": {
+    "native_gate": "/home/chris/git/collie/android/gradlew -p /home/chris/git/collie/android --no-daemon testDebugUnitTest lintDebug lintRelease assembleDebug assembleDebugAndroidTest assembleRelease",
+    "root_tests": "TMPDIR=/var/tmp/collie-audit-fixtures bun run test (working directory /tmp/collie-comprehensive-audit-server)",
+    "root_typescript": "bun run typecheck (working directory /home/chris/git/collie)",
+    "web_typescript": "bunx tsc --noEmit (working directory /home/chris/git/collie/web)",
+    "lint": "bun run lint (working directory /home/chris/git/collie)",
+    "interaction": "bash /home/chris/git/collie/scripts/android-interaction-test.sh emulator-5580",
+    "doc_links": "bun /home/chris/git/collie/scripts/check-doc-links.ts",
+    "whitespace": "git diff --check (working directory /home/chris/git/collie)",
+    "grype": "grype sbom:/tmp/collie-audit-final-sbom.cdx.json --config /home/chris/git/collie/android/grype.yaml --fail-on high -o json",
+    "isolated_cli_build": "bun run build:cli (working directory /tmp/collie-comprehensive-audit-server)",
+    "isolated_web_build": "bun run build:web (working directory /tmp/collie-comprehensive-audit-server)"
+  },
+  "emulator": {
+    "serial": "emulator-5580",
+    "owned_instance": "stormlens_api36 read-only, no snapshot/no window",
+    "api": 36,
+    "android_version": "16",
+    "hardware": "sdk_gphone64_x86_64",
+    "ime": "Gboard English QWERTY",
+    "interaction": {
+      "tests": 51,
+      "failures": 0,
+      "exit_code": 0,
+      "font_scale": 1,
+      "transport": "in-memory synthetic, no real terminal writes",
+      "log": "/tmp/collie-kotlin-alignment-emulator-interactions-final.log"
+    },
+    "baseline": {
+      "tests": 10,
+      "failures": 0,
+      "exit_code": 0,
+      "font_scale": 2,
+      "classes": [
+        "com.lateapex.collie.ui.NativeLaunchSmokeTest",
+        "com.lateapex.collie.ui.SystemBarInsetsDeviceTest",
+        "com.lateapex.collie.ui.AgentIconsDeviceTest",
+        "com.lateapex.collie.ui.PaneComposerDeviceTest",
+        "com.lateapex.collie.ui.HardeningUiDeviceTest",
+        "com.lateapex.collie.data.AndroidKeystoreConnectionStoreTest"
+      ],
+      "log": "/tmp/collie-kotlin-alignment-emulator-baseline.log"
+    },
+    "total_final_suite_passes": 61,
+    "limits": "No physical/live-read, real Codex, audible TalkBack or provider-delivery verification.",
+    "cleanup": {
+      "exit_code": 0,
+      "log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-alignment/collie-kotlin-alignment-emulator-cleanup.log.gz",
+      "sha256": "49545f6ba7d08013b86c4b4f02b3559e296b8f4d37a29e287d649a727da3f9bb"
+    },
+    "extra_codex_binding_recheck_passes": 1
+  },
+  "kotlin_compatibility_resolution": {
+    "disposition": "historical metadata investigation; superseded by implemented Kotlin alignment",
+    "compiler": "2.0.21",
+    "serialization_compiler_plugin": "2.0.21",
+    "stdlib": "2.1.0",
+    "stdlib_requester": "kotlinx-coroutines Android/core JVM 1.10.2",
+    "resolved_release_artifacts": 67,
+    "classes_scanned": 6970,
+    "metadata_classes": 3304,
+    "metadata_2_1_classes": 1730,
+    "incompatible_metadata": 0,
+    "prerelease_metadata": 0,
+    "probe_exit_code": 0,
+    "forced_debug_release_compile_exit_code": 0,
+    "compiler_boundary_controls": "ordinary 2.1 accepted, ordinary 2.2 and strict 2.1 rejected",
+    "production_config_or_lock_changes": false,
+    "artifact_hashes": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-compatibility/artifact-hashes.json",
+    "artifact_hashes_sha256": "006afd619bb03fb04984f27d9a3e8d0f0898ae0c38906cfa470f84a2c03f1723",
+    "evidence": [
+      {
+        "path": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-compatibility/collie-kotlin-compatibility-insight.log",
+        "sha256": "e110a0eaa25d7af616e180ee59b586bf0599e23853ab43cc35500a5d84b3f535"
+      },
+      {
+        "path": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-compatibility/collie-kotlin-classpaths.json",
+        "sha256": "ef45f58f4ff1eb2636504810960e8b980e56fe2745a7766007e1d3769b372c4a"
+      },
+      {
+        "path": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-compatibility/collie-kotlin-classpaths.log",
+        "sha256": "b6b3f57a50719c7281dc660014151ab20661ecdfeecde28d3414f2ad54f5537c"
+      },
+      {
+        "path": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-compatibility/collie-kotlin-probe.init.gradle",
+        "sha256": "82bbb63d3d238089702e1940d7eade6292230c65c472990dc121cb4c9d693bea"
+      },
+      {
+        "path": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-compatibility/CollieKotlinMetadataProbe.java",
+        "sha256": "3ff93cc5761fe031ba4299938a7c8d12c714f46f7a49abd84ecb7953594c170a"
+      },
+      {
+        "path": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-compatibility/collie-kotlin-artifact-paths.txt",
+        "sha256": "f6c33176d7e580ad502a3bd1f158587d80afc8f761b95d284480158b23c22148"
+      },
+      {
+        "path": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-compatibility/collie-kotlin-metadata-probe.log",
+        "sha256": "2c5c8089830ad213ae776305726eb248f81f73ebc367be5a6a1e777ecc193588"
+      },
+      {
+        "path": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-compatibility/collie-kotlin-fresh-compile.log",
+        "sha256": "19f218d21a61a24ee82afa8eb8678f8a4710292a5fe7e49120b11b0e8dfe876e"
+      }
+    ],
+    "report": "/home/chris/git/collie/android/acceptance/audit-kotlin-compatibility-resolution.md",
+    "documentation_links": {
+      "exit_code": 0,
+      "markdown_files": 205,
+      "log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-compatibility/collie-kotlin-doc-links.log",
+      "sha256": "fb6e53a66bea86a7af0c8e18f9b3a15807459e073422212e3cf99c7abb356445"
+    },
+    "whitespace_exit_code": 0
+  },
+  "original_comprehensive_execution": {
+    "native_gate": {
+      "tasks": [
+        "testDebugUnitTest",
+        "lintDebug",
+        "lintRelease",
+        "assembleDebug",
+        "assembleDebugAndroidTest",
+        "assembleRelease"
+      ],
+      "exit_code": 0,
+      "lint": {
+        "debug": {
+          "warnings": 178,
+          "errors": 0
+        },
+        "release": {
+          "warnings": 178,
+          "errors": 0
+        }
+      }
+    },
+    "apks": [
+      {
+        "path": "/home/chris/git/collie/android/app/build/outputs/apk/debug/app-debug.apk",
+        "sha256": "bb82d43d132f9522f39bd5dffbfc9f8813c5e51cde7807d9b004bffe95ffd90a",
+        "retained_artifact": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-comprehensive-final/app-debug.apk"
+      },
+      {
+        "path": "/home/chris/git/collie/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk",
+        "sha256": "0a187bd474d089ec11fbb5953c709e532b5196991e085cac1bd1d17e1dd8957e",
+        "retained_artifact": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-comprehensive-final/app-debug-androidTest.apk"
+      },
+      {
+        "path": "/home/chris/git/collie/android/app/build/outputs/apk/release/app-release-unsigned.apk",
+        "sha256": "a3d57212ae0c57f2c201b8ab9089d7abe802842cd07b3de3cc62f7dc1dac2d4f",
+        "retained_artifact": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-comprehensive-final/app-release-unsigned.apk"
+      }
+    ],
+    "native_unit_tests": {
+      "suites": 90,
+      "tests": 607,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "robolectric_sdk": 35,
+      "retained_xml": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-comprehensive-final/native-unit-test-results.tar.gz",
+      "retained_xml_sha256": "d0c961cbc74aba362f8fae6a902ac34c63a5b472f6d4c338b199eca45d1c66df"
+    },
+    "server_tests": {
+      "bridge_pass": 5406,
+      "cli_pass": 1956,
+      "cli_windows_skip": 1,
+      "scripts_pass": 293,
+      "scripts_windows_skip": 46,
+      "shell_and_packaging": "passed",
+      "exit_code": 0,
+      "fixture_TMPDIR": "/var/tmp/collie-audit-fixtures"
+    },
+    "isolated_builds": {
+      "checkout": "/tmp/collie-comprehensive-audit-server",
+      "cli_exit_code": 0,
+      "web_exit_code": 0,
+      "compared_server_web_input_paths": 2088,
+      "input_mismatches": 0
+    },
+    "emulator": {
+      "serial": "emulator-5580",
+      "owned_instance": "stormlens_api36 read-only, no snapshot/no window",
+      "api": 36,
+      "android_version": "16",
+      "hardware": "sdk_gphone64_x86_64",
+      "ime": "Gboard English QWERTY",
+      "interaction": {
+        "tests": 51,
+        "failures": 0,
+        "exit_code": 0,
+        "font_scale": 1,
+        "transport": "in-memory synthetic, no real terminal writes",
+        "log": "/tmp/collie-audit-emulator-final-interactions-recheck.log"
+      },
+      "baseline": {
+        "tests": 10,
+        "failures": 0,
+        "exit_code": 0,
+        "font_scale": 2,
+        "classes": [
+          "NativeLaunchSmokeTest",
+          "SystemBarInsetsTest",
+          "AgentIconsTest",
+          "PaneComposerTest",
+          "HardeningUiTest",
+          "AndroidKeystoreConnectionStoreTest"
+        ],
+        "log": "/tmp/collie-audit-emulator-final-baseline-200.log"
+      },
+      "total_final_suite_passes": 61,
+      "extra_navigation_recheck_passes": 1,
+      "limits": "No physical/live-read, real Codex, audible TalkBack or provider-delivery verification.",
+      "cleanup": {
+        "exit_code": 0,
+        "result": "OK: killing emulator, bye bye\nOK",
+        "log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-comprehensive-final/collie-audit-emulator-cleanup.log.gz",
+        "sha256": "a67c807271d6ca2b880509e1c6be627e957d56ba6f1181d58876bc0eda4f6e33"
+      }
+    },
+    "logs": [
+      {
+        "original_log": "/tmp/collie-audit-final-native-gates3.log",
+        "sha256_uncompressed": "71f7766c393d5326876f37ef50d8b282a1d02969ea3bed0ac83880956cdabc10",
+        "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-comprehensive-final/collie-audit-final-native-gates3.log.gz",
+        "sha256_retained": "31ab4de7ffc6a421c10d4621617b9608963d5d9f803367a79391e5921f6cd083"
+      },
+      {
+        "original_log": "/tmp/collie-audit-server-tests-clean.log",
+        "sha256_uncompressed": "64cb46221c63c41f6c96389ad47ab94f987a2251df2f81451cd6604f987f3d7b",
+        "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-comprehensive-final/collie-audit-server-tests-clean.log.gz",
+        "sha256_retained": "352849505d404b2c220431558d2c27b92acb2f90a1b83f05beb019d34cb79a8e"
+      },
+      {
+        "original_log": "/tmp/collie-audit-web-logic.log",
+        "sha256_uncompressed": "0b623e79bdda6394c564fe5fa07ab654590c65fa3d55422c17f4c8025b9a61f9",
+        "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-comprehensive-final/collie-audit-web-logic.log.gz",
+        "sha256_retained": "4cd80a34d6b9d6915f04f8ae5699c25aadc4f63db39c919e241b735c6fc390e4"
+      },
+      {
+        "original_log": "/tmp/collie-audit-web-dom.log",
+        "sha256_uncompressed": "55fa670c969bdc9f9ff6c3eaf72fd25e656b0c19c938b3a7b364117836227763",
+        "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-comprehensive-final/collie-audit-web-dom.log.gz",
+        "sha256_retained": "0252fca1c29d2cac5295812aa9194da9e5b62ccdaa824291b1de5ebab4a5b672"
+      },
+      {
+        "original_log": "/tmp/collie-audit-root-typecheck.log",
+        "sha256_uncompressed": "67c4b854c29a8fcf5d65995e433a6a0739370b5ad8bf6ed252797203be409b36",
+        "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-comprehensive-final/collie-audit-root-typecheck.log.gz",
+        "sha256_retained": "41b66512e3ec0f0e6bc38191307a90155a0590db7b9186f4fc2aa1483a421307"
+      },
+      {
+        "original_log": "/tmp/collie-audit-web-typecheck.log",
+        "sha256_uncompressed": "aeb576518caebc12e6bb36adc8ead2698dcb650fc6330c970493584ae227f951",
+        "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-comprehensive-final/collie-audit-web-typecheck.log.gz",
+        "sha256_retained": "4eebccf7a381de90f02ae7ca1cb85fbba16e0c15180004175e9a4866ff439868"
+      },
+      {
+        "original_log": "/tmp/collie-audit-lint.log",
+        "sha256_uncompressed": "641e4701fb4d5bb20bc306eb390832554271908c4eab628f3cb56d6889c689d5",
+        "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-comprehensive-final/collie-audit-lint.log.gz",
+        "sha256_retained": "5f866103ffde2c0c563ff1a75eef56f99b55a333058fd49cfade3847badebdc5"
+      },
+      {
+        "original_log": "/tmp/collie-audit-final-native-policy.log",
+        "sha256_uncompressed": "594f6572cb57a02ac04c3e9d2846fb4b6e424cf4d3b8b269f20f09565d6c5361",
+        "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-comprehensive-final/collie-audit-final-native-policy.log.gz",
+        "sha256_retained": "2bcb8c893a31f3ba8c9e2b4cef5668e6237001871138f135cb72328b63a3a596"
+      },
+      {
+        "original_log": "/tmp/collie-audit-final-notices.log",
+        "sha256_uncompressed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-comprehensive-final/collie-audit-final-notices.log.gz",
+        "sha256_retained": "04b2f6167b7ff21135c15028b785ca01c0ad244d14a157292616f07753ea7eac"
+      },
+      {
+        "original_log": "/tmp/collie-audit-final-version.log",
+        "sha256_uncompressed": "785e2ad9bcbdbdd1869d31856f0e5a2e01fd38ec47783263b20a109e9b2e8667",
+        "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-comprehensive-final/collie-audit-final-version.log.gz",
+        "sha256_retained": "2ee9f9141941f5188d3985e3bc54ba3479176e36cd4307fe1d4d1e582ff09440"
+      },
+      {
+        "original_log": "/tmp/collie-audit-isolated-cli-build.log",
+        "sha256_uncompressed": "86ea3136fa8ee4f4b8bce5b71fa8a7e71b0f3c02c2853d7552ae68b653321478",
+        "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-comprehensive-final/collie-audit-isolated-cli-build.log.gz",
+        "sha256_retained": "9e1975d5f20ae6844e021024f70324461f0461c535d7b60f9619b5ed25382a13"
+      },
+      {
+        "original_log": "/tmp/collie-audit-isolated-web-build.log",
+        "sha256_uncompressed": "d1b3064b64b78ae77dffb14eeb61fcce595acf070e36ea360e95478af3eb7cca",
+        "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-comprehensive-final/collie-audit-isolated-web-build.log.gz",
+        "sha256_retained": "f4c8fc67298071b7558b2987cd0eb460bc676f3e7b326b8697bdb381d3c4c37a"
+      },
+      {
+        "original_log": "/tmp/collie-audit-final-sbom.log",
+        "sha256_uncompressed": "0bf52b88c4e9ab747fff93788bfe423fd01d491470121b4c8bd25becab7816fb",
+        "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-comprehensive-final/collie-audit-final-sbom.log.gz",
+        "sha256_retained": "d31ec84f6a02c6e1920b11da478066102d4ab057104a264ce0f1ec8626c35eba"
+      },
+      {
+        "original_log": "/tmp/collie-audit-final-grype.log",
+        "sha256_uncompressed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-comprehensive-final/collie-audit-final-grype.log.gz",
+        "sha256_retained": "b5331be08598c9c9c79d69f765c44d4e01eadcccf05c9d4b076d15827ada6508"
+      },
+      {
+        "original_log": "/tmp/collie-audit-emulator-final-install.log",
+        "sha256_uncompressed": "50daa2ba76a5c9784728abf9461823bc72d3c4835986fc7ba7cdd96abebea397",
+        "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-comprehensive-final/collie-audit-emulator-final-install.log.gz",
+        "sha256_retained": "d90843abb12d1570c9fdfb2fc84171d81f1b935aad03f3655bf14f8535e04c2b"
+      },
+      {
+        "original_log": "/tmp/collie-audit-emulator-final-baseline.log",
+        "sha256_uncompressed": "a1725a03da538d89c97abe1c56b86f1742297dcf9f1e4a8f64dc98ce0b711783",
+        "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-comprehensive-final/collie-audit-emulator-final-baseline.log.gz",
+        "sha256_retained": "474d6ca2557bff98a78d944e924350a57d94e55d100618b0206099e5715a4532"
+      },
+      {
+        "original_log": "/tmp/collie-audit-emulator-final-baseline-200.log",
+        "sha256_uncompressed": "04d6586046658c7cc1fdacf2c853b7326dc62de68c4ff7c755213a2087e9f31a",
+        "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-comprehensive-final/collie-audit-emulator-final-baseline-200.log.gz",
+        "sha256_retained": "4b854a23a440589f6c655609cdbc23663f8d4190bf8594c6026be3438455cd7b"
+      },
+      {
+        "original_log": "/tmp/collie-audit-emulator-final-interactions.log",
+        "sha256_uncompressed": "71bd3347a9daf44db873cb6d69821555d9f61100b97a171462d0a450481f047c",
+        "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-comprehensive-final/collie-audit-emulator-final-interactions.log.gz",
+        "sha256_retained": "771181e653d838931acc549eb62440659995e8d73914ed52b4ac5486659fe4b6"
+      },
+      {
+        "original_log": "/tmp/collie-audit-emulator-navigation-recheck.log",
+        "sha256_uncompressed": "90234c22d67aa2c72498563a6468e59e2ce3f2e17665dfd99941bf16ea8293e0",
+        "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-comprehensive-final/collie-audit-emulator-navigation-recheck.log.gz",
+        "sha256_retained": "a1e152d1e9c91c742bd58fe55f7467ca0ae0a70f0773f1820500754e77c6a973"
+      },
+      {
+        "original_log": "/tmp/collie-audit-emulator-final-interactions-recheck.log",
+        "sha256_uncompressed": "fb031b4102c28a59c34ca955ba88add55852ef7c4dc4bd5c10aa7cff7a91a7bf",
+        "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-comprehensive-final/collie-audit-emulator-final-interactions-recheck.log.gz",
+        "sha256_retained": "efc581263f591e1e0a7ee750e4e87b6fd762cf1eff1383915466439168bd0b3d"
+      },
+      {
+        "original_log": "/tmp/collie-audit-final-doc-links.log",
+        "sha256_uncompressed": "346ed69a06cf92301b5eb4561db7f353f248e476f9f11d61629141adb1d51dc0",
+        "retained_log": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-comprehensive-final/collie-audit-final-doc-links.log.gz",
+        "sha256_retained": "fafea7e853fe7d6029e076be20c487371e86699c357a56b2b6ce732ebec787a8"
+      }
+    ],
+    "retained_evidence_directory": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-comprehensive-final",
+    "static_checks": {
+      "root_typescript": 0,
+      "web_typescript": 0,
+      "oxlint": 0,
+      "native_policy_including_merged_manifest": 0,
+      "notices": 0,
+      "versions": 0,
+      "license_byte_comparison": 0,
+      "documentation_links": {
+        "exit_code": 0,
+        "markdown_files": 204
+      },
+      "whitespace": 0
+    }
+  },
+  "kotlin_alignment": {
+    "disposition": "implemented and verified",
+    "Kotlin": "2.2.21",
+    "serialization_compiler_plugin": "2.2.21",
+    "application_Kotlin_BOM": "2.2.21",
+    "AGP": "8.10.1",
+    "R8": "8.10.24",
+    "Gradle": "8.11.1",
+    "module_version_records": 307,
+    "locked_release_modules": 80,
+    "unrelated_application_version_changes": 0,
+    "native_unit_tests_pass": 607,
+    "native_suites": 90,
+    "lint_warning_each_variant": 179,
+    "lint_errors": 0,
+    "final_emulator_passes": 61,
+    "targeted_tooling_tests_pass": 25,
+    "grype_matches": 0,
+    "grype_database_valid": true,
+    "before_inputs": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-alignment/before",
+    "input_hashes": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-alignment/input-hashes.json",
+    "lock_delta": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-alignment/lock-delta.json",
+    "evidence_directory": "/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-kotlin-alignment",
+    "report": "/home/chris/git/collie/android/acceptance/audit-kotlin-alignment.md",
+    "independent_read_only_review": "final configuration, lock/checker and documented ranges reviewed; no concrete defect",
+    "interim_results": [
+      "Two intermediate builds cancelled while final supported tool versions were corrected.",
+      "Incorrect baseline class arguments caused ClassNotFound; corrected actual classes passed all 10.",
+      "First full interaction attempt passed 50/51: typed field contained FFixture codex reply. Same case passed individually and unchanged full 51-case rerun passed. Cause unproven; input/timing variability remains a limitation."
+    ],
+    "official_sources_checked": "2026-10-10"
+  }
+}

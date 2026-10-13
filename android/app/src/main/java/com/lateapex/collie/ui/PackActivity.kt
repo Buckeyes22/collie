@@ -186,13 +186,19 @@ class PackActivity : AppCompatActivity() {
                 ))
                 finish()
             }
-        }, LinearLayout.LayoutParams(dp(44), dp(44)))
+        }, LinearLayout.LayoutParams(dp(48), dp(48)))
         addView(CollieHeadingTextView(this@PackActivity).apply {
             setText(R.string.pack_title)
             textSize = 18f
             setTextColor(color(R.color.collie_foreground))
             setPadding(dp(8), 0, 0, 0)
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        addView(MaterialButton(this@PackActivity).apply {
+            setText(R.string.machines_title)
+            contentDescription = getString(R.string.machines_open_pack_accessibility)
+            minHeight = dp(48)
+            setOnClickListener { startActivity(Intent(this@PackActivity, MachinesActivity::class.java)) }
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)))
     }
 
     private fun emptyCard(): LinearLayout = LinearLayout(this).apply {
@@ -308,7 +314,7 @@ class PackActivity : AppCompatActivity() {
             addView(MaterialButton(this@PackActivity).apply {
                 setText(R.string.pack_go_to_machine)
                 setOnClickListener { goTo(member) }
-            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)).apply { topMargin = dp(12) })
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)).apply { topMargin = dp(12) })
             applyAppTypeface()
         }
     }

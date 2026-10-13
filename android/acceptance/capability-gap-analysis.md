@@ -1,0 +1,80 @@
+# Collie / Herdr / Android capability gap analysis — 2026-10-10
+
+The Android app covers the central monitor-and-reply workflow, but it does not consume several implemented Collie features. The most immediate gaps are missing journal images, read-only repository/file inspection, richer launch/worktree screens, queued-message actions, and persistent update dismissal. Herdr also offers capabilities beyond Collie's bridge contract; those require server design before Android can use them.
+
+This is a source/documentation comparison and proposed backlog, not implementation of the newly identified features. The preceding Kotlin fix is implemented and verified separately in `/home/chris/git/collie/android/acceptance/audit-kotlin-alignment.md`.
+
+## Evidence and meaning of “today”
+
+- Current working checkout `/home/chris/git/collie`, baseline `8cc67d40d6195b5a5189d038ff2ec8409e0692de` plus current local corrections; upstream foundation Collie 1.19.0 at `632a2bf784045b1e2576da112d89ed21fecc9eeb`. Current source takes precedence over older prose and archived copies.
+- Herdr documentation archived at `/home/chris/git/collie/.project-docs/herdr`, version 0.9.3, revision `7b116c05bfda646af39d2524c54e70c751f57ee8`, fetched 2026-10-10. Its `docs/next` directory is inside that pinned release archive; directory naming alone does not establish a roadmap feature. The installed `/home/chris/.local/bin/herdr` reports 0.9.3 and its offline schema reports protocol 22, schema 1, 102 methods. No running terminal was driven to obtain the schema.
+- Doclayer routed first: Collie wiki `path@cad2899a337a16aa0d65045d9aa80f6d3be5559e`, dated 2026-10-10; archived Collie references `URL@2026-10-10T07:59:58Z`. It flagged index lag (`69e22e31` versus Git `cad2899a`, two commits) and unrelated Android documentation sync delivery-budget errors. These flags are retained; current local source and the shipped schema supply the capability evidence. The retrieval gap is `gap-6cd57263df239e51873a`.
+- Three GPT-6.1 Sol agents independently compared Collie API/PWA features, Herdr/platform support, and native Android entry points. Parent review cross-checked image projection, queue-action guards, update dismissal, launch transports, and scoped Space refresh. Detailed evidence is in the three companion reports linked below.
+- “Implemented” means current source exposes the behavior; it does not mean every real device, harness, crew member, or live deployment was exercised. This analysis does not claim global parity with later upstream releases.
+
+## Existing native coverage
+
+Android already supports paired HTTPS connections, device revocation, scoped dashboard/Space/tab/pane navigation, terminal mirrors, named keys and direct typing, guarded semantic interactions and replies, live chat plus paginated searchable history, image upload, reviewed speech-to-text drafts, approved legacy launchers, workspace creation, worktree list/create/open, Crew status, notification preferences/snooze, and server update management. Capability gates and host/session scope are already part of the client. New screens should build on these paths.
+
+The maintained native overview is `/home/chris/git/collie/android/README.md:110`; actual API methods are in `/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/network/CollieApiClient.kt:61`. Transports alone do not establish a user-facing feature.
+
+## Confirmed gaps and implementation boundary
+
+| Capability already available | Current Android gap | Work needed and user benefit |
+|---|---|---|
+| Structured tool-call and denial detail | Native text cards omit some decoded structured call/image/denial context shown by the PWA. | Enrich native tool cards with faithful typed context and distinguish denial from tool errors, while retaining text fallback. |
+| Journal attachment images and tool-result images | Fields decode, but history projection/rendering drops image content. This can hide the only phone-readable copy of pi/OMP off-grid terminal images. | Native authenticated, same-origin scoped, bounded image loading and rendering in both history and live transcript. Restore visible results, with an explicit failure/unsupported state. |
+| Pane/workspace Changes, diffs and last-commit inspection | No native API/screen for the implemented read-only Changes family. | Native read-only lists/diff views, scoped to the source machine/session; preserve repository containment and server limits. Inspect an agent's work before approving or responding. |
+| Pane/workspace Files, text and image reads, path existence | No native file browser or authenticated file-image viewer; terminal filesystem links are not promoted into this workflow. | Native bounded file browser/viewer with distinct refusal and missing-route states; Files additionally requires the server's device-read authorization gate, beyond ordinary paired reads. Files remains read-only; editing is not an existing contract. |
+| Harness/command/shell launch targets and folder-based worktree planning | New transports exist in Android, but screens still call legacy launch/worktree routes. | Wire target discovery, folder choice, plan preview, base/ref and parent choice into native screens. Preserve caller-held request IDs across deliberate same-intent replay, without automatic write retries. |
+| Launcher recipe add/remove/rename; folder stars | API/PWA feature family absent from native UI. | Native configuration controls scoped to the target host, with the same confirmation and write gates. Avoid visiting the PWA merely to maintain phone launch choices. |
+| One-off command runs, preflight, recent-run history/removal | Rich launch/run screen absent; these are not the same as sending text to an existing pane. | Explicit run UI with server preflight and no-prompts confirmation, declared availability, intent identity and typed refusals. |
+| Chat `sendQueuedNow` action | Android displays queued messages and decodes declared keys but supplies no action. | A guarded “Send now” action using the server-declared keys. Never resend queued text; refuse while a semantic dialog owns input, while offline/saved, or when writes are unauthorized. |
+| Persistent version/scope update dismissal | Native Dismiss sets a local Boolean and calls digest snooze; server dismissal has different durable semantics. | Implement `/api/update/dismiss` with version and offer/crew scope. Keep “remind me next digest” as a distinct snooze operation. |
+| Mux topology-latency declaration and force-refresh | Android omits `topologyLatency`; Space refresh reads another snapshot without requesting the mux refresh floor. | Decode and display bounded freshness where declared, negotiate supported read depth, and perform scoped `/api/refresh` before a manual Space reload. Mainly improves zellij's census behavior. |
+| Machine/cache notification preference switches | Native settings expose three shared switches, while the PWA exposes five; machine/cache fields decode but are not editable. | Add the two shared preference controls with clear bridge-wide scope, independently of native background delivery. |
+| Machine resource summaries/history and alert thresholds | Native Crew status is not a machine metrics view; machine alert fields are preserved but not editable. | Native machine panels/history and declared alert controls. Resource configuration and actual native notification delivery are separate pieces. |
+| Cache/model/git context, cache rules and per-pane watches | Several decoded fields lack rich native presentation; cache metadata is largely opaque; watch/rules endpoints and associated user controls are absent. | Native cache-window presentation, declared rules, watch management and expiry-state handling. Notification delivery needs its own implementation decision. |
+| Text/document attachments accepted by configured bridge upload policy | Native picker and media path support images only. | Add a native document picker and bounded streaming upload, honoring server extension/type/size declarations. Attach logs or source files without switching clients. |
+| Retained offline chat tails | Native transcript caches are in memory; PWA offers bounded retained copies. | Optional encrypted, scoped, expiring retention and clear/revocation wipe. Saved copies remain read-only and never authorize writes. |
+| Larger non-Herdr terminal read windows | Android applies Herdr's 1,000-line ceiling to every backend; bridge allows bounded requests up to 10,000. | Negotiate a declared read ceiling and implement bounded growth for supporting adapters; retain Herdr limits and unknown-depth refusal. |
+| Local pins, handedness and keypad customization | PWA offers device-local navigation/input preferences that native does not expose. | Optional native local preferences for frequent panes and custom key layouts, preserving supported-key validation and touch/accessibility targets. |
+| Per-device typeface/operator fonts | Native fixes its current faces; PWA has font preferences. | Optional design reconciliation and authenticated bounded font loading, after core functionality. |
+| Native background notification delivery | App edits shared notification preferences but has no native receiver/provider registration lifecycle. PWA Web Push exists. | Design a native delivery/provider contract and lifecycle, then implement app registration and handling. Existing browser subscription flow is not a native receiver. |
+| Wider per-harness semantic presentation | Raw fallback remains for unknown/unproven surfaces; icon recognition is broader than verified semantic/journal support. | Extend only from current fixtures and verified choreography; candidates include OMP dialogs, Claude resume/effort/unnumbered trust, and current Muse surfaces. Preserve raw readable fallback and existing dialog write guards; never map similarly named agents to unverified key recipes. |
+| Additional Herdr layout, movement, waits/process information and integration management | Herdr exposes methods that Collie's mux port/HTTP API does not expose. | Add deliberately scoped, capability-gated bridge contracts before native controls. Evaluate layout/move/inspection first; agent automation and integration administration need separate product intent. |
+
+## Source cross-checks for immediate gaps
+
+- Journal loss: `/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/network/WireModels.kt:226` carries image fields; `/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/HistoryPresentation.kt:317` turns non-tool parts into prose and tools into text-only results. PWA rendering is `/home/chris/git/collie/web/src/components/transcript-view.tsx:148`; off-grid image behavior is documented in `/home/chris/git/collie/bridge/journal/registry.ts:90`.
+- Changes/Files implementation: `/home/chris/git/collie/web/src/lib/api.ts:861` through the file-existence family at line 1071; user-facing limits, read-only behavior and crew routing are in `/home/chris/git/collie/docs/changes.md:123`, line 270 and line 283. These routes already exist; native absence is not an absent server feature.
+- Queue action: `/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/network/UpstreamModels.kt:127`; PWA guards and the reason a dialog must block the keys are `/home/chris/git/collie/web/src/components/agent-chat.tsx:1448`.
+- Update dismissal: `/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/UpdatesActivity.kt:568` versus `/home/chris/git/collie/bridge/server.ts:2498` and `/home/chris/git/collie/web/src/lib/api.ts:1689`.
+- New launch/worktree calls: `/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/data/CollieRepository.kt:208` and `/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/network/CollieApiClient.kt:343`; the maintained compatibility record explicitly distinguishes transport support from the legacy screens at `/home/chris/git/collie/android/UPSTREAM_API_COMPATIBILITY.md:36`.
+- Freshness: `/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/network/WireModels.kt:37`, `/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/SpaceViewModel.kt:132`, and `/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/SpaceActivity.kt:100`. Dashboard already invokes bridge refresh at `/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/MainViewModel.kt:210`. Declared behavior is `/home/chris/git/collie/MUX_CONTRACT.md:52`.
+
+## Recommended order
+
+1. **Complete existing information and actions:** journal images, correct update dismissal, honest topology freshness/Space refresh, and guarded queued-message “Send now.” These fill concrete omissions without introducing a broad new administrative product.
+2. **Inspect work from the phone:** read-only Files and Changes, text/image viewing, diffs and last commit; then document attachments and larger supported read windows. Share one scoped repository/file navigation model and preserve server containment/refusal semantics.
+3. **Start work from the phone:** expose the rich launch/worktree contracts; then recipe maintenance, starred folders and one-off runs/preflight. Intent identity and clear unknown-outcome handling belong in the first implementation.
+4. **Observe cost and health:** machine metrics/history/alerts, the missing machine/cache preference switches, and cache/model/git context plus watch UI. Present configured alerts independently of whether this APK can receive background notifications.
+5. **Design native delivery and optional deeper terminal control:** choose a native notification provider/contract; evaluate Herdr layout/move/inspection via the Collie port. Agent automation, plugin/integration administration and deployment management are wider product decisions.
+
+These priorities are proposed from workflow impact and contract readiness, not measured effort estimates. Earlier native release exclusions explain the current scope but do not eliminate the opportunities.
+
+## Platform limits and documentation drift
+
+Collie registers five mux backends: Herdr, tmux, zellij, tuios and tern. Android must consume capability declarations rather than treating a feature as supported solely because a backend name appears. Journal/session availability, keyboard grammar, focus, worktrees and topology freshness differ between them; the exact matrix is in `/home/chris/git/collie/MUX_CONTRACT.md` and the Herdr companion report.
+
+Windows support is specifically standalone Windows 11 x64 with Herdr 0.9.3+, manual front-door publishing, and no Windows Crew membership in the documented release. An Android screen cannot supply a server capability deliberately refused on that host. See `/home/chris/git/collie/docs/windows.md:532`.
+
+Two misleading documentation statements require maintenance: the native README lists only four journal adapters while the current bridge registers seven plus the OMP alias; older Herdr API/adapter comments describe `truncated` as always false, while pinned Herdr 0.9.3 can report truncation. Neither finding means unsupported journal harnesses suddenly need native SDKs or that Herdr offers unlimited scrollback.
+
+## Companion evidence
+
+- [/home/chris/git/collie/android/acceptance/capability-gaps-collie.md](/home/chris/git/collie/android/acceptance/capability-gaps-collie.md)
+- [/home/chris/git/collie/android/acceptance/capability-gaps-herdr.md](/home/chris/git/collie/android/acceptance/capability-gaps-herdr.md)
+- [/home/chris/git/collie/android/acceptance/capability-gaps-android.md](/home/chris/git/collie/android/acceptance/capability-gaps-android.md)
+
+The evidence manifest records hashes of cited current files and reports. The shipped Herdr schema and doclayer output are retained under `/home/chris/git/collie/.project-docs/audit-evidence/2026-10-10-capability-gaps/`. The analysis introduces documentation artifacts only; it does not enable writes, change production UI, publish builds, or exercise an operator terminal.

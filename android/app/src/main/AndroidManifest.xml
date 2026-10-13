@@ -13,6 +13,15 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Collie"
         android:usesCleartextTraffic="false">
+        <activity android:name=".ui.ProxySignInActivity" android:exported="false" />
+        <activity android:name=".ui.OpenLinkActivity" android:exported="true" android:noHistory="true" android:excludeFromRecents="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="com.lateapex.collie" />
+            </intent-filter>
+        </activity>
         <activity
             android:name=".ui.MainActivity"
             android:exported="true"
@@ -28,13 +37,70 @@
             android:parentActivityName=".ui.MainActivity"
             android:windowSoftInputMode="adjustResize" />
         <activity
+            android:name=".ui.LayoutActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.PaneActivity" />
+        <activity
+            android:name=".ui.LayoutRecipesActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.PaneActivity" />
+        <activity
             android:name=".ui.HistoryActivity"
             android:exported="false"
             android:parentActivityName=".ui.PaneActivity" />
         <activity
+            android:name=".ui.PaneProcessesActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.PaneActivity" />
+        <activity
+            android:name=".ui.CacheWatchActivity"
+            android:exported="false" />
+        <activity android:name=".ui.AgentControlActivity" android:exported="false" android:parentActivityName=".ui.PaneActivity" />
+        <activity android:name=".ui.WaitsActivity" android:exported="false" android:parentActivityName=".ui.PaneActivity" />
+        <activity
+            android:name=".ui.AgentIdentityActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.PaneActivity" />
+        <activity
+            android:name=".ui.AgentMetadataActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.PaneActivity" />
+        <activity
+            android:name=".ui.AgentViewActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.PaneActivity" />
+        <activity
+            android:name=".ui.ChangesActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.PaneActivity" />
+        <activity
+            android:name=".ui.FilesActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.MainActivity" />
+        <activity
             android:name=".ui.SettingsActivity"
             android:exported="false"
             android:parentActivityName=".ui.MainActivity" />
+        <activity
+            android:name=".ui.AgentCatalogActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.SettingsActivity" />
+        <activity
+            android:name=".ui.IntegrationsActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.SettingsActivity" />
+        <activity
+            android:name=".ui.PluginsActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.SettingsActivity" />
+        <activity
+            android:name=".ui.PluginDetailsActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.PluginsActivity" />
+        <activity
+            android:name=".ui.PluginConfigActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.PluginDetailsActivity" />
         <activity
             android:name=".ui.UpdatesActivity"
             android:exported="false"
@@ -48,9 +114,31 @@
             android:exported="false"
             android:parentActivityName=".ui.SettingsActivity" />
         <activity
+            android:name=".ui.MachinesActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.MainActivity" />
+        <activity
             android:name=".ui.SpaceActivity"
             android:exported="false"
             android:parentActivityName=".ui.MainActivity" />
+        <activity
+            android:name=".ui.OrganizeSpacesActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.MainActivity" />
+        <activity
+            android:name=".ui.TabTransferActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.MainActivity" />
+        <activity
+            android:name=".ui.NewActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.MainActivity"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".ui.LaunchRecipeActivity"
+            android:exported="false"
+            android:parentActivityName=".ui.NewActivity"
+            android:windowSoftInputMode="adjustResize" />
 
         <provider
             android:name="androidx.core.content.FileProvider"

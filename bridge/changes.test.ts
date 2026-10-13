@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -14,11 +14,14 @@ import {
   gitEnv,
   listChanges,
   MAX_DIFF_LINES,
+  MAX_HISTORY_OFFSET,
+  MAX_HISTORY_RESPONSE_BYTES,
   parseCommitObject,
   parseNameStatusZ,
   parseNumstatZ,
   parseStatusV2,
   readCommit,
+  readCommitHistory,
   repoOfFolder,
   SharedReads,
   sharedDiffs,
@@ -110,6 +113,9 @@ describe("changesParams", () => {
     expect(at("?repo=.&path=a%20b").path).toBe("a b");
     expect(at("").view).toBe("changes");
     expect(at("?view=commit&repo=.").view).toBe("commit");
+    expect(at("?view=history&repo=.&limit=80&offset=2")).toMatchObject({ view: "history", historyLimit: 50, historyOffset: 2 });
+    expect(at("?view=history&repo=.&offset=-1").historyOffset).toBe(-1);
+    expect(at("?view=history&repo=.&offset=2x").historyOffset).toBe(-1);
     expect(at("?view=HEAD~3").view).toBe("changes");
   });
 });
@@ -618,6 +624,120 @@ describe("the last commit (ADR 0065 rule 9)", () => {
     for (const m of ["fsmonitor", "external", "textconv", "command", "clean", "smudge", "gpg"]) {
       expect(existsSync(join(markers, m)), `${m} ran`).toBe(false);
     }
+  });
+});
+
+describe("paged commit history", () => {
+  test("bounds a maximum page of huge author objects and shares its exact output with native transport", async () => {
+    const dir = join(base, "history-upper-bound");
+    mkdirSync(dir);
+    git(dir, "init", "-q");
+    const records: string[] = [];
+    for (let n = 1; n <= 50; n++) {
+      const message = "\u0002".repeat(600) + "\n";
+      const author = "\u0001".repeat(200_000) + n;
+      records.push(`commit refs/heads/main\nmark :${n}\nauthor ${author} <t@t> ${1700000000 + n} +0000\ncommitter t <t@t> ${1700000000 + n} +0000\ndata ${Buffer.byteLength(message)}\n${message}${n > 1 ? `from :${n - 1}\n` : ""}\n`);
+    }
+    const imported = Bun.spawnSync(["git", "fast-import", "--quiet"], {
+      cwd: dir, env: fixtureEnv(), stdin: new TextEncoder().encode(records.join("")), stdout: "pipe", stderr: "pipe",
+    });
+    expect(imported.exitCode, imported.stderr.toString()).toBe(0);
+    const answer = await readCommitHistory(dir, { ...params(".", null), view: "history", historyHead: null, historyOffset: 0, historyLimit: 50 });
+    if (!answer.available) throw new Error(`upper-bound page unavailable: ${answer.reason}`);
+    expect(answer.commits).toHaveLength(50);
+    expect(answer).toMatchObject({ nextOffset: null, truncated: false });
+    for (const commit of answer.commits) {
+      expect(commit.author).toBe("\u0001".repeat(1024));
+      expect(commit.subject).toBe("\u0002".repeat(500));
+    }
+    const body = JSON.stringify({ workspaceId: "w", ...answer });
+    expect(Buffer.byteLength(body)).toBeLessThan(MAX_HISTORY_RESPONSE_BYTES);
+    // This exact real-bridge DTO is chunked through MockWebServer by the native API test.
+    const nativeFixture = readFileSync(new URL("../android/app/src/test/resources/changes-history-upper-bound.json", import.meta.url), "utf8").trim();
+    expect(body).toBe(nativeFixture);
+  });
+
+  test("caps the last page at exactly 10000 rows and distinguishes truncation from the real end", async () => {
+    const dir = join(base, "history-boundary");
+    mkdirSync(dir);
+    git(dir, "init", "-q");
+    // One real git import builds the boundary fixture without 10001 child-process launches.
+    const records: string[] = [];
+    for (let n = 1; n <= MAX_HISTORY_OFFSET + 1; n++) {
+      const message = `revision ${n}\n`;
+      records.push(`commit refs/heads/main\nmark :${n}\ncommitter t <t@t> ${1700000000 + n} +0000\ndata ${Buffer.byteLength(message)}\n${message}${n > 1 ? `from :${n - 1}\n` : ""}\n`);
+    }
+    const imported = Bun.spawnSync(["git", "fast-import", "--quiet"], {
+      cwd: dir, env: fixtureEnv(), stdin: new TextEncoder().encode(records.join("")), stdout: "pipe", stderr: "pipe",
+    });
+    expect(imported.exitCode, imported.stderr.toString()).toBe(0);
+    git(dir, "reset", "--hard", "-q", "HEAD");
+    const head = git(dir, "rev-parse", "HEAD").trim();
+    const at = (offset: number, limit: number, anchor = head) => readCommitHistory(dir, {
+      ...params(".", null), view: "history", historyHead: anchor, historyOffset: offset, historyLimit: limit,
+    });
+    const final = await at(MAX_HISTORY_OFFSET - 10, 30);
+    if (!final.available) throw new Error(`boundary unavailable: ${final.reason}`);
+    expect(final.commits).toHaveLength(10);
+    expect(final.offset + final.commits.length).toBe(MAX_HISTORY_OFFSET);
+    expect(final.commits.map((commit) => commit.subject)).toEqual(Array.from({ length: 10 }, (_, i) => `revision ${11 - i}`));
+    expect(final).toMatchObject({ truncated: true, nextOffset: null });
+    const last = await at(MAX_HISTORY_OFFSET - 1, 50);
+    if (!last.available) throw new Error(`last row unavailable: ${last.reason}`);
+    expect(last.commits).toHaveLength(1);
+    expect(last.commits[0]!.subject).toBe("revision 2");
+    expect(last).toMatchObject({ truncated: true, nextOffset: null });
+    expect(await at(MAX_HISTORY_OFFSET, 30)).toEqual({ available: false, reason: "stale-history" });
+    // The ancestor has exactly 10000 commits: its last row is the genuine end, not truncated.
+    const exactHead = git(dir, "rev-parse", "HEAD~1").trim();
+    const exact = await at(MAX_HISTORY_OFFSET - 10, 30, exactHead);
+    if (!exact.available) throw new Error(`exact boundary unavailable: ${exact.reason}`);
+    expect(exact.commits).toHaveLength(10);
+    expect(exact.commits.at(-1)!.subject).toBe("revision 1");
+    expect(exact).toMatchObject({ truncated: false, nextOffset: null });
+  });
+
+  test("pins the first-page HEAD, returns ordered bounded pages without duplicates, and reads a selected older commit", async () => {
+    const dir = repo(join(base, "commit-history"), { "note.txt": "zero\n" });
+    const commitNote = (n: number) => {
+      write(join(dir, "note.txt"), `${n}\n`);
+      git(dir, "add", "note.txt");
+      git(dir, "commit", "-q", "-m", `revision ${n}`);
+      return git(dir, "rev-parse", "HEAD").trim();
+    };
+    const hashes = [git(dir, "rev-parse", "HEAD").trim()];
+    for (let n = 1; n <= 4; n++) hashes.unshift(commitNote(n));
+    const first = await readCommitHistory(dir, { ...params(".", null), view: "history", historyHead: null, historyOffset: 0, historyLimit: 2 });
+    if (!first.available) throw new Error(`first page unavailable: ${first.reason}`);
+    expect(first.commits.map((commit) => commit.hash)).toEqual(hashes.slice(0, 2));
+    expect(first.nextOffset).toBe(2);
+    const pinnedHead = first.headHash;
+
+    // A new HEAD does not shift the following page because all offsets use the first-page anchor.
+    const newer = commitNote(5);
+    const second = await readCommitHistory(dir, { ...params(".", null), view: "history", historyHead: pinnedHead, historyOffset: first.nextOffset!, historyLimit: 2 });
+    if (!second.available) throw new Error(`second page unavailable: ${second.reason}`);
+    expect(second.headHash).toBe(pinnedHead);
+    expect(second.commits.map((commit) => commit.hash)).toEqual(hashes.slice(2, 4));
+    expect(newer).not.toBe(pinnedHead);
+    expect(new Set([...first.commits, ...second.commits].map((commit) => commit.hash)).size).toBe(4);
+    expect(second.nextOffset).toBe(4);
+
+    const selected = hashes[2]!;
+    const detail = await readCommit(dir, { ...params(".", null), view: "commit", commitHash: selected });
+    expect(detail).toMatchObject({ available: true, commit: { hash: selected, subject: "revision 2" } });
+    const diff = await commitFileDiff(dir, { ...params(".", "note.txt"), view: "commit", commitHash: selected });
+    expect(diff).toMatchObject({ available: true, hash: selected });
+    if (diff.available) expect(diff.diff).toContain("+2");
+  });
+
+  test("rejects invalid, over-bound, and no-longer-reachable anchors without treating them as revisions", async () => {
+    const dir = repo(join(base, "commit-history-stale"));
+    const head = git(dir, "rev-parse", "HEAD").trim();
+    const badOffset = await readCommitHistory(dir, { ...params(".", null), view: "history", historyHead: head, historyOffset: MAX_HISTORY_OFFSET + 1, historyLimit: 30 });
+    expect(badOffset).toEqual({ available: false, reason: "stale-history" });
+    const malformed = await readCommitHistory(dir, { ...params(".", null), view: "history", historyHead: "HEAD~1;echo bad", historyOffset: 0, historyLimit: 30 });
+    expect(malformed).toEqual({ available: false, reason: "stale-history" });
   });
 });
 

@@ -25,6 +25,13 @@ type BunSocket = {
   end(): void;
 };
 
+/** Zero accepted bytes is a refusal; any accepted prefix keeps an uncertain effect. */
+export class WriteAdmissionRetired extends Error {
+  constructor(readonly bytesMayHaveBeenSent: boolean) {
+    super(bytesMayHaveBeenSent ? "worktree.authority_changed_after_partial_write: outcome unknown" : "worktree.authority_changed_before_write");
+  }
+}
+
 export type SockHandle = {
   /**
    * Hand a whole payload to the socket. Backpressure is the DIALER's problem, not the caller's:
@@ -32,7 +39,7 @@ export type SockHandle = {
    * loudly through `error`/`close`. Never returns a byte count — there is nothing for a caller to
    * retry (see write-drain.ts for why the naive `socket.write()` truncated long requests).
    */
-  write(data: string): void;
+  write(data: string, originalAdmission?: () => boolean): void;
   flush(): void;
   /**
    * Closes the connection IMMEDIATELY — on win32 this is destroy(), not a graceful half-close,
@@ -80,6 +87,83 @@ export function toPipeName(socketPath: string): string {
   return "\\\\.\\pipe\\" + socketPath;
 }
 
+/** The production Bun writer's narrow acceptance boundary; shared by dialHerdr and fixtures.
+ * This factory does no dialing and never grants admission; it keeps only one owned remainder. */
+interface OwnedWrite { readonly bytes: Uint8Array; readonly cursor: WriteCursor; readonly originalAdmission?: () => boolean }
+
+export function createBunWriteStream(handlers: DialHandlers) {
+  let bunSock: BunSocket | null = null;
+  let ended = false;
+  let pending: OwnedWrite | null = null;
+
+  // Push as much of the parked payload as the socket will take. Returns having either finished
+  // it, or left it parked for the next `drain`. A write that accepts nothing is a stall, not an
+  // error — we simply wait; a socket that will never drain dies through close/error (or the
+  // caller's own timeout) rather than spinning here.
+  const pump = () => {
+    const s = bunSock;
+    if (!s || !pending) return;
+    for (;;) {
+      if (!pending) return;
+      const original: OwnedWrite = pending;
+      const rest = writeRemaining(original.cursor);
+      if (rest === null) break;
+      // Recheck the original owner at every accepted-byte boundary, including drain.
+      let admitted = true;
+      try { admitted = original.originalAdmission?.() ?? true; } catch { admitted = false; }
+      if (!admitted) {
+        const error = new WriteAdmissionRetired(original.cursor.sent > 0);
+        pending = null;
+        handlers.error?.(handle, error);
+        handle.end();
+        return;
+      }
+      if (ended || pending !== original) return;
+      const accepted = s.write(original.bytes, rest.offset, rest.length);
+      if (ended || pending !== original) return;
+      pending = { ...original, cursor: advanceWrite(original.cursor, accepted) };
+      if (accepted < 0) {
+        // Bun signals a failed write with a negative count. Report it as the transport error it
+        // is instead of leaving the request to time out with no explanation.
+        pending = null;
+        handlers.error?.(handle, new Error("socket write failed"));
+        return;
+      }
+      if (accepted === 0) return; // full — resume on drain
+    }
+    if (pending && writeComplete(pending.cursor)) pending = null;
+    if (!ended) s.flush();
+  };
+
+  const handle: SockHandle = {
+    write(data, originalAdmission) {
+      if (ended) throw new Error("dial: owned socket is closed");
+      const bytes = encoder.encode(data);
+      // One in-flight payload at a time is all either call site needs (one request per
+      // connection, one subscribe line per stream); concatenating would silently reorder.
+      if (pending) throw new Error("dial: a previous write is still draining");
+      pending = { bytes, cursor: startWrite(bytes.byteLength), originalAdmission };
+      pump();
+    },
+    flush() {
+      bunSock?.flush();
+    },
+    end() {
+      if (ended) return;
+      ended = true;
+      pending = null;
+      bunSock?.end();
+    },
+  };
+
+  return {
+    handle,
+    attach(socket: BunSocket) { bunSock = socket; },
+    drain(socket: BunSocket) { bunSock = socket; pump(); },
+    discard() { pending = null; },
+  };
+}
+
 export function dialHerdr(
   socketPath: string,
   handlers: DialHandlers,
@@ -90,78 +174,33 @@ export function dialHerdr(
     // The handle is OURS, not the raw Bun socket, because write() has to survive a short write:
     // the unaccepted tail is parked here and resumed from `drain`. Every handler below is handed
     // this same object so `end()` and a resumed write always address one socket.
-    let bunSock: BunSocket | null = null;
-    let pending: { bytes: Uint8Array; cursor: WriteCursor } | null = null;
-
-    // Push as much of the parked payload as the socket will take. Returns having either finished
-    // it, or left it parked for the next `drain`. A write that accepts nothing is a stall, not an
-    // error — we simply wait; a socket that will never drain dies through close/error (or the
-    // caller's own timeout) rather than spinning here.
-    const pump = () => {
-      const s = bunSock;
-      if (!s || !pending) return;
-      for (;;) {
-        const rest = writeRemaining(pending.cursor);
-        if (rest === null) break;
-        const accepted = s.write(pending.bytes, rest.offset, rest.length);
-        pending = { bytes: pending.bytes, cursor: advanceWrite(pending.cursor, accepted) };
-        if (accepted < 0) {
-          // Bun signals a failed write with a negative count. Report it as the transport error it
-          // is instead of leaving the request to time out with no explanation.
-          pending = null;
-          handlers.error?.(handle, new Error("socket write failed"));
-          return;
-        }
-        if (accepted === 0) return; // full — resume on drain
-      }
-      if (writeComplete(pending.cursor)) pending = null;
-      s.flush();
-    };
-
-    const handle: SockHandle = {
-      write(data) {
-        const bytes = encoder.encode(data);
-        // One in-flight payload at a time is all either call site needs (one request per
-        // connection, one subscribe line per stream); concatenating would silently reorder.
-        if (pending) throw new Error("dial: a previous write is still draining");
-        pending = { bytes, cursor: startWrite(bytes.byteLength) };
-        pump();
-      },
-      flush() {
-        bunSock?.flush();
-      },
-      end() {
-        pending = null;
-        bunSock?.end();
-      },
-    };
-
+    const stream = createBunWriteStream(handlers);
     const promise = Bun.connect({
       unix: socketPath,
       socket: {
         open(s) {
-          bunSock = s;
-          handlers.open?.(handle);
+          stream.attach(s);
+          handlers.open?.(stream.handle);
         },
         data(s, chunk) {
-          bunSock = s;
-          handlers.data?.(handle, chunk);
+          stream.attach(s);
+          handlers.data?.(stream.handle, chunk);
         },
         drain(s) {
-          bunSock = s;
-          pump();
+          stream.attach(s);
+          stream.drain(s);
         },
         error(s, err) {
-          bunSock = s;
-          pending = null;
-          handlers.error?.(handle, err);
+          stream.attach(s);
+          stream.discard();
+          handlers.error?.(stream.handle, err);
         },
         close(s) {
-          bunSock = s;
+          stream.attach(s);
           // A connection that dies mid-write drops its remainder here; the close handler is what
           // rejects the caller, exactly as for any other transport failure.
-          pending = null;
-          handlers.close?.(handle);
+          stream.discard();
+          handlers.close?.(stream.handle);
         },
       },
     });
@@ -177,8 +216,8 @@ export function dialHerdr(
       })();
     });
     return promise.then((s) => {
-      bunSock = s;
-      return handle;
+      stream.attach(s);
+      return stream.handle;
     });
   }
 
@@ -193,7 +232,10 @@ export function dialHerdr(
     // (see write-drain.ts) simply does not exist on this transport. Failures still surface through
     // the 'error'/'close' handlers below, which is what rejects a request that dies mid-write.
     const handle: SockHandle = {
-      write: (data) => {
+      write: (data, originalAdmission) => {
+        if (originalAdmission && !originalAdmission()) throw new WriteAdmissionRetired(false);
+        // Node accepts this whole payload into its owned queue. Later queue failure is unknown;
+        // it is never a caller-managed remainder or an automatic second request.
         sock.write(data);
       },
       flush: () => {},

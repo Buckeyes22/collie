@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { AuditLog } from "./audit.ts";
@@ -23,6 +25,7 @@ import { FORGET_DEVICE_PATH, launch, launchersRoute, serveAddedLauncherRoute, ty
 import type { SessionRuntime } from "./sessions.ts";
 import type { StateEngine } from "./state-engine.ts";
 import type { CreateResponse, Launcher, LaunchersResponse } from "./types.ts";
+import { OperationStore } from "./control/operations.ts";
 
 // Rows a phone adds (ADR 0094): the merged allowlist and who wins it, the three writes and their
 // gate, the request id, the operator's switches enforced on the bridge, and the revoke cleanup.
@@ -93,6 +96,30 @@ describe("addLauncher: a recipe", () => {
     expect(f.io.writes).toBe(1);
   });
 
+  test("receipt-bound retries require the same device, runtime and canonical payload", async () => {
+    const f = fixture();
+    const key = new Uint8Array(32).fill(4);
+    const base = { key, deviceIdentity: "paired-device-1", runtime: "default" };
+    const firstBody = { requestId: ID1, recipe: { harness: "claude", options: ["skip"] } };
+    expect((await addLauncher(firstBody, f.ctx({ receiptContext: base }))).status).toBe(200);
+    const reordered = await addLauncher({ recipe: { options: ["skip"], harness: "claude" }, requestId: ID1 }, f.ctx({ receiptContext: base }));
+    expect(reordered).toMatchObject({ status: 200, body: { replayed: true } });
+    expect((await addLauncher(recipe("claude", ["opus"]), f.ctx({ receiptContext: base }))).status).toBe(409);
+    expect((await addLauncher(firstBody, f.ctx({ receiptContext: { ...base, deviceIdentity: "paired-device-2" } }))).status).toBe(409);
+    expect(f.io.writes).toBe(1);
+  });
+
+  test("receipt-bound retry of an ID-only legacy row refuses the owner guarantee", async () => {
+    const f = fixture();
+    await addLauncher(recipe("claude", ["skip"]), f.ctx());
+
+    const out = await addLauncher(recipe("claude", ["skip"]), f.ctx({
+      receiptContext: { key: new Uint8Array(32).fill(4), deviceIdentity: "paired-device-1", runtime: "default" },
+    }));
+
+    expect(out.status).toBe(409);
+  });
+
   test("a bad recipe is refused with its reason, and nothing is stored", async () => {
     const f = fixture();
     for (const [body, reason] of [
@@ -124,6 +151,102 @@ describe("addLauncher: a recipe", () => {
     const f = fixture({ operator: [{ command: "claude --continue", label: "Resume" }] });
     const out = await addLauncher(recipe("claude", ["continue"]), f.ctx());
     expect(out).toMatchObject({ status: 409, body: { code: "launcher.duplicate" } });
+  });
+});
+
+describe("addLauncher owner-bound request custody", () => {
+  test("remove and restart retain the ID tombstone and reject altered-body reuse without a new row write", async () => {
+    const f = fixture();
+    const stateDir = await mkdtemp(join(tmpdir(), "collie-added-operation-"));
+    try {
+      const operations = new OperationStore(stateDir, () => 10);
+      expect(await operations.prepare()).toBe(true);
+      const ownerContext = {
+        key: new Uint8Array(32).fill(9),
+        deviceIdentity: "paired-incarnation-1",
+        owningHost: "host-local-1",
+        runtime: "runtime-1",
+      };
+      const ctx = () => f.ctx({ receiptContext: ownerContext, operations });
+      expect((await addLauncher(recipe("claude", []), ctx())).status).toBe(200);
+      const remove = await f.added.remove(ID1);
+      expect(remove).not.toBeNull();
+      const writesAfterRemoval = f.io.writes;
+
+      const restarted = new OperationStore(stateDir, () => 11);
+      expect(await restarted.prepare()).toBe(true);
+      const replay = await addLauncher(recipe("claude", []), f.ctx({ receiptContext: ownerContext, operations: restarted }));
+      expect(replay).toMatchObject({ status: 503, body: { ok: false, code: "launch.outcome_unknown" } });
+      expect(f.io.writes).toBe(writesAfterRemoval);
+
+      const altered = await addLauncher(recipe("claude", ["skip"]), f.ctx({ receiptContext: ownerContext, operations: restarted }));
+      expect(altered).toMatchObject({ status: 409, body: { ok: false, code: "launch.request_mismatch" } });
+      expect(f.io.writes).toBe(writesAfterRemoval);
+      expect(await f.added.get(ID1)).toBeUndefined();
+    } finally {
+      await rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  test("concurrent identical IDs create at most one row", async () => {
+    const f = fixture();
+    const stateDir = await mkdtemp(join(tmpdir(), "collie-added-concurrent-"));
+    try {
+      const operations = new OperationStore(stateDir, () => 10);
+      await operations.prepare();
+      const ctx = f.ctx({
+        receiptContext: { key: new Uint8Array(32).fill(4), deviceIdentity: "pair-1", owningHost: "host-1", runtime: "runtime-1" },
+        operations,
+      });
+      await Promise.all([addLauncher(recipe("claude", []), ctx), addLauncher(recipe("claude", []), ctx)]);
+      expect((await f.added.list()).filter((row) => row.id === ID1)).toHaveLength(1);
+      expect(f.io.writes).toBe(1);
+    } finally {
+      await rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  test("owner, host and canonical payload mismatches refuse before a second effect", async () => {
+    const f = fixture();
+    const stateDir = await mkdtemp(join(tmpdir(), "collie-added-binding-"));
+    try {
+      const operations = new OperationStore(stateDir, () => 10);
+      await operations.prepare();
+      const key = new Uint8Array(32).fill(8);
+      const base = { key, deviceIdentity: "paired-incarnation-1", owningHost: "host-1", runtime: "runtime-1" };
+      expect((await addLauncher(recipe("claude", []), f.ctx({ receiptContext: base, operations }))).status).toBe(200);
+      const alteredHost = await addLauncher(recipe("claude", []), f.ctx({
+        receiptContext: { ...base, owningHost: "host-2" }, operations,
+      }));
+      const alteredOwner = await addLauncher(recipe("claude", []), f.ctx({
+        receiptContext: { ...base, deviceIdentity: "paired-incarnation-2" }, operations,
+      }));
+      const alteredBody = await addLauncher(recipe("claude", ["skip"]), f.ctx({ receiptContext: base, operations }));
+      expect([alteredHost.status, alteredOwner.status, alteredBody.status]).toEqual([409, 409, 409]);
+      expect(f.io.writes).toBe(1);
+      expect((await f.added.list()).map((row) => row.command)).toEqual(["claude"]);
+    } finally {
+      await rm(stateDir, { recursive: true, force: true });
+    }
+  });
+
+  test("unreadable operation custody fails closed before adding a row", async () => {
+    const f = fixture();
+    const stateDir = await mkdtemp(join(tmpdir(), "collie-added-corrupt-"));
+    try {
+      await writeFile(join(stateDir, "control-operations.json"), "not-json", { mode: 0o600 });
+      const operations = new OperationStore(stateDir, () => 10);
+      expect(await operations.prepare()).toBe(false);
+      const out = await addLauncher(recipe("claude", []), f.ctx({
+        receiptContext: { key: new Uint8Array(32).fill(3), deviceIdentity: "pair-1", owningHost: "host-1", runtime: "runtime-1" },
+        operations,
+      }));
+      expect(out).toMatchObject({ status: 503, body: { code: "launch.receipts_unavailable" } });
+      expect(await f.added.list()).toEqual([]);
+      expect(f.io.writes).toBe(0);
+    } finally {
+      await rm(stateDir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -328,6 +451,39 @@ describe("serveAddedLauncherRoute", () => {
     expect(await removed?.json()).toEqual({ ok: true, removed: 1 });
     expect(await f.added.list()).toEqual([]);
     expect(lines.map((l) => l.action)).toEqual(["launcher.add", "launcher.rename", "launcher.remove"]);
+  });
+
+  test("routes use the resolved owning-host operation store and do not recreate a removed ID", async () => {
+    const f = fixture();
+    const stateDir = await mkdtemp(join(tmpdir(), "collie-added-route-"));
+    try {
+      const operations = new OperationStore(stateDir, () => 10);
+      await operations.prepare();
+      const key = new Uint8Array(32).fill(5);
+      const routeCaller = caller({
+        pairedIdentity: () => "paired-incarnation-route",
+        intentReceiptKey: key,
+      });
+      const created = await serveAddedLauncherRoute(
+        postTo("/api/launchers/added", recipe("claude", [])),
+        "/api/launchers/added", routeCaller, f.sources, operations, "host-route-1",
+      );
+      expect(created?.status).toBe(200);
+      expect(await operations.inspect(ID1, "paired-incarnation-route", "host-route-1", "default")).toMatchObject({ capability: "launcher.add", state: "succeeded" });
+
+      await f.added.remove(ID1);
+      const writesAfterRemove = f.io.writes;
+      const replay = await serveAddedLauncherRoute(
+        postTo("/api/launchers/added", recipe("claude", [])),
+        "/api/launchers/added", routeCaller, f.sources, operations, "host-route-1",
+      );
+      expect(replay?.status).toBe(503);
+      expect(await replay?.json()).toMatchObject({ ok: false, code: "launch.outcome_unknown" });
+      expect(f.io.writes).toBe(writesAfterRemove);
+      expect(await f.added.get(ID1)).toBeUndefined();
+    } finally {
+      await rm(stateDir, { recursive: true, force: true });
+    }
   });
 });
 

@@ -93,6 +93,15 @@ const entry: TranscriptEntry = {
 
 // What a member on 1.17 sends for each answer: the same shapes, in clear.
 const paneRead: PaneReadResponse = { paneId: "w1:p1", text: `\u001b[2m$ cat .env\u001b[0m\nKEY=${key}\n`, truncated: false, revision: 7 };
+
+test("Crew masking preserves only a typed owning Files read verdict and never lends one to an old peer", () => {
+  for (const ready of [true, false]) {
+    const body = { ...paneRead, filesReadReady: ready };
+    expect(maskForwardedAnswer("pane", JSON.stringify(body))).toBe(JSON.stringify(maskPaneRead(body)));
+  }
+  expect(JSON.parse(maskForwardedAnswer("pane", JSON.stringify(paneRead))!).filesReadReady).toBeUndefined();
+  expect(maskForwardedAnswer("pane", JSON.stringify({ ...paneRead, filesReadReady: "true" }))).toBeNull();
+});
 const history = { paneId: "w1:p1", available: true as const, entries: [entry], hasMore: false, total: 1, fileTruncated: false };
 const chatBody: ChatWindowBody = {
   page: "live",
@@ -122,6 +131,7 @@ describe("which answers the lead masks", () => {
     expect(textAnswerOf("pane/w1%3Ap1")).toBe("pane");
     expect(textAnswerOf("pane/w1%3Ap1/history")).toBe("history");
     expect(textAnswerOf("pane/w1%3Ap1/chat")).toBe("chat");
+    expect(textAnswerOf("pane/w1%3Ap1/processes")).toBe("processes");
     expect(textAnswerOf("pane/w1%3Ap1/changes")).toBe("changes");
     expect(textAnswerOf("workspace/w1/changes")).toBe("changes");
     expect(textAnswerOf("pane/w1%3Ap1/files")).toBe("files");
@@ -142,6 +152,13 @@ describe("a member's key reaches the phone masked through the lead", () => {
     ["a Changes diff asked by space", "/api/workspace/w1/changes", JSON.stringify({ workspaceId: "w1", ...diff })],
     ["a Files body", "/api/pane/w1:p1/files", JSON.stringify({ paneId: "w1:p1", ...fileText })],
     ["a Files body asked by space", "/api/workspace/w1/files", JSON.stringify({ workspaceId: "w1", ...fileText })],
+    ["process arguments and directories", "/api/pane/w1:p1/processes", JSON.stringify({ ok: true, paneId: "w1:p1", truncated: false, foregroundCwd: `/home/${key}`, restoreError: `restore failed ${key}`, processes: [{ pid: 5, name: "node", argv: ["node", `--key=${key}`], cwd: "/home/a" }] })],
+    ["agent session provenance", "/api/pane/w1:p1/agent", JSON.stringify({
+      ok: true, paneId: "w1:p1", agent: "codex", status: "working",
+      session: { source: "herdr:codex", agent: "codex", kind: "id", value: key },
+      stateAuthority: { observed: false, source: null }, interactiveReady: true, launchPending: false,
+      stateChangeSeq: "9", completionSeq: null,
+    })],
   ];
   for (const [name, path, body] of cases) {
     test(name, async () => {
@@ -196,6 +213,19 @@ describe("a member's key reaches the phone masked through the lead", () => {
     expect(out).not.toContain(key);
     expect(out).toContain(masked);
   });
+});
+
+test("Crew preserves exact uint64 identity diagnostics and refuses overflow", () => {
+  const baseIdentity = {
+    ok: true, paneId: "w1:p1", agent: "codex", status: "working",
+    stateAuthority: { observed: false, source: null }, interactiveReady: true, launchPending: false,
+    stateChangeSeq: "9007199254740993", completionSeq: "18446744073709551615",
+  };
+  const allowed = maskForwardedAnswer("agent", JSON.stringify(baseIdentity), "w1:p1");
+  expect(allowed).not.toBeNull();
+  expect(JSON.parse(allowed!).stateChangeSeq).toBe("9007199254740993");
+  expect(JSON.parse(allowed!).completionSeq).toBe("18446744073709551615");
+  expect(maskForwardedAnswer("agent", JSON.stringify({ ...baseIdentity, completionSeq: "18446744073709551616" }), "w1:p1")).toBeNull();
 });
 
 describe("an answer a 1.18 member already masked comes back byte for byte", () => {
@@ -274,6 +304,14 @@ describe("fail closed: a body that should be masked and cannot be is never passe
     ["a History answer with no availability", "/api/pane/w1:p1/history", JSON.stringify({ entries: [entry] })],
     ["a diff that is not a string", "/api/pane/w1:p1/changes", JSON.stringify({ ...diff, diff: [key] })],
     ["a file text that is not a string", "/api/pane/w1:p1/files", JSON.stringify({ ...fileText, text: { t: key } })],
+    ["process metadata with an unbounded argument list", "/api/pane/w1:p1/processes", JSON.stringify({ ok: true, paneId: "w1:p1", truncated: false, processes: [{ pid: 5, name: "node", argv: Array(65).fill(key) }] })],
+    ["process metadata with a malformed cwd", "/api/pane/w1:p1/processes", JSON.stringify({ ok: true, paneId: "w1:p1", truncated: false, processes: [{ pid: 5, name: "node", cwd: { secret: key } }] })],
+    ["process metadata for another pane", "/api/pane/w1:p1/processes", JSON.stringify({ ok: true, paneId: "w1:p2", truncated: false, processes: [{ pid: 5, name: "node" }] })],
+    ["agent identity with control characters", "/api/pane/w1:p1/agent", JSON.stringify({
+      ok: true, paneId: "w1:p1", agent: "codex\nrelease", status: "working",
+      stateAuthority: { observed: false, source: null }, interactiveReady: true, launchPending: false,
+      stateChangeSeq: "9", completionSeq: null,
+    })],
   ];
   for (const [name, path, body] of broken) {
     test(name, async () => {
@@ -287,6 +325,19 @@ describe("fail closed: a body that should be masked and cannot be is never passe
       expect(refusal.host).toBe("laptop");
     });
   }
+});
+
+describe("process details aggregate envelope", () => {
+  test("refuses a schema-valid process payload over the shared aggregate text budget", () => {
+    const processes = Array.from({ length: 64 }, (_, pid) => ({
+      pid,
+      name: "node",
+      argv: Array.from({ length: 64 }, () => "x".repeat(61)),
+    }));
+    const raw = JSON.stringify({ ok: true, paneId: "w1:p1", truncated: false, processes });
+    expect(raw.length).toBeLessThan(1_000_000);
+    expect(maskForwardedAnswer("processes", raw, "w1:p1")).toBeNull();
+  });
 });
 
 describe("the merged snapshot's titles", () => {

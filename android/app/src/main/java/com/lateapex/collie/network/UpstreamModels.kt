@@ -4,6 +4,7 @@ package com.lateapex.collie.network
 
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.json.JsonObject
 
 @Serializable
@@ -11,6 +12,37 @@ data class UploadCapability(val maxBytes: Long, val imageTypes: List<String>, va
 
 @Serializable
 data class HarnessInfo(val id: String, val label: String, val found: Boolean)
+
+@Serializable
+data class MuxAgentCapabilities(val agentDetection: Boolean, val agentSessionRef: Boolean)
+
+@Serializable
+data class AgentCapabilityRow(
+    val kind: String,
+    val label: String,
+    val executableFound: Boolean? = null,
+    val version: String? = null,
+    val launch: String = "unverified",
+    val detection: String = "unverified",
+    val sessionReference: String = "unverified",
+    val journal: String = "unverified",
+    val webSemanticDialog: String = "unverified",
+    val webComposer: String = "unverified",
+    val media: String = "unverified",
+    val observedPanes: Int? = null,
+    val observedSessionReferences: Int? = null,
+    val evidence: JsonObject? = null,
+)
+
+@Serializable
+data class AgentCapabilitiesResponse(
+    val schema: Int,
+    val mux: String,
+    val muxCapabilities: MuxAgentCapabilities? = null,
+    val runtimeVersion: String? = null,
+    val rows: List<AgentCapabilityRow> = emptyList(),
+    val note: String = "",
+)
 
 @Serializable
 data class StartTarget(
@@ -55,6 +87,81 @@ data class RecentRun(
 )
 
 @Serializable
+data class LaunchCheckResponse(
+    val ok: Boolean,
+    val noPrompts: Boolean,
+    val problem: String? = null,
+)
+
+@Serializable
+data class LaunchersAdding(
+    val adds: Boolean,
+    val freeText: Boolean,
+    val run: Boolean,
+    val file: String,
+    val count: Int,
+    val max: Int,
+    val recipes: List<RecipeWire>,
+    val off: List<AddedOffWire> = emptyList(),
+)
+
+@Serializable
+data class RecipeWire(
+    val harness: String,
+    val label: String,
+    val binary: String,
+    val options: List<RecipeOptionWire>,
+)
+
+@Serializable
+data class RecipeOptionWire(
+    val id: String,
+    val label: String,
+    val args: String,
+    val group: String? = null,
+    val noPrompts: Boolean = false,
+)
+
+@Serializable
+data class AddedOffWire(
+    val id: String,
+    val label: String,
+    val command: String,
+    val kind: String,
+    val harness: String? = null,
+    val reason: String,
+)
+
+@Serializable
+data class RecentRunsResponse(
+    val ok: Boolean,
+    val removed: Int? = null,
+    val error: String? = null,
+    val code: String? = null,
+    val detail: kotlinx.serialization.json.JsonObject? = null,
+)
+
+@Serializable
+data class AddedLauncherMutationResponse(
+    val ok: Boolean,
+    val removed: Int? = null,
+    val error: String? = null,
+    val code: String? = null,
+    val detail: kotlinx.serialization.json.JsonObject? = null,
+)
+
+/** Folder strings reported by the selected host's bridge; they are labels/launch inputs, not local paths. */
+@Serializable
+data class FoldersResponse(
+    val recent: List<String>,
+    val favourites: List<String>,
+    val home: String,
+)
+
+@Serializable
+internal data class StarFolderRequest(val folder: String, val starred: Boolean)
+
+@Serializable
 internal data class StartLaunchRequest(
     val requestId: String,
     val cwd: String? = null,
@@ -62,6 +169,21 @@ internal data class StartLaunchRequest(
     val command: String? = null,
     val shell: Boolean? = null,
 )
+
+@Serializable
+internal data class StartRunRequest(val requestId: String, val cwd: String? = null, val run: String)
+
+@Serializable
+internal data class RunCheckRequest(val run: String)
+
+@Serializable
+internal data class RecentRunRemoveRequest(val line: String)
+
+@Serializable
+internal data class AddedLauncherRenameRequest(val id: String, val label: String)
+
+@Serializable
+internal data class AddedLauncherRemoveRequest(val id: String)
 
 @Serializable
 data class WorktreeBase(@EncodeDefault val kind: String = "default", val ref: String? = null) {
@@ -94,15 +216,30 @@ internal data class WorktreeAtRequest(
 )
 
 @Serializable
+data class WorktreeRememberedChoice(val base: String, val folder: String, val parent: String? = null)
+
+@Serializable
+data class WorktreeDefaultTarget(val path: String, val exists: Boolean)
+
+@Serializable
+data class WorktreeParentTarget(
+    val ok: Boolean,
+    val path: String? = null,
+    val error: String? = null,
+    val code: String? = null,
+    val detail: JsonObject? = null,
+)
+
+@Serializable
 data class WorktreePlanResponse(
     val ok: Boolean,
     val repoRoot: String? = null,
     val defaultBranch: String? = null,
     val currentBranch: String? = null,
-    val remembered: JsonObject? = null,
+    val remembered: WorktreeRememberedChoice? = null,
     val branchValid: Boolean? = null,
-    val defaultTarget: JsonObject? = null,
-    val parentTarget: JsonObject? = null,
+    val defaultTarget: WorktreeDefaultTarget? = null,
+    val parentTarget: WorktreeParentTarget? = null,
     val error: String? = null,
     val code: String? = null,
 )
@@ -125,4 +262,22 @@ data class PaneChatResponse(
     val upserts: List<TranscriptEntry> = emptyList(),
     val queued: List<String> = emptyList(),
     val sendQueuedNow: List<String>? = null,
+    /** Opaque, server-derived pane occupant identity; absent when guarded sends are unsupported. */
+    val queuedSendOccupant: String? = null,
+    /** Digest of the ordered queue, computed by the owner; no queued text is repeated on writes. */
+    val queuedDigest: String? = null,
+)
+
+/** Server-issued binding for one guarded queue action; deliberately contains no queued message text. */
+private val QUEUED_SEND_IDENTITY = Regex("^[0-9a-f]{64}$")
+
+internal fun isCanonicalQueuedSendIdentity(value: String?): Boolean =
+    value != null && QUEUED_SEND_IDENTITY.matches(value)
+
+@Serializable
+data class QueuedSendGuard(
+    val generation: Long,
+    val revision: Long,
+    @SerialName("queue_digest") val queueDigest: String,
+    val occupant: String,
 )

@@ -105,6 +105,8 @@ const claudePane: AgentView = {
   sessionName: "guard-work",
   // Server-side only: toPaneWire must strip this to `hasSession` and never leak the value.
   agentSession: { kind: "id", value: "abc-123" },
+  foregroundCwd: "/sensitive/foreground",
+  restoreError: "restore error with private path /secret",
   readableLines: 48,
   tabLabel: "collie",
   lastActiveAt: TS - 60_000,
@@ -250,6 +252,7 @@ function soloSnapshot(registry: SessionRegistry): SnapshotResponse {
 // authorised change; every byte-level assertion in this file is untouched.
 
 const SNAPSHOT_KEYS = {
+  controlAuthority: true,
   bridge: true,
   device: true,
   agents: true,
@@ -401,10 +404,11 @@ const TAB_KEYS = {
 } satisfies Record<keyof TabView, true>;
 
 describe("solo zero-tax — wire shapes carry no crew dimension", () => {
-  test("SnapshotResponse carries `servers` as OPTIONAL and nothing else new", () => {
+  test("SnapshotResponse carries crew authority as OPTIONAL; solo bytes stay unchanged", () => {
     expect(Object.keys(SNAPSHOT_KEYS).toSorted()).toEqual([
       "agents",
       "bridge",
+      "controlAuthority",
       "device",
       "notifications",
       "servers",
@@ -560,6 +564,12 @@ describe("solo zero-tax — the snapshot body is byte-for-byte today's", () => {
     expect(snap.agents.map((p) => Object.hasOwn(p, "agentSession"))).toEqual([false, false]);
     expect(snap.agents.map((p) => p.hasSession)).toEqual([true, undefined]);
   });
+
+  test("sensitive runtime process metadata is returned only by the device-read detail route", () => {
+    const pane = soloSnapshot(soloRegistry()).agents[0]!;
+    expect(pane).not.toHaveProperty("foregroundCwd");
+    expect(pane).not.toHaveProperty("restoreError");
+  });
 });
 
 // ── 3. ETag stability ────────────────────────────────────────────────────────
@@ -627,7 +637,7 @@ describe("solo zero-tax — routes", () => {
       // the poll path, forwarded to the owning member and taxing a solo instance with nothing.
       // `files` is the Files view (ADR 0083): one folder or one file under the Changes root, a read
       // gated on an authorised device and forwarded to the owning member like `changes`.
-      "/^\\/api\\/pane\\/([^/]+)(?:\\/(reply|keys|upload|close|rename|history|chat|changes|files|focus))?$/",
+      "/^\\/api\\/pane\\/([^/]+)(?:\\/(reply|keys|upload|close|rename|history|chat|changes|files|focus|processes|agent|agent\\/(?:state|session|release|authority\\/clear)))?$/",
       // Which paths exist under the Files root (ADR 0088), asked in one batch for the pane view's
       // links: a read with the Files gate, one `lstat` per path, not forwarded across a crew link.
       "/^\\/api\\/pane\\/([^/]+)\\/files\\/exist$/",
@@ -651,6 +661,10 @@ describe("solo zero-tax — routes", () => {
       // included, and then answers 404 instead of the SPA's app shell. Not a route of its own, and it
       // registers nothing on the crew link.
       "/api/*",
+      // H12's read-only exact-name capability snapshot, scoped to the selected owner runtime.
+      "/api/agents/capabilities",
+      // B19 scoped read-only named census; every mutation remains separately gated.
+      "/api/agents/named",
       // The prompt-cache rule catalog (M28/02). A process-scoped READ, gated exactly as `/api/config`
       // is, and the only route this feature adds. Not forwarded across the crew link.
       "/api/cache-rules",
@@ -920,6 +934,7 @@ describe("solo zero-tax — config", () => {
       "COLLIE_CODEX_ROOT",
       "COLLIE_DEVICE_ALLOWLIST",
       "COLLIE_DEVICE_HEADER",
+      "COLLIE_GEMINI_ROOT",
       "COLLIE_GROK_ROOT",
       "COLLIE_HERDR_DIAL",
       "COLLIE_HERMES_ROOT",
@@ -969,6 +984,10 @@ const STATE_DIR_ENTRIES = [
   // never on Linux or macOS, and never on a Windows install whose folders were private already.
   "acl-backups",
   "activity.json",
+  // Operator-owned allowlist for explicitly registered custom agent reporters and exact session refs.
+  "agent-reporters.json",
+  // B19 bounded original observation metadata; never prompts or matched output.
+  "agent-waits-v1.json",
   "audit.log",
   // Agent beacons (M11/01) — a directory, and one no bridge module ever writes: the bridge only ever
   // READS it, and the emitter that fills it is a CLI verb the operator installs a hook for. An
@@ -981,12 +1000,17 @@ const STATE_DIR_ENTRIES = [
   // The one-off lines a phone ran on this machine, newest first (ADR 0095). Written by use and by
   // nothing else: absent until the first one-off run that works.
   "commands-recent.json",
+  // Reserved only by declared, admitted control mutations; status reads create no file.
+  "control-operations.json",
   // The new-space sheet's folder list (M40/02, #289), and a §11 row RENEGOTIATED ON PURPOSE: it is
   // the one entry here a solo instance's own operator writes through ordinary use, from the phone.
   // Absent until the first space created with a folder or the first star — both are acts, and a
   // bridge that is only started, only read, or only ever asked for spaces in home writes none of it,
   // so the four entries asserted below hold. Driven in "the folder list appears only on use".
   "folders.json",
+  // Stable host-local HMAC key for owner-bound launch/worktree/add receipt fingerprints. Created
+  // only when bound receipt use first needs it; never derived from the pairing credential.
+  "intent-receipt-hmac-key",
   // One receipt per launch the phone tagged with a request id (ADR 0091), so a retried Start never
   // opens a second pane. Written by use and by nothing else: absent until the first launch that
   // carries an id succeeds.
@@ -1005,6 +1029,11 @@ const STATE_DIR_ENTRIES = [
   // and a bridge only started and stopped does not. Both are driven in "the machine files appear …".
   "machine-alerts.json",
   "machine-history.json",
+  // ADR 0098: operator-opted native gateway only. Absent profile reads never create any file.
+  "native-access.json",
+  "native-device-bindings.json",
+  "native-ingress-replay.json",
+  "native-proof-replay.json",
   "notify-prefs.json",
   // Device pairing. Both are absent until the operator runs `collie pair`, and an install that
   // never does keeps writing exactly the six entries above it.
@@ -1068,6 +1097,12 @@ const CREW_STATE_DIR_ENTRIES = [
   // moves. `legacyStateFileNotice` (`crew/trust-store.ts`, ADR 0045) asks whether it is present so a
   // state directory that never saw 1.8.x is named rather than adopted in silence. One `exists()` on
   // the boot path, no open, no rename; a solo instance finds nothing and says nothing.
+  // B27 stage-only deputy custody. Dynamic hash-addressed generation/staging directories are
+  // confined by the checkpoint namespace constructors and tested through physical storage.
+  "monitoring-adoption.marker.json",
+  "monitoring-checkpoint.accepted.json",
+  "monitoring-checkpoint.stage.json",
+  "monitoring-checkpoint.transfer-",
   "pack-trust.json",
   "standby-devices.json",
 ];

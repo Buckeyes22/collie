@@ -1,3 +1,4 @@
+import type { HostControlPort } from "../host-control/types.ts";
 // The mux registry — the SINGLE decision site for "which multiplexer is this collie driving".
 //
 // Maps a configured mux name to the factory that builds its adapter. Adding a multiplexer is one
@@ -231,4 +232,12 @@ export function createMux(
     throw new Error(`unknown multiplexer "${name}" — this build drives: ${muxNames(registry).join(", ") || "none"}`);
   }
   return factory.create(target);
+}
+
+/** Provider selection stays at the mux registry seam; declaration never implies administration support. */
+export function hostControlForMux(name: string): HostControlPort | undefined {
+  // Administration is bound to a runtime adapter instance and its verified endpoint witness.
+  // A mux name alone cannot establish which host/server would receive a write.
+  void name;
+  return undefined;
 }

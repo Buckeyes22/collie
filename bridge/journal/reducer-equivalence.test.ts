@@ -5,6 +5,7 @@ import { createLineFeeder, type RowReducer } from "./reduce.ts";
 import { createClaudeReducer, parseClaudeTranscript } from "./claude.ts";
 import { createCodexReducer, parseCodexTranscript } from "./codex.ts";
 import { createGrokReducer, parseGrokTranscript } from "./grok.ts";
+import { createGeminiReducer, parseGeminiTranscript } from "./gemini.ts";
 import { createHermesReducer, parseHermesTranscript } from "./hermes.ts";
 import { createMuseReducer, parseMuseTranscript } from "./muse.ts";
 import { createOpencodeReducer, parseOpencodeTranscript } from "./opencode.ts";
@@ -54,7 +55,11 @@ function randomChunks(text: string, seed: number, max = 24): string[] {
 function byRow(make: () => RowReducer, text: string): TranscriptEntry[] {
   const reducer = make();
   const out: TranscriptEntry[] = [];
-  for (const line of text.split("\n")) for (const e of reducer.push(line).added) out.push(e);
+  for (const line of text.split("\n")) {
+    const result = reducer.push(line);
+    if (result.replace !== undefined) out.splice(0, out.length, ...result.replace);
+    else for (const entry of result.added) out.push(entry);
+  }
   return out;
 }
 
@@ -63,11 +68,16 @@ function byChunks(make: () => RowReducer, text: string, seed: number): Transcrip
   const reducer = make();
   const feeder = createLineFeeder();
   const out: TranscriptEntry[] = [];
+  const apply = (line: string): void => {
+    const result = reducer.push(line);
+    if (result.replace !== undefined) out.splice(0, out.length, ...result.replace);
+    else for (const entry of result.added) out.push(entry);
+  };
   for (const chunk of randomChunks(text, seed)) {
-    for (const line of feeder.push(chunk)) for (const e of reducer.push(line).added) out.push(e);
+    for (const line of feeder.push(chunk)) apply(line);
   }
   // A reader at the end of its input flushes; a reader tailing a live file does not (see LineFeeder).
-  for (const line of feeder.flush()) for (const e of reducer.push(line).added) out.push(e);
+  for (const line of feeder.flush()) apply(line);
   return out;
 }
 
@@ -96,6 +106,7 @@ function expectEquivalent(make: () => RowReducer, parse: (text: string) => Trans
 const COVERED = [
   "claude",
   "codex",
+  "gemini",
   "opencode",
   "pi",
   "grok",
@@ -105,6 +116,21 @@ const COVERED = [
 
 test("every harness the registry knows has an equivalence section here", () => {
   expect([...KNOWN_HARNESS_NAMES].toSorted()).toEqual([...COVERED].toSorted());
+});
+
+describe("gemini: JSONL patches and rewinds agree for whole and incremental reads", () => {
+  const text = [
+    JSON.stringify({ sessionId: "aaaaaaaa-aaaa-4aaa-aaaa-aaaaaaaaaaaa", projectHash: "project" }),
+    JSON.stringify({ id: "u1", timestamp: "2026-10-01T00:00:00Z", type: "user", content: "hello" }),
+    JSON.stringify({ id: "a1", timestamp: "2026-10-01T00:00:01Z", type: "gemini", content: "draft" }),
+    JSON.stringify({ $patch: { id: "a1", content: "answer" } }),
+    JSON.stringify({ id: "u2", timestamp: "2026-10-01T00:00:02Z", type: "user", content: "second branch" }),
+    JSON.stringify({ $rewindTo: "u2" }),
+  ].join("\n");
+
+  test("patches and branch changes survive randomized JSONL chunk boundaries", () => {
+    expectEquivalent(createGeminiReducer, parseGeminiTranscript, text);
+  });
 });
 
 // Rubbish every corpus below ends with, because a tail read produces all of it: a blank row, a

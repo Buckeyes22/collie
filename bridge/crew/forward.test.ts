@@ -3,10 +3,14 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { computeEtag } from "../http-cache.ts";
+import { loadConfig } from "../config.ts";
+import { guard } from "../server.ts";
 import { DEFAULT_MAX_UPLOAD_BYTES } from "../uploads.ts";
 import {
+  admitCrewForward,
   apiPathFor,
   forwardAuditAction,
+  forwardGate,
   forwardHeaders,
   forwardKind,
   forwardPaneId,
@@ -18,7 +22,8 @@ import {
   type ForwardErrorCode,
   type ForwardTransport,
 } from "./forward.ts";
-import { crewDeviceOf } from "./peer-gate.ts";
+import { crewDeviceOf, crewGate, crewPairedIdentityOf } from "./peer-gate.ts";
+import { maskForwardedAnswer } from "./mask.ts";
 import { crewTimeoutBudget, WRITE_BUDGET_MS, type CrewLink, type PeerOutcome } from "./peer-client.ts";
 import type { PeerState } from "./registry.ts";
 
@@ -118,6 +123,47 @@ async function failureBody(res: Response): Promise<ForwardFailure> {
 }
 
 describe("which routes cross a link", () => {
+  test("the production lead admission forwards a device-read plan without terminal-write authority", async () => {
+    const source = readFileSync(join(import.meta.dir, "../server.ts"), "utf8");
+    expect(source).toContain("admitCrewForward(pathname, req.method, currentCallerGate");
+    expect(source).toContain("() => crewLead!.forward(req, url, resolved");
+    const dispatchStart = source.indexOf("const forwarded = secure(", source.indexOf("const input = isPaneInput(pathname, req.method)"));
+    const dispatch = source.slice(dispatchStart, source.indexOf("// The PRIMARY engine", dispatchStart));
+    expect(dispatch).not.toContain('currentCallerGate("write")');
+
+    const { transport, calls } = transportOf((init) => {
+      const peerRequest = new Request("https://peer/crew/v1/layout/plan", { headers: init.headers });
+      const peerAdmission = crewGate("device-read", { deviceHeader: "x-device", deviceAllowlist: ["phone"] }, crewDeviceOf(peerRequest));
+      expect(peerAdmission).toEqual({ ok: true });
+      return ok(new Response('{"ok":true,"planToken":"p"}', { status: 200, headers: { "content-type": "application/json" } }));
+    });
+    const [request, url] = post("/api/layout/plan?host=laptop", '{"root":{"type":"pane"}}', {
+      authorization: "Bearer paired-token", "x-device": "phone",
+    });
+    let leadLevel: string | undefined;
+    const leadConfig = loadConfig({ COLLIE_ALLOW_ANY_HOST: "1", COLLIE_DEVICE_HEADER: "x-device",
+      COLLIE_DEVICE_ALLOWLIST: "phone", COLLIE_SKIP_SERVE: "1", COLLIE_TRUSTED_USER_OPTIONAL: "1" });
+    const pairing = { resolve: (token: string | null) => token === "paired-token" ? { label: "phone" } : null };
+    const response = await admitCrewForward(url.pathname, request.method, (level) => {
+      leadLevel = level;
+      return guard(request, leadConfig, level, pairing);
+    }, () => forward(request, url, { transport, device: "phone", pairedIdentity: "a".repeat(64) }));
+    expect(leadLevel).toBe("device-read");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, planToken: "p" });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.route).toBe("layout/plan");
+
+    let missingFactorDials = 0;
+    const missingDevice = new Request(url, { method: "POST", headers: { authorization: "Bearer paired-token" }, body: '{"root":{}}' });
+    const denied = await admitCrewForward(url.pathname, request.method, (level) => {
+      expect(level).toBe("device-read");
+      return guard(missingDevice, leadConfig, level, pairing);
+    }, async () => { missingFactorDials++; return new Response("should not dispatch"); });
+    expect(denied.status).toBe(403);
+    expect(missingFactorDials).toBe(0);
+  });
+
   test("the pane family, tabs and workspace map 1:1 onto the crew prefix", () => {
     expect(crewRouteFor("/api/pane/w1:p1")).toBe("pane/w1:p1");
     for (const action of ["reply", "keys", "upload", "close", "rename", "history"]) {
@@ -127,6 +173,30 @@ describe("which routes cross a link", () => {
     expect(crewRouteFor("/api/tab/w1:t1/rename")).toBe("tab/w1:t1/rename");
     expect(crewRouteFor("/api/tab/w1:t1/close")).toBe("tab/w1:t1/close");
     expect(crewRouteFor("/api/workspace")).toBe("workspace");
+  });
+
+  test("organization plans are reads and their exact final routes remain writes over Crew", () => {
+    const routes = [
+      ["workspace/w1/rename/plan", "read"], ["workspace/w1/rename", "write"],
+      ["workspace/w1/close/plan", "read"], ["workspace/w1/close", "write"],
+      ["workspace/w1/move/plan", "read"], ["workspace/w1/move", "write"],
+      ["workspace/w1/focus/plan", "read"], ["workspace/w1/focus", "write"],
+      ["workspaces/reorder/plan", "read"], ["workspaces/reorder", "write"],
+      ["tab/t1/move/plan", "read"], ["tab/t1/move", "write"],
+      ["tab/t1/focus/plan", "read"], ["tab/t1/focus", "write"],
+      ["tab/t1/rename/plan", "read"], ["tab/t1/rename", "write"],
+      ["tab/t1/close/plan", "read"], ["tab/t1/close", "write"],
+    ] as const;
+    for (const [route, kind] of routes) {
+      expect(crewRouteFor(`/api/${route}`)).toBe(route);
+      expect(apiPathFor(route)).toBe(`/api/${route}`);
+      expect(forwardKind(route, "POST")).toBe(kind);
+    }
+    expect(forwardAuditAction("workspace/w1/focus")).toBe("workspace.focus");
+    expect(forwardAuditAction("tab/t1/move")).toBe("tab.move");
+    expect(forwardAuditAction("tab/t1/close/plan")).toBeNull();
+    expect(crewRouteFor("/api/workspaces/reorder/extra")).toBeNull();
+    expect(crewRouteFor("/api/tab/t1/move/other")).toBeNull();
   });
 
   test("launch and its rows cross the link too — rows must come from the host that runs them", () => {
@@ -142,6 +212,67 @@ describe("which routes cross a link", () => {
     // launch or tab.launch, decided by the body) is the accurate record.
     expect(forwardAuditAction("launch")).toBe("launch");
     expect(forwardAuditAction("launchers")).toBeNull();
+  });
+
+  test("agent capability inventory is a scoped read forwarded to the owning runtime", () => {
+    expect(crewRouteFor("/api/agents/capabilities")).toBe("agents/capabilities");
+    expect(apiPathFor("agents/capabilities")).toBe("/api/agents/capabilities");
+    expect(forwardKind("agents/capabilities")).toBe("read");
+    expect(forwardAuditAction("agents/capabilities")).toBeNull();
+    expect(crewRouteFor("/api/agents/capabilities/launch")).toBeNull();
+  });
+
+  test("host integration routes cross Crew with the owning member's declared read gates", () => {
+    const cases = [
+      ["/api/host/integrations", "host/integrations", "GET", "read", null],
+      ["/api/host/integrations/status", "host/integrations/status", "GET", "device-read", null],
+      ["/api/host/agent-manifests", "host/agent-manifests", "GET", "device-read", null],
+      ["/api/host/integrations/claude/install/plan", "host/integrations/claude/install/plan", "POST", "read", null],
+      ["/api/host/integrations/claude/install", "host/integrations/claude/install", "POST", "write", "integrationInstall"],
+      ["/api/host/integrations/letta/uninstall/plan", "host/integrations/letta/uninstall/plan", "POST", "read", null],
+      ["/api/host/integrations/letta/uninstall", "host/integrations/letta/uninstall", "POST", "write", "lettaUninstall"],
+      ["/api/host/agent-manifests/reload", "host/agent-manifests/reload", "POST", "write", "manifestReload"],
+      ["/api/host/agent-manifests/refresh/plan", "host/agent-manifests/refresh/plan", "POST", "read", null],
+      ["/api/host/agent-manifests/refresh", "host/agent-manifests/refresh", "POST", "write", "manifestRefresh"],
+    ] as const;
+    for (const [path, route, method, gate, audit] of cases) {
+      expect(crewRouteFor(path)).toBe(route);
+      expect(apiPathFor(route)).toBe(path);
+      expect(forwardGate(route, method)).toBe(gate);
+      expect(forwardKind(route, method)).toBe(gate === "write" ? "write" : "read");
+      expect(forwardAuditAction(route)).toBe(audit);
+    }
+    expect(crewRouteFor("/api/host/integrations/claude/install/extra")).toBeNull();
+    expect(crewRouteFor("/api/host/integrations/unsafe_target/install")).toBeNull();
+  });
+
+  test("plugin inventory, config, and owner lifecycle routes cross Crew with closed gates", () => {
+    const cases = [
+      ["/api/host/plugins", "host/plugins", "GET", "device-read", "read"],
+      ["/api/host/plugins/example.safe/actions", "host/plugins/example.safe/actions", "GET", "device-read", "read"],
+      ["/api/host/plugins/example.safe/logs", "host/plugins/example.safe/logs", "GET", "device-read", "read"],
+      ["/api/host/plugins/example.safe/config", "host/plugins/example.safe/config", "GET", "device-read", "read"],
+      ["/api/host/plugins/example.safe/config/prepare/plan", "host/plugins/example.safe/config/prepare/plan", "POST", "device-read", "read"],
+      ["/api/host/plugins/example.safe/config/prepare", "host/plugins/example.safe/config/prepare", "POST", "write", "write"],
+      ["/api/host/plugins/example.safe/config/plan", "host/plugins/example.safe/config/plan", "POST", "device-read", "read"],
+      ["/api/host/plugins/example.safe/config/apply", "host/plugins/example.safe/config/apply", "POST", "write", "write"],
+      ["/api/host/plugins/install/plan", "host/plugins/install/plan", "POST", "device-read", "read"],
+      ["/api/host/plugins/install", "host/plugins/install", "POST", "write", "write"],
+      ["/api/host/plugins/link/selections", "host/plugins/link/selections", "GET", "device-read", "read"],
+      ["/api/host/plugins/link/plan", "host/plugins/link/plan", "POST", "device-read", "read"],
+      ["/api/host/plugins/link", "host/plugins/link", "POST", "write", "write"],
+      ["/api/host/plugins/example.safe/uninstall/plan", "host/plugins/example.safe/uninstall/plan", "POST", "device-read", "read"],
+      ["/api/host/plugins/example.safe/uninstall", "host/plugins/example.safe/uninstall", "POST", "write", "write"],
+      ["/api/host/plugins/operations/request-1", "host/plugins/operations/request-1", "GET", "device-read", "read"],
+    ] as const;
+    for (const [path, route, method, gate, kind] of cases) {
+      expect(crewRouteFor(path)).toBe(route);
+      expect(apiPathFor(route)).toBe(path);
+      expect(forwardGate(route, method)).toBe(gate);
+      expect(forwardKind(route, method)).toBe(kind);
+    }
+    expect(crewRouteFor("/api/host/plugins/install/extra")).toBeNull();
+    expect(crewRouteFor("/api/host/plugins/link/arbitrary")).toBeNull();
   });
 
   test("the folder list and a star on it cross the link — folders live on the member that has them", () => {
@@ -211,13 +342,15 @@ describe("which routes cross a link", () => {
     const pane = server.match(/^const PANE_ROUTE = (.+);$/m)![1]!;
     const tab = server.match(/^const TAB_ACTION_ROUTE = (.+);$/m)![1]!;
     const alternation = /\(([a-z]+(?:\|[a-z]+)+)\)/;
-    const paneActions = pane.match(alternation)![1]!.split("|").toSorted();
-    // The list IS the inventory of what crosses a link; `chat` joined it with the live window, and
-    // `files` with the Files view (ADR 0083).
-    expect(paneActions).toEqual([
-      "changes", "chat", "close", "files", "focus", "history", "keys", "rename", "reply", "upload",
-    ]);
+    expect(pane).toBe("/^\\/api\\/pane\\/([^/]+)(?:\\/(reply|keys|upload|close|rename|history|chat|changes|files|focus|processes|agent|agent\\/(?:state|session|release|authority\\/clear)))?$/");
+    const paneActions = ["reply", "keys", "upload", "close", "rename", "history", "chat", "changes", "files", "focus", "processes", "agent"];
+    // The list IS the inventory of legacy single-segment actions; nested agent actions are checked
+    // separately below so no subroute can accidentally become forwardable.
     for (const action of paneActions) expect(crewRouteFor(`/api/pane/x/${action}`)).toBe(`pane/x/${action}`);
+    for (const action of ["state", "session", "release", "authority/clear"]) {
+      expect(crewRouteFor(`/api/pane/x/agent/${action}`)).toBe(`pane/x/agent/${action}`);
+    }
+    expect(crewRouteFor("/api/pane/x/agent/arbitrary")).toBeNull();
     const tabActions = tab.match(alternation)![1]!.split("|").toSorted();
     expect(tabActions).toEqual(["close", "rename"]);
     for (const action of tabActions) expect(crewRouteFor(`/api/tab/x/${action}`)).toBe(`tab/x/${action}`);
@@ -250,8 +383,14 @@ describe("which routes cross a link", () => {
     expect(wsImage).toBe("/^\\/api\\/workspace\\/([^/]+)\\/files\\/image$/");
     expect(crewRouteFor("/api/pane/w1:p1/files/image")).toBe("pane/w1:p1/files/image");
     expect(crewRouteFor("/api/workspace/w1/files/image")).toBe("workspace/w1/files/image");
+    const paneExist = server.match(/^const PANE_FILES_EXIST_ROUTE = (.+);$/m)![1]!;
+    const wsExist = server.match(/^const WORKSPACE_FILES_EXIST_ROUTE = (.+);$/m)![1]!;
+    expect(paneExist).toBe("/^\\/api\\/pane\\/([^/]+)\\/files\\/exist$/");
+    expect(wsExist).toBe("/^\\/api\\/workspace\\/([^/]+)\\/files\\/exist$/");
+    expect(crewRouteFor("/api/pane/w1:p1/files/exist")).toBe("pane/w1:p1/files/exist");
+    expect(crewRouteFor("/api/workspace/w1/files/exist")).toBe("workspace/w1/files/exist");
+    expect(crewRouteFor("/api/pane/w1:p1/files/exist/extra")).toBeNull();
     expect(crewRouteFor("/api/pane/w1:p1/files/image/x")).toBeNull();
-    expect(crewRouteFor("/api/workspace/w1/files/exist")).toBeNull();
     expect(apiPathFor("pane/w1:p1/files/image")).toBe("/api/pane/w1:p1/files/image");
     expect(apiPathFor("workspace/w1/files/image")).toBe("/api/workspace/w1/files/image");
   });
@@ -263,8 +402,20 @@ describe("which routes cross a link", () => {
     // must be attempted against a stale member rather than refused before it is tried (§10.3).
     expect(forwardKind("pane/w1:p1/chat")).toBe("read");
     expect(forwardKind("pane/w1:p1/changes")).toBe("read");
+    expect(forwardKind("pane/w1:p1/processes")).toBe("read");
+    expect(forwardKind("pane/w1:p1/agent")).toBe("read");
+    expect(forwardKind("pane/w1:p1/metadata", "GET")).toBe("read");
+    expect(forwardGate("pane/w1:p1/metadata", "GET")).toBe("device-read");
+    expect(forwardKind("pane/w1:p1/metadata", "POST")).toBe("write");
+    expect(forwardGate("pane/w1:p1/metadata", "POST")).toBe("write");
+    expect(forwardGate("pane/w1:p1/processes", "GET")).toBe("device-read");
+    expect(forwardGate("pane/w1:p1/agent", "GET")).toBe("device-read");
     for (const action of ["reply", "keys", "upload", "close", "rename"]) {
       expect(forwardKind(`pane/w1:p1/${action}`)).toBe("write");
+    }
+    for (const action of ["agent/state", "agent/session", "agent/release", "agent/authority/clear"]) {
+      expect(forwardKind(`pane/w1:p1/${action}`)).toBe("write");
+      expect(forwardGate(`pane/w1:p1/${action}`, "POST")).toBe("write");
     }
     expect(forwardKind("tab")).toBe("write");
     expect(forwardKind("workspace")).toBe("write");
@@ -276,6 +427,27 @@ describe("which routes cross a link", () => {
     // The image read is the same read on another cap (ADR 0090).
     expect(forwardKind("pane/w1:p1/files/image")).toBe("read");
     expect(forwardKind("workspace/w1/files/image")).toBe("read");
+    expect(forwardKind("pane/w1:p1/files/exist")).toBe("read");
+    expect(forwardKind("workspace/w1/files/exist")).toBe("read");
+    expect(forwardGate("pane/w1:p1/files/exist", "POST")).toBe("device-read");
+    expect(forwardGate("workspace/w1/files/exist", "POST")).toBe("device-read");
+  });
+
+  test("the bounded Files existence POST carries its exact body and workspace/session scope over Crew", async () => {
+    const { transport, calls } = transportOf(() => ok(new Response('{"exists":["src/Main.kt"]}', { status: 200 })));
+    const body = JSON.stringify({ paths: ["src/Main.kt", "docs/read me.md"] });
+    const [req, url] = post("/api/workspace/w1/files/exist?host=laptop&session=work", body);
+    const response = await forward(req, url, { transport, device: "phone-7" });
+    expect(response.status).toBe(200);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.route).toBe("workspace/w1/files/exist");
+    expect(calls[0]!.params).toEqual({ session: "work" });
+    expect(calls[0]!.init.method).toBe("POST");
+    const forwardedBody = calls[0]!.init.body;
+    expect(forwardedBody).not.toBeNull();
+    expect(await new Response(forwardedBody).text()).toBe(body);
+    expect(new Headers(calls[0]!.init.headers).get("x-crew-device")).toBe("phone-7");
+    expect(calls[0]!.budgetMs).toBeUndefined();
   });
 
   test("the audit action a forward records is the one the peer will write", () => {
@@ -297,6 +469,8 @@ describe("which routes cross a link", () => {
     expect(forwardAuditAction("workspace/w1/files")).toBeNull();
     expect(forwardAuditAction("pane/w1:p1/files/image")).toBeNull();
     expect(forwardAuditAction("workspace/w1/files/image")).toBeNull();
+    expect(forwardAuditAction("pane/w1:p1/files/exist")).toBeNull();
+    expect(forwardAuditAction("workspace/w1/files/exist")).toBeNull();
   });
 });
 
@@ -586,6 +760,17 @@ describe("request shaping", () => {
     expect(forwardHeaders(req, null).get("x-crew-device")).toBeNull();
     expect(forwardHeaders(req).get("x-crew-device")).toBeNull();
   });
+
+  test("only a lead-derived pairing identity crosses the crew link", () => {
+    const req = new Request("https://lead.example/api/launch", {
+      headers: { "x-crew-paired-identity": "f".repeat(64) },
+    });
+    const identity = "a".repeat(64);
+    const headers = forwardHeaders(req, "phone", identity);
+    expect(headers.get("x-crew-paired-identity")).toBe(identity);
+    expect(crewPairedIdentityOf(new Request("https://peer.example/api/launch", { headers }))).toBe(identity);
+    expect(forwardHeaders(req, "phone").get("x-crew-paired-identity")).toBeNull();
+  });
 });
 
 // ── §10.3 Writes: refuse before attempting, never retry an ambiguous one ─────
@@ -633,6 +818,26 @@ describe("a write to a member that is not reachable (§10.3)", () => {
     expect(res.status).toBe(404);
     expect(calls).toHaveLength(1);
     expect(calls[0]!.route).toBe("folders");
+  });
+
+  test("process diagnostics preserve an older peer's 404 instead of presenting an empty census", async () => {
+    const { transport, calls } = transportOf(() => ok(new Response('{"error":"not found"}', { status: 404 })));
+    const [req, url] = get("/api/pane/w1:p1/processes?host=laptop&session=dev");
+    const res = await forward(req, url, { transport });
+    expect(res.status).toBe(404);
+    expect(await res.text()).toBe('{"error":"not found"}');
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.route).toBe("pane/w1:p1/processes");
+    expect(calls[0]!.params).toEqual({ session: "dev" });
+  });
+
+  test("process details stop reading a peer body at the aggregate byte ceiling", async () => {
+    const raw = JSON.stringify({ ok: true, paneId: "w1:p1", truncated: false, processes: [] }) + " ".repeat(1_000_001);
+    const { transport } = transportOf(() => ok(new Response(raw, { headers: { "content-type": "application/json" } })));
+    const [req, url] = get("/api/pane/w1:p1/processes?host=laptop&session=dev");
+    const res = await forward(req, url, { transport, mask: maskForwardedAnswer });
+    expect(res.status).toBe(502);
+    expect(await res.text()).not.toContain("processes");
   });
 
   test("a READ to a dead member is still attempted — a stale mirror is worth asking for", async () => {
@@ -991,7 +1196,7 @@ describe("journal, uploads and state stay host-local", () => {
     // And the contract names the gap, so the two cannot drift apart silently.
     const contract = readFileSync(join(import.meta.dir, "..", "..", "MUX_CONTRACT.md"), "utf8");
     expect(contract).toContain("## Conformance across a crew link");
-    expect(contract).toContain("listSessions` and the three worktree verbs have no forwardable route");
+    expect(contract).toContain("listSessions` and the existing lead-local `listWorktrees`, `createWorktree` and `openWorktree` routes have no forwardable route");
   });
 });
 
@@ -1005,4 +1210,90 @@ describe("the added-launcher routes cross the link as writes", () => {
     expect(crewRouteFor("/api/launchers/added/list")).toBeNull();
     expect(crewRouteFor("/api/launchers/added/")).toBeNull();
   });
+});
+
+describe("scoped foundation Crew reads", () => {
+  test("refresh and control receipts reach only the addressed peer and retain session/device", async () => {
+    const calls: { route: string; params: Record<string, string> }[] = [];
+    for (const [path, method] of [["refresh", "POST"], ["control/operations/intent", "GET"]]) {
+      const url = new URL(`https://lead.example/api/${path}?host=laptop&session=work`);
+      const res = await forwardToPeer(new Request(url, { method }), url, {
+        link: LINK, state: DEAD, device: "phone", maxUploadBytes: 1024,
+        transport: async (_link, route, params, init) => {
+          calls.push({ route, params });
+          expect(crewDeviceOf(new Request("https://peer", { headers: init.headers }))).toBe("phone");
+          return { ok: true, value: new Response("old peer unsupported", { status: 404 }), status: 404, member: "laptop", receivedAt: 1, date: null };
+        },
+      });
+      expect(res.status).toBe(404);
+      expect(forwardKind(path!)).toBe("read");
+      expect(forwardAuditAction(path!)).toBeNull();
+    }
+    expect(calls).toEqual([{ route: "refresh", params: { session: "work" } }, { route: "control/operations/intent", params: { session: "work" } }]);
+  });
+
+  test("pane and portable layout contracts are additive across Crew with read plans and write-only execution", () => {
+    const routes = [
+      ["pane/w1:p1/layout", "GET", "read"],
+      ["pane/w1:p1/layout/neighbor", "GET", "read"],
+      ["pane/w1:p1/layout/edges", "GET", "read"],
+      ["pane/w1:p1/layout/plan", "POST", "read"],
+      ["tab/t1/transfer/plan", "POST", "read"],
+      ["tab/t1/layout/export", "GET", "device-read"],
+      ["layout/plan", "POST", "device-read"],
+      ["layout/apply", "POST", "write"],
+      ["tab/t1/layout/split-ratio", "POST", "write"],
+      ["pane/w1:p1/layout/split", "POST", "write"],
+      ["pane/w1:p1/layout/resize", "POST", "write"],
+      ["pane/w1:p1/layout/zoom", "POST", "write"],
+      ["pane/w1:p1/layout/swap", "POST", "write"],
+      ["pane/w1:p1/layout/move", "POST", "write"],
+      ["pane/w1:p1/layout/focus-direction", "POST", "write"],
+    ] as const;
+    for (const [route, method, gate] of routes) {
+      expect(crewRouteFor(`/api/${route}`)).toBe(route);
+      expect(forwardKind(route, method)).toBe(gate === "device-read" ? "read" : gate);
+      expect(forwardGate(route, method)).toBe(gate);
+    }
+    expect(crewRouteFor("/api/pane/w1:p1/layout/arbitrary")).toBeNull();
+    expect(crewRouteFor("/api/layout/arbitrary")).toBeNull();
+  });
+
+  test("owning-peer removal has its own read plan and write route over Crew", () => {
+    for (const [route, method, gate] of [
+      ["workspace/w1/worktree/remove-plan", "GET", "read"],
+      ["workspace/w1/worktree/remove", "POST", "write"],
+    ] as const) {
+      expect(crewRouteFor(`/api/${route}`)).toBe(route);
+      expect(forwardKind(route, method)).toBe(gate);
+      expect(forwardGate(route, method)).toBe(gate);
+    }
+    expect(crewRouteFor("/api/workspace/w1/worktree/arbitrary")).toBeNull();
+  });
+
+  test("metadata and host agent-view routes cross Crew with exact read/write admission", () => {
+    for (const [route, method, gate] of [
+      ["pane/p1/metadata", "GET", "device-read"],
+      ["pane/p1/metadata", "POST", "write"],
+      ["workspace/w1/metadata", "GET", "device-read"],
+      ["workspace/w1/metadata", "POST", "write"],
+      ["host/agent-view", "GET", "device-read"],
+      ["host/agent-view", "POST", "write"],
+      ["host/agent-view", "DELETE", "write"],
+    ] as const) {
+      expect(crewRouteFor(`/api/${route}`)).toBe(route);
+      expect(forwardGate(route, method)).toBe(gate);
+      expect(forwardKind(route, method)).toBe(gate === "write" ? "write" : "read");
+    }
+    expect(crewRouteFor("/api/host/agent-view/anything")).toBeNull();
+  });
+});
+
+test("native identity credentials and private ingress terminate at the lead across ordinary read, Files device-read and one-shot writes",async()=>{
+ for(const [path,method] of [["/api/pane/p1?host=laptop&session=work","GET"],["/api/pane/p1/files?host=laptop&session=work","GET"],["/api/pane/p1/keys?host=laptop&session=work","POST"]]) {
+  const headers={authorization:"Bearer pairing-private","Collie-Proxy-Authorization":"DPoP identity-private",DPoP:"proof-private","X-Collie-Native-Ingress":"mac-private","X-Collie-Native-Request-Id":"private-correlation","X-Device":"phone-spoof","Tailscale-User-Login":"phone-spoof"};
+  const [req,url]=method==="GET"?get(path!,headers):post(path!,JSON.stringify({keys:["Enter"]}),headers);
+  const {transport,calls}=transportOf(()=>ok(new Response("bounded answer")));const response=await forward(req,url,{transport,device:"approved",pairedIdentity:"1".repeat(64)});expect(response.status).toBe(200);expect(calls).toHaveLength(1);
+  const passed=new Headers(calls[0]!.init.headers);for(const name of Object.keys(headers))expect(passed.get(name)).toBeNull();expect(passed.get("x-crew-device")).toBe("approved");expect(passed.get("x-crew-paired-identity")).toBe("1".repeat(64));expect(calls[0]!.params.session).toBe("work");
+ }
 });

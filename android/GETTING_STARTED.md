@@ -4,11 +4,11 @@ Connect the native app to your own Collie server and pair your phone for termina
 
 ## Before you start
 
-You need Android 8.0 or newer and a reachable Collie HTTPS server.
+You need the current Android 17 release (API 37) and a reachable Collie HTTPS server.
 
 The app is a client of the bridge API. Install the server using the upstream
 [installation guide](https://github.com/AltanS/collie/blob/main/docs/install.md) if needed.
-The current development baseline is Collie server 1.5.1; other versions need compatibility testing.
+The current development baseline is Collie server 1.19.0; other versions need compatibility testing.
 For the default setup, sign the host and phone into the same Tailscale network.
 
 > **Caution.** Terminal control runs with the host user's privileges. Keep the server behind

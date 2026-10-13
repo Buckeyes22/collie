@@ -11,6 +11,7 @@ import androidx.annotation.VisibleForTesting
 import com.lateapex.collie.diagnostics.AnrWatchdog
 import com.lateapex.collie.diagnostics.DiagnosticsExport
 import com.lateapex.collie.ui.NativePreferences
+import com.lateapex.collie.ui.DocumentAttachment
 
 class CollieApplication : Application() {
     lateinit var container: AppContainer
@@ -24,6 +25,7 @@ class CollieApplication : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        DocumentAttachment.cleanupPreviousProcessSpools(cacheDir)
         NativePreferences(this).applyTheme()
         container = AppContainer(this)
         // Backstop for a process that died with the share sheet open: never leave a plaintext export behind.
@@ -83,11 +85,10 @@ class CollieApplication : Application() {
         ).also { it.start() }
     }
 
-    /** API 30+ only: the OS's own record of why the PREVIOUS process died, read once at the next
+    /** The OS's own record of why the PREVIOUS process died, read once at the next
      * launch — catches an ANR/crash the watchdog never got a chance to observe before the process
      * ended. Best-effort: any failure here is itself diagnostic-adjacent, not diagnostic-critical. */
     private fun recordHistoricalExitReasons() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return
         try {
             val activityManager = getSystemService(ActivityManager::class.java) ?: return
             val seen = getSharedPreferences(DIAGNOSTICS_STATE, MODE_PRIVATE)

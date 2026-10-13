@@ -38,9 +38,6 @@ import type {
   MuxSnapshot,
   MuxSpaceRequest,
   MuxWorktree,
-  MuxWorktreeCreateRequest,
-  MuxWorktreeOpenRequest,
-  MuxWorktreeOpened,
   MuxWorktreeScope,
   MuxSubscription,
   MuxTabRequest,
@@ -166,8 +163,8 @@ export function withAgentHints(adapter: MuxAdapter, deps: AgentHintDeps): MuxAda
     refresh: (): Promise<void> => adapter.refresh(),
     readGrid: (paneId: string, request: MuxGridRequest): Promise<MuxOutcome<MuxGrid>> =>
       adapter.readGrid(paneId, request),
-    typeText: (paneId: string, txt: string): Promise<MuxAck> => adapter.typeText(paneId, txt),
-    sendKeys: (paneId: string, keys: readonly string[]): Promise<MuxAck> => adapter.sendKeys(paneId, keys),
+    typeText: (paneId, txt, finalAdmission) => adapter.typeText(paneId, txt, finalAdmission),
+    sendKeys: (paneId, keys, finalAdmission) => adapter.sendKeys(paneId, keys, finalAdmission),
     renamePane: (paneId: string, label: string | null): Promise<MuxAck> => adapter.renamePane(paneId, label),
     closePane: (paneId: string): Promise<MuxAck> => adapter.closePane(paneId),
     setFocus: (paneId: string): Promise<MuxAck> => adapter.setFocus(paneId),
@@ -177,10 +174,10 @@ export function withAgentHints(adapter: MuxAdapter, deps: AgentHintDeps): MuxAda
     createSpace: (request: MuxSpaceRequest): Promise<MuxOutcome<MuxCreatedPane>> => adapter.createSpace(request),
     listWorktrees: (scope: MuxWorktreeScope): Promise<MuxOutcome<readonly MuxWorktree[]>> =>
       adapter.listWorktrees(scope),
-    createWorktree: (request: MuxWorktreeCreateRequest): Promise<MuxOutcome<MuxCreatedPane>> =>
-      adapter.createWorktree(request),
-    openWorktree: (request: MuxWorktreeOpenRequest): Promise<MuxOutcome<MuxWorktreeOpened>> =>
-      adapter.openWorktree(request),
+    createWorktree: (request, finalAdmission, beforeDispatch) =>
+      adapter.createWorktree(request, finalAdmission, beforeDispatch),
+    openWorktree: (request, finalAdmission, beforeDispatch) =>
+      adapter.openWorktree(request, finalAdmission, beforeDispatch),
     listSessions: (): Promise<MuxOutcome<readonly MuxSession[]>> => adapter.listSessions(),
     watch: (options: MuxWatchOptions): MuxSubscription => adapter.watch(options),
   };

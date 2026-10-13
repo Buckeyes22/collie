@@ -24,6 +24,7 @@ import {
 import { signDial, signRequest, DIAL_HEADER, MAX_SKEW_MS, SIGNATURE_HEADER, TIMESTAMP_HEADER } from "./signing.ts";
 import { serializeTrustStore, TrustStore, type TrustStoreData, type TrustStoreIo, type Warrant } from "./trust-store.ts";
 import { mintWarrant, WARRANT_TTL_MS } from "./warrant.ts";
+import { MONITORING_CHECKPOINT_PATH, type MonitoringCheckpointReceiver, type CheckpointAuthority } from "./monitoring-checkpoint.ts";
 
 // The endpoint. It takes a plain `Request` and needs no `Bun.serve`, so unlike the rest of the HTTP
 // layer this IS unit-tested for real rather than pinned at the source.
@@ -680,6 +681,55 @@ describe("GET /crew/v1/snapshot — the one merged route, §9.2", () => {
     const res = (await call(handler, CREW_SNAPSHOT_PATH, { method: "POST", headers: authed }))!;
     expect(res.status).toBe(404);
     expect(res.status).not.toBe(405);
+  });
+});
+
+describe("/crew/v1/monitoring/checkpoint — exact lead receipt and checkpoint frames", () => {
+  test("an admitted current named lead reaches both the read receipt and bounded frame handler", async () => {
+    const warrant = mintWarrant(leadStore({ peers: [member({ memberId: "laptop" })] }), "laptop", T0)!.result;
+    const h = harness(peerStore({ warrant: { warrant, deputyCertPem: material("laptop").certPem } }));
+    const methods: string[] = [];
+    let captured: CheckpointAuthority | null = null;
+    const receiver = {
+      receipt: async (authority: CheckpointAuthority, current: () => boolean) => {
+        captured = authority;
+        expect(current()).toBe(true);
+        return { checkpointRevision: "9", rootDigest: "c".repeat(64) };
+      },
+      handle: async (req: Request, authority: CheckpointAuthority, current: () => boolean) => {
+        methods.push(req.method);
+        captured = authority;
+        expect(current()).toBe(true);
+        return Response.json({ accepted: true });
+      },
+    } satisfies Pick<MonitoringCheckpointReceiver,"receipt"|"handle">;
+    const standby = {
+      warrantsSelf: () => true, silentForMs: () => 60_000, armMs: 30_000,
+      collidingLabels: () => [], applySync: async () => {}, syncedDigest: () => null, syncedCollision: () => [],
+    };
+    const handler = createCrewRouter({ store: h.store, audit: h.audit, transportPinned: true, now: () => T0, standby, monitoringCheckpoint: receiver });
+    const read = (await call(handler, MONITORING_CHECKPOINT_PATH, { headers: authed }))!;
+    expect(read.status).toBe(200);
+    expect(await read.json()).toEqual({ accepted: true });
+    const write = (await call(handler, MONITORING_CHECKPOINT_PATH, { method: "POST", headers: authed, body: "{}" }))!;
+    expect(write.status).toBe(200);
+    expect(methods).toEqual(["GET", "POST"]);
+    expect<CheckpointAuthority|null>(captured).toEqual({ crewId: CREW.crewId, leadMemberId: "desk", leadFingerprint: fp("desk"), deputyMemberId: "laptop",
+      deputyFingerprint: fp("laptop"), warrantGeneration: warrant.generation, secretGeneration: CREW.secretGeneration });
+  });
+
+  test("a peer without the current exact deputy warrant has no receipt or staging route", async () => {
+    const h = harness(peerStore());
+    let calls = 0;
+    const receiver = { receipt: async () => { calls++; return null; }, handle: async () => { calls++; return Response.json({ accepted: true }); } } satisfies Pick<MonitoringCheckpointReceiver,"receipt"|"handle">;
+    const standby = {
+      warrantsSelf: () => true, silentForMs: () => 60_000, armMs: 30_000,
+      collidingLabels: () => [], applySync: async () => {}, syncedDigest: () => null, syncedCollision: () => [],
+    };
+    const handler = createCrewRouter({ store: h.store, audit: h.audit, transportPinned: true, now: () => T0, standby, monitoringCheckpoint: receiver });
+    const res = (await call(handler, MONITORING_CHECKPOINT_PATH, { headers: authed }))!;
+    expect(res.status).toBe(401);
+    expect(calls).toBe(0);
   });
 });
 
@@ -2666,5 +2716,28 @@ describe("version negotiation", () => {
       expected: 2,
       received: null,
     });
+  });
+});
+
+describe("foundation routes on the admitted Crew dispatcher", () => {
+  test("refresh and operation reads preserve peer session; wrong secret never resolves", async () => {
+    const h = harness(peerStore());
+    await h.store.load();
+    const seen: string[] = [];
+    const handler = createCrewRouter({ store: h.store, audit: h.audit, transportPinned: true, now: () => T0,
+      controlCapabilities: () => ({ controlOperations: true }),
+      receiptContextBound: () => true,
+      dispatch: async (_req, url) => { seen.push(`${url.pathname}${url.search}`); return Response.json({ ok: true }); },
+    });
+    const hello = (await call(handler, CREW_HELLO_PATH, { headers: authed }))!;
+    expect(await hello.json()).toMatchObject({ controlCapabilities: { controlOperations: true }, receiptContextBound: true });
+    for (const [route, method] of [["refresh", "POST"], ["control/operations/intent", "GET"]]) {
+      const result = (await call(handler, `${CREW_PREFIX}${route}?session=work`, { method, headers: authed }))!;
+      expect(result.status).toBe(200);
+    }
+    expect(seen).toEqual(["/api/refresh?session=work", "/api/control/operations/intent?session=work"]);
+    const refused = (await call(handler, `${CREW_PREFIX}refresh`, { method: "POST", headers: withSecret("wrong") }))!;
+    expect(refused.status).toBe(401);
+    expect(seen).toHaveLength(2);
   });
 });

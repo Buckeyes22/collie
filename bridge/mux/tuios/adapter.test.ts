@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { TuiosMux } from "./adapter.ts";
-import { TuiosError, type WireHello, type WireSession, type WireWindowList } from "./client.ts";
+import { TuiosError, type WireAgent, type WireHello, type WireSession, type WireWindowList } from "./client.ts";
 import { FakeTuios } from "./fixture.ts";
 
 // Three promises the conformance world does not reach: the pinned handshake, a revision that stays
@@ -59,6 +59,33 @@ describe("revision", () => {
     expect(after).toBeGreaterThan(before);
     await fake.changePane(pane.paneId);
     expect(await read()).toBeGreaterThan(after);
+  });
+});
+
+/** A fake TUIOS server reporting a selected installed harness manifest on its seeded agent pane. */
+class WithHarnessId extends FakeTuios {
+  constructor(private readonly harnessId: string) { super(); }
+
+  override async listAgents(): Promise<WireAgent[]> {
+    return (await super.listAgents()).map((agent) => Object.assign({}, agent, { harnessId: this.harnessId }));
+  }
+}
+
+describe("TUIOS exact manifest identity mapping", () => {
+  test.each([
+    ["gemini-cli", "gemini"],
+    ["qwen", "qwen"],
+    ["maki", "maki"],
+  ])("maps the documented %s id to exact Collie identity %s", async (harnessId, expected) => {
+    const pane = (await new TuiosMux(new WithHarnessId(harnessId)).snapshot()).panes.find((candidate) => candidate.spaceLabel === "collie");
+    expect(pane).toMatchObject({ agent: expected, status: "blocked", agentSession: { kind: "id" } });
+  });
+
+  test("does not prefix-match an unknown manifest id or retain its session as an agent session", async () => {
+    const pane = (await new TuiosMux(new WithHarnessId("gemini-cli-evil")).snapshot()).panes.find((candidate) => candidate.spaceLabel === "collie");
+    expect(pane?.agent).toBe("shell");
+    expect(pane?.status).toBe("unknown");
+    expect(pane?.agentSession).toBeUndefined();
   });
 });
 

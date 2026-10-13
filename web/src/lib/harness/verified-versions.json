@@ -27,6 +27,19 @@
         "evidence": "canary run 20261001T135013Z: journal kinds asserted, nothing unrecognised"
       }
     },
+    "gemini": {
+      "version": "0.0.0",
+      "verified": "2026-10-11",
+      "how": "unverified",
+      "adapter": false,
+      "evidence": "No version-matched Gemini terminal capture or screen grammar is established. The bridge journal reader is based on Google's current chatRecordingTypes.ts and chatRecordingService.ts source; that source-derived implementation is not a vendor canary.",
+      "journal": {
+        "version": "0.0.0",
+        "verified": "2026-10-11",
+        "how": "unverified",
+        "evidence": "bridge/journal/gemini.ts parses the current source-documented JSONL records, including bounded patches/orderIds and rewinds. No installed Gemini executable or version-matched journal canary was available; 0.0.0 is the unknown-version floor, not a vendor version."
+      }
+    },
     "grok": {
       "version": "1.0.41",
       "verified": "2026-09-27",

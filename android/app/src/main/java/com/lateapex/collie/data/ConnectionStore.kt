@@ -9,20 +9,43 @@ import android.util.Base64
 import com.lateapex.collie.domain.Connection
 import com.lateapex.collie.network.OriginValidator
 import java.security.KeyStore
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.FlowCollector
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.InternalCoroutinesApi
+import kotlinx.coroutines.ExperimentalForInheritanceCoroutinesApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+
+/** Durable custody witness. Its diagnostic form never prints ID, origin, label or bearer. */
+data class CommittedConnectionSnapshot(val revision: Long, val incarnationId: String?, val connection: Connection?) {
+    override fun toString(): String = "CommittedConnectionSnapshot(revision=$revision, connected=${connection != null})"
+}
 
 interface ConnectionStore {
     val connection: StateFlow<Connection?>
     fun save(connection: Connection)
     fun clear()
+    /** Atomic, durable replacement of this exact credential incarnation. No check/save fallback. */
+    fun compareAndSet(expected: Connection, replacement: Connection): Boolean = false
+    /** Null means an unsupported test store, distinct from a supported legacy record without ID. */
+    fun captureCommitted(): CommittedConnectionSnapshot? = null
+    fun observeCommitted(observer: (CommittedConnectionSnapshot) -> Unit): AutoCloseable = AutoCloseable { }
+    fun compareAndSet(expected: CommittedConnectionSnapshot, replacement: Connection?): Boolean = false
+}
+
+/** Process-wide bounded notification delivery; no Android Looper is needed by the store. */
+private object ConnectionPublisher {
+    val executor = Executors.newSingleThreadExecutor { task ->
+        Thread(task, "collie-connection-publisher").apply { isDaemon = true }
+    }
 }
 
 data class CipherEnvelope(val iv: ByteArray, val ciphertext: ByteArray)
@@ -35,18 +58,19 @@ interface SecretCipher {
 /** AES/GCM whose non-exportable key lives in Android Keystore. */
 class AndroidKeystoreCipher(
     private val alias: String = KEY_ALIAS,
+    private val associatedData: ByteArray = alias.encodeToByteArray(),
 ) : SecretCipher {
     override fun encrypt(plaintext: ByteArray): CipherEnvelope {
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.ENCRYPT_MODE, key())
-        cipher.updateAAD(ASSOCIATED_DATA)
+        cipher.updateAAD(associatedData)
         return CipherEnvelope(cipher.iv, cipher.doFinal(plaintext))
     }
 
     override fun decrypt(envelope: CipherEnvelope): ByteArray {
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(TAG_BITS, envelope.iv))
-        cipher.updateAAD(ASSOCIATED_DATA)
+        cipher.updateAAD(associatedData)
         return cipher.doFinal(envelope.ciphertext)
     }
 
@@ -74,7 +98,6 @@ class AndroidKeystoreCipher(
         private const val KEY_ALIAS = "com.lateapex.collie.connection.v1"
         private const val TRANSFORMATION = "AES/GCM/NoPadding"
         private const val TAG_BITS = 128
-        private val ASSOCIATED_DATA = "com.lateapex.collie.connection.v1".encodeToByteArray()
     }
 }
 
@@ -88,18 +111,94 @@ class EncryptedConnectionStore(
     private val cipher: SecretCipher,
     private val json: Json,
     private val originValidator: OriginValidator,
+    preferencesOverride: SharedPreferences? = null,
 ) : ConnectionStore {
     private val preferences: SharedPreferences =
-        context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
-    private val mutableConnection = MutableStateFlow(read())
+        preferencesOverride ?: context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+    private val persistenceLock = Any()
+    private val current = AtomicReference(read())
+    private val committedObservers = java.util.concurrent.CopyOnWriteArrayList<(CommittedConnectionSnapshot) -> Unit>()
+    private val notifications = MutableStateFlow(current.get())
+    private val publicationScheduled = AtomicBoolean(false)
+    /** Runs on the single publisher, outside all mutation locks; no-op in production. */
+    @Volatile internal var beforePublicationForTesting: () -> Unit = {}
 
-    override val connection: StateFlow<Connection?> = mutableConnection.asStateFlow()
+    // Durable ownership and notification delivery are distinct. Callers never borrow a stale
+    // emitted value for admission: value/replayCache always project the committed incarnation.
+    @OptIn(ExperimentalForInheritanceCoroutinesApi::class)
+    override val connection: StateFlow<Connection?> = object : StateFlow<Connection?> {
+        override val value: Connection? get() = current.get().connection
+        override val replayCache: List<Connection?> get() = listOf(value)
+
+        @OptIn(InternalCoroutinesApi::class)
+        override suspend fun collect(collector: FlowCollector<Connection?>): Nothing {
+            var seenRevision = -1L
+            var initialized = false
+            var emitted: Connection? = null
+            return notifications.collect(object : FlowCollector<CommittedConnectionSnapshot> {
+                override suspend fun emit(value: CommittedConnectionSnapshot) {
+                    val latest = current.get()
+                    if (latest.revision > seenRevision) {
+                        seenRevision = latest.revision
+                        if (!initialized || emitted != latest.connection) {
+                            initialized = true
+                            emitted = latest.connection
+                            collector.emit(latest.connection)
+                        }
+                    }
+                }
+            })
+        }
+    }
+
+    override fun captureCommitted(): CommittedConnectionSnapshot = current.get()
+
+    override fun observeCommitted(observer: (CommittedConnectionSnapshot) -> Unit): AutoCloseable {
+        committedObservers += observer
+        schedulePublication()
+        return AutoCloseable { committedObservers -= observer }
+    }
 
     override fun save(connection: Connection) {
+        synchronized(persistenceLock) { commitLocked(connection) }
+        schedulePublication()
+    }
+
+    /** Compatibility only. Production lifecycle callers must supply their originally captured snapshot. */
+    override fun compareAndSet(expected: Connection, replacement: Connection): Boolean {
+        val snapshot = captureCommitted()
+        return snapshot.connection === expected && compareAndSet(snapshot, replacement)
+    }
+
+    override fun compareAndSet(expected: CommittedConnectionSnapshot, replacement: Connection?): Boolean {
+        val changed = synchronized(persistenceLock) {
+            val actual = current.get()
+            if (actual.revision != expected.revision || actual.incarnationId != expected.incarnationId ||
+                actual.connection !== expected.connection) false
+            else { commitLocked(replacement); true }
+        }
+        if (changed) schedulePublication()
+        return changed
+    }
+
+    /** Called only under persistenceLock. No observer or external ACK runs in this transaction. */
+    private fun commitLocked(connection: Connection?) {
+        val prior = current.get()
+        val revision = Math.addExact(prior.revision, 1L)
+        val id = if (connection == null) null
+            else prior.incarnationId?.takeIf { prior.connection === connection } ?: java.util.UUID.randomUUID().toString()
+        if (connection == null) {
+            check(preferences.edit().remove(RECORD).commit()) { "Unable to clear encrypted Collie connection" }
+        } else persist(connection, id!!)
+        // Failed encryption/persistence leaves the original complete committed witness unchanged.
+        current.set(CommittedConnectionSnapshot(revision, id, connection))
+    }
+
+    private fun persist(connection: Connection, incarnationId: String) {
         require(connection.label.isNotBlank() && connection.label.length <= MAX_LABEL_CHARS)
         val clear = json.encodeToString(
             StoredConnection.serializer(),
-            StoredConnection(connection.origin.value, connection.label, connection.token),
+            StoredConnection(connection.origin.value, connection.label, connection.token, incarnationId),
         ).encodeToByteArray()
         val envelope = cipher.encrypt(clear)
         val encoded = json.encodeToString(
@@ -113,18 +212,32 @@ class EncryptedConnectionStore(
         check(preferences.edit().putString(RECORD, encoded).commit()) {
             "Unable to persist encrypted Collie connection"
         }
-        mutableConnection.value = connection
     }
 
     override fun clear() {
-        check(preferences.edit().remove(RECORD).commit()) {
-            "Unable to clear encrypted Collie connection"
-        }
-        mutableConnection.value = null
+        synchronized(persistenceLock) { commitLocked(null) }
+        schedulePublication()
     }
 
-    private fun read(): Connection? {
-        val encoded = preferences.getString(RECORD, null) ?: return null
+    private fun schedulePublication() {
+        if (publicationScheduled.compareAndSet(false, true)) {
+            // Always enqueue, even for Main.immediate callers and repository CAS under admission.
+            // One shared publisher and at most one queued drain per store bound the work. Releasing
+            // the flag before reading current prevents lost wakeups; sequential drains and collector
+            // revision checks prevent an obsolete notification from republishing an older owner.
+            ConnectionPublisher.executor.execute {
+                publicationScheduled.set(false)
+                beforePublicationForTesting()
+                notifications.value = current.get()
+                // Coalescing is safe because authority compares the durable ID, never the emitted
+                // Connection reference. Read latest for each observer; no stale callback clears B.
+                committedObservers.forEach { observer -> runCatching { observer(current.get()) } }
+            }
+        }
+    }
+
+    private fun read(): CommittedConnectionSnapshot {
+        val encoded = preferences.getString(RECORD, null) ?: return CommittedConnectionSnapshot(0, null, null)
         return try {
             val stored = json.decodeFromString(StoredEnvelope.serializer(), encoded)
             require(stored.version == ENVELOPE_VERSION)
@@ -136,11 +249,14 @@ class EncryptedConnectionStore(
             )
             val record = json.decodeFromString(StoredConnection.serializer(), plaintext.decodeToString())
             require(record.label.isNotBlank() && record.label.length <= MAX_LABEL_CHARS)
-            Connection(originValidator.requireValid(record.origin), record.label, record.token)
+            require(record.incarnationId == null || record.incarnationId.matches(INCARNATION_ID))
+            // A legacy record stays identifiable as missing custody; do not mint read authority.
+            CommittedConnectionSnapshot(0, record.incarnationId,
+                Connection(originValidator.requireValid(record.origin), record.label, record.token))
         } catch (_: Exception) {
             // Synchronous removal prevents a repeatedly crashing envelope from surviving process death.
             preferences.edit().remove(RECORD).commit()
-            null
+            CommittedConnectionSnapshot(0, null, null)
         }
     }
 
@@ -156,6 +272,7 @@ class EncryptedConnectionStore(
         val origin: String,
         val label: String,
         val token: String? = null,
+        val incarnationId: String? = null,
     )
 
     companion object {
@@ -163,5 +280,6 @@ class EncryptedConnectionStore(
         internal const val RECORD = "encrypted_record"
         private const val ENVELOPE_VERSION = 1
         private const val MAX_LABEL_CHARS = 80
+        private val INCARNATION_ID = Regex("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
     }
 }

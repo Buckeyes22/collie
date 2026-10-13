@@ -40,6 +40,47 @@ class PaneScrollbackTest {
     }
 
     @Test
+    fun scrollbackCapabilityAloneDoesNotClaimUnknownTernDepth() {
+        val unknownDepth = pane(agent = "shell", readableLines = null)
+        val tern = MuxConfigResponse(
+            name = "tern",
+            capabilities = mapOf("gridScrollback" to true),
+            readLimits = com.lateapex.collie.network.MuxReadLimitsResponse(
+                kotlinx.serialization.json.JsonPrimitive(10_000),
+            ),
+        )
+
+        assertEquals(PaneBufferAction.NONE, PaneBufferPolicy.resolve(unknownDepth, tern, 600).action)
+    }
+
+    @Test
+    fun verifiedAdapterCeilingAllowsLargerBoundedWindowsButOldBridgeFallsBack() {
+        val modern = MuxConfigResponse(readLimits = com.lateapex.collie.network.MuxReadLimitsResponse(kotlinx.serialization.json.JsonPrimitive(10_000)))
+        assertEquals(10_000, PaneScrollbackWindow.maxLines(modern))
+        assertEquals(1_000, PaneScrollbackWindow.maxLines(null))
+        assertEquals(1_200, PaneScrollbackWindow.grow(600, PaneScrollbackWindow.maxLines(modern)))
+        assertEquals(1_000, PaneScrollbackWindow.grow(600, PaneScrollbackWindow.maxLines(null)))
+        assertEquals(1_200, PaneScrollbackWindow.growDesired(600))
+        // Native desired depth stays distinct from the legacy bridge's admitted 1,000-row cap.
+        assertEquals(1_000, PaneScrollbackWindow.growDesired(600).coerceAtMost(PaneScrollbackWindow.maxLines(null)))
+    }
+
+    @Test
+    fun aShortNonTruncatedReadStopsGrowthEvenWhenThePreviousCensusWasLarger() {
+        val staleDepth = pane(agent = "shell", readableLines = 1_400)
+        val read = com.lateapex.collie.network.PaneReadResponse(
+            "w1:p1", "only rows", truncated = false, revision = 1,
+            requestedLines = 1_200, servedLines = 1,
+        )
+        assertEquals(
+            PaneBufferAction.NONE,
+            PaneBufferPolicy.resolve(staleDepth, MuxConfigResponse(capabilities = mapOf("gridScrollback" to true),
+                readLimits = com.lateapex.collie.network.MuxReadLimitsResponse(kotlinx.serialization.json.JsonPrimitive(10_000))),
+                requestedLines = 1_200, read = read).action,
+        )
+    }
+
+    @Test
     fun transcriptLimitationExplainsItselfWithoutHidingIndependentScrollback() {
         val note = "This multiplexer keeps no agent session log for Collie to read."
         val result = PaneBufferPolicy.resolve(
@@ -58,10 +99,12 @@ class PaneScrollbackTest {
 
     @Test
     fun journalAgentWithoutASessionGetsAnExplanationButNoDeadHistoryButton() {
-        val result = PaneBufferPolicy.resolve(pane(agent = "opencode", hasSession = false), null, 600)
-
-        assertEquals(PaneBufferAction.NONE, result.action)
-        assertEquals("opencode", result.missingSessionAgent)
+        listOf("opencode", "hermes", "omp").forEach { agent ->
+            val result = PaneBufferPolicy.resolve(pane(agent = agent, hasSession = false), null, 600)
+            assertEquals(PaneBufferAction.NONE, result.action)
+            assertEquals(agent, result.missingSessionAgent)
+        }
+        assertNull(PaneBufferPolicy.resolve(pane(agent = "muse", hasSession = false), null, 600).missingSessionAgent)
     }
 
     @Test

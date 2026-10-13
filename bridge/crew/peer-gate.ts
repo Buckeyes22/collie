@@ -20,7 +20,7 @@
 // ADR 0013), which are strictly stronger than same-origin. The device layer is what remains, and it
 // is what this function applies, unchanged and locally owned.
 
-import { decodeDeviceHeader, DEVICE_HEADER } from "./admission.ts";
+import { decodeDeviceHeader, DEVICE_HEADER, PAIRED_IDENTITY_HEADER } from "./admission.ts";
 
 /** The slice of `Config` this gate reads. Narrowed so a test needs no `loadConfig`. */
 export interface PeerGateConfig {
@@ -91,4 +91,10 @@ export function crewDeviceOf(req: Request): string | null {
   if (!raw) return null;
   const device = decodeDeviceHeader(raw).trim();
   return device === "" ? null : device;
+}
+
+/** The lead-derived opaque pairing identity. It is attribution/binding data, not an auth factor. */
+export function crewPairedIdentityOf(req: Request): string | null {
+  const value = req.headers.get(PAIRED_IDENTITY_HEADER)?.trim().toLowerCase();
+  return value !== undefined && /^[0-9a-f]{64}$/u.test(value) ? value : null;
 }

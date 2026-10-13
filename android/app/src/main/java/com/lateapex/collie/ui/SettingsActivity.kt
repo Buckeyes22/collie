@@ -68,6 +68,7 @@ class SettingsActivity : AppCompatActivity() {
             it.bindDisplay(binding.settingsLocalPreferences)
             it.bindBehavior(binding.settingsBehaviorPreferences)
         }
+        RetentionSettingsSection(this, nativePreferences, repository).bind(binding.settingsBehaviorPreferences)
         serverControls = SettingsServerControls(
             this,
             repository,
@@ -77,6 +78,44 @@ class SettingsActivity : AppCompatActivity() {
             focusDevices = entry.focusDevices,
             onRevealDevices = ::revealDevices,
         ).also { it.bind(binding.settingsServerControls, binding.settingsPairingHost) }
+        binding.settingsServerControls.addView(
+            com.google.android.material.button.MaterialButton(this).apply {
+                setText(R.string.settings_manage_launchers)
+                isAllCaps = false
+                minHeight = (48 * resources.displayMetrics.density).toInt()
+                setOnClickListener {
+                    startActivity(LaunchRecipeActivity.intent(this@SettingsActivity, repository.selectedScope.value, LaunchRecipeActivity.MODE_RECIPES))
+                }
+            },
+            android.widget.LinearLayout.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+            ),
+        )
+        binding.settingsServerControls.addView(
+            com.google.android.material.button.MaterialButton(this).apply {
+                setText(R.string.settings_manage_host_integrations)
+                isAllCaps = false
+                minHeight = (48 * resources.displayMetrics.density).toInt()
+                setOnClickListener { startActivity(Intent(this@SettingsActivity, IntegrationsActivity::class.java)) }
+            },
+            android.widget.LinearLayout.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+            ),
+        )
+        binding.settingsServerControls.addView(
+            com.google.android.material.button.MaterialButton(this).apply {
+                setText(R.string.settings_manage_plugins)
+                isAllCaps = false
+                minHeight = (48 * resources.displayMetrics.density).toInt()
+                setOnClickListener { startActivity(Intent(this@SettingsActivity, PluginsActivity::class.java)) }
+            },
+            android.widget.LinearLayout.LayoutParams(
+                android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+            ),
+        )
         binding.root.applyAppTypeface()
         @Suppress("DEPRECATION")
         val vibrator = getSystemService(VIBRATOR_SERVICE) as? Vibrator
@@ -91,6 +130,9 @@ class SettingsActivity : AppCompatActivity() {
         binding.disconnectButton.setOnClickListener { confirmDisconnect() }
         binding.settingsLicensesButton.setOnClickListener {
             startActivity(Intent(this, LicensesActivity::class.java))
+        }
+        binding.root.findViewById<View>(R.id.settings_agent_catalog_button)?.setOnClickListener {
+            startActivity(AgentCatalogActivity.intent(this))
         }
         binding.root.findViewById<View>(R.id.settings_diagnostics_send_button)?.setOnClickListener {
             confirmSendDiagnostics()

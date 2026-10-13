@@ -93,8 +93,8 @@ class VisualFoundationsTest {
         assertTrue(title != null && ViewCompat.isAccessibilityHeading(title))
         assertEquals(R.id.collie_sheet_content, (inserted.parent as View).id)
         val close = requireNotNull(dialog.findViewById<ImageButton>(R.id.collie_sheet_close))
-        assertEquals(dp(44), close.layoutParams.width)
-        assertEquals(dp(44), close.layoutParams.height)
+        assertEquals(dp(48), close.layoutParams.width)
+        assertEquals(dp(48), close.layoutParams.height)
     }
 
     private fun dp(value: Int): Int =

@@ -106,6 +106,7 @@ function fakeJournal(lines: string[] = []) {
   const state = { lines: [...lines], mtimeMs: 1000, rewound: false, fromStart: true };
   const calls = { resolve: 0, stat: 0, readSince: 0, load: 0, reducer: 0 };
   let now = 100_000;
+  let afterReadSince: (() => void) | undefined;
 
   const source: TranscriptSource = {
     async resolve(r) {
@@ -130,12 +131,20 @@ function fakeJournal(lines: string[] = []) {
       const at = decodeCursor(cursor, "bytes", key);
       const reset = at === null || state.rewound || at > state.lines.length;
       state.rewound = false;
-      return {
+      const result = {
         lines: state.lines.slice(reset ? 0 : at),
         cursor: encodeCursor("bytes", key, state.lines.length),
         reset,
         fromStart: reset && state.fromStart,
       };
+      afterReadSince?.();
+      return result;
+    },
+    async guardedResolution(r) {
+      const path = await this.resolve(r);
+      if (path === null) return null;
+      const version = state.mtimeMs;
+      return { path, isCurrent: () => state.mtimeMs === version };
     },
   };
 
@@ -166,6 +175,7 @@ function fakeJournal(lines: string[] = []) {
       state.lines.push(...rows);
       state.mtimeMs += 1;
     },
+    afterReadSince: (fn: () => void) => { afterReadSince = fn; },
   };
 }
 
@@ -409,6 +419,42 @@ describe("no reader means no work", () => {
     fx.advance(2);
     await live.window(fx.adapter, ref(), { limit: 10 });
     expect(fx.calls.readSince).toBe(2);
+  });
+
+  test("a guarded-action read observes a new queue inside the presentation tick floor", async () => {
+    const fx = fakeJournal([queue("first queued command")]);
+    const live = windows(fx);
+    const initial = await live.window(fx.adapter, ref(), { limit: 10 });
+    expect(initial?.queued).toEqual(["first queued command"]);
+
+    fx.advance(TICK_FLOOR_MS - 1);
+    fx.append(queue("replacement queued command"));
+    const ordinary = await live.window(fx.adapter, ref(), { limit: 10 });
+    expect(ordinary?.queued).toEqual(["first queued command"]);
+    const fresh = await live.windowFresh(fx.adapter, ref(), { limit: 10 });
+    expect(fresh?.body.queued).toEqual(["replacement queued command"]);
+    expect(fresh?.isCurrent()).toBe(true);
+    expect(fx.calls.readSince).toBe(2);
+    fx.append(queue("late replacement"));
+    expect(fresh?.isCurrent()).toBe(false);
+  });
+
+  test("guarded-action reads refuse a source without a resolver dependency lease", async () => {
+    const fx = fakeJournal([queue("queued command")]);
+    const unsupported = {
+      ...fx.adapter,
+      source: { ...fx.adapter.source, guardedResolution: undefined },
+    };
+    expect(await windows(fx).windowFresh(unsupported, ref(), { limit: 10 })).toBeNull();
+    expect(fx.calls.readSince).toBe(0);
+  });
+
+  test("a source change during the forced read invalidates the guarded window", async () => {
+    const fx = fakeJournal([queue("queued command")]);
+    fx.afterReadSince(() => fx.append(queue("changed during source read")));
+    const result = await windows(fx).windowFresh(fx.adapter, ref(), { limit: 10 });
+    expect(result).toBeNull();
+    expect(fx.calls.readSince).toBe(1);
   });
 
   test("a session whose stat did not move is never read at all", async () => {

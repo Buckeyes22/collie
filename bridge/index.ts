@@ -1,3 +1,4 @@
+import { nativeAccessFor } from "./native-access/config.ts";
 import { existsSync, readFileSync, readlinkSync, statSync } from "node:fs";
 import { mkdir, readFile as readFileAsync, realpath as realpathAsync, stat as statAsync, statfs as statfsAsync, writeFile } from "node:fs/promises";
 import { cpus, freemem, homedir, hostname, loadavg, totalmem } from "node:os";
@@ -14,11 +15,11 @@ import { CacheTracker } from "./cache/tracker.ts";
 import { CacheWarden } from "./cache/warden.ts";
 import { CacheWatchStore } from "./cache/watch.ts";
 import { MachineAlertStore } from "./machine-alerts.ts";
-import { loadMachineHistory, saveMachineHistory } from "./machine-history.ts";
+import { MachineHistory, loadMachineHistoryForMigration, saveMachineHistory } from "./machine-history.ts";
 import { DiskWatch } from "./machine-disks.ts";
 import { MachineSampler } from "./machine-stats.ts";
 import { machineRosterOf, MachineWatch, SOLO_MACHINE_ID, type MachineRosterEntry } from "./machines.ts";
-import { localWatchPane, peerWatchPane } from "./cache/watch-key.ts";
+import { localWatchPane, peerWatchPane, resolvePeerWatchPane } from "./cache/watch-key.ts";
 import { buildJournalRegistry } from "./journal/registry.ts";
 import { createCacheRulesReader } from "./operator-cache-rules.ts";
 import { AuditLog, fileAuditAppender } from "./audit.ts";
@@ -68,7 +69,7 @@ import { pushTitle } from "./push-titles.ts";
 import { NotifyPrefsStore } from "./notify-prefs.ts";
 import { FolderStore } from "./folders.ts";
 import { WorktreeBaseStore } from "./worktree-bases.ts";
-import { WorktreeReceiptStore } from "./worktree-receipts.ts";
+import { WorktreeReceiptStore, loadOrCreateIntentReceiptKey } from "./worktree-receipts.ts";
 import { LaunchReceiptStore } from "./launch-receipts.ts";
 import { AddedLauncherStore, addedFileIo } from "./launchers-added.ts";
 import { RecentRunStore, recentRunFileIo } from "./recent-runs.ts";
@@ -109,6 +110,9 @@ import {
 import { CrewRegistry } from "./crew/registry.ts";
 import { leadReleaseHeader, LEG_WALL_CLOCK_MS, CrewFollower, UpdateTurns } from "./crew/follow.ts";
 import { createCrewRouter, type CrewRouterDeps } from "./crew/router.ts";
+import { MonitoringCheckpointReceiver } from "./crew/monitoring-checkpoint.ts";
+import { monitoringAuthorityKey } from "./crew/monitoring-authority.ts";
+import { monitoringCheckpointSource } from "./crew/monitoring-checkpoint-source.ts";
 import {
   checkpointMarker,
   formatMarker,
@@ -162,7 +166,7 @@ import {
   type TrustStoreData,
   type Warrant,
 } from "./crew/trust-store.ts";
-import { currentWarrant, discardForeignWarrant, refreshWarrant, type WarrantPush } from "./crew/warrant.ts";
+import { currentWarrant, discardForeignWarrant, refreshWarrant, WARRANT_TTL_MS, type WarrantPush } from "./crew/warrant.ts";
 import { Push } from "./push.ts";
 import { pluginRoot } from "./root.ts";
 import { buildId, startServer } from "./server.ts";
@@ -607,8 +611,20 @@ function crewStoreChanged(): void {
 }
 
 // ── Process-global services, shared across every session ─────────────────────
-const push = new Push(cfg);
+const nativeAccess = nativeAccessFor(cfg.stateDir);
+if (nativeAccess && (cfg.deviceHeader !== nativeAccess.config.deviceHeader || !cfg.skipServe || cfg.basePath === "/" || cfg.basePath === new URL(nativeAccess.config.publicBase).pathname || !cfg.trustedUser || cfg.trustedUser !== nativeAccess.config.mappedLogin)) {
+  throw new Error("Native gateway requires matching device/login gates, separate retained browser and native mounts, and the explicitly configured proxy front door (COLLIE_SKIP_SERVE=1).");
+}
+const push = new Push(cfg, undefined, nativeAccess?.bindings);
 await push.init();
+// A configured native gateway has a durable cross-process retirement outbox. This consumer drops
+// exact local registrations even without an alert; signed offline clears are a separate B22 ACK.
+let nativeRetirementRunning = false;
+const nativeRetirementTimer = nativeAccess ? setInterval(() => {
+  if (nativeRetirementRunning) return;
+  nativeRetirementRunning = true;
+  void push.refreshNativeBindings().catch(() => console.warn("[native-access] enrollment retirement deferred")).finally(() => { nativeRetirementRunning = false; });
+}, 1000) : null;
 
 const snooze = new Snooze(cfg);
 await snooze.load();
@@ -699,6 +715,12 @@ await folders.load();
 // nothing: the file appears on the first create that carries an id.
 const worktreeReceipts = new WorktreeReceiptStore(cfg.stateDir);
 await worktreeReceipts.load();
+let intentReceiptKey: Uint8Array | null = null;
+try {
+  intentReceiptKey = await loadOrCreateIntentReceiptKey(cfg.stateDir);
+} catch (error) {
+  console.warn(`[receipts] owner-bound intent receipts unavailable: ${error instanceof Error ? error.message : String(error)}`);
+}
 
 // Which ref each new worktree was cut from (ADR 0089, amended, bridge/worktree-bases.ts). Nothing
 // reads it yet. Loading writes nothing: the file appears on the first create that named a start.
@@ -1328,6 +1350,7 @@ const holdsOwnWarrant = (): boolean => warrantNamesSelf(crew.mode, trustStore.cu
  */
 const standbyStore = crew.mode === "peer" && bootTrust !== null ? new StandbyDeviceStore(cfg.stateDir) : null;
 if (standbyStore !== null) await standbyStore.load();
+const monitoringCheckpointReceiver = standbyStore === null ? undefined : new MonitoringCheckpointReceiver(cfg.stateDir);
 
 /** The synced devices, or none. The credential the standby door checks a confirm against — only that. */
 const syncedDevices = (): readonly SyncedDevice[] => standbyStore?.current()?.devices ?? [];
@@ -1462,6 +1485,8 @@ function crewSelfOf(data: TrustStoreData) {
   return { id: data.self.memberId, name: leadLabel(hostname(), data.self.memberId) };
 }
 
+let machineAlertStore: MachineAlertStore | undefined;
+
 const crewLead = (() => {
   if (crew.mode !== "lead") return undefined;
   const data = trustStore.current();
@@ -1512,6 +1537,7 @@ const crewLead = (() => {
       // (bridge/cache/watch-key.ts).
       cacheWarden.tick(
         body.agents.flatMap((p) => {
+          if (resolvePeerWatchPane(body, p.paneId, p.session) !== p) return [];
           const pane = peerWatchPane(p, memberId);
           return pane === undefined ? [] : [pane];
         }),
@@ -1608,6 +1634,17 @@ const crewLead = (() => {
       collision: (labels) => {
         pairingCollision = labels === null || labels.length === 0 ? null : { at: Date.now(), labels };
       },
+    },
+    monitoringCheckpoint: {
+      deputy: () => trustStore.current()?.deputy ?? null,
+      ...monitoringCheckpointSource({
+        stateDir: cfg.stateDir,
+        trustStore,
+        store: () => machineAlertStore,
+        isLead: () => deposed === null && resolveCrewRuntime(enrollmentOf(trustStore.current())).mode === "lead",
+        warrant: currentWarrant,
+      }),
+      push: (link, frame) => client.monitoringCheckpoint(link, frame),
     },
     // §18.10's fast path: a member told this lead, in as many words, that it follows somebody else.
     // Best-effort and time-boxed (it works only while this lead is still in that member's anchor
@@ -1728,29 +1765,56 @@ const machineSampler = new MachineSampler({
  */
 function machineRoster(): MachineRosterEntry[] {
   const data = trustStore.current();
-  return machineRosterOf(
-    crewStatus?.() ?? null,
-    data === null ? { id: SOLO_MACHINE_ID, name: hostname() } : crewSelfOf(data),
+  const status = crewStatus?.() ?? null;
+  const base = machineRosterOf(
+    status,
+    data === null
+      ? { id: SOLO_MACHINE_ID, name: hostname() }
+      : { id: SOLO_MACHINE_ID, name: hostname(), fingerprint: data.self.fingerprint, createdAt: data.self.createdAt },
   );
+  if (data === null || status === null) return base;
+  return base.map((entry):MachineRosterEntry => {
+    const identity = entry.isLead ? data.self : data.peers.find((member) => member.memberId === entry.id);
+    if (identity === undefined) return entry;
+    return Object.assign({},entry,{
+      fingerprint:identity.fingerprint,
+      enrolledAt:entry.isLead ? data.self.createdAt : data.peers.find(member=>member.memberId===entry.id)!.enrolledAt,
+      solo:false,
+    });
+  });
 }
 
+machineAlertStore = crew.mode === "peer" ? undefined : await MachineAlertStore.load(cfg.stateDir);
+const machineHistory = crew.mode === "peer" ? undefined : machineAlertStore?.monitoringHistory(Date.now()) ??
+  await loadMachineHistoryForMigration(cfg.stateDir, Date.now());
+if (machineAlertStore !== undefined && machineHistory === null) machineAlertStore.failClosed("machine.monitoring_state_corrupt");
 const machineWatch =
   crew.mode === "peer"
     ? undefined
     : new MachineWatch({
         now: Date.now,
         roster: machineRoster,
-        history: await loadMachineHistory(cfg.stateDir, Date.now()),
-        alerts: await MachineAlertStore.load(cfg.stateDir),
+        history: machineHistory ?? new MachineHistory(),
+        alerts: machineAlertStore!,
         saveHistory: (history, now) => saveMachineHistory(cfg.stateDir, history, now),
         // The cache warning's two gates, for the cache warning's reason (ADR 0042): quiet hours apply,
         // and the operator's switch for the kind is read live.
         muted: () => snooze.isMuted(),
         enabled: () => notifyPrefs.current().machines,
-        send: (msg) => void push.send(msg),
+        send: (msg, producerCurrent) => void push.send(msg, producerCurrent),
+        captureProducer: () => {
+          const held = trustStore.current();
+          const originalTrustRevision=trustStore.monitoringRevision(monitoringAuthorityKey);
+          const originalWarrant=currentWarrant(held)?.warrant;
+          const originalExpiry=originalWarrant===undefined ? Infinity : originalWarrant.refreshedAt+WARRANT_TTL_MS;
+          return () => {
+            const current = trustStore.current();
+            return Date.now()<originalExpiry && deposed === null && trustStore.monitoringRevision(monitoringAuthorityKey)===originalTrustRevision && (held === null ? current === null : current !== null);
+          };
+        },
         // A deposed lead's roster is void (§18.12): it stops sweeping, and it must stop judging and
         // pushing about machines it no longer answers for, and stop recording its own minutes too.
-        active: () => deposed === null,
+        active: () => deposed === null && resolveCrewRuntime(enrollmentOf(trustStore.current())).mode!=="peer",
       });
 
 // The same tick the crew sweep rides (CREW_PROTOCOL.md §10.1, §11): no second timer. The sampler reads
@@ -1980,7 +2044,9 @@ if (standbyServer !== null && standbyDoor !== null) {
   );
 }
 
-const server = startServer({
+
+const server = await startServer({
+  nativeIngress: nativeAccess ? { ingress: nativeAccess.ingress, mappedLogin: nativeAccess.config.mappedLogin } : undefined,
   cfg,
   registry,
   push,
@@ -2003,6 +2069,7 @@ const server = startServer({
   cacheWatch,
   folders,
   worktreeReceipts,
+  intentReceiptKey,
   worktreeBases,
   launchReceipts,
   worktreeChoices,
@@ -2068,6 +2135,7 @@ const server = startServer({
             },
             // The standby half (RFC §6.5, §7), or nothing at all — see `standbySurface` above.
             standby: standbySurface,
+            monitoringCheckpoint: monitoringCheckpointReceiver,
             ...surface,
           }),
   // Peer only, and only when the pin could actually be built. See `transportPinned` above.
@@ -2116,6 +2184,7 @@ const shutdown = async () => {
   stt.close();
   // Writes are debounced, so the last few seconds of "you looked at this" live only in memory —
   // persist them before exiting, or every restart quietly resurrects alerts you'd already cleared.
+  if (nativeRetirementTimer) clearInterval(nativeRetirementTimer);
   activity.stop();
   await activity.flush();
   // The day of minutes is saved every five minutes from the tick; the last few go to disk here.

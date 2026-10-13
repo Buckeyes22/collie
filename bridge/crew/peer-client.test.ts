@@ -367,6 +367,9 @@ describe("PeerClient — the verdict matrix (§7, §10.2)", () => {
         warrantGeneration: null,
         warrantActiveGeneration: null,
         pairingDigest: null, pairingCollision: null,
+        controlCapabilities: null,
+        hostControlCapabilities: null,
+        receiptContextBound: null,
         mux: null,
       },
       status: 200,
@@ -1509,6 +1512,12 @@ describe("parseMuxReport — a member's declaration, bounded and re-checked", ()
     expect(
       Object.hasOwn(parseMuxReport({ mux: { ...block, topologyLatency: { kind: "bounded" } } })!, "topologyLatency"),
     ).toBe(false);
+    expect(parseMuxReport({ mux: { ...block, readLimits: { maxRequestedLines: 10_000 } } })?.readLimits)
+      .toEqual({ maxRequestedLines: 10_000 });
+    for (const maxRequestedLines of [0, -1, 10_001, 1.5, "1000"]) {
+      expect(Object.hasOwn(parseMuxReport({ mux: { ...block, readLimits: { maxRequestedLines } } })!, "readLimits"))
+        .toBe(false);
+    }
   });
 
   test("strings and collections are capped, so a member cannot make the lead serve an unbounded body", () => {
@@ -1518,5 +1527,23 @@ describe("parseMuxReport — a member's declaration, bounded and re-checked", ()
     });
     expect(wire?.unsupportedKeys).toHaveLength(256);
     expect(wire?.notes).toEqual({});
+  });
+});
+
+describe("new capability absence on older peers", () => {
+  test("hello preserves only the peer's positive declaration; absent/malformed blocks stay unknown", async () => {
+    for (const controlCapabilities of [undefined, { controlOperations: true }, { controlOperations: "true" }]) {
+      const result = await client(replying({ protocol: CREW_PROTOCOL_VERSION, member: "laptop", controlCapabilities }).fetch).hello(laptop);
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.value.controlCapabilities).toEqual(controlCapabilities?.controlOperations === true ? { controlOperations: true } : null);
+    }
+  });
+
+  test("receipt readiness is optional, boolean-only, and absence never inherits lead readiness", async () => {
+    for (const receiptContextBound of [undefined, true, false, "true"]) {
+      const result = await client(replying({ protocol: CREW_PROTOCOL_VERSION, member: "laptop", receiptContextBound }).fetch).hello(laptop);
+      expect(result.ok).toBe(true);
+      if (result.ok) expect(result.value.receiptContextBound).toBe(typeof receiptContextBound === "boolean" ? receiptContextBound : null);
+    }
   });
 });

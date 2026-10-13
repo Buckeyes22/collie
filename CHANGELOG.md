@@ -1,5 +1,7 @@
 # Changelog
 
+
+- B19 source: retain original-terminal custody through negotiated producer input queues and live scoped transitions; native waits resume the same opaque ID and show moved/closed/detected results without successor actions. Producer compilation/review and physical acceptance remain pending.
 This file tracks all notable changes to Collie, ordered newest version first. The project follows
 [Semantic Versioning](https://semver.org/). From 1.6.0 on, a version's changes are grouped under
 `### Added`, `### Changed`, `### Fixed`, `### Packaging` and `### Docs`, in that order and only
@@ -11,6 +13,12 @@ empty `## [Unreleased]` section above it. The newest numbered `## [x.y.z]` headi
 Unreleased heading) **must** match the `version` field in `herdr-plugin.toml`, `package.json`,
 and `web/package.json`, which `scripts/check-version.sh` checks. See [`CLAUDE.md`](./CLAUDE.md) →
 *Versioning* for the bump policy.
+- **Agent views reach their dedicated host handler.** Integration administration dispatches only its own routes so phone view reads and changes are available.
+
+### Fixed
+
+- **Restore verified actions after reconnecting to Herdr events.** Recheck the current runtime handshake during the next snapshot so supported controls become available without reusing retired authority.
+
 
 ## Upgrading
 
@@ -23,13 +31,77 @@ Running a crew? Update the lead first; members follow on their own. Details:
 
 ## [Unreleased]
 
+### Added
+
+- **Manage Herdr plugins from native clients.** Add host-scoped inventory, manifest actions, controlled logs and panes, secret-redacted bounded JSON config editing, and confirmed install/link/uninstall plans backed by owner-derived operations and durable receipts. Keep executable arguments, owner paths and secret values private.
+
+- **Report bounded agent metadata and manage declarative Herdr views.** Guard pane token reports with a negotiated original-occupant binding, and reconcile terminal projections through the producer's owner-scoped view reader. Keep unsupported runtimes and unresolved dispatch outcomes fail-closed.
+
+
+- **Share portable pane layouts with a reviewed preview.** Add bounded JSON export/import and exact boolean-path split-ratio controls through capability-gated Herdr routes and Crew; apply plans accept only declared launcher commands and keep plugin-backed commands unavailable pending B32 resolution.
+
+- **Manage Herdr integrations from the native host screen.** Add scoped integration inventory and version status, planned install/removal, manifest inspection/reload and separately confirmed refresh through a typed host-control adapter and Crew route. Letta plans bind to its reported CLI status; active but untrusted hooks and manifest update outcomes stay visible.
+
+- **Named agents and bounded waits keep their original occupant.** Add typed local/Crew orchestration routes, exact Herdr response envelopes and durable one-shot receipts. Recheck original admission after dial and every drain; possible delivered writes remain unknown and are never resent automatically.
+
+- **Opt in to native identity through a configured DPoP gateway.** Add an operator-owned public OIDC profile, independent pairing/device enrollment, bounded replay-protected loopback ingress, final binding/role/access-expiry dispatch fences and durable exact binding-retirement custody. Preserve visible pane read intent without trusting injected phone identity headers. Preserve authenticated browser routing on a separate retained mount; actual issuer/device/Crew and signed retirement acceptance remain pending. Keep ordinary startup unchanged when the optional gateway configuration is absent.
+
+- **Plan and safely remove linked worktrees from New.** Show the chosen branch-capable target, default or explicit base, and server-resolved folder before owner-bound creation; preserve lead-local create/list/open routes and add a separate owner-scoped removal plan across Crew. Clean removal is the default, dirty changes need an explicit force choice, and durable receipts keep lost replies from dispatching twice. Herdr does not expose an atomic expected-state check, which remains stated by the contract.
+
+- **Review repository history without leaving Changes.** Expose bounded first-parent commit pages through the scoped read and Crew routes, pin later pages to the first page's HEAD, and read selected commits plus their listed file diffs without enabling Git writes. Stop at 10,000 commits and show truncation separately from the end of history. Bound displayed author names and serialized pages to the native transport envelope, and refuse malformed cap metadata.
+- **Inspect an agent's current identity without guessing its authority.** Add bounded pane/session diagnostics and optional Crew forwarding; validate registered custom reporter intents but refuse lifecycle writes until the upstream runtime can compare-and-set the current occupant atomically.
+- **Launch, worktree and launcher-add intents keep durable owner-bound tombstones.** The shared operation journal reserves each frozen effect before dispatch and never evicts those reservations; bounded success-response caches may replay a known result, while a lost or evicted body stays unknown and cannot trigger a second effect. The bridge advertises readiness only when its protected receipt key and durable journal are available.
+- **Inspect harness support per owning host.** Add a paired read-only 24-kind capability inventory and a native Settings screen, use bounded fixed-argument version probes for registered binaries, and report per-kind identities only from the current owner snapshot while keeping unmeasured behavior explicitly unverified.
+
+- **Inspect pane process context from the owning runtime.** Add a bounded device-read endpoint for foreground process, directory and restore diagnostics, with explicit Herdr pane targeting, occupant checks and Crew forwarding.
+
+- **Plan and reconcile pane layout changes.** Declare bounded neutral layout reads and one-shot split, resize, zoom, swap, focus and move routes with durable move aliases and Crew gate parity.
+- **Native Files reads can confirm printed paths across Crew.** Forward the exact bounded root-relative existence check with device-read admission on the lead and peer.
+
+- **Scoped control reads preserve authority across Crew and reconnects.** Declare independent positive control capabilities, carry typed refusal provenance, forward session refresh as a read, and expose device-bound durable operation receipts without repeating uncertain dispatch.
+- **Pane reads negotiate a bounded adapter budget.** Publish verified adapter ceilings, report admitted and served rows separately, and refuse a response that exceeds the admitted limit.
+- **Queued sends revalidate their live queue and pane occupant.** Add a closed guarded form to the existing keys route, refuse older Crew peers, and latch duplicate or uncertain attempts without sending queued text.
+- **Organize workspaces and tabs through owner-scoped plans.** Add bounded rename, close, focus, pre-removal ordering and a guarded whole-tab transfer that moves existing processes one at a time with durable receipts, linked-worktree close previews, and explicit same-workspace-only `tab.move` across mux and Crew.
+
+- **Machine rule updates compare the original enrolled machine and rule revision.** Keep lead-local, device-write whole-rule replacements, exact request receipts and bounded inert read extensions. Commit completed-minute history, episodes, reserved clears and the evaluator watermark in one durable generation. The backend exports an original-owner producer port and bounded, integrity-checked deputy checkpoints; the native editor, actual B22 signed enqueue, and B38 activation still require their source joins and actual acceptance.
+
 ### Changed
 
 - **The Android fork follows the current upstream server contract.** Merge Collie 1.19.0 while retaining native Kotlin screens, English-only UI, Android release isolation, transcript caching, and request trace correlation. Android handles scoped sessions, Crew, paired reads, mounted origins and live chat.
 
 ### Fixed
 
+- **Keep local acknowledged input visible when the current connection returns.** Refresh only its local acknowledgement display without replacing an already adopted pane, restoring drafts or replaying input. Refuse queued old connection emissions.
+
+- **Keep native proxy cleanup with its original owner.** Join connection-incarnation retirement with request custody through transport waits, encrypted identity transactions, nonce caches, issuer calls and queued profile/editor acknowledgements. Preserve fresh replacement navigation and local acknowledged-input custody without replaying terminal actions.
+
+- **Native identity profiles accept exact root issuers without a slash.** Preserve the operator’s literal issuer in discovery, callback, token and device-binding verification while keeping other HTTPS endpoints canonical.
+
+- **Printed file discovery carries its owning device read admission.** Pane responses bind the current Files verdict into their ETag, and Crew preserves the owning declaration without borrowing the lead’s support.
+
 - **Large upstream merges keep their required commit checks effective.** Read entire staged path lists before judging changelog, protocol and flake-lock evidence so an early matching path cannot cause SIGPIPE to hide the match or skip a required gate.
+- **Claude command help reflects current review and fork behavior.** Describe `/review` as a current-diff or specified-target review and `/fork` as a copied background session with an optional prompt in the shared Android and web catalogs.
+- **Cache watches preserve each peer session’s exact pane identity.** Ambiguous old peer watches remain removable orphan rows, and current cache details retire their copied facts and catalog validators with their actor.
+
+- **Gemini journal drift canaries follow structural Part fields.** Count unknown field names without recording their payloads, including appended patches and replacement snapshots.
+- **Native gateway responses retain their matching compressed wire encoding.** Forward gzip and other encoded upstream bodies without decoding them under the original encoding headers, preserving bounded streams and current identity checks.
+- **Native identity profiles retain explicitly configured API resource scopes.** Export bounded additional issuer scopes for native authorization without changing the required signed token audience or gateway admission.
+- **Keep pane read limits through agent identity decorators.** Preserve the owning adapter's declared ceiling when beacon hooks and hints wrap it, so production reads can request the same bounded history as direct adapter reads.
+- **Fence every worktree dispatch to its original review.** Recheck the paired caller, owning runtime and target after preparation and before launcher text or Enter. A checkout already created remains a truthful partial result when its launcher cannot safely start; the same request ID never recreates it automatically.
+- **Fence worktree authority through socket readiness and drain.** Preserve the original caller and runtime at every managed byte-write continuation; zero-byte retirement refuses, while a previously accepted prefix remains uncertain and is never resent automatically.
+- **Worktree uncertainty survives retirement after bytes reach the socket.** Creation and removal receipts retain UNKNOWN after an accepted prefix, while zero-byte refusal stays refused and the same intent is never dispatched again.
+- **The CLI embeds the agent identity operator guide.** Packaged and binary installs can print the guide added with native identity inspection; Gemini doctor fixtures retain the full expanded integration and journal catalog.
+
+- **Retired monitoring work cannot borrow a replacement producer.** Preserve the original role, secret, enrollment and warrant lease across queued writes, settlement and final browser delivery. Refuse stale evaluated rules, retain reserved clears under opening pressure, keep each checkpoint revision immutable, distinguish missing storage from corruption, and verify complete chunks before a usable receipt or idempotent acknowledgement. Stream full-precision records across bounded chunks with a separately declared private external-index budget.
+
+- **Pending monitoring delivery cannot discard another machine’s recovery clear.** Keep an incomplete minute retryable when its opening slot is busy, release failed owned checkpoint transfers, share authoritative event-pair validation with checkpoint readers, and bind acknowledgements to the exact requested revision and digest.
+
+- **Committed monitoring snapshots survive later minute updates.** Complete each immutable observation under its original authority, coalesce the latest revision after its exact receipt, and retain original deputy, warrant and frame deadline checks. A deferred frame never certifies delivery or replays producer work.
+
+### Packaging
+
+- **Pin current Android tooling without weakening native checks.** Align the SDK, built-in Kotlin, wrapper checksum and release SDK references with the latest-only Android policy.
+- **Android builds use the current SDK command interface.** CI installs the age-eligible Android CLI from Google's signed repository with an explicit version pin and retains SDK license and failure checks.
 
 ## [1.19.0] - 2026-10-09
 

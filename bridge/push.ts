@@ -1,3 +1,4 @@
+import type { DeviceBindings, IngressBinding, BindingRetired } from "./native-access/device-bindings.ts";
 import type { JsonObject, JsonValue } from "./json.ts";
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
@@ -31,6 +32,7 @@ export type PushSubscription = { endpoint: string; keys: { p256dh: string; auth:
 export interface StoredSubscription extends PushSubscription {
   /** When this endpoint was FIRST seen. Preserved across a re-subscribe of the same endpoint —
    *  "since when has this device been subscribed" is the question it answers, not "when last". */
+  nativeBinding?: IngressBinding;
   createdAt?: string;
   /** The `User-Agent` of the request that registered it, trimmed and capped. The only thing that
    *  tells "my iPhone" from "the Mac I used once" in a list of opaque Apple endpoints. */
@@ -39,6 +41,9 @@ export interface StoredSubscription extends PushSubscription {
 
 /** What a registration knows about itself beyond the subscription — see {@link Push.addSubscription}. */
 export interface SubscriptionMeta {
+  /** Derived by the dispatcher, never from a registration body. */
+  nativeIngress?: boolean;
+  nativeBinding?: IngressBinding;
   /**
    * An endpoint this registration SUPERSEDES: the one the same device last registered with. A
    * service worker re-registration (a reinstall, a rejected push topic, a restart-triggered
@@ -93,6 +98,13 @@ function coerceStored(v: JsonValue | undefined): StoredSubscription | null {
     endpoint: o.endpoint,
     keys: { p256dh: keys.p256dh, auth: keys.auth },
   };
+  if (o.nativeBinding !== undefined) {
+    const b = o.nativeBinding;
+    if (b === null || typeof b !== "object" || Array.isArray(b) || Object.keys(b).length !== 3 ||
+        typeof b.id !== "string" || !/^[A-Za-z0-9_-]{16,64}$/u.test(b.id) || typeof b.revision !== "number" ||
+        !Number.isSafeInteger(b.revision) || b.revision < 1 || typeof b.pairedDeviceId !== "string" || !/^[0-9a-f]{64}$/u.test(b.pairedDeviceId)) return null;
+    row.nativeBinding = { id: b.id, revision: b.revision, pairedDeviceId: b.pairedDeviceId };
+  }
   if (typeof o.createdAt === "string") row.createdAt = o.createdAt;
   if (typeof o.userAgent === "string") row.userAgent = o.userAgent.slice(0, USER_AGENT_MAX);
   return row;
@@ -305,6 +317,7 @@ export class Push {
   constructor(
     private readonly cfg: Config,
     sender?: PushSender,
+    private readonly nativeBindings?: DeviceBindings,
   ) {
     this.file = join(cfg.stateDir, "push-subscriptions.json");
     this.sender = sender ?? ((sub, payload, options) => this.lib!.sendNotification(sub, payload, options));
@@ -333,11 +346,13 @@ export class Push {
     this.lib.setVapidDetails(this.cfg.vapidSubject, this.cfg.vapidPublic, this.cfg.vapidPrivate);
     this._enabled = true;
     await this.loadStore();
+    await this.refreshNativeBindings();
     console.log(`[push] enabled (${this.subs.size} saved subscription(s))`);
   }
 
   async addSubscription(sub: PushSubscription, meta: SubscriptionMeta = {}): Promise<void> {
     if (!this.enabled) return;
+    if (meta.nativeIngress && (!this.nativeBindings || !meta.nativeBinding || !this.nativeBindings.current(meta.nativeBinding)) || meta.nativeBinding && (!this.nativeBindings || !this.nativeBindings.current(meta.nativeBinding))) throw new Error("native.enrollment_binding");
     // The row this one supersedes (SubscriptionMeta.replaces). Dropped BEFORE the new one is stored,
     // and only when it is a different endpoint — a device re-registering the endpoint it already
     // holds is naming itself, not a predecessor.
@@ -350,6 +365,7 @@ export class Push {
     const previous = this.subs.get(sub.endpoint);
     const userAgent = meta.userAgent?.trim().slice(0, USER_AGENT_MAX) ?? previous?.userAgent;
     const row: StoredSubscription = { endpoint: sub.endpoint, keys: sub.keys };
+    if (meta.nativeBinding) row.nativeBinding = { id: meta.nativeBinding.id, revision: meta.nativeBinding.revision, pairedDeviceId: meta.nativeBinding.pairedDeviceId };
     // Re-subscribing does not restart the clock: `createdAt` is when this endpoint first appeared.
     row.createdAt = previous?.createdAt ?? new Date().toISOString();
     if (userAgent !== undefined && userAgent !== "") row.userAgent = userAgent;
@@ -393,7 +409,7 @@ export class Push {
   }
 
   /** Send a notification instruction (render, clear, or update) to every subscribed device. */
-  async send(message: PushMessage): Promise<void> {
+  async send(message: PushMessage, originalProducerCurrent: () => boolean = () => true): Promise<void> {
     // The SW reads deep-link fields from `data`. `session` is omitted for the primary and `host` for
     // this collie's own sessions (both absent on the message), keeping that payload identical to the
     // pre-multi-session, pre-crew shape.
@@ -408,7 +424,7 @@ export class Push {
     const base =
       msg.type === "update" ? UPDATE_SEND_OPTIONS : msg.type === "machine" ? MACHINE_SEND_OPTIONS : SEND_OPTIONS;
     const options = topic !== undefined && topicIsSendable(topic) ? { ...base, topic } : base;
-    await this.broadcast(JSON.stringify({ ...msg, data }), options);
+    await this.broadcast(JSON.stringify({ ...msg, data }), options, originalProducerCurrent);
   }
 
   /** Convenience for a one-off render (used by the manual push-test script). */
@@ -416,16 +432,20 @@ export class Push {
     await this.send({ title, body, paneId: data.paneId });
   }
 
-  private async broadcast(payload: string, options: SendOptions): Promise<void> {
-    if (!this.enabled) return;
+  private async broadcast(payload: string, options: SendOptions, originalProducerCurrent: () => boolean = () => true): Promise<void> {
+    if (!this.enabled || !originalProducerCurrent()) return;
+    if (this.nativeBindings) await this.refreshNativeBindings();
+    if (!originalProducerCurrent()) return;
     const dead: string[] = [];
     // One entry per subscription attempted this round, so the eviction pass below can ask which
     // push services proved themselves healthy before it holds a failure against any one device.
     const results = await Promise.all(
       [...this.subs.values()].map(async (sub) => {
         try {
+          if (sub.nativeBinding && (!this.nativeBindings || !this.nativeBindings.current(sub.nativeBinding))) return { sub, err: null };
           // `{ endpoint, keys }` and nothing else: the stored row also carries operator metadata,
           // and web-push serialises what it is handed.
+          if (!originalProducerCurrent()) return { sub, err: null };
           await this.sender({ endpoint: sub.endpoint, keys: sub.keys }, payload, options);
           return { sub, err: null };
         } catch (err) {
@@ -434,6 +454,7 @@ export class Push {
       }),
     );
 
+    if (!originalProducerCurrent()) return;
     // A push service that delivered to SOMEBODY this round has a working VAPID/JWT/network path,
     // so a sibling's failure on that same origin is about that subscription and nothing else.
     const healthy = new Set(
@@ -492,6 +513,19 @@ export class Push {
    *
    * This and {@link save} are the only reader and the only writer of `push-subscriptions.json`.
    */
+  /** Retire only the exact local enrollment. The durable event remains pending until B22 commits
+   * its signed offline clear; removing a legacy subscription cannot acknowledge that obligation. */
+  async refreshNativeBindings(): Promise<void> {
+    if (!this.nativeBindings) return;
+    for (const event of this.nativeBindings.pendingRetirements()) await this.retireNativeBinding(event);
+  }
+
+  async retireNativeBinding(event: BindingRetired): Promise<number> {
+    let count = 0;
+    for (const [endpoint, row] of this.subs) if (row.nativeBinding?.id === event.bindingId && row.nativeBinding.revision === event.revision && row.nativeBinding.pairedDeviceId === event.pairedDeviceId) { this.subs.delete(endpoint); this.failures.delete(endpoint); count++; }
+    if (count) await this.save(); return count;
+  }
+
   async loadStore(): Promise<void> {
     try {
       const raw: unknown = await Bun.file(this.file).json();

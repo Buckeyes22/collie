@@ -8,7 +8,7 @@
 // therefore costs 32 MB of reading and a full re-parse of it. That is the cost this module removes.
 //
 // ── THE ONE FACT THE WHOLE DESIGN RESTS ON ───────────────────────────────────
-// A raw `\n` byte is always a row boundary, in all seven formats. The five file harnesses write JSONL,
+// A raw `\n` byte is always a row boundary, in all eight formats. The six file harnesses write JSONL,
 // and the two SQLite harnesses serialise their rows through `JSON.stringify`, which escapes a newline
 // inside a string value as `\n` (two characters) and never emits a raw one. So a reader may cut the
 // byte stream anywhere: a fragment either completes with the next chunk or is a fragment of exactly
@@ -32,6 +32,11 @@ export interface Reduction {
   readonly added: readonly TranscriptEntry[];
   /** `uuid`s of turns emitted EARLIER that this row changed in place. Never a position. */
   readonly changed: readonly string[];
+  /**
+   * Full replacement snapshot for formats whose source explicitly reorders/removes history.
+   * Consumers must start a new position generation; UUID upserts cannot express deletion or moves.
+   */
+  readonly replace?: readonly TranscriptEntry[];
 }
 
 // ── WHAT A REDUCER REPORTS ABOUT WHAT IT COULD NOT READ, AND WHY IT IS A METHOD ──
@@ -65,7 +70,7 @@ export interface Reduction {
 /**
  * A role name in a tally wears this prefix, so a name always says which field produced it.
  *
- * Two of the seven formats decide a row's kind with a `type` AND a role (codex and pi); claude and grok
+ * Two formats decide a row's kind with a `type` AND a role (codex and pi); claude and grok
  * never read one, and opencode and hermes have nothing else. Without the prefix a tally saying
  * `developer` would not say where to look. Not exported: it is a spelling inside the names this
  * module produces, and a caller reads those names rather than composing one.
@@ -165,7 +170,7 @@ export function createUnknownCounter(known: KnownTypes): UnknownCounter {
 }
 
 /**
- * An empty tally, for a `RowReducer` that is not one of the seven grammars.
+ * An empty tally, for a `RowReducer` that is not one of the eight grammars.
  *
  * A function rather than a shared constant: `Object.freeze` does not stop `Map.set`, so a shared
  * empty tally would be a shared mutable handed to every caller.
@@ -341,7 +346,9 @@ export function reduction(added: readonly TranscriptEntry[], changed: ReadonlySe
 export function parseWith(reducer: RowReducer, text: string): TranscriptEntry[] {
   const entries: TranscriptEntry[] = [];
   for (const line of text.split("\n")) {
-    for (const entry of reducer.push(line).added) entries.push(entry);
+    const result = reducer.push(line);
+    if (result.replace !== undefined) entries.splice(0, entries.length, ...result.replace);
+    else for (const entry of result.added) entries.push(entry);
   }
   return entries;
 }

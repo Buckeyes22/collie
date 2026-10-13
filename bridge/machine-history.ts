@@ -16,11 +16,11 @@
 // ── ONE RING OF TYPED ARRAYS PER MACHINE ─────────────────────────────────────
 // A minute is a handful of numbers, and a day is 1440 minutes. Kept as one object per minute, a
 // machine's day held about 175 KiB of heap (measured 2026-10-05 under Bun 1.4.1). Kept here as a ring
-// of typed arrays, allocated once at the first sample, it is 1440 x 48 bytes, about 68 KiB with the
+// of typed arrays, allocated once at the first sample, it is 1440 x 64 bytes, about 90 KiB with the
 // disk fraction, and it never grows. Each minute keeps running AVERAGES and their counts rather than sums: an average is what
 // every reader wants, and the next sample folds in with `avg += (x - avg) / n`. CPU, memory and disk
 // stay 64-bit, because the alert evaluator compares them with the rule's line and a 32-bit 0.9 is
-// below 0.9. The CPU maximum and the network rates are 32-bit: they are only ever drawn.
+// below 0.9. The CPU maximum, network rates and minute timestamps also remain full 64-bit values for checkpoints.
 //
 // ── THE FILE IS COMPACT ──────────────────────────────────────────────────────
 // Version 2 stores, per machine, the first minute's start and one row per minute,
@@ -34,8 +34,9 @@
 
 import { mkdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { readMonitoringPrivateFile } from "./monitoring-private-io.ts";
 import type { JsonValue } from "./json.ts";
-import { coerceHistoryFile } from "./machine-parse.ts";
+import { coerceHistoryFile, parseMachineStrictJson, parseMonitoringHistory, parseLegacyMonitoringHistory, isMachineFileMissing } from "./machine-parse.ts";
 import { fullestFraction } from "./machine-disks.ts";
 import type { MachineHistoryPoint, MachineSample, MachineSpark } from "./types.ts";
 
@@ -61,7 +62,7 @@ export const SPARK_MAX_MINUTES = 60;
  * One minute of one machine as the file hands it back: averages and the sample count behind them.
  * `rx` and `tx` are `null` for a minute with no network reading.
  */
-export interface LoadedMinute {
+export type LoadedMinute = {
   /** The minute's start, epoch ms. */
   readonly t: number;
   readonly n: number;
@@ -72,6 +73,10 @@ export interface LoadedMinute {
   readonly tx: number | null;
   /** The fullest disk's fraction, `null` for a minute with no disk reading (and every older file). */
   readonly disk: number | null;
+  /** Exact per-field counts used only by the authoritative monitoring generation. */
+  readonly rxN?: number;
+  readonly txN?: number;
+  readonly diskN?: number;
 }
 
 /** One complete minute as the alert evaluator reads it: CPU average, memory and fullest-disk fractions. */
@@ -113,14 +118,14 @@ const COUNT_MAX = 0xffff;
  */
 class Series {
   /** The minute's start in whole minutes since the epoch (29 million today; an Int32 holds 2 billion). */
-  private readonly minute = new Int32Array(HISTORY_MINUTES);
+  private readonly minute = new Float64Array(HISTORY_MINUTES);
   private readonly n = new Uint16Array(HISTORY_MINUTES);
   private readonly cpu = new Float64Array(HISTORY_MINUTES);
   private readonly mem = new Float64Array(HISTORY_MINUTES);
-  private readonly cpuMax = new Float32Array(HISTORY_MINUTES);
-  private readonly rx = new Float32Array(HISTORY_MINUTES);
+  private readonly cpuMax = new Float64Array(HISTORY_MINUTES);
+  private readonly rx = new Float64Array(HISTORY_MINUTES);
   private readonly rxN = new Uint16Array(HISTORY_MINUTES);
-  private readonly tx = new Float32Array(HISTORY_MINUTES);
+  private readonly tx = new Float64Array(HISTORY_MINUTES);
   private readonly txN = new Uint16Array(HISTORY_MINUTES);
   private readonly disk = new Float64Array(HISTORY_MINUTES);
   private readonly diskN = new Uint16Array(HISTORY_MINUTES);
@@ -200,16 +205,32 @@ class Series {
     this.cpuMax[s] = m.cpuMax;
     if (m.rx !== null) {
       this.rx[s] = m.rx;
-      this.rxN[s] = n;
+      this.rxN[s] = Math.min(COUNT_MAX, Math.max(1, Math.round(m.rxN ?? n)));
     }
     if (m.tx !== null) {
       this.tx[s] = m.tx;
-      this.txN[s] = n;
+      this.txN[s] = Math.min(COUNT_MAX, Math.max(1, Math.round(m.txN ?? n)));
     }
     if (m.disk !== null) {
       this.disk[s] = m.disk;
-      this.diskN[s] = n;
+      this.diskN[s] = Math.min(COUNT_MAX, Math.max(1, Math.round(m.diskN ?? n)));
     }
+  }
+
+  checkpointRows(): LoadedMinute[] {
+    const out: LoadedMinute[] = [];
+    for (let i = 0; i < this.size; i++) {
+      const s = this.slot(i);
+      const rxN = this.rxN[s]!;
+      const txN = this.txN[s]!;
+      const diskN = this.diskN[s]!;
+      out.push({
+        t: this.t(i), n: this.n[s]!, cpu: this.cpu[s]!, cpuMax: this.cpuMax[s]!, mem: this.mem[s]!,
+        rx: rxN === 0 ? null : this.rx[s]!, tx: txN === 0 ? null : this.tx[s]!, disk: diskN === 0 ? null : this.disk[s]!,
+        rxN, txN, diskN,
+      });
+    }
+    return out;
   }
 
   /** Drop the newest `count` minutes. */
@@ -429,6 +450,22 @@ export class MachineHistory {
     }
     return { version: 2, machines };
   }
+
+  /** Full-precision bounded state for the atomic rules/evaluator/outbox generation. */
+  toMonitoringState(now: number): Record<string, LoadedMinute[]> {
+    this.prune(now);
+    return Object.fromEntries([...this.machines].map(([id, series]) => [id, series.checkpointRows()]));
+  }
+
+  /** Strict importer for a checkpoint generated by {@link toMonitoringState}. */
+  static fromMonitoringState(value: JsonValue | undefined, now: number): MachineHistory | null {
+    const loaded = parseMonitoringHistory(value);
+    if(loaded===null)return null;
+    const history = new MachineHistory(loaded);
+    history.prune(now);
+    history.markSaved();
+    return history;
+  }
 }
 
 /** Write the store, atomically and owner-only: a fresh temp file at 0600, then a rename over the target. */
@@ -452,6 +489,26 @@ export async function loadMachineHistory(stateDir: string, now: number): Promise
     raw = undefined;
   }
   const history = new MachineHistory(coerceHistoryFile(raw, HISTORY_MINUTES));
+  history.prune(now);
+  history.markSaved();
+  return history;
+}
+
+/** Strict one-shot migration reader for the legacy sidecar; malformed rows never become authority. */
+export async function loadMachineHistoryForMigration(stateDir: string, now: number): Promise<MachineHistory | null> {
+  const path = join(stateDir, MACHINE_HISTORY_FILE);
+  let bytes: Buffer;
+  try {
+    bytes = await readMonitoringPrivateFile(path, 64 * 1024 * 1024);
+  } catch (error) {
+    if (isMachineFileMissing(error)) return new MachineHistory();
+    return null;
+  }
+  let raw: JsonValue | null;
+  try { raw = parseMachineStrictJson(new TextDecoder("utf-8", { fatal: true }).decode(bytes)); } catch { return null; }
+  const loaded=parseLegacyMonitoringHistory(raw);
+  if(loaded===null)return null;
+  const history = new MachineHistory(loaded);
   history.prune(now);
   history.markSaved();
   return history;

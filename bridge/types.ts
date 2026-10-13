@@ -1,13 +1,14 @@
 // Domain model for the bridge. These are OUR types, decoupled from Herdr's wire shapes
 // (which live only in mux/herdr/client.ts). The rest of the app talks in these terms.
 
+import type { JsonObject } from "./json.ts";
 import type { Confidence } from "./cache/claims.ts";
 import type { PaneCache } from "./cache/engine.ts";
 import type { ApiErrorDetail, ErrorCode } from "./error-codes.ts";
 import type { GitHead } from "./git-head.ts";
 import type { ChatBody } from "./journal/live.ts";
 import type { AgentSessionRef, TranscriptEntry } from "./journal/types.ts";
-import type { MuxCapability, MuxSpaceCapacity, MuxTopologyLatency } from "./mux/capabilities.ts";
+import type { MuxCapability, MuxReadLimits, MuxSpaceCapacity, MuxTopologyLatency } from "./mux/capabilities.ts";
 import type { UpdateRun } from "./update-run.ts";
 
 // Re-exported so the wire surface has ONE import site: a consumer of PaneHistoryResponse gets the
@@ -28,6 +29,8 @@ export type AgentStatus = "idle" | "working" | "blocked" | "done" | "unknown";
  */
 export interface AgentView {
   paneId: string;
+  /** Opaque server-only terminal incarnation used to reject stale layout plans. */
+  terminalIncarnation?: string;
   workspaceId: string;
   workspaceLabel: string;
   workspaceNumber: number;
@@ -35,6 +38,10 @@ export interface AgentView {
   agent: string;
   status: AgentStatus;
   cwd: string;
+  /** Current PTY foreground directory; separate from pane/workspace `cwd`. */
+  foregroundCwd?: string;
+  /** Host restore diagnostic, displayed as untrusted text. */
+  restoreError?: string;
   focused: boolean;
   /** "agent" for an agent-bearing pane, "shell" for a bare shell. Defaults to "agent" when absent. */
   kind?: "agent" | "shell";
@@ -65,11 +72,9 @@ export interface AgentView {
    */
   sessionAgent?: string;
   /**
-   * Upper bound on the lines a `recent` read of this pane can return — Herdr's scrollback depth plus
-   * the viewport. This is the ONLY reliable "is there more scrollback" signal: `PaneRead.truncated`
-   * is always false even when a read cut history off, which is why the mirror's "Load older" button
-   * never used to appear. A pane on the alternate screen (any Claude agent) reports just its viewport
-   * here, because the alt screen keeps no scrollback ring at all. Absent on older Herdr servers.
+   * Depth reported by the owning mux census. It is a hint for the loaded mirror window, not a
+   * guarantee that the buffer has not since shrunk or that agent-owned alternate-screen history is
+   * exhaustive. Absent when the adapter cannot measure retained depth or on older peers.
    */
   readableLines?: number;
   /**
@@ -178,7 +183,7 @@ export interface AgentView {
  * NOTE the `Omit` is opt-OUT: a future server-only field on AgentView goes on the wire unless it is
  * added to the omit list here. If you add one, strip it here in the same change.
  */
-export type PaneWire = Omit<AgentView, "agentSession" | "sessionAgent"> & {
+export type PaneWire = Omit<AgentView, "agentSession" | "sessionAgent" | "foregroundCwd" | "restoreError" | "terminalIncarnation"> & {
   /** True when this pane's history is actually offerable: the agent named a session AND its harness
    *  has a journal adapter. Says nothing about whether the log is readable — a named session whose
    *  file is missing still answers `available:false` with reason `no-log`. */
@@ -243,7 +248,7 @@ export function toPaneWire(
   hasJournal: (agent: string) => boolean,
   discoversSessions: (agent: string) => boolean = () => false,
 ): PaneWire {
-  const { agentSession, sessionAgent: _sessionAgent, ...rest } = pane;
+  const { agentSession, sessionAgent: _sessionAgent, foregroundCwd: _foregroundCwd, restoreError: _restoreError, terminalIncarnation: _terminalIncarnation, ...rest } = pane;
   const addressable = agentSession !== undefined || discoversSessions(pane.agent);
   return addressable && hasJournal(pane.agent) ? { ...rest, hasSession: true } : rest;
 }
@@ -353,6 +358,8 @@ export interface DeviceAuth {
 
 /** GET /api/snapshot — the current herd view. */
 export interface SnapshotResponse {
+  /** Authenticated lead incarnation; absent on solo/older bridges. Never a credential. */
+  controlAuthority?: { leadId: string; epoch: string };
   bridge: BridgeStatus;
   /** Per-device authorisation for the requesting client; absent when the feature is off. */
   device?: DeviceAuth;
@@ -551,7 +558,7 @@ export type MachineDisk = {
 export type AlertMetric = "cpu" | "mem" | "disk";
 
 /** Push when the metric stays at or above `above` (0.5..0.99) for `forMin` minutes (5..120). */
-export interface AlertRule {
+export type AlertRule = {
   above: number;
   forMin: number;
 }
@@ -577,6 +584,12 @@ export interface MachineRow {
   /** When the answering bridge took or received that sample. Present exactly when `sample` is. */
   sampledAt?: number;
   alerts: MachineAlerts;
+  /** Canonical unsigned decimal rule generation; absent on an older bridge. */
+  rulesRevision?: string;
+  /** SHA-256 of the enrolled machine identity or persisted solo lineage. */
+  machineIncarnation?: string;
+  /** Inert bounded server-owned rule extensions; callers may preserve, never invent, them. */
+  extensions?: JsonObject;
   /** The metrics whose alert episode is open now. */
   firing: AlertMetric[];
   /**
@@ -625,6 +638,10 @@ export interface MachineHistoryResponse {
 /** `POST /api/machines/:id/alerts`. The rules as stored after the write. */
 export interface MachineAlertsResponse {
   alerts: MachineAlerts;
+  rulesRevision?: string;
+  machineIncarnation?: string;
+  /** Inert bounded server-owned rule extensions; callers may preserve, never invent, them. */
+  extensions?: JsonObject;
 }
 
 /**
@@ -778,11 +795,21 @@ export interface UpdateStatus {
 
 /** GET /api/pane/:id — recent terminal output for one agent (ANSI/SGR, rendered colored). */
 export interface PaneReadResponse {
+  /** Owning producer's current device-read admission; absence never admits automatic Files. */
+  filesReadReady?: boolean;
   paneId: string;
   text: string;
   truncated: boolean;
   /** Herdr's monotonic pane revision — passed through for the client's prompt-select race guard. */
   revision: number;
+  /** Lines admitted by the bridge after applying verified adapter and server ceilings. */
+  requestedLines?: number;
+  /** Actual non-empty rows in `text`; never inferred from the request. */
+  servedLines?: number;
+  /** Mux-reported retained depth; it may lag a shrinking buffer and is not exhaustive journal history. */
+  readableLines?: number;
+  /** Why this read stopped before the client's desired window, when known. */
+  limitReason?: "adapter-ceiling" | "server-ceiling" | "available-depth";
   /**
    * The same rows with soft wraps undone, present only when the grid shows a URL the pane's width
    * cut in two (`hasSplitUrl`). The mirror keeps rendering `text`; the client uses this to give the
@@ -833,7 +860,12 @@ export type PaneHistoryResponse =
  */
 export type PaneChatResponse =
   | { paneId: string; available: false; reason: "disabled" | "no-session" | "no-log" }
-  | ({ paneId: string; available: true } & ChatBody);
+  | ({ paneId: string; available: true } & ChatBody & {
+      /** Opaque guard identity, present only for a live declared queued-send action. */
+      queuedDigest?: string;
+      /** Opaque hash of the current owner-side pane occupant identity. */
+      queuedSendOccupant?: string;
+    });
 
 /**
  * One changed file in a Changes list (ADR 0065). `status` is the file's state against HEAD, staged
@@ -928,6 +960,23 @@ export interface CommitInfo {
   time: number;
 }
 
+/** A bounded first-parent page. `headHash` pins every subsequent offset to the same history. */
+export interface ChangeCommitHistory {
+  available: true;
+  repo: string;
+  name: string;
+  headHash: string;
+  offset: number;
+  limit: number;
+  commits: CommitInfo[];
+  nextOffset: number | null;
+  truncated: boolean;
+}
+
+export type ChangeCommitHistoryAnswer =
+  | { available: false; reason: ChangesUnavailableReason | "unknown-repo" | "no-commit" | "stale-history" }
+  | ChangeCommitHistory;
+
 /**
  * The last commit of one discovered repo, read-only (ADR 0065, the commit view): HEAD against its
  * first parent, or against the empty tree for a root commit. `files` carry `M`, `A`, `D` or `R`.
@@ -974,6 +1023,10 @@ export type PaneChangeCommitDiffResponse = { paneId: string } & ChangesWorkspace
 export type WorkspaceChangeCommitResponse = { workspaceId: string; workspaceLabel?: string } & ChangeCommit;
 /** GET /api/workspace/:id/changes?view=commit&repo=&path= — the same file, asked by workspace. */
 export type WorkspaceChangeCommitDiffResponse = { workspaceId: string; workspaceLabel?: string } & ChangeCommitDiff;
+/** GET /api/{pane|workspace}/:id/changes?view=history&repo=&head=&offset=&limit=. */
+export type PaneChangeCommitHistoryResponse = { paneId: string } & ChangesWorkspace & ChangeCommitHistoryAnswer;
+export type WorkspaceChangeCommitHistoryResponse = { workspaceId: string; workspaceLabel?: string } & ChangeCommitHistoryAnswer;
+/** GET /api/{pane|workspace}/:id/changes?view=history&repo=&head=&offset=&limit=. */
 
 // ── The Files view (ADR 0083): one folder, or one text file, under the Changes root ──────────────
 
@@ -1294,6 +1347,8 @@ export interface MuxConfig {
    * put "synced 4s ago" under a multiplexer that is never stale, which is noise that means nothing.
    */
   topologyLatency?: MuxTopologyLatency;
+  /** The adapter's declared per-request ceiling, absent on old bridges. */
+  readLimits?: MuxReadLimits;
 }
 
 /**
@@ -1560,6 +1615,50 @@ export interface HarnessInfo {
   found: boolean;
 }
 
+/** One independently assessed cell in GET /api/agents/capabilities. `unverified` is not
+ * synonymous with unsupported: evidence or adapter work is still required. */
+export type AgentCapabilityState = "implemented" | "unsupported" | "unverified" | "interface-ready";
+
+export interface AgentCapabilityEvidence {
+  /** A short explanation; executable output and filesystem paths never cross this contract. */
+  version: string;
+  journal: string;
+  semantic: string;
+  media: string;
+}
+
+export interface AgentCapabilityRow {
+  kind: string;
+  label: string;
+  executableFound: boolean | null;
+  version: string | null;
+  launch: AgentCapabilityState;
+  detection: AgentCapabilityState;
+  sessionReference: AgentCapabilityState;
+  journal: AgentCapabilityState;
+  webSemanticDialog: AgentCapabilityState;
+  webComposer: AgentCapabilityState;
+  media: AgentCapabilityState;
+  /** Current owner-runtime observations only; zero is real and does not imply unsupported. */
+  observedPanes?: number;
+  /** Number of observed pane identities that carried an owner-reported session reference. */
+  observedSessionReferences?: number;
+  evidence: AgentCapabilityEvidence;
+}
+
+/** Current host/session result; no PATH or executable location crosses the API. */
+export interface AgentCapabilitiesResponse {
+  schema: 1;
+  mux: string;
+  muxCapabilities: {
+    agentDetection: boolean;
+    agentSessionRef: boolean;
+  };
+  runtimeVersion: string | null;
+  rows: AgentCapabilityRow[];
+  note: string;
+}
+
 /**
  * GET /api/folders, and the answer to POST /api/folders/star — THIS host's own folder list for the
  * new-space sheet (#289), read from its `folders.json` (bridge/folders.ts). Session-scoped only so a
@@ -1650,6 +1749,10 @@ export interface CacheWatchListResponse {
 export interface BridgeConfig {
   push: boolean;
   vapidPublicKey: string;
+  /** Native conditional whole-rule replacement is available on this bridge. */
+  machineRulesRevision?: 1;
+  /** True only when this host can bind receipt IDs to validated pairing identities and payloads. */
+  receiptContextBound?: boolean;
   /** Build id of the bundle the bridge is currently serving (for stale-cache detection). */
   build?: string;
   /**
@@ -1676,6 +1779,8 @@ export interface BridgeConfig {
    * M10/06 — which a client reads as "every capability present", i.e. exactly today's Herdr app.
    */
   mux?: MuxConfig;
+  control?: { capabilities: Record<string, boolean> };
+  hostControl?: { provider: string; capabilities: Record<string, boolean>; notes: Record<string, string> };
   /**
    * Speech-to-text, when a provider is configured. **Absent is the feature being off**, which is
    * also exactly what an older bridge sends — so a client reads "no key" as "no microphone" and a

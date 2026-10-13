@@ -55,6 +55,47 @@
                 android:textSize="12sp" />
         </LinearLayout>
 
+        <TextView
+            android:id="@+id/changes_button"
+            android:layout_width="wrap_content"
+            android:layout_height="@dimen/collie_touch_target"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:clickable="true"
+            android:contentDescription="@string/changes_open_space_accessibility"
+            android:focusable="true"
+            android:gravity="center"
+            android:minWidth="64dp"
+            android:paddingHorizontal="8dp"
+            android:text="@string/pane_action_changes"
+            android:textColor="@color/collie_on_background"
+            android:textSize="13sp" />
+
+        <ImageButton
+            android:id="@+id/new_workflow_button"
+            android:layout_width="@dimen/collie_touch_target"
+            android:layout_height="@dimen/collie_touch_target"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/new_title"
+            android:padding="8dp"
+            android:src="@drawable/ic_collie_add" />
+        <Button
+            android:id="@+id/files_button"
+            android:layout_width="wrap_content"
+            android:layout_height="@dimen/collie_touch_target"
+            android:contentDescription="@string/files_open"
+            android:minWidth="48dp"
+            android:text="@string/files_open"
+            android:textAllCaps="false" />
+
+        <ImageButton
+            android:id="@+id/metadata_button"
+            android:layout_width="@dimen/collie_touch_target"
+            android:layout_height="@dimen/collie_touch_target"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/workspace_metadata_open"
+            android:padding="10dp"
+            android:src="@android:drawable/ic_menu_edit" />
+
         <ImageButton
             android:id="@+id/settings_button"
             android:layout_width="@dimen/collie_touch_target"

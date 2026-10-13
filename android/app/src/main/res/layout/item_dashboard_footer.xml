@@ -16,7 +16,7 @@
         android:contentDescription="@string/pack_footer_accessibility"
         android:focusable="true"
         android:gravity="center"
-        android:minHeight="44dp"
+        android:minHeight="@dimen/collie_touch_target"
         android:orientation="horizontal"
         android:visibility="gone">
 

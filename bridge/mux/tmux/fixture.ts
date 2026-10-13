@@ -152,6 +152,12 @@ export class FakeTmux implements TmuxExec {
     return this.recorded;
   }
 
+  /** Replace retained history for bounded pane-read fixtures. */
+  setScrollback(paneId: string, rows: readonly string[]): void {
+    const pane = this.panes.find((candidate) => candidate.id === paneId);
+    if (pane !== undefined) pane.history = [...rows];
+  }
+
   /** The command groups run so far. Read by the unit tests, never by the conformance engine. */
   invocations(): readonly (readonly string[])[] {
     return this.ran;
@@ -421,7 +427,10 @@ export class FakeTmux implements TmuxExec {
     const pane = this.panes.find((candidate) => candidate.id === paneId);
     if (pane === undefined) return missing("pane", paneId);
     const start = flagValue(group, "-S");
-    const lines = start === undefined ? pane.viewport : [...pane.history, ...pane.viewport];
+    const allLines = start === undefined ? pane.viewport : [...pane.history, ...pane.viewport];
+    const requested = start === undefined ? allLines.length : Number(start.replace(/^-+/u, ""));
+    // `-S -N` starts N rows above the viewport, then includes the viewport itself.
+    const lines = allLines.slice(Math.max(0, allLines.length - requested - pane.viewport.length));
     const paint = (line: string): string => (group.includes("-e") ? `${GREEN}${line}${RESET}` : line);
     return said(`${lines.map(paint).join("\n")}\n`);
   }

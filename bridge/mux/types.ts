@@ -1,3 +1,4 @@
+import type { AgentAction, AgentControlInfo, AgentExplain, AgentOccupant, AgentWaitCondition } from "../control/agent-models.ts";
 // THE MUX PORT — everything Collie needs from a multiplexer, in Collie's words.
 //
 // A *multiplexer* is what owns the pane. A *harness* is what runs inside it (claude, codex, pi, omp).
@@ -28,13 +29,16 @@
 import type { AgentSessionRef } from "../journal/types.ts";
 import type { AgentStatus } from "../types.ts";
 import type { MuxCapability, MuxCapabilityDeclaration } from "./capabilities.ts";
+import type { HostControlPort } from "../host-control/types.ts";
 import type { MuxIdentity } from "./identity.ts";
+import type { PaneMetadataRequest, WorkspaceMetadataRequest } from "../control/metadata.ts";
 
 export type {
   MuxCapability,
   MuxCapabilityDeclaration,
   MuxSpaceCapacity,
   MuxTopologyLatency,
+  MuxReadLimits,
 } from "./capabilities.ts";
 export { declareCapabilities, MUX_CAPABILITIES, supportsCapability } from "./capabilities.ts";
 export type { MuxIdentity, MuxIdentityProblem } from "./identity.ts";
@@ -127,6 +131,8 @@ export function isUnsupported<T>(outcome: MuxOutcome<T>): boolean {
  */
 export interface MuxPane extends MuxIdentity {
   readonly paneId: string;
+  /** Opaque, server-only terminal-process incarnation; never a phone-visible identifier. */
+  readonly terminalIncarnation?: string;
   readonly spaceId: string;
   readonly spaceLabel: string;
   /** The space's position, as the multiplexer orders them. 1-based; 0 when it has no ordering. */
@@ -142,6 +148,10 @@ export interface MuxPane extends MuxIdentity {
   readonly tabNamed?: true;
   /** The pane's working directory. Empty when the multiplexer does not report one. */
   readonly cwd: string;
+  /** Herdr's optional PTY foreground cwd. This never replaces the stable pane/workspace `cwd`. */
+  readonly foregroundCwd?: string;
+  /** Restore diagnostic reported by the owning multiplexer, when present. */
+  readonly restoreError?: string;
   /**
    * **The pane the operator's own terminal is showing.** Not "the pane Collie is showing", and not a
    * pane Collie chose — it is a FACT about the multiplexer, read every snapshot.
@@ -307,6 +317,99 @@ export interface MuxSnapshot {
   readonly tabs: readonly MuxTab[];
 }
 
+/** Neutral, bounded pane geometry. Coordinates are terminal cells, as supplied by the mux. */
+export interface MuxLayoutRect {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+export interface MuxLayoutSnapshot {
+  readonly workspaceId: string;
+  readonly tabId: string;
+  readonly zoomed: boolean;
+  readonly area: MuxLayoutRect;
+  readonly focusedPaneId: string;
+  readonly panes: readonly { readonly paneId: string; readonly focused: boolean; readonly rect: MuxLayoutRect }[];
+  readonly splits: readonly { readonly id: string; readonly direction: "right" | "down"; readonly ratio: number; readonly rect: MuxLayoutRect }[];
+}
+/** Portable, process-free layout data. Pane IDs are observations and are stripped on export. */
+export type MuxPortableLayoutNode =
+  | { readonly type: "pane"; readonly label: string | null; readonly cwd: string | null; readonly paneId: string | null; readonly command: readonly string[] | null; readonly env: Readonly<Record<string, string>> }
+  | { readonly type: "split"; readonly direction: MuxSplitDirection; readonly ratio: number; readonly first: MuxPortableLayoutNode; readonly second: MuxPortableLayoutNode };
+export interface MuxPortableLayout {
+  readonly workspaceId: string;
+  readonly tabId: string;
+  readonly focusedPaneId: string;
+  readonly zoomed: boolean;
+  readonly root: MuxPortableLayoutNode;
+}
+export interface MuxLayoutApplyRequest {
+  readonly root: MuxPortableLayoutNode;
+  readonly workspaceId: string | null;
+  readonly tabId: string | null;
+  readonly tabLabel: string | null;
+  readonly focus: false;
+}
+export interface MuxLayoutCreated {
+  readonly workspaceId: string;
+  readonly tabId: string;
+  readonly paneIds: readonly string[];
+  readonly focusedPaneId: string;
+}
+export interface MuxSplitRatioRequest {
+  readonly tabId: string;
+  readonly paneId: string | null;
+  /** Herdr's boolean-path direction bits: false follows first, true follows second. */
+  readonly path: readonly boolean[];
+  readonly ratio: number;
+}
+export type MuxPaneDirection = "left" | "right" | "up" | "down";
+export type MuxSplitDirection = "right" | "down";
+export type MuxSplitCwdChoice = null | { readonly kind: "source-pane" } | { readonly kind: "workspace"; readonly workspaceId: string } | { readonly kind: "advertised-folder"; readonly path: string };
+export type MuxLayoutRead =
+  | { readonly kind: "layout"; readonly layout: MuxLayoutSnapshot }
+  | { readonly kind: "neighbor"; readonly paneId: string; readonly direction: MuxPaneDirection; readonly neighborPaneId: string | null; readonly layout: MuxLayoutSnapshot }
+  | { readonly kind: "edges"; readonly paneId: string; readonly left: boolean; readonly right: boolean; readonly up: boolean; readonly down: boolean; readonly layout: MuxLayoutSnapshot };
+export type MuxLayoutReadRequest = { readonly kind: "layout" } | { readonly kind: "neighbor"; readonly direction: MuxPaneDirection } | { readonly kind: "edges" };
+/** Internal evidence read after adapter preflight and checked synchronously before one mutation. */
+export interface MuxLayoutFinalEvidence {
+  readonly sourceLayout: MuxLayoutRead;
+  /** Fresh same-window opaque occupant and owner-selected cwd evidence, never serialized. */
+  readonly snapshot: MuxSnapshot;
+  readonly destinationLayout?: MuxLayoutRead;
+  readonly neighborLayout?: MuxLayoutRead;
+}
+/** Internal synchronous admission fence. It is never serialized or accepted from a phone request. */
+export type MuxLayoutFinalAdmission = (prepared: MuxLayoutAction, runtimeIdentity: string, evidence: MuxLayoutFinalEvidence) => boolean;
+export interface MuxTransferMember { readonly paneId: string; readonly witness: string }
+export interface MuxTransferGuard {
+  readonly schema: 1;
+  readonly transferId: string;
+  readonly sourceWorkspaceId: string;
+  readonly sourceTabId: string;
+  readonly remainingSource: readonly MuxTransferMember[];
+  readonly destination: null | { readonly workspaceId: string; readonly tabId: string; readonly members: readonly MuxTransferMember[] };
+}
+export type MuxLayoutAction =
+  | { readonly kind: "split"; readonly paneId: string; readonly direction: MuxSplitDirection; readonly ratio: number | null; readonly targetPaneId: string | null; readonly workspaceId: string | null; readonly resolvedTargetPaneId?: string; readonly resolvedWorkspaceId?: string; readonly resolvedSourceTabId?: string; readonly resolvedSourceWorkspaceId?: string; readonly resolvedSourceCwd?: string | null; readonly cwdDevice?: string | null; readonly cwdInode?: string | null; readonly cwdCatalogPath?: string | null; readonly cwdSelectedPath?: string | null; readonly cwdChoice?: MuxSplitCwdChoice; readonly cwd?: string | null; readonly env?: Readonly<Record<string, string>>; readonly focus: false }
+  | { readonly kind: "resize"; readonly paneId: string; readonly direction: MuxPaneDirection; readonly amount: number | null }
+  | { readonly kind: "zoom"; readonly paneId: string; readonly mode: "toggle" | "on" | "off" }
+  | { readonly kind: "swap"; readonly paneId: string; readonly direction: MuxPaneDirection | null; readonly sourcePaneId: string | null; readonly targetPaneId: string | null; readonly resolvedTargetPaneId?: string }
+  | { readonly kind: "move"; readonly paneId: string; readonly destination: MuxMoveDestination; readonly focus: false; readonly transfer?: MuxTransferGuard; readonly resolvedSourceTabId?: string; readonly resolvedSourceWorkspaceId?: string; readonly resolvedTargetPaneId?: string; readonly resolvedTargetTabId?: string; readonly resolvedTargetWorkspaceId?: string }
+  | { readonly kind: "focus-direction"; readonly paneId: string; readonly direction: MuxPaneDirection; readonly resolvedTargetPaneId?: string };
+export type MuxMoveDestination =
+  | { readonly type: "tab"; readonly tabId: string; readonly split: MuxSplitDirection; readonly targetPaneId: string; readonly ratio: number | null }
+  | { readonly type: "new_tab"; readonly workspaceId: string; readonly label: string | null }
+  | { readonly type: "new_workspace"; readonly label: string | null; readonly tabLabel: string | null };
+export type MuxLayoutMutation =
+  | { readonly kind: "split"; readonly layout: MuxLayoutSnapshot; readonly paneId: string }
+  | { readonly kind: "resize"; readonly changed: boolean; readonly layout: MuxLayoutSnapshot }
+  | { readonly kind: "zoom"; readonly changed: boolean; readonly zoomed: boolean; readonly layout: MuxLayoutSnapshot }
+  | { readonly kind: "swap"; readonly changed: boolean; readonly layout: MuxLayoutSnapshot }
+  | { readonly kind: "move"; readonly changed: boolean; readonly paneId: string; readonly previousPaneId: string; readonly previousTabId: string; readonly previousWorkspaceId: string; readonly layout: MuxLayoutSnapshot; readonly createdTabId?: string; readonly createdWorkspaceId?: string; readonly closedTabId?: string; readonly closedWorkspaceId?: string }
+  | { readonly kind: "focus-direction"; readonly changed: boolean; readonly paneId: string; readonly layout: MuxLayoutSnapshot };
+
 // ── Reading a pane ────────────────────────────────────────────────────────────
 
 /**
@@ -349,6 +452,51 @@ export interface MuxGrid {
    * constant here would disable the guard silently.
    */
   readonly revision: number;
+}
+
+/** One foreground process as reported by the owning runtime. Missing OS fields stay absent. */
+export interface MuxPaneProcess {
+  readonly pid: number;
+  readonly name: string;
+  readonly argv?: readonly string[];
+  readonly argv0?: string;
+  readonly cmdline?: string;
+  readonly cwd?: string;
+}
+
+/** Process census for an explicitly resolved pane; missing individual OS fields stay absent. */
+export interface MuxPaneProcessInfo {
+  readonly paneId: string;
+  /** Same occupant snapshot taken after the process RPC, never copied from an earlier census. */
+  readonly foregroundCwd?: string;
+  readonly restoreError?: string;
+  readonly shellPid?: number;
+  readonly foregroundProcessGroupId?: number;
+  readonly processes: readonly MuxPaneProcess[];
+  readonly truncated: boolean;
+  readonly tty?: string;
+}
+
+/** Read-only identity facts returned by an owning runtime for one current pane. */
+export interface MuxAgentIdentity {
+  readonly paneId: string;
+  /** Name the runtime currently associates with this pane, if any. */
+  readonly agent: string | null;
+  readonly status: AgentStatus;
+  /** Session provenance is independent of lifecycle authority. */
+  readonly session?: {
+    readonly source: string;
+    readonly agent: string;
+    readonly kind: "id" | "path";
+    readonly value: string;
+  };
+  /** Herdr does not expose the active lifecycle authority source in AgentInfo. */
+  readonly stateAuthority: { readonly observed: false; readonly source: null };
+  readonly interactiveReady: boolean | null;
+  readonly launchPending: boolean | null;
+  /** Decimal strings preserve uint64 values without JS precision loss. */
+  readonly stateChangeSeq: string | null;
+  readonly completionSeq: string | null;
 }
 
 /** A freshly-created shell pane — enough to navigate into it before the next snapshot. */
@@ -440,6 +588,19 @@ export interface MuxWorktreeCreateRequest extends MuxWorktreeScope {
 /** Which existing worktree to show. */
 export interface MuxWorktreeOpenRequest extends MuxWorktreeScope {
   readonly path: string;
+}
+
+/** Remove only a discovered, currently open linked checkout by its owner workspace ID. */
+export interface MuxWorktreeRemoveRequest {
+  readonly workspaceId: string;
+  /** Defaults false. True is a separate operator confirmation that discards reported changes. */
+  readonly force: boolean;
+}
+
+export interface MuxWorktreeRemoved {
+  readonly workspaceId: string;
+  readonly path: string;
+  readonly forced: boolean;
 }
 
 /**
@@ -544,11 +705,16 @@ export interface MuxSubscription {
  * remote machine is reached by talking to the Collie that runs on it, never by dialling its
  * multiplexer across a machine boundary (ADR 0011).
  */
+/** Synchronous authority check after adapter preflight and immediately before its named RPC. */
+export type MuxOrganizationFinalAdmission = () => boolean;
+
 export interface MuxAdapter {
   /** Registry key of the multiplexer behind this adapter. For display and support, never a branch. */
   readonly mux: string;
   /** What this adapter can do. Declared, never inferred from {@link mux}. */
   readonly capabilities: MuxCapabilityDeclaration;
+  /** Optional explicit declaration of this runtime's host-management provider. */
+  readonly hostControl?: HostControlPort;
 
   /**
    * This multiplexer's mark, as SVG source — the bytes served at `/api/mux/logo.svg`.
@@ -593,6 +759,27 @@ export interface MuxAdapter {
   /** One pane's rendered screen. Needs `paneGrid`; `recent` past the viewport needs `gridScrollback`. */
   readGrid(paneId: string, request: MuxGridRequest): Promise<MuxOutcome<MuxGrid>>;
 
+  /** Read foreground process metadata from the owning runtime. Needs `paneProcesses`; optional for older adapters. */
+  processInfo?(paneId: string): Promise<MuxOutcome<MuxPaneProcessInfo>>;
+
+  /** Read owner-supplied agent/session diagnostics without inferring a state authority source. */
+  agentIdentity?(paneId: string): Promise<MuxOutcome<MuxAgentIdentity>>;
+  /** Optional closed orchestration methods; every original witness is retained through awaits. */
+  agentList?(): Promise<MuxOutcome<readonly AgentControlInfo[]>>;
+  agentRead?(expected: AgentOccupant, source: "visible" | "recent" | "recent_unwrapped" | "detection", lines: number, finalAdmission: (runtime: string) => boolean): Promise<MuxOutcome<MuxGrid>>;
+  agentControl?(paneId: string): Promise<MuxOutcome<AgentControlInfo>>;
+  agentExplain?(expected: AgentOccupant): Promise<MuxOutcome<AgentExplain>>;
+  agentAction?(action: AgentAction, expected: AgentOccupant, finalAdmission: (runtimeIdentity: string) => boolean, signal?: AbortSignal, beforeFirstBytes?: () => Promise<boolean>): Promise<import("../control/agent-models.ts").AgentActionOutcome>;
+  agentWait?(condition: AgentWaitCondition, expected: AgentOccupant, timeoutMs: number, finalAdmission: (runtimeIdentity: string) => boolean, signal: AbortSignal, observationOwner?: import("../control/agent-models.ts").AgentObservationOwner): Promise<import("../control/agent-models.ts").AgentWaitOutcome>;
+  agentObservedTransition?(original: AgentOccupant, observed: import("../control/agent-models.ts").AgentObservedTransition, owner: import("../control/agent-models.ts").AgentObservationOwner): Promise<MuxOutcome<void>>;
+  agentObservedMove?(original: AgentOccupant, observed: import("../control/agent-models.ts").AgentObservedMove, owner: import("../control/agent-models.ts").AgentObservationOwner): Promise<MuxOutcome<AgentControlInfo>>;
+
+
+  /** Report source-owned display metadata; never writes lifecycle authority. */
+  reportPaneMetadata?(paneId: string, request: PaneMetadataRequest): Promise<MuxAck>;
+  reportPaneMetadataOriginal?(paneId: string, request: PaneMetadataRequest, original: import("../control/agent-models.ts").AgentControlInfo, finalAdmission: (runtime: string) => boolean): Promise<MuxAck>;
+  reportWorkspaceMetadata?(workspaceId: string, request: WorkspaceMetadataRequest): Promise<MuxAck>;
+
   /**
    * The same rows with soft wraps undone, when the multiplexer can produce them.
    *
@@ -608,8 +795,17 @@ export interface MuxAdapter {
    */
   readLogicalText?(paneId: string, lines: number): Promise<MuxOutcome<string>>;
 
+  /** Optional layout facts and operations; each is backed by its own fail-closed capability. */
+  readLayout?(paneId: string, request?: MuxLayoutReadRequest): Promise<MuxOutcome<MuxLayoutRead>>;
+  applyLayout?(action: MuxLayoutAction, finalAdmission: MuxLayoutFinalAdmission): Promise<MuxOutcome<MuxLayoutMutation>>;
+  exportPortableLayout?(target: { readonly tabId: string } | { readonly paneId: string }): Promise<MuxOutcome<MuxPortableLayout>>;
+  applyPortableLayout?(request: MuxLayoutApplyRequest, finalAdmission: (runtimeIdentity: string, snapshot: MuxSnapshot) => boolean | Promise<boolean>): Promise<MuxOutcome<MuxLayoutCreated>>;
+  setSplitRatio?(request: MuxSplitRatioRequest, finalAdmission: (runtimeIdentity: string, snapshot: MuxSnapshot) => boolean | Promise<boolean>): Promise<MuxOutcome<MuxPortableLayout>>;
+  /** Opaque current mux process incarnation; absent means planned mutations fail closed. */
+  layoutRuntimeIdentity?(): Promise<string | null> | string | null;
+
   /** Type literal text into a pane, submitting nothing. Needs `typeText`. */
-  typeText(paneId: string, text: string): Promise<MuxAck>;
+  typeText(paneId: string, text: string, finalAdmission?: (runtimeIdentity: string) => boolean): Promise<MuxAck>;
 
   /**
    * Send keys in the contract's neutral spelling (keys.ts), applied in order. Needs `sendKeys`.
@@ -617,7 +813,7 @@ export interface MuxAdapter {
    * A key the multiplexer cannot send is `refused` and is listed in `unsupportedKeys` — the whole
    * door is not closed because one key is missing.
    */
-  sendKeys(paneId: string, keys: readonly string[]): Promise<MuxAck>;
+  sendKeys(paneId: string, keys: readonly string[], finalAdmission?: (runtimeIdentity: string) => boolean): Promise<MuxAck>;
 
   /** Set or clear a pane's operator label (`null` clears). Needs `renamePane`. */
   renamePane(paneId: string, label: string | null): Promise<MuxAck>;
@@ -646,10 +842,20 @@ export interface MuxAdapter {
   createTab(request: MuxTabRequest): Promise<MuxOutcome<MuxCreatedPane>>;
 
   /** Set a tab's label. Needs `renameTab`. */
-  renameTab(tabId: string, label: string): Promise<MuxAck>;
+  renameTab(tabId: string, label: string, finalAdmission?: MuxOrganizationFinalAdmission): Promise<MuxAck>;
 
   /** Close a tab and every pane in it. Needs `closeTab`. */
-  closeTab(tabId: string): Promise<MuxAck>;
+  closeTab(tabId: string, finalAdmission?: MuxOrganizationFinalAdmission): Promise<MuxAck>;
+
+  /** Explicit workspace/tab organization. Every operation is independently capability-gated. */
+  renameSpace?(spaceId: string, label: string, finalAdmission: MuxOrganizationFinalAdmission): Promise<MuxAck>;
+  closeSpace?(spaceId: string, closeGroup: boolean, finalAdmission: MuxOrganizationFinalAdmission): Promise<MuxAck>;
+  moveSpace?(spaceId: string, insertIndex: number, finalAdmission: MuxOrganizationFinalAdmission): Promise<MuxAck>;
+  moveSpaceBlock?(spaceIds: readonly string[], beforeSpaceId: string | null, finalAdmission: MuxOrganizationFinalAdmission): Promise<MuxAck>;
+  focusSpace?(spaceId: string, finalAdmission: MuxOrganizationFinalAdmission): Promise<MuxAck>;
+  /** Herdr tab.move is scoped to its existing workspace; it never transfers a tab across spaces. */
+  moveTab?(tabId: string, insertIndex: number, finalAdmission: MuxOrganizationFinalAdmission): Promise<MuxAck>;
+  focusTab?(tabId: string, finalAdmission: MuxOrganizationFinalAdmission): Promise<MuxAck>;
 
   /** New space, opening a fresh shell. Needs `createSpace`. */
   createSpace(request: MuxSpaceRequest): Promise<MuxOutcome<MuxCreatedPane>>;
@@ -658,10 +864,13 @@ export interface MuxAdapter {
   listWorktrees(scope: MuxWorktreeScope): Promise<MuxOutcome<readonly MuxWorktree[]>>;
 
   /** New worktree on a new branch, opened as a space. Needs `createWorktree`. */
-  createWorktree(request: MuxWorktreeCreateRequest): Promise<MuxOutcome<MuxCreatedPane>>;
+  createWorktree(request: MuxWorktreeCreateRequest, finalAdmission?: (runtimeIdentity: string) => boolean, beforeDispatch?: () => Promise<boolean>): Promise<MuxOutcome<MuxCreatedPane>>;
 
   /** Show an existing worktree as a space. Needs `openWorktree`. */
-  openWorktree(request: MuxWorktreeOpenRequest): Promise<MuxOutcome<MuxWorktreeOpened>>;
+  openWorktree(request: MuxWorktreeOpenRequest, finalAdmission?: (runtimeIdentity: string) => boolean, beforeDispatch?: () => Promise<boolean>): Promise<MuxOutcome<MuxWorktreeOpened>>;
+
+  /** Remove one discovered linked checkout, never its branch or the main checkout. */
+  removeWorktree?(request: MuxWorktreeRemoveRequest, finalAdmission?: (runtimeIdentity: string) => boolean, beforeDispatch?: () => Promise<boolean>): Promise<MuxOutcome<MuxWorktreeRemoved>>;
 
   /**
    * The OTHER instances of this multiplexer on this machine, each with the endpoint to dial it.
@@ -708,8 +917,13 @@ export interface MuxAdapter {
  * The field is OMITTED rather than set to `undefined` when the adapter has none, so
  * `"logo" in adapter` keeps answering the same question after wrapping as before it.
  */
-export function muxDataFields(adapter: MuxAdapter): Pick<MuxAdapter, "logo"> {
-  return adapter.logo === undefined ? {} : { logo: adapter.logo };
+type MutableMuxDataFields = { -readonly [K in keyof Pick<MuxAdapter, "logo" | "hostControl">]: Pick<MuxAdapter, "logo" | "hostControl">[K] };
+
+export function muxDataFields(adapter: MuxAdapter): Pick<MuxAdapter, "logo" | "hostControl"> {
+  const fields: MutableMuxDataFields = {};
+  if (adapter.logo !== undefined) fields.logo = adapter.logo;
+  if (adapter.hostControl !== undefined) fields.hostControl = adapter.hostControl;
+  return fields;
 }
 
 /**
@@ -718,7 +932,69 @@ export function muxDataFields(adapter: MuxAdapter): Pick<MuxAdapter, "logo"> {
  * A decorator spreads this rather than conditionally spreading inline, so a multiplexer that cannot
  * unwrap (tmux) never comes out of a decorator appearing to offer the read: absent stays absent.
  */
-export function muxOptionalMethods(adapter: MuxAdapter): Pick<MuxAdapter, "readLogicalText"> {
+type MuxOptionalMethodFields = Pick<MuxAdapter,
+  | "readLogicalText" | "processInfo" | "readLayout" | "applyLayout" | "exportPortableLayout" | "applyPortableLayout" | "setSplitRatio" | "layoutRuntimeIdentity" | "agentIdentity" | "agentList" | "agentRead" | "agentControl" | "agentExplain" | "agentAction" | "agentWait" | "agentObservedMove" | "agentObservedTransition"
+  | "reportPaneMetadata" | "reportPaneMetadataOriginal" | "reportWorkspaceMetadata"
+  | "removeWorktree"
+  | "renameSpace" | "closeSpace" | "moveSpace" | "moveSpaceBlock" | "focusSpace" | "moveTab" | "focusTab"
+>;
+export function muxOptionalMethods(adapter: MuxAdapter): MuxOptionalMethodFields {
   const readLogicalText = adapter.readLogicalText?.bind(adapter);
-  return readLogicalText === undefined ? {} : { readLogicalText };
+  const processInfo = adapter.processInfo?.bind(adapter);
+  const readLayout = adapter.readLayout?.bind(adapter);
+  const applyLayout = adapter.applyLayout?.bind(adapter);
+  const exportPortableLayout = adapter.exportPortableLayout?.bind(adapter);
+  const applyPortableLayout = adapter.applyPortableLayout?.bind(adapter);
+  const setSplitRatio = adapter.setSplitRatio?.bind(adapter);
+  const layoutRuntimeIdentity = adapter.layoutRuntimeIdentity?.bind(adapter);
+  const removeWorktree = adapter.removeWorktree?.bind(adapter);
+  const renameSpace = adapter.renameSpace?.bind(adapter);
+  const closeSpace = adapter.closeSpace?.bind(adapter);
+  const moveSpace = adapter.moveSpace?.bind(adapter);
+  const moveSpaceBlock = adapter.moveSpaceBlock?.bind(adapter);
+  const focusSpace = adapter.focusSpace?.bind(adapter);
+  const moveTab = adapter.moveTab?.bind(adapter);
+  const focusTab = adapter.focusTab?.bind(adapter);
+  const agentIdentity = adapter.agentIdentity?.bind(adapter);
+  const agentList = adapter.agentList?.bind(adapter);
+  const agentRead = adapter.agentRead?.bind(adapter);
+  const agentControl = adapter.agentControl?.bind(adapter);
+  const agentExplain = adapter.agentExplain?.bind(adapter);
+  const agentAction = adapter.agentAction?.bind(adapter);
+  const agentWait = adapter.agentWait?.bind(adapter);
+  const agentObservedTransition = adapter.agentObservedTransition?.bind(adapter);
+  const agentObservedMove = adapter.agentObservedMove?.bind(adapter);
+  const reportPaneMetadata = adapter.reportPaneMetadata?.bind(adapter);
+  const reportPaneMetadataOriginal = adapter.reportPaneMetadataOriginal?.bind(adapter);
+  const reportWorkspaceMetadata = adapter.reportWorkspaceMetadata?.bind(adapter);
+  const methods: MuxOptionalMethodFields = {};
+  if (readLogicalText !== undefined) methods.readLogicalText = readLogicalText;
+  if (processInfo !== undefined) methods.processInfo = processInfo;
+  if (readLayout !== undefined) methods.readLayout = readLayout;
+  if (applyLayout !== undefined) methods.applyLayout = applyLayout;
+  if (exportPortableLayout !== undefined) methods.exportPortableLayout = exportPortableLayout;
+  if (applyPortableLayout !== undefined) methods.applyPortableLayout = applyPortableLayout;
+  if (setSplitRatio !== undefined) methods.setSplitRatio = setSplitRatio;
+  if (layoutRuntimeIdentity !== undefined) methods.layoutRuntimeIdentity = layoutRuntimeIdentity;
+  if (removeWorktree !== undefined) methods.removeWorktree = removeWorktree;
+  if (renameSpace !== undefined) methods.renameSpace = renameSpace;
+  if (closeSpace !== undefined) methods.closeSpace = closeSpace;
+  if (moveSpace !== undefined) methods.moveSpace = moveSpace;
+  if (moveSpaceBlock !== undefined) methods.moveSpaceBlock = moveSpaceBlock;
+  if (focusSpace !== undefined) methods.focusSpace = focusSpace;
+  if (moveTab !== undefined) methods.moveTab = moveTab;
+  if (focusTab !== undefined) methods.focusTab = focusTab;
+  if (agentIdentity !== undefined) methods.agentIdentity = agentIdentity;
+  if (agentList !== undefined) methods.agentList = agentList;
+  if (agentRead !== undefined) methods.agentRead = agentRead;
+  if (agentControl !== undefined) methods.agentControl = agentControl;
+  if (agentExplain !== undefined) methods.agentExplain = agentExplain;
+  if (agentAction !== undefined) methods.agentAction = agentAction;
+  if (agentWait !== undefined) methods.agentWait = agentWait;
+  if (agentObservedTransition !== undefined) methods.agentObservedTransition = agentObservedTransition;
+  if (agentObservedMove !== undefined) methods.agentObservedMove = agentObservedMove;
+  if (reportPaneMetadata !== undefined) methods.reportPaneMetadata = reportPaneMetadata;
+  if (reportPaneMetadataOriginal !== undefined) methods.reportPaneMetadataOriginal = reportPaneMetadataOriginal;
+  if (reportWorkspaceMetadata !== undefined) methods.reportWorkspaceMetadata = reportWorkspaceMetadata;
+  return methods;
 }

@@ -32,11 +32,35 @@ class NativePreferencesTest {
     }
 
     @Test
+    fun pairingLabelSuffixIsPrivateToTheInstallAndStableAcrossPreferenceInstances() {
+        val first = NativePreferences(context).pairingLabelSuffix
+        assertTrue(first.matches(Regex("[0-9a-f]{4}")))
+        assertEquals(first, NativePreferences(context).pairingLabelSuffix)
+        val stored = context.getSharedPreferences(NativePreferences.PREFERENCES, Context.MODE_PRIVATE).all
+        assertEquals(first, stored["pairing_label_suffix"])
+    }
+
+    @Test
     fun defaultsFollowTheSystemAndEnableHaptics() {
         val preferences = NativePreferences(context)
 
         assertEquals(NativePreferences.ThemeMode.SYSTEM, preferences.themeMode)
         assertTrue(preferences.hapticsEnabled)
+    }
+
+    @Test
+    fun changesLookupPreferencesPersistAndClampToBridgeDepth() {
+        val preferences = NativePreferences(context)
+        assertEquals(2, preferences.changesDepth)
+        assertTrue(preferences.changesNested)
+
+        preferences.changesDepth = 4
+        preferences.changesNested = false
+        val restored = NativePreferences(context)
+        assertEquals(4, restored.changesDepth)
+        assertFalse(restored.changesNested)
+        restored.changesDepth = 9
+        assertEquals(4, NativePreferences(context).changesDepth)
     }
 
     @Test

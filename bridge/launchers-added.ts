@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { harnessLaunch } from "./harness-launch.ts";
 import type { JsonObject, JsonValue } from "./json.ts";
 import { buildRecipe, cleanLauncherText, MAX_COMMAND_CHARS, MAX_LABEL_CHARS, scanNoPrompts } from "./launcher-recipes.ts";
-import { isRequestId } from "./worktree-receipts.ts";
+import { isIntentReceiptBinding, isRequestId, type IntentReceiptBinding } from "./worktree-receipts.ts";
 
 // ── Launcher rows added from a phone, kept on THIS machine only (M48 spec 02, ADR 0094) ─────────
 //
@@ -59,6 +59,8 @@ export interface AddedLauncher {
   via: "local" | "crew";
   /** Epoch ms of the add. */
   at: number;
+  /** Intent binding for the add request; absent on legacy rows. */
+  binding?: IntentReceiptBinding;
 }
 
 function asRecord(value: JsonValue | undefined): JsonObject | null {
@@ -72,17 +74,19 @@ function asRecord(value: JsonValue | undefined): JsonObject | null {
 export function coerceAddedRow(raw: JsonValue | undefined): AddedLauncher | null {
   const r = asRecord(raw);
   if (r === null) return null;
-  const { id, kind, harness, source, options, command, label, noPrompts, device, via, at } = r;
+  const { id, kind, harness, source, options, command, label, noPrompts, device, via, at, binding } = r;
   if (!isRequestId(id)) return null;
   if (kind !== "agent" && kind !== "command") return null;
   if (source !== "recipe" && source !== "text") return null;
   if (typeof command !== "string" || typeof label !== "string" || typeof noPrompts !== "boolean") return null;
   if (typeof device !== "string" || device === "" || (via !== "local" && via !== "crew")) return null;
   if (typeof at !== "number" || !Number.isFinite(at)) return null;
+  if (binding !== undefined && !isIntentReceiptBinding(binding)) return null;
   const line = cleanLauncherText(command, MAX_COMMAND_CHARS);
   const name = cleanLauncherText(label, MAX_LABEL_CHARS);
   if (!line.ok || !name.ok || line.text !== command || name.text !== label) return null;
   const row: AddedLauncher = { id, kind, source, command, label, noPrompts, device, via, at };
+  if (binding !== undefined) row.binding = binding;
   if (kind === "agent") {
     if (typeof harness !== "string" || harnessLaunch(harness) === undefined) return null;
     row.harness = harness;

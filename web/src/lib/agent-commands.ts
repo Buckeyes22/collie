@@ -42,7 +42,7 @@ const CLAUDE: readonly AgentCommand[] = [
   { command: "/model", description: "Switch the model; opens a picker if no name given", takesArg: true, argHint: "[model]", common: true, dangerous: false }, // harness-bar
   { command: "/resume", description: "Resume a previous conversation by id, name, or picker", takesArg: true, argHint: "[session]", common: true, dangerous: false }, // harness-bar
   { command: "/init", description: "Generate a starter CLAUDE.md for this project", takesArg: false, argHint: "", common: true, dangerous: false },
-  { command: "/review", description: "Review a GitHub pull request by number (lists open PRs if none)", takesArg: true, argHint: "[PR]", common: true, dangerous: false },
+  { command: "/review", description: "Review the current diff, or a PR, branch, or path", takesArg: true, argHint: "[target]", common: true, dangerous: false },
   { command: "/status", description: "Show version, model, account, and connectivity info", takesArg: false, argHint: "", common: true, dangerous: false },
   { command: "/usage", description: "Show session cost, plan limits, and activity stats", takesArg: false, argHint: "", common: true, dangerous: false },
   { command: "/context", description: "Visualize context-window usage with optimization hints", takesArg: false, argHint: "", common: true, dangerous: false },
@@ -64,7 +64,7 @@ const CLAUDE: readonly AgentCommand[] = [
   { command: "/export", description: "Export the conversation as plain text", takesArg: true, argHint: "[filename]", common: false, dangerous: false },
   { command: "/fast", description: "Toggle fast mode on or off", takesArg: true, argHint: "[on|off]", common: false, dangerous: false },
   { command: "/feedback", description: "Submit feedback or report a bug to Anthropic", takesArg: true, argHint: "[report]", common: false, dangerous: false },
-  { command: "/fork", description: "Spawn a background subagent that inherits this conversation", takesArg: true, argHint: "<directive>", common: false, dangerous: false },
+  { command: "/fork", description: "Copy this conversation into a new background session", takesArg: true, argHint: "[prompt]", common: false, dangerous: false },
   { command: "/goal", description: "Set a completion condition; keep working until it is met", takesArg: true, argHint: "[condition|clear]", common: false, dangerous: false },
   { command: "/hooks", description: "View hook configurations for tool events", takesArg: false, argHint: "", common: false, dangerous: false },
   { command: "/ide", description: "Manage IDE integrations and show connection status", takesArg: false, argHint: "", common: false, dangerous: false },

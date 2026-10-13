@@ -35,6 +35,15 @@ class LiveChatWindowTest {
     }
 
     @Test
+    fun aNewGenerationAppliesAnAuthoritativeReorderAndDeletionSnapshot() {
+        val window = LiveChatWindow()
+        window.merge(live(1, 1, turn("a", 100, "a"), turn("b", 101, "b"), turn("c", 102, "c")))
+        window.merge(live(2, 1, turn("c", 200, "c"), turn("a", 201, "a")))
+        assertEquals(listOf("c", "a"), window.entries.map { it.uuid })
+        assertEquals(listOf(200L, 201L), window.entries.map { it.seq })
+    }
+
+    @Test
     fun rewoundTurnsDisappearButKeepTheirPagingCursorAndCanBeRestored() {
         val window = LiveChatWindow()
         window.merge(live(1, 1, turn("a", 2, "a"), turn("b", 3, "b")))

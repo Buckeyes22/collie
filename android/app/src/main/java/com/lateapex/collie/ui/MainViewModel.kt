@@ -7,11 +7,18 @@ import androidx.lifecycle.viewModelScope
 import com.lateapex.collie.CollieApplication
 import com.lateapex.collie.R
 import com.lateapex.collie.data.CollieRepository
+import com.lateapex.collie.data.ScopedReadContext
+import com.lateapex.collie.data.custodyOwner
+import com.lateapex.collie.data.StoredLaunchIntent
+import com.lateapex.collie.domain.DeviceLabel
 import com.lateapex.collie.domain.PollingBackoff
 import com.lateapex.collie.domain.Scope
+import com.lateapex.collie.network.retiresPairing
 import com.lateapex.collie.network.ApiFailure
 import com.lateapex.collie.network.ApiResult
+import com.lateapex.collie.network.ActionResponse
 import com.lateapex.collie.network.CreateResponse
+import com.lateapex.collie.network.AddedLauncherResponse
 import com.lateapex.collie.network.LaunchersResponse
 import com.lateapex.collie.network.MuxConfigResponse
 import com.lateapex.collie.network.PairResult
@@ -19,6 +26,8 @@ import com.lateapex.collie.network.PaneSummary
 import com.lateapex.collie.network.SnapshotResponse
 import com.lateapex.collie.network.WorktreeListResponse
 import com.lateapex.collie.network.WorktreeOpenResponse
+import com.lateapex.collie.network.WorktreePlanResponse
+import com.lateapex.collie.network.StartTarget
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -47,14 +56,23 @@ data class MainUiState(
     val muxName: String? = null,
     val mux: MuxConfigResponse? = null,
     val launchers: LaunchersResponse? = null,
+    val refreshNotice: String? = null,
+    val receiptContextBound: Boolean? = null,
+    val unknownLaunchIntents: List<StoredLaunchIntent> = emptyList(),
+    val originalReadContext: ScopedReadContext? = null,
+    val savedCopy: com.lateapex.collie.data.SavedCopyProvenance? = null,
+    val savedCopyVersion: com.lateapex.collie.data.ScopedCustodyVersion? = null,
 ) {
     val panes: List<PaneSummary>
         get() = snapshot?.let { it.agents + it.shellPanes }.orEmpty()
 }
 
-class MainViewModel(application: Application) : AndroidViewModel(application) {
-    private val repository: CollieRepository =
-        (application as CollieApplication).container.repository
+class MainViewModel @JvmOverloads constructor(
+    application: Application,
+    repositoryOverride: CollieRepository? = null,
+) : AndroidViewModel(application) {
+    private val repository: CollieRepository = repositoryOverride
+        ?: (application as CollieApplication).container.repository
     private val mutableState = MutableStateFlow(MainUiState())
     val state: StateFlow<MainUiState> = mutableState.asStateFlow()
     val currentScope: Scope get() = repository.selectedScope.value
@@ -62,17 +80,140 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var pollingJob: Job? = null
     private var configRequested = false
     private val requestInFlight = AtomicBoolean(false)
+    private val manualRefreshPending = AtomicBoolean(false)
     private val pollingBackoff = PollingBackoff()
     private val scopeBackStack = ScopeBackStack()
     private val nativePreferences = NativePreferences(application)
     private var scopeValidationPending = true
+    private var observedConnection = repository.connection.value
+
+    @Volatile internal var originalContext: ScopedReadContext? = null
+        private set
+    private fun adoptOriginalContext(context: ScopedReadContext) {
+        if (originalContext?.custodyOwner?.let { it != context.custodyOwner } == true) {
+            mutableState.value = MainUiState(configured = true, origin = context.key.origin,
+                label = context.connection.label, paired = context.connection.isPaired)
+            configRequested = false
+            scopeValidationPending = true
+        }
+        originalContext = context
+        mutableState.value = mutableState.value.copy(originalReadContext = context.takeIf { mutableState.value.savedCopy == null })
+    }
+
+    private val authorityRegistration = repository.onAuthorityRetired { event ->
+        withRetirementOnMain(event, { originalContext }) {
+            val reason = event.reason
+            if (reason == com.lateapex.collie.data.AuthorityInvalidation.ACCESS_FROZEN) {
+                repository.accessFailure?.takeIf { it is ApiFailure.Http && it.status in setOf(401, 403) }?.let { failure ->
+                    mutableState.value = mutableState.value.copy(loading = false, error = MainViewModel.describe(getApplication<Application>().resources, failure))
+                }
+            }
+            mutableState.value = mutableState.value.copy(writeAuthorized = false)
+            if (reason in setOf(com.lateapex.collie.data.AuthorityInvalidation.PAIRING_RETIRED,
+                com.lateapex.collie.data.AuthorityInvalidation.CONNECTION_CHANGED, com.lateapex.collie.data.AuthorityInvalidation.DISCONNECTED)) {
+                mutableState.value = MainUiState()
+            } else if (reason == com.lateapex.collie.data.AuthorityInvalidation.LEAD_CHANGED) {
+                mutableState.value = mutableState.value.copy(loading = false, refreshing = false)
+            }
+        }
+    }
+
+    private var savedSelection: com.lateapex.collie.data.OfflineReadSelection? = null
+    private val savedCustodyLock = Any()
+    private var savedExpiryJob: Job? = null
+    private val savedClear = repository.offlineContentStore?.onReadsCleared { cutoff ->
+        withMainCustodyAck {
+            val retired = synchronized(savedCustodyLock) {
+                val copy = mutableState.value.savedCopy ?: return@synchronized null
+                if (copy.clearRevision >= cutoff) return@synchronized null
+                val previous = savedSelection to savedExpiryJob
+                savedSelection = null; savedExpiryJob = null
+                mutableState.value = MainUiState(configured = repository.connection.value != null)
+                previous
+            }
+            retired?.second?.cancel()
+            retired?.first?.let(repository::expireSavedCopy)
+        }
+    }
+    private val savedRetirement = repository.onReadContextRetired { event ->
+        withOfflineRetirementOnMain(event, { mutableState.value.savedCopyVersion }) {
+            val retiredJob = synchronized(savedCustodyLock) {
+                if (!event.affectsCustody(mutableState.value.savedCopyVersion)) return@synchronized null
+                val job = savedExpiryJob
+                savedExpiryJob = null; savedSelection = null
+                mutableState.value = MainUiState(configured = repository.connection.value != null)
+                job
+            }
+            retiredJob?.cancel()
+        }
+    }
+
+    private suspend fun restoreSavedDashboard(expected: ScopedReadContext? = null) {
+        val store = repository.offlineContentStore ?: return
+        val scope = currentScope
+        val selected = repository.offlineSelection(scope, null) ?: return
+        if (expected != null && (selected.committed.connection !== expected.connection ||
+            selected.scope.incarnation != expected.connectionIncarnation || expected.requestScope != scope)) return
+        val shown = mutableState.value.savedCopy
+        if (expected == null && shown != null && shown.scope != selected.scope) return
+        val copy = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { store.dashboard(selected.scope) }
+        if (!repository.isOfflineSelectionCurrent(selected)) return
+        if (copy == null) {
+            if (mutableState.value.savedCopy != null) {
+                savedSelection?.let(repository::expireSavedCopy)
+                savedSelection = null; mutableState.value = mutableState.value.copy(snapshot = null, savedCopy = null, savedCopyVersion = null, writeAuthorized = false)
+            }
+            return
+        }
+        if (!repository.showSavedCopy(selected, copy.provenance.capturedAt, afterFailedRead = expected != null)) return
+        if (!repository.isOfflineOwnerCurrent(selected)) return
+        val displayVersion = repository.savedCopyVersion(selected) ?: return
+        synchronized(savedCustodyLock) {
+        if (!repository.isSavedCopyCurrent(selected.scope, displayVersion) || !store.isDisplayCurrent(copy.provenance)) return
+        savedSelection = selected
+        mutableState.value = mutableState.value.copy(snapshot = copy.value, loading = false, refreshing = false,
+            savedCopy = copy.provenance, savedCopyVersion = displayVersion, originalReadContext = null,
+            writeAuthorized = false, snapshotFailed = true, mux = null, launchers = null, lastSuccessAt = copy.provenance.capturedAt)
+        }
+        savedExpiryJob?.cancel()
+        savedExpiryJob = viewModelScope.launch {
+            delay((copy.provenance.expiresAt - System.currentTimeMillis()).coerceAtLeast(1))
+            if (savedSelection === selected) {
+                repository.expireSavedCopy(selected)
+                savedSelection = null
+                mutableState.value = mutableState.value.copy(snapshot = null, savedCopy = null, savedCopyVersion = null, writeAuthorized = false)
+            }
+        }
+    }
+
+    override fun onCleared() {
+        authorityRegistration.close()
+        savedRetirement.close()
+        savedClear?.close()
+        super.onCleared()
+    }
 
     init {
-        repository.selectScope(nativePreferences.dashboardScope)
+        repository.selectSubject(nativePreferences.dashboardScope, null)
         syncConnection()
         viewModelScope.launch {
+            restoreSavedDashboard()
+            repository.offlineContentStore?.changes?.collectLatest { if (mutableState.value.savedCopy != null) restoreSavedDashboard() }
+        }
+        viewModelScope.launch {
             repository.connection.collectLatest { connection ->
-                val previous = mutableState.value
+                val adopted = originalContext?.takeIf { !repository.isActorRetired(it) }
+                if (adopted != null && adopted.connection !== connection) return@collectLatest
+                val changed = connection != observedConnection && adopted?.connection !== connection
+                observedConnection = connection
+                if (changed) {
+                    configRequested = false
+                    scopeValidationPending = true
+                }
+                val previous = if (changed) mutableState.value.copy(
+                    snapshot = null, mux = null, muxName = null, launchers = null, lastSuccessAt = null,
+                    refreshing = false, refreshNotice = null,
+                ) else mutableState.value
                 val revoked = previous.configured && previous.paired && connection?.isPaired == false
                 mutableState.value = previous.copy(
                     configured = connection != null,
@@ -87,8 +228,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun startPolling(refreshBridge: Boolean = true) {
+        repository.selectSubject(currentScope, null)
         if (pollingJob != null || repository.connection.value == null) return
-        pollingJob = viewModelScope.launch {
+        val activePoll = viewModelScope.launch {
             if (refreshBridge) repository.refresh()
             while (true) {
                 loadSnapshot(isManual = false)
@@ -99,6 +241,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 delay(pollDelay(mutableState.value.snapshot))
             }
         }
+        pollingJob = activePoll
+        activePoll.invokeOnCompletion { if (pollingJob === activePoll) pollingJob = null }
     }
 
     fun stopPolling() {
@@ -193,19 +337,53 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun refresh() {
+    fun refresh(expectedContext: ScopedReadContext? = null) {
+        if (!manualRefreshPending.compareAndSet(false, true)) return
+        val refreshScope = currentScope
+        val readContext = expectedContext ?: repository.readContext(refreshScope, null)
+        if (readContext == null) {
+            manualRefreshPending.set(false)
+            return
+        }
         viewModelScope.launch {
-            mutableState.value = mutableState.value.copy(refreshing = true, error = null)
+            if (!isCurrentRefresh(readContext, refreshScope)) {
+                manualRefreshPending.set(false)
+                return@launch
+            }
+            mutableState.value = mutableState.value.copy(refreshing = true, error = null, refreshNotice = null)
             try {
-                repository.refresh()
-                loadSnapshot(isManual = true)
+                while (requestInFlight.get() && isCurrentRefresh(readContext, refreshScope)) delay(10)
+                if (!isCurrentRefresh(readContext, refreshScope)) return@launch
+                when (val refreshed = repository.refresh(refreshScope, readContext)) {
+                    is ApiResult.Failure -> {
+                        if (!isCurrentRefresh(readContext, refreshScope)) return@launch
+                        mutableState.value = mutableState.value.copy(refreshNotice = getApplication<Application>().getString(
+                            if (refreshed.error is ApiFailure.Http && refreshed.error.status == 404)
+                                R.string.refresh_ordinary_reload else R.string.refresh_failed_fallback,
+                        ))
+                    }
+                    is ApiResult.Success -> if (!refreshed.value.ok) {
+                        if (!isCurrentRefresh(readContext, refreshScope)) return@launch
+                        mutableState.value = mutableState.value.copy(
+                            refreshNotice = getApplication<Application>().getString(R.string.refresh_failed_fallback),
+                        )
+                    }
+                    is ApiResult.NotModified -> Unit
+                }
+                if (isCurrentRefresh(readContext, refreshScope)) loadSnapshot(
+                    isManual = true, scopeOverride = refreshScope, expectedContext = readContext,
+                )
             } finally {
-                // A poll may already own the snapshot request. Pull-to-refresh must still stop its
-                // spinner when that happens.
-                mutableState.value = mutableState.value.copy(refreshing = false)
+                manualRefreshPending.set(false)
+                if (isCurrentRefresh(readContext, refreshScope)) {
+                    mutableState.value = mutableState.value.copy(refreshing = false)
+                }
             }
         }
     }
+
+    private fun isCurrentRefresh(context: ScopedReadContext, scope: Scope): Boolean =
+        repository.selectedScope.value == scope && repository.isCurrent(context)
 
     /** Retry the read path only. The dashboard connection band never invokes a bridge mutation. */
     fun retryConnection() {
@@ -232,11 +410,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         configRequested = false
         mutableState.value = mutableState.value.copy(
             loading = true,
+            refreshing = false,
             snapshot = null,
             launchers = null,
             error = null,
             snapshotFailed = false,
             authError = false,
+            refreshNotice = null,
         )
         startPolling()
     }
@@ -259,8 +439,120 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     suspend fun launch(command: String): ApiResult<CreateResponse> = repository.launch(command)
 
-    suspend fun listWorktrees(workspaceId: String, scope: Scope = currentScope): ApiResult<WorktreeListResponse> =
-        repository.listWorktrees(workspaceId, scope)
+    suspend fun launchIntent(
+        target: StartTarget,
+        requestId: String,
+        cwd: String?,
+        confirmedNoPrompts: Boolean,
+        scope: Scope = currentScope,
+    ): ApiResult<CreateResponse> {
+        val actor = repository.readContext(scope)
+        val result = repository.startLaunchIntent(scope, target, requestId, cwd, confirmedNoPrompts)
+        if (actor != null && !repository.isCurrent(actor)) return staleScopeResult()
+        if (scope == currentScope) refreshLaunchIntentState(scope)
+        return result
+    }
+
+    suspend fun retryLaunchIntent(requestId: String, scope: Scope = currentScope): ApiResult<CreateResponse> {
+        val actor = repository.readContext(scope)
+        val result = repository.retryLaunchIntent(scope, requestId)
+        if (actor != null && !repository.isCurrent(actor)) return staleScopeResult()
+        if (scope == currentScope) refreshLaunchIntentState(scope)
+        return result
+    }
+
+    fun abandonLaunchIntent(requestId: String, scope: Scope = currentScope): ApiResult<ActionResponse> {
+        val actor = repository.readContext(scope)
+        val result = repository.abandonLaunchIntent(scope, requestId)
+        if (actor != null && !repository.isCurrent(actor)) return staleScopeResult()
+        if (scope == currentScope) refreshLaunchIntentState(scope)
+        return result
+    }
+
+    suspend fun createWorktreeIntent(
+        cwd: String,
+        branch: String,
+        target: StartTarget,
+        requestId: String,
+        base: com.lateapex.collie.network.WorktreeBase = com.lateapex.collie.network.WorktreeBase(),
+        folder: com.lateapex.collie.network.WorktreeFolder = com.lateapex.collie.network.WorktreeFolder(),
+        confirmedNoPrompts: Boolean,
+        scope: Scope = currentScope,
+        expectedContext: ScopedReadContext? = null,
+    ): ApiResult<WorktreeOpenResponse> {
+        val actor = expectedContext ?: repository.readContext(scope)
+        val result = repository.createWorktreeAtIntent(scope, cwd, branch, target, requestId, base, folder, confirmedNoPrompts, actor)
+        if (actor != null && !repository.isCurrent(actor)) return staleScopeResult()
+        if (scope == currentScope) refreshLaunchIntentState(scope)
+        return result
+    }
+
+    suspend fun retryWorktreeIntent(requestId: String, scope: Scope = currentScope): ApiResult<WorktreeOpenResponse> {
+        val actor = repository.readContext(scope)
+        val result = repository.retryWorktreeIntent(scope, requestId)
+        if (actor != null && !repository.isCurrent(actor)) return staleScopeResult()
+        if (scope == currentScope) refreshLaunchIntentState(scope)
+        return result
+    }
+
+    suspend fun addLauncherIntent(requestId: String, canonicalBody: String, scope: Scope = currentScope): ApiResult<AddedLauncherResponse> {
+        val actor = repository.readContext(scope)
+        val result = repository.addLauncherIntent(scope, requestId, canonicalBody)
+        if (actor != null && !repository.isCurrent(actor)) return staleScopeResult()
+        if (scope == currentScope) refreshLaunchIntentState(scope)
+        return result
+    }
+
+    suspend fun retryAddedLauncherIntent(requestId: String, scope: Scope = currentScope): ApiResult<AddedLauncherResponse> {
+        val actor = repository.readContext(scope)
+        val result = repository.retryAddedLauncherIntent(scope, requestId)
+        if (actor != null && !repository.isCurrent(actor)) return staleScopeResult()
+        if (scope == currentScope) refreshLaunchIntentState(scope)
+        return result
+    }
+
+    suspend fun createWorkspaceWorktreeIntent(
+        workspaceId: String,
+        branch: String,
+        requestId: String,
+        scope: Scope = currentScope,
+    ): ApiResult<WorktreeOpenResponse> {
+        val actor = repository.readContext(scope)
+        val result = repository.createWorkspaceWorktreeIntent(scope, workspaceId, branch, requestId)
+        if (actor != null && !repository.isCurrent(actor)) return staleScopeResult()
+        if (scope == currentScope) refreshLaunchIntentState(scope)
+        return result
+    }
+
+    suspend fun createWorkspaceWorktreeLegacyInitial(
+        workspaceId: String,
+        branch: String,
+        requestId: String,
+        scope: Scope = currentScope,
+        expectedContext: ScopedReadContext? = null,
+    ): ApiResult<WorktreeOpenResponse> {
+        val actor = expectedContext ?: repository.readContext(scope)
+        val result = repository.createWorkspaceWorktreeLegacyInitial(scope, workspaceId, branch, requestId, actor)
+        if (actor != null && !repository.isCurrent(actor)) return staleScopeResult()
+        if (scope == currentScope) refreshLaunchIntentState(scope)
+        return result
+    }
+
+    fun refreshLaunchIntentState(scope: Scope = currentScope) {
+        if (scope == currentScope) {
+            mutableState.value = mutableState.value.copy(unknownLaunchIntents = originalContext?.let { repository.unresolvedLaunchIntents(scope, it) }.orEmpty())
+        }
+    }
+
+    private fun <T> staleScopeResult(): ApiResult<T> = ApiResult.Failure(
+        ApiFailure.Protocol("Connection or scope changed; refresh before trying again"),
+    )
+
+    suspend fun listWorktrees(workspaceId: String, scope: Scope = currentScope, expectedContext: ScopedReadContext? = null): ApiResult<WorktreeListResponse> =
+        repository.listWorktrees(workspaceId, scope, expectedContext)
+
+    suspend fun planWorktree(cwd: String, branch: String?, parent: String?, scope: Scope = currentScope, expectedContext: ScopedReadContext? = null): ApiResult<WorktreePlanResponse> =
+        repository.planWorktree(scope, cwd, branch, parent, expectedContext)
 
     suspend fun createWorktree(
         workspaceId: String,
@@ -274,25 +566,47 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         scope: Scope = currentScope,
     ): ApiResult<WorktreeOpenResponse> = repository.openWorktree(workspaceId, path, scope)
 
+    suspend fun planWorktreeRemoval(workspaceId: String, force: Boolean = false, scope: Scope = currentScope, expectedContext: ScopedReadContext? = null): ApiResult<com.lateapex.collie.network.WorktreeRemovePlanResponse> =
+        repository.planWorktreeRemoval(workspaceId, force, scope, expectedContext)
+
+    suspend fun removeWorktreeIntent(workspaceId: String, requestId: String, planToken: String, force: Boolean, scope: Scope = currentScope, expectedContext: ScopedReadContext? = null, plan: com.lateapex.collie.network.WorktreeRemovePlanResponse? = null): ApiResult<com.lateapex.collie.network.WorktreeRemoveResponse> =
+        repository.removeWorktreeIntent(workspaceId, requestId, planToken, force, scope, expectedContext, plan)
+
+    suspend fun retryWorktreeRemovalIntent(requestId: String, scope: Scope = currentScope): ApiResult<com.lateapex.collie.network.WorktreeRemoveResponse> =
+        repository.retryWorktreeRemovalIntent(scope, requestId).also {
+            if (scope == currentScope) refreshLaunchIntentState(scope)
+        }
+
     fun report(error: String?) {
         mutableState.value = mutableState.value.copy(error = error, snapshotFailed = false, authError = false)
     }
 
     private suspend fun loadConfig() {
-        val result = repository.config()
+        val context = repository.readContext(currentScope, null) ?: return
+        adoptOriginalContext(context)
+        val result = repository.config(currentScope, context)
+        if (!repository.isCurrent(context)) return
         if (result is ApiResult.Success) {
             mutableState.value = mutableState.value.copy(
                 muxName = result.value.mux?.name?.trim()?.takeIf(String::isNotEmpty),
                 mux = result.value.mux,
+                receiptContextBound = result.value.receiptContextBound,
             )
-            val launchers = repository.launchers()
+            val launchers = repository.launchers(currentScope, context)
+            if (!repository.isCurrent(context)) return
             if (launchers is ApiResult.Success) {
                 mutableState.value = mutableState.value.copy(launchers = launchers.value)
             }
+            refreshLaunchIntentState()
         }
     }
 
-    private suspend fun loadSnapshot(isManual: Boolean) {
+    private suspend fun loadSnapshot(
+        isManual: Boolean,
+        scopeOverride: Scope? = null,
+        expectedContext: ScopedReadContext? = null,
+    ) {
+        if (!isManual && manualRefreshPending.get()) return
         if (!requestInFlight.compareAndSet(false, true)) return
         try {
             mutableState.value = mutableState.value.copy(
@@ -300,8 +614,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 error = if (mutableState.value.snapshot == null) null else mutableState.value.error,
                 requestStartedAt = System.currentTimeMillis(),
             )
-            val requestedScope = repository.selectedScope.value
-            var result = repository.snapshot(if (scopeValidationPending) Scope() else requestedScope)
+            val requestedScope = scopeOverride ?: repository.selectedScope.value
+            val context = expectedContext ?: repository.readContext(requestedScope) ?: return
+            adoptOriginalContext(context)
+            val initialScope = if (scopeValidationPending) Scope() else requestedScope
+            val initialContext = if (initialScope == requestedScope) context else {
+                if (!repository.isCurrent(context)) return
+                repository.readContext(initialScope) ?: return
+            }
+            var result = repository.snapshot(initialScope, initialContext)
+            if (!repository.isCurrent(context)) {
+                val failure = (result as? ApiResult.Failure)?.error as? ApiFailure.Http
+                if (failure?.status in setOf(401, 403)) restoreSavedDashboard(context)
+                return
+            }
             if (result is ApiResult.Success && scopeValidationPending) {
                 val restore = DashboardScopePersistence.resolve(requestedScope, result.value)
                 scopeValidationPending = false
@@ -311,29 +637,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     configRequested = false
                     mutableState.value = mutableState.value.copy(launchers = null)
                 }
-                restore.readScope?.let { result = repository.snapshot(it) }
+                restore.readScope?.let { restoredScope ->
+                    val restoredContext = repository.readContext(restoredScope) ?: return
+                    adoptOriginalContext(restoredContext)
+                    result = repository.snapshot(restoredScope, restoredContext)
+                    if (!repository.isCurrent(restoredContext)) return
+                }
             }
             when (result) {
                 is ApiResult.Success -> {
                     pollingBackoff.succeeded()
+                    val accepted = originalContext ?: return
+                    repository.retainSnapshot(accepted, result.value)
+                    if (!repository.isCurrent(accepted)) return
+                    savedExpiryJob?.cancel(); savedExpiryJob = null; savedSelection = null
                     val now = System.currentTimeMillis()
                     mutableState.value = mutableState.value.copy(
                         loading = false,
                         refreshing = false,
                         snapshot = result.value,
+                        savedCopy = null, savedCopyVersion = null, originalReadContext = accepted,
                         writeAuthorized = repository.writesAllowed(),
                         error = null,
                         lastSuccessAt = now.takeIf { result.value.bridge != "disconnected" }
                             ?: mutableState.value.lastSuccessAt,
                         snapshotFailed = false,
                         authError = false,
+                        refreshNotice = if (isManual) mutableState.value.refreshNotice else null,
                     )
                 }
                 is ApiResult.Failure -> {
                     pollingBackoff.failed()
-                    val pairingRequired = result.error is ApiFailure.Http &&
-                        result.error.message in setOf("device not paired", "device expired")
-                    if (pairingRequired) repository.demoteToReadOnly()
+                    val pairingRequired = result.error is ApiFailure.Http && result.error.retiresPairing()
                     val authError = result.error is ApiFailure.Redirect ||
                         result.error is ApiFailure.Http && result.error.status in setOf(401, 403)
                     mutableState.value = mutableState.value.copy(
@@ -346,6 +681,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         snapshotFailed = !pairingRequired,
                         authError = authError && !pairingRequired,
                     )
+                    restoreSavedDashboard(context)
                 }
                 is ApiResult.NotModified -> {
                     pollingBackoff.succeeded()
@@ -358,6 +694,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         } ?: mutableState.value.lastSuccessAt,
                         snapshotFailed = false,
                         authError = false,
+                        refreshNotice = if (isManual) mutableState.value.refreshNotice else null,
                     )
                 }
             }
@@ -394,7 +731,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun validateLabel(label: String): String? = when {
         label.isBlank() -> getApplication<Application>().getString(R.string.device_label_required)
-        label.trim().length > 80 -> getApplication<Application>().getString(R.string.device_label_too_long)
+        DeviceLabel.normalize(label).length > DeviceLabel.MAX_CHARS -> getApplication<Application>().getString(R.string.device_label_too_long)
         else -> null
     }
 
@@ -407,7 +744,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         fun describe(resources: Resources, failure: ApiFailure): String = when (failure) {
             is ApiFailure.Redirect -> resources.getString(R.string.error_proxy_sign_in, failure.status)
             is ApiFailure.Http -> when {
-                failure.message in setOf("device not paired", "device expired") -> resources.getString(R.string.error_device_not_paired)
+                failure.source == com.lateapex.collie.network.FailureSource.GATEWAY && failure.factor == com.lateapex.collie.network.FailureFactor.IDENTITY -> resources.getString(R.string.proxy_identity_required)
+                failure.source == com.lateapex.collie.network.FailureSource.GATEWAY && failure.factor == com.lateapex.collie.network.FailureFactor.DEVICE -> resources.getString(R.string.proxy_identity_binding_required)
+                failure.retiresPairing() -> resources.getString(R.string.error_device_not_paired)
                 failure.message == "device not authorised" -> resources.getString(R.string.error_device_unauthorised)
                 else -> failure.message ?: resources.getString(R.string.error_http, failure.status)
             }

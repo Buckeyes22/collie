@@ -1,12 +1,14 @@
 package com.lateapex.collie.network
 
 import com.lateapex.collie.domain.CollieOrigin
+import com.lateapex.collie.domain.DeviceLabel
 import com.lateapex.collie.domain.Connection
 import com.lateapex.collie.domain.PaneAddress
 import com.lateapex.collie.domain.MuxKeyGrammar
 import com.lateapex.collie.domain.Scope
 import java.io.IOException
 import java.io.InterruptedIOException
+import java.io.ByteArrayOutputStream
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.TimeUnit
@@ -17,7 +19,18 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.serialization.DeserializationStrategy
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.longOrNull
+import kotlinx.serialization.json.put
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.HttpUrl
@@ -30,6 +43,7 @@ import okhttp3.Request
 import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
+import okio.Buffer
 
 sealed interface ApiResult<out T> {
     data class Success<T>(
@@ -37,9 +51,10 @@ sealed interface ApiResult<out T> {
         val status: Int,
         val etag: String? = null,
         val buildId: String? = null,
+        val controlAuthority: ControlAuthority? = null,
     ) : ApiResult<T>
 
-    data class NotModified(val etag: String?) : ApiResult<Nothing>
+    data class NotModified(val etag: String?, val controlAuthority: ControlAuthority? = null) : ApiResult<Nothing>
     data class Failure(val error: ApiFailure) : ApiResult<Nothing>
 }
 
@@ -50,10 +65,18 @@ sealed interface ApiFailure {
         val message: String?,
         val code: String?,
         val textDelivered: Boolean = false,
+        val source: FailureSource = FailureSource.UNKNOWN,
+        val factor: FailureFactor = FailureFactor.UNKNOWN,
     ) : ApiFailure
     data class Protocol(val message: String) : ApiFailure
     data class Network(val message: String?) : ApiFailure
     data object Timeout : ApiFailure
+}
+
+/** True when transport/response evidence cannot establish whether a one-shot mutation committed. */
+fun ApiFailure.mutationOutcomeUnknown(): Boolean = when (this) {
+    is ApiFailure.Network, ApiFailure.Timeout, is ApiFailure.Redirect, is ApiFailure.Protocol -> true
+    is ApiFailure.Http -> status in setOf(408, 425, 429) || status >= 500
 }
 
 interface CollieApi {
@@ -69,11 +92,80 @@ interface CollieApi {
         etag: String? = null,
         markSeen: Boolean = true,
     ): ApiResult<PaneReadResponse>
+    suspend fun paneProcesses(connection: Connection, address: PaneAddress): ApiResult<PaneProcessesResponse> = unavailable("Pane process details")
+    suspend fun paneAgentIdentity(connection: Connection, address: PaneAddress): ApiResult<AgentIdentityResponse> = unavailable("Agent identity details")
+    suspend fun paneMetadata(connection: Connection, address: PaneAddress, reconcileRequestId: String? = null): ApiResult<MetadataRouteResponse> = unavailable("Pane metadata")
+    suspend fun writePaneMetadata(connection: Connection, address: PaneAddress, request: PaneMetadataRequest): ApiResult<MetadataRouteResponse> = unavailable("Pane metadata write")
+    suspend fun workspaceMetadata(connection: Connection, scope: Scope, workspaceId: String, reconcileRequestId: String? = null): ApiResult<MetadataRouteResponse> = unavailable("Workspace metadata")
+    suspend fun writeWorkspaceMetadata(connection: Connection, scope: Scope, workspaceId: String, request: WorkspaceMetadataRequest): ApiResult<MetadataRouteResponse> = unavailable("Workspace metadata write")
+    suspend fun agentView(connection: Connection): ApiResult<AgentViewRouteResponse> = unavailable("Agent view")
+    suspend fun setAgentView(connection: Connection, request: AgentViewRequest): ApiResult<AgentViewRouteResponse> = unavailable("Agent view write")
+    suspend fun clearAgentView(connection: Connection, requestId: String): ApiResult<AgentViewRouteResponse> = unavailable("Agent view clear")
     suspend fun refresh(connection: Connection, scope: Scope = Scope()): ApiResult<ActionResponse>
     suspend fun pair(origin: CollieOrigin, code: String, label: String): ApiResult<PairResult>
+    suspend fun namedAgentRead(connection: Connection, address: PaneAddress, source: String, lines: Int): ApiResult<NamedAgentReadResponse> = unavailable("Named agent read")
+    suspend fun namedAgentList(connection: Connection, scope: Scope): ApiResult<NamedAgentListResponse> = unavailable("Named agent census")
+    suspend fun namedAgentControl(connection: Connection, address: PaneAddress): ApiResult<AgentAutomationResponse> = unavailable("Named agent control")
+    suspend fun namedAgentExplain(connection: Connection, address: PaneAddress): ApiResult<AgentExplainResponse> = unavailable("Named agent explanation")
+    suspend fun namedAgentAction(connection: Connection, address: PaneAddress, id: String, witness: String, action: NamedAgentAction, expectedText: String?): ApiResult<AgentActionResponse> = unavailable("Named agent action")
+    suspend fun startAgentWait(connection: Connection, address: PaneAddress, id: String, witness: String, condition: NamedAgentWait, timeoutMs: Int): ApiResult<AgentWaitResponse> = unavailable("Bounded agent waits")
+    suspend fun agentWait(connection: Connection, address: PaneAddress, id: String, cancel: Boolean = false): ApiResult<AgentWaitResponse> = unavailable("Bounded agent waits")
+    suspend fun controlOperation(connection: Connection, scope: Scope, requestId: String): ApiResult<ControlOperationResponse> = unavailable("Control operations")
+    suspend fun hostIntegrations(connection: Connection, scope: Scope): ApiResult<HostIntegrationsResponse> = unavailable("Host integrations")
+    suspend fun hostPlugins(connection: Connection, scope: Scope): ApiResult<HostPluginsResponse> = unavailable("Host plugins")
+    suspend fun hostPluginActions(connection: Connection, scope: Scope, pluginId: String): ApiResult<HostPluginActionsResponse> = unavailable("Plugin actions")
+    suspend fun hostPluginLogs(connection: Connection, scope: Scope, pluginId: String): ApiResult<HostPluginLogsResponse> = unavailable("Plugin logs")
+    suspend fun setHostPluginEnabled(connection: Connection, scope: Scope, pluginId: String, enabled: Boolean): ApiResult<ActionResponse> = unavailable("Plugin enabled state")
+    suspend fun unlinkHostPlugin(connection: Connection, scope: Scope, pluginId: String): ApiResult<ActionResponse> = unavailable("Plugin unlink")
+    suspend fun invokeHostPluginAction(connection: Connection, scope: Scope, pluginId: String, actionId: String, correlationId: String): ApiResult<HostPluginActionResponse> = unavailable("Plugin action")
+    suspend fun openHostPluginPane(connection: Connection, scope: Scope, pluginId: String, request: HostPluginPaneRequest): ApiResult<HostPluginPaneResponse> = unavailable("Plugin pane")
+    suspend fun focusHostPluginPane(connection: Connection, scope: Scope, pluginId: String, paneId: String): ApiResult<ActionResponse> = unavailable("Plugin pane focus")
+    suspend fun closeHostPluginPane(connection: Connection, scope: Scope, pluginId: String, paneId: String): ApiResult<ActionResponse> = unavailable("Plugin pane close")
+    suspend fun hostPluginLinkSelections(connection: Connection, scope: Scope): ApiResult<HostPluginLinkSelectionsResponse> = unavailable("Plugin link selections")
+    suspend fun planHostPluginLink(connection: Connection, scope: Scope, selectionId: String): ApiResult<HostPluginLinkPlanResponse> = unavailable("Plugin link plan")
+    suspend fun applyHostPluginLink(connection: Connection, scope: Scope, request: HostPluginLinkRequest): ApiResult<HostPluginMutationResponse> = unavailable("Plugin link")
+    suspend fun planHostPluginInstall(connection: Connection, scope: Scope, owner: String, repo: String, subdir: String?, ref: String?): ApiResult<HostPluginInstallPlanResponse> = unavailable("Plugin install plan")
+    suspend fun applyHostPluginInstall(connection: Connection, scope: Scope, request: HostPluginInstallRequest): ApiResult<HostPluginMutationResponse> = unavailable("Plugin install")
+    suspend fun planHostPluginUninstall(connection: Connection, scope: Scope, pluginId: String): ApiResult<HostPluginUninstallPlanResponse> = unavailable("Plugin uninstall plan")
+    suspend fun applyHostPluginUninstall(connection: Connection, scope: Scope, pluginId: String, request: HostPluginUninstallRequest): ApiResult<HostPluginMutationResponse> = unavailable("Plugin uninstall")
+    suspend fun hostPluginOwnerOperation(connection: Connection, scope: Scope, requestId: String): ApiResult<HostPluginOwnerOperationResponse> = unavailable("Plugin operation receipt")
+    suspend fun hostPluginConfigFiles(connection: Connection, scope: Scope, pluginId: String): ApiResult<HostPluginConfigFilesResponse> = unavailable("Plugin config files")
+    suspend fun hostPluginConfig(connection: Connection, scope: Scope, pluginId: String, file: String): ApiResult<HostPluginConfigResponse> = unavailable("Plugin config")
+    suspend fun planHostPluginConfigPrepare(connection: Connection, scope: Scope, pluginId: String): ApiResult<HostPluginConfigPlanResponse> = unavailable("Plugin config preparation plan")
+    suspend fun applyHostPluginConfigPrepare(connection: Connection, scope: Scope, pluginId: String, request: HostPluginConfigPrepareRequest): ApiResult<HostPluginConfigOperationResponse> = unavailable("Plugin config preparation")
+    suspend fun planHostPluginConfigEdit(connection: Connection, scope: Scope, pluginId: String, request: HostPluginConfigFileRequest): ApiResult<HostPluginConfigPlanResponse> = unavailable("Plugin config edit plan")
+    suspend fun applyHostPluginConfigEdit(connection: Connection, scope: Scope, pluginId: String, request: HostPluginConfigApplyRequest): ApiResult<HostPluginConfigOperationResponse> = unavailable("Plugin config edit")
+    suspend fun hostIntegrationStatus(connection: Connection, scope: Scope): ApiResult<HostIntegrationsResponse> = unavailable("Host integration status")
+    suspend fun agentManifestStatus(connection: Connection, scope: Scope): ApiResult<AgentManifestStatusResponse> = unavailable("Agent manifests")
+    suspend fun planHostOperation(connection: Connection, scope: Scope, intent: HostOperationIntent): ApiResult<HostOperationPlanResponse> = unavailable("Host operation plan")
+    suspend fun applyHostOperation(connection: Connection, scope: Scope, intent: HostOperationIntent, request: HostOperationRequest): ApiResult<HostOperationResponse> = unavailable("Host operation")
+    suspend fun paneLayout(connection: Connection, address: PaneAddress): ApiResult<PaneLayoutReadResponse> = unavailable("Pane layout")
+    suspend fun paneLayoutRead(connection: Connection, address: PaneAddress, kind: String, direction: String? = null): ApiResult<PaneLayoutReadResponse> = unavailable("Pane layout inspection")
+    suspend fun planPaneLayout(connection: Connection, address: PaneAddress, action: kotlinx.serialization.json.JsonObject): ApiResult<PaneLayoutPlanResponse> = unavailable("Pane layout plan")
+    suspend fun planTabTransfer(connection: Connection, scope: Scope, tabId: String, body: kotlinx.serialization.json.JsonObject): ApiResult<PaneTransferPlanResponse> = unavailable("Whole-tab transfer plan")
+    suspend fun applyPaneLayout(connection: Connection, address: PaneAddress, requestId: String, planToken: String, action: kotlinx.serialization.json.JsonObject): ApiResult<PaneLayoutOperationResponse> = unavailable("Pane layout action")
+    suspend fun exportPortableLayout(connection: Connection, scope: Scope, tabId: String): ApiResult<PortableLayoutExportResponse> = unavailable("Portable layout export")
+    suspend fun planPortableLayout(connection: Connection, scope: Scope, body: kotlinx.serialization.json.JsonObject): ApiResult<PortableLayoutPlanResponse> = unavailable("Portable layout plan")
+    suspend fun applyPortableLayout(connection: Connection, scope: Scope, body: kotlinx.serialization.json.JsonObject): ApiResult<PortableLayoutApplyResponse> = unavailable("Portable layout apply")
+    suspend fun setSplitRatio(connection: Connection, scope: Scope, tabId: String, body: kotlinx.serialization.json.JsonObject): ApiResult<PortableLayoutApplyResponse> = unavailable("Split ratio change")
+    suspend fun planOrganization(connection: Connection, scope: Scope, action: OrganizationAction): ApiResult<OrganizationPlanResponse> = unavailable("Workspace organization plan")
+    suspend fun applyOrganization(connection: Connection, scope: Scope, requestId: String, planToken: String, action: OrganizationAction): ApiResult<OrganizationOperationResponse> = unavailable("Workspace organization action")
     suspend fun devices(connection: Connection): ApiResult<DevicesResponse>
     suspend fun revokeDevice(connection: Connection, label: String): ApiResult<DevicesResponse> = unavailable("Device revoke")
     suspend fun crew(connection: Connection): ApiResult<CrewStatusResponse> = unavailable("Crew status")
+    /** Lead-owned census. The machine id is response data, never a request origin or crew selector. */
+    suspend fun machines(connection: Connection, spark: Int = MAX_MACHINE_SPARK_MINUTES): ApiResult<MachinesResponse> = unavailable("Machine resources")
+    suspend fun machineHistory(connection: Connection, machineId: String, since: Long? = null): ApiResult<MachineHistoryResponse> = unavailable("Machine history")
+    /** One-shot full-rule replacement bound to the exact revision and machine incarnation read by the editor. */
+    suspend fun replaceMachineAlerts(
+        connection: Connection,
+        machineId: String,
+        alerts: MachineAlerts,
+        rulesRevision: String,
+        machineIncarnation: String,
+        requestId: String,
+        extensions: JsonObject?,
+    ): ApiResult<MachineRuleWriteResponse> = unavailable("Machine alert rules")
     /** [etag] from the last answer to the same read: an unchanged page comes back as NotModified. */
     suspend fun history(
         connection: Connection,
@@ -90,9 +182,30 @@ interface CollieApi {
         before: ChatBefore? = null,
         etag: String? = null,
     ): ApiResult<PaneChatResponse> = unavailable("Live chat")
+    /** Authenticated bytes from Collie's content-addressed journal image route. */
+    suspend fun imageBlob(connection: Connection, scope: Scope, sha256: String): ApiResult<ImageBlob> = unavailable("Journal image")
+    suspend fun changes(connection: Connection, target: ChangesTarget, scope: Scope, lookup: ChangesLookup): ApiResult<ChangesListAnswer> = unavailable("Changes")
+    suspend fun changeDiff(connection: Connection, target: ChangesTarget, scope: Scope, lookup: ChangesLookup, repo: String, path: String): ApiResult<ChangeDiffAnswer> = unavailable("Changes diff")
+    suspend fun changeCommitHistory(connection: Connection, target: ChangesTarget, scope: Scope, lookup: ChangesLookup, repo: String, head: String?, offset: Int, limit: Int): ApiResult<ChangeCommitHistoryAnswer> = unavailable("Changes commit history")
+    suspend fun changeCommit(connection: Connection, target: ChangesTarget, scope: Scope, lookup: ChangesLookup, repo: String, commitHash: String? = null): ApiResult<ChangeCommitAnswer> = unavailable("Changes commit")
+    suspend fun changeCommitDiff(connection: Connection, target: ChangesTarget, scope: Scope, lookup: ChangesLookup, repo: String, path: String, commitHash: String? = null): ApiResult<ChangeCommitDiffAnswer> = unavailable("Changes commit diff")
+    suspend fun files(connection: Connection, target: FilesTarget, scope: Scope, path: RelativeFilePath? = null, dir: RelativeFilePath? = null, ignored: Boolean = false): ApiResult<FilesAnswer> = unavailable("Files")
+    suspend fun filesExist(connection: Connection, target: FilesTarget, scope: Scope, paths: List<RelativeFilePath>): ApiResult<FilesExistAnswer> = unavailable("Files path existence")
+    suspend fun fileImage(connection: Connection, target: FilesTarget, scope: Scope, path: RelativeFilePath): ApiResult<FilesImageBlob> = unavailable("Files image")
     suspend fun startLaunch(connection: Connection, scope: Scope, target: StartTarget, requestId: String, cwd: String? = null): ApiResult<CreateResponse> = unavailable("Launch by id")
+    /** Sends the exact encrypted-journal body for a deliberate replay; never rebuilds an intent. */
+    suspend fun startLaunchFrozen(connection: Connection, scope: Scope, canonicalBody: String): ApiResult<CreateResponse> = unavailable("Frozen launch retry")
+    suspend fun addLauncherFrozen(connection: Connection, scope: Scope, canonicalBody: String): ApiResult<AddedLauncherResponse> = unavailable("Frozen launcher add")
+    suspend fun renameAddedLauncher(connection: Connection, scope: Scope, id: String, label: String): ApiResult<AddedLauncherResponse> = unavailable("Launcher rename")
+    suspend fun removeAddedLauncher(connection: Connection, scope: Scope, id: String): ApiResult<AddedLauncherMutationResponse> = unavailable("Launcher remove")
+    suspend fun checkRun(connection: Connection, scope: Scope, run: String): ApiResult<LaunchCheckResponse> = unavailable("Run validation")
+    suspend fun startRunFrozen(connection: Connection, scope: Scope, canonicalBody: String): ApiResult<CreateResponse> = unavailable("Frozen one-off run")
+    suspend fun removeRecentRun(connection: Connection, scope: Scope, line: String): ApiResult<RecentRunsResponse> = unavailable("Recent run removal")
+    suspend fun clearRecentRuns(connection: Connection, scope: Scope): ApiResult<RecentRunsResponse> = unavailable("Recent run clear")
     suspend fun planWorktree(connection: Connection, scope: Scope, cwd: String, branch: String? = null, parent: String? = null): ApiResult<WorktreePlanResponse> = unavailable("Worktree plan")
     suspend fun createWorktreeAt(connection: Connection, scope: Scope, cwd: String, branch: String, target: StartTarget, requestId: String, base: WorktreeBase = WorktreeBase(), folder: WorktreeFolder = WorktreeFolder()): ApiResult<WorktreeOpenResponse> = unavailable("Worktree from folder")
+    /** Sends the exact encrypted-journal body for a deliberate replay. */
+    suspend fun createWorktreeAtFrozen(connection: Connection, scope: Scope, canonicalBody: String): ApiResult<WorktreeOpenResponse> = unavailable("Frozen worktree retry")
     suspend fun closePane(connection: Connection, address: PaneAddress): ApiResult<ActionResponse> = unavailable("Pane close")
     suspend fun focusPane(connection: Connection, address: PaneAddress): ApiResult<ActionResponse> = unavailable("Pane focus")
     suspend fun renamePane(
@@ -121,6 +234,10 @@ interface CollieApi {
         cwd: String? = null,
     ): ApiResult<CreateResponse> = unavailable("Workspace create")
     suspend fun launchers(connection: Connection, scope: Scope): ApiResult<LaunchersResponse> = unavailable("Launchers")
+    suspend fun folders(connection: Connection, scope: Scope): ApiResult<FoldersResponse> = unavailable("Folders")
+    suspend fun starFolder(connection: Connection, scope: Scope, folder: String, starred: Boolean): ApiResult<FoldersResponse> = unavailable("Folder favorites")
+    suspend fun agentCapabilities(connection: Connection, scope: Scope): ApiResult<AgentCapabilitiesResponse> =
+        unavailable("Agent capability inventory")
     suspend fun launch(
         connection: Connection,
         scope: Scope,
@@ -138,19 +255,40 @@ interface CollieApi {
         workspaceId: String,
         branch: String,
     ): ApiResult<WorktreeOpenResponse> = unavailable("Worktree create")
+    suspend fun createWorktreeFrozen(
+        connection: Connection,
+        scope: Scope,
+        workspaceId: String,
+        canonicalBody: String,
+    ): ApiResult<WorktreeOpenResponse> = unavailable("Frozen worktree create")
     suspend fun openWorktree(
         connection: Connection,
         scope: Scope,
         workspaceId: String,
         path: String,
     ): ApiResult<WorktreeOpenResponse> = unavailable("Worktree open")
+    suspend fun planWorktreeRemoval(connection: Connection, scope: Scope, workspaceId: String, force: Boolean = false): ApiResult<WorktreeRemovePlanResponse> = unavailable("Worktree removal plan")
+    suspend fun removeWorktree(connection: Connection, scope: Scope, workspaceId: String, request: WorktreeRemoveRequest): ApiResult<WorktreeRemoveResponse> = unavailable("Worktree removal")
     suspend fun upload(
         connection: Connection,
         address: PaneAddress,
         upload: ImageUpload,
     ): ApiResult<UploadResponse> = unavailable("Upload")
+    suspend fun upload(
+        connection: Connection,
+        address: PaneAddress,
+        upload: UploadSource,
+    ): ApiResult<UploadResponse> = when (upload) {
+        is UploadSource.Image -> this.upload(connection, address, upload.upload)
+        is UploadSource.Document -> unavailable("Document upload")
+    }
     suspend fun transcribe(connection: Connection, audio: AudioUpload): ApiResult<SttResponse> =
         unavailable("Speech to text")
+    suspend fun cacheRules(connection: Connection, etag: String? = null): ApiResult<CacheRulesResponse> = unavailable("Cache rule catalog")
+    suspend fun cacheWatch(connection: Connection, address: PaneAddress): ApiResult<CacheWatchResponse> = unavailable("Cache watch")
+    suspend fun setCacheWatch(connection: Connection, address: PaneAddress, on: Boolean): ApiResult<CacheWatchResponse> = unavailable("Cache watch update")
+    suspend fun cacheWatchList(connection: Connection): ApiResult<CacheWatchListResponse> = unavailable("Cache watch list")
+    suspend fun forgetCacheWatch(connection: Connection, id: String): ApiResult<CacheWatchListResponse> = unavailable("Cache watch forget")
     suspend fun notificationPreferences(connection: Connection): ApiResult<NotifyPreferences> = unavailable("Notification preferences")
     suspend fun setNotificationPreferences(
         connection: Connection,
@@ -170,6 +308,11 @@ interface CollieApi {
         peersOnly: Boolean = false,
     ): ApiResult<UpdateStartResponse> = unavailable("Update start")
     suspend fun snoozeUpdate(connection: Connection): ApiResult<UpdateInfo> = unavailable("Update snooze")
+    suspend fun dismissUpdate(
+        connection: Connection,
+        version: String,
+        scope: UpdateDismissalScope,
+    ): ApiResult<UpdateInfo> = unavailable("Update dismissal")
     suspend fun reply(
         connection: Connection,
         address: PaneAddress,
@@ -183,6 +326,13 @@ interface CollieApi {
         keys: List<String>,
         expectedPrompt: String? = null,
     ): ApiResult<ActionResponse>
+    suspend fun queuedSendNow(
+        connection: Connection,
+        address: PaneAddress,
+        keys: List<String>,
+        expectedPrompt: String,
+        guard: QueuedSendGuard,
+    ): ApiResult<ActionResponse> = unavailable("Guarded queued send")
 
     private fun <T> unavailable(operation: String): ApiResult<T> =
         ApiResult.Failure(ApiFailure.Protocol("$operation is unavailable"))
@@ -192,8 +342,154 @@ class CollieApiClient(
     private val client: OkHttpClient,
     private val json: Json,
 ) : CollieApi {
+    override suspend fun files(
+        connection: Connection,
+        target: FilesTarget,
+        scope: Scope,
+        path: RelativeFilePath?,
+        dir: RelativeFilePath?,
+        ignored: Boolean,
+    ): ApiResult<FilesAnswer> {
+        validateFilesTarget(target)
+        require((path == null) xor (dir == null)) { "Files reads name exactly one path or directory" }
+        val query = buildList {
+            path?.let { add("path" to it.value) }
+            dir?.let { add("dir" to it.value) }
+            if (path == null) add("ignored" to if (ignored) "1" else "0")
+        }
+        val url = scopedUrl(connection.origin, filesPath(target), scope, query)
+        val request = request(connection, url)
+        return executeBoundedJson(request, MAX_FILES_RESPONSE_BYTES, "Malformed Files response") { element ->
+            FilesWire.answer(element, target, path, dir)
+        }
+    }
+
+    override suspend fun filesExist(
+        connection: Connection,
+        target: FilesTarget,
+        scope: Scope,
+        paths: List<RelativeFilePath>,
+    ): ApiResult<FilesExistAnswer> {
+        validateFilesTarget(target)
+        require(paths.size <= MAX_FILES_EXIST_PATHS && paths.map { it.value }.toSet().size == paths.size)
+        val url = scopedUrl(connection.origin, filesExistPath(target), scope)
+        val payload = json.encodeToString(FilesExistRequest(paths.map { it.value }))
+        return executeBoundedJson(post(connection, url, payload), MAX_FILES_RESPONSE_BYTES, "Malformed Files existence response") { element ->
+            FilesWire.exists(element, paths)
+        }
+    }
+
+    override suspend fun fileImage(
+        connection: Connection,
+        target: FilesTarget,
+        scope: Scope,
+        path: RelativeFilePath,
+    ): ApiResult<FilesImageBlob> {
+        validateFilesTarget(target)
+        val url = scopedUrl(connection.origin, filesImagePath(target), scope, listOf("path" to path.value))
+        val request = requestBuilder(connection, url).header("Accept", "image/png,image/jpeg,image/gif,image/webp,image/avif").get().build()
+        return executeResponse(request, FILE_IMAGE_TIMEOUT_SECONDS) { response ->
+            if (response.code in REDIRECT_CODES) return@executeResponse ApiResult.Failure(ApiFailure.Redirect(response.code))
+            val body = response.body
+            if (!response.isSuccessful) {
+                val error = body?.source()?.let { source ->
+                    val limit = MAX_ERROR_MESSAGE_CHARS.toLong()
+                    source.request(limit + 1)
+                    source.readUtf8(minOf(source.buffer.size, limit))
+                }.orEmpty()
+                return@executeResponse failure(response, error)
+            }
+            if (body == null) return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Files image response was empty"))
+            val declared = body.contentLength()
+            if (declared > FilesImageBlob.MAX_BYTES) return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Files image exceeds the size limit"))
+            val bytes = try {
+                body.source().use { source ->
+                    val output = java.io.ByteArrayOutputStream(if (declared in 0..FilesImageBlob.MAX_BYTES.toLong()) declared.toInt() else 32 * 1024)
+                    val chunk = okio.Buffer()
+                    while (true) {
+                        val read = source.read(chunk, 8_192L)
+                        if (read == -1L) break
+                        if (output.size().toLong() + read > FilesImageBlob.MAX_BYTES) {
+                            return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Files image exceeds the size limit"))
+                        }
+                        output.write(chunk.readByteArray())
+                    }
+                    output.toByteArray()
+                }
+            } catch (_: IOException) {
+                return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Files image response could not be read"))
+            }
+            if (bytes.isEmpty()) return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Files image response was empty"))
+            val size = response.header("x-collie-file-size")?.toLongOrNull()?.takeIf { it in 0..MAX_SAFE_INTEGER }
+            val mtime = response.header("x-collie-file-mtime")?.toDoubleOrNull()?.takeIf { it.isFinite() && it >= 0.0 && it <= MAX_SAFE_INTEGER.toDouble() }
+            ApiResult.Success(
+                FilesImageBlob(response.header("Content-Type")?.substringBefore(';')?.trim()?.lowercase(), bytes, size, mtime),
+                response.code,
+                controlAuthority = responseAuthority(response),
+            )
+        }
+    }
+
+    private fun validateFilesTarget(target: FilesTarget) {
+        require(target.id.isNotBlank() && target.id.length <= MAX_FILES_ID_CHARS && '\u0000' !in target.id)
+    }
+
+    private fun filesPath(target: FilesTarget): List<String> = when (target) {
+        is FilesTarget.Pane -> path("pane", target.id, "files")
+        is FilesTarget.Workspace -> path("workspace", target.id, "files")
+    }
+
+    private fun filesExistPath(target: FilesTarget): List<String> = filesPath(target) + "exist"
+    private fun filesImagePath(target: FilesTarget): List<String> = filesPath(target) + "image"
+
+    override suspend fun imageBlob(connection: Connection, scope: Scope, sha256: String): ApiResult<ImageBlob> {
+        require(sha256.matches(Regex("[0-9a-fA-F]{64}")))
+        val imageAccept = "image/png,image/jpeg,image/gif,image/webp"
+        val imageUrl = scopedUrl(connection.origin, path("blobs", sha256.lowercase()), scope)
+        val request = requestBuilder(connection, imageUrl).header("Accept", imageAccept).get().build()
+        return executeResponse(request, READ_TIMEOUT_SECONDS) { response ->
+            if (response.code in REDIRECT_CODES) return@executeResponse ApiResult.Failure(ApiFailure.Redirect(response.code))
+            if (!response.isSuccessful) {
+                val body = response.body?.source()?.let { source ->
+                    val limit = MAX_ERROR_MESSAGE_CHARS.toLong()
+                    source.request(limit + 1)
+                    source.readUtf8(minOf(source.buffer.size, limit))
+                }.orEmpty()
+                return@executeResponse failure(response, body)
+            }
+            val body = response.body ?: return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Image response was empty"))
+            val declared = body.contentLength()
+            if (declared > ImageBlob.MAX_BYTES) return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Image Content-Length exceeds the 10 MiB limit ($declared bytes)"))
+            val bytes = try {
+                body.source().use { source ->
+                    val output = java.io.ByteArrayOutputStream(minOf(if (declared >= 0) declared.toInt() else 64 * 1024, ImageBlob.MAX_BYTES))
+                    val chunk = okio.Buffer()
+                    while (true) {
+                        val read = source.read(chunk, 16 * 1024L)
+                        if (read == -1L) break
+                        val bytesRead = chunk.readByteArray()
+                        val received = output.size().toLong() + bytesRead.size
+                        if (received > ImageBlob.MAX_BYTES) return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Image stream exceeds the 10 MiB limit ($received bytes)"))
+                        output.write(bytesRead)
+                    }
+                    output.toByteArray()
+                }
+            } catch (_: IOException) {
+                return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Image response could not be read"))
+            }
+            if (bytes.isEmpty()) return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Image response was empty"))
+            ApiResult.Success(
+                ImageBlob(response.header("Content-Type")?.substringBefore(';')?.trim()?.lowercase(), bytes),
+                response.code,
+                controlAuthority = responseAuthority(response),
+            )
+        }
+    }
     override suspend fun health(connection: Connection): ApiResult<HealthResponse> =
-        executeJson(request(connection, path("health")), HealthResponse.serializer(), READ_TIMEOUT_SECONDS)
+        executeJson(request(connection, path("health")).let { request ->
+            if (connection.token == null) request.newBuilder().tag(NativeBootstrapAdmission::class.java,
+                NativeBootstrapAdmission(connection, "GET", request.url.toString())).build() else request
+        }, HealthResponse.serializer(), READ_TIMEOUT_SECONDS)
 
     override suspend fun config(connection: Connection): ApiResult<BridgeConfigResponse> =
         executeJson(request(connection, path("config")), BridgeConfigResponse.serializer(), READ_TIMEOUT_SECONDS)
@@ -231,40 +527,147 @@ class CollieApiClient(
         return executeJson(builder.build(), PaneReadResponse.serializer(), READ_TIMEOUT_SECONDS, allowNotModified = true)
     }
 
+    override suspend fun paneProcesses(connection: Connection, address: PaneAddress): ApiResult<PaneProcessesResponse> {
+        val url = scopedUrl(connection.origin, path("pane", address.paneId, "processes"), address.scope)
+        val builder = requestBuilder(connection, url).header("X-Collie-Seen", "1")
+        return requireContract(
+            executeJson(
+                builder.get().build(),
+                PaneProcessesResponse.serializer(),
+                READ_TIMEOUT_SECONDS,
+                maxResponseBytes = MAX_PROCESS_INFO_BODY_BYTES,
+                limitMessage = "Process details response exceeded its size limit",
+            ),
+            "Malformed process details response",
+        ) { response ->
+            response.ok && response.paneId == address.paneId && response.processes.size <= 64 &&
+                (response.shellPid == null || response.shellPid >= 0) &&
+                (response.foregroundProcessGroupId == null || response.foregroundProcessGroupId >= 0) &&
+                (response.foregroundCwd == null || response.foregroundCwd.length <= 4096) &&
+                (response.restoreError == null || response.restoreError.length <= 4096) &&
+                response.processes.all { process ->
+                    process.pid >= 0 && process.name.length <= 256 &&
+                        (process.argv == null || process.argv.size <= 64 && process.argv.all { it.length <= 2048 }) &&
+                        (process.argv0 == null || process.argv0.length <= 2048) &&
+                        (process.cmdline == null || process.cmdline.length <= 8192) &&
+                        (process.cwd == null || process.cwd.length <= 4096)
+                } &&
+                ((response.tty?.length ?: 0) + (response.foregroundCwd?.length ?: 0) + (response.restoreError?.length ?: 0) +
+                    response.processes.sumOf { process ->
+                        process.name.length + (process.argv?.sumOf { it.length } ?: 0) + (process.argv0?.length ?: 0) +
+                            (process.cmdline?.length ?: 0) + (process.cwd?.length ?: 0)
+                    } <= MAX_PROCESS_INFO_TEXT_CHARS)
+        }
+    }
+
+    override suspend fun paneAgentIdentity(connection: Connection, address: PaneAddress): ApiResult<AgentIdentityResponse> {
+        val url = scopedUrl(connection.origin, path("pane", address.paneId, "agent"), address.scope)
+        return requireContract(
+            executeJson(
+                requestBuilder(connection, url).get().build(),
+                AgentIdentityResponse.serializer(),
+                READ_TIMEOUT_SECONDS,
+                maxResponseBytes = 16 * 1024,
+            ),
+            "Malformed agent identity response",
+        ) { response ->
+            response.ok && response.paneId == address.paneId &&
+                response.agent?.let { it.isNotBlank() && it.length <= 256 } != false &&
+                response.stateAuthority == AgentStateAuthority(observed = false, source = null) &&
+                response.stateChangeSeq.isWireSequence() && response.completionSeq.isWireSequence() &&
+                response.session?.let { session ->
+                    session.source.isNotBlank() && session.source.length <= 80 && session.agent.isNotBlank() &&
+                        session.agent.length <= 80 && session.kind in setOf("id", "path") &&
+                        session.value.isNotBlank() && session.value.length <= 2048
+                } != false
+        }
+    }
+
+    override suspend fun paneMetadata(connection: Connection, address: PaneAddress, reconcileRequestId: String?): ApiResult<MetadataRouteResponse> {
+        val query = reconcileRequestId?.let { listOf("request_id" to it) }.orEmpty()
+        val result = executeJson(request(connection, scopedUrl(connection.origin, path("pane", address.paneId, "metadata"), address.scope, query)), MetadataRouteResponse.serializer(), READ_TIMEOUT_SECONDS, maxResponseBytes = 64 * 1024)
+        return requireContract(result, "Malformed pane metadata receipt") { it.ok && it.target == address.paneId && !it.authoritative && it.reconcileRequired && it.contributions.size <= 64 &&
+            (reconcileRequestId == null && it.operation == null || reconcileRequestId != null && it.operation?.validFor(reconcileRequestId) == true && it.operation.capability == "agentMetadata") }
+    }
+
+    override suspend fun writePaneMetadata(connection: Connection, address: PaneAddress, request: PaneMetadataRequest): ApiResult<MetadataRouteResponse> {
+        if (!validMetadataRequest(request)) return ApiResult.Failure(ApiFailure.Protocol("Pane metadata request is outside the bounded schema"))
+        val result = executeJson(post(connection, scopedUrl(connection.origin, path("pane", address.paneId, "metadata"), address.scope), json.encodeToString(request)), MetadataRouteResponse.serializer(), MUTATION_TIMEOUT_SECONDS, maxResponseBytes = 16 * 1024)
+        return requireContract(result, "Malformed pane metadata acknowledgment") { it.ok && it.target == null && it.requestId == request.requestId && it.receipt && it.reconcileRequired && it.source?.startsWith("collie.native.") == true ||
+            !it.ok && it.requestId == null && it.operation?.let { op -> op.validFor(request.requestId) && op.capability == "agentMetadata" && op.state in setOf("pending", "unknown") } == true }
+    }
+
+    override suspend fun workspaceMetadata(connection: Connection, scope: Scope, workspaceId: String, reconcileRequestId: String?): ApiResult<MetadataRouteResponse> {
+        if (!validControlId(workspaceId)) return ApiResult.Failure(ApiFailure.Protocol("Workspace id is malformed"))
+        val query = reconcileRequestId?.let { listOf("request_id" to it) }.orEmpty()
+        val result = executeJson(request(connection, scopedUrl(connection.origin, path("workspace", workspaceId, "metadata"), scope, query)), MetadataRouteResponse.serializer(), READ_TIMEOUT_SECONDS, maxResponseBytes = 64 * 1024)
+        return requireContract(result, "Malformed workspace metadata receipt") { it.ok && it.target == workspaceId && !it.authoritative && it.reconcileRequired && it.contributions.size <= 64 &&
+            (reconcileRequestId == null && it.operation == null || reconcileRequestId != null && it.operation?.validFor(reconcileRequestId) == true && it.operation.capability == "agentMetadata") }
+    }
+
+    override suspend fun writeWorkspaceMetadata(connection: Connection, scope: Scope, workspaceId: String, request: WorkspaceMetadataRequest): ApiResult<MetadataRouteResponse> {
+        if (!validControlId(workspaceId) || !validWorkspaceMetadataRequest(request)) return ApiResult.Failure(ApiFailure.Protocol("Workspace metadata request is outside the bounded schema"))
+        val result = executeJson(post(connection, scopedUrl(connection.origin, path("workspace", workspaceId, "metadata"), scope), json.encodeToString(request)), MetadataRouteResponse.serializer(), MUTATION_TIMEOUT_SECONDS, maxResponseBytes = 16 * 1024)
+        return requireContract(result, "Malformed workspace metadata acknowledgment") { it.ok && it.target == null && it.requestId == request.requestId && it.receipt && it.reconcileRequired && it.source?.startsWith("collie.native.") == true ||
+            !it.ok && it.requestId == null && it.operation?.let { op -> op.validFor(request.requestId) && op.capability == "agentMetadata" && op.state in setOf("pending", "unknown") } == true }
+    }
+
+    override suspend fun agentView(connection: Connection): ApiResult<AgentViewRouteResponse> {
+        val result = executeJson(request(connection, url(connection.origin, path("host", "agent-view"))), AgentViewRouteResponse.serializer(), READ_TIMEOUT_SECONDS, maxResponseBytes = 32 * 1024)
+        return requireContract(result, "Malformed agent-view receipt") { response ->
+            response.ok && response.authoritative == !response.reconcileRequired &&
+                (response.view == null || ((response.view["source"] as? JsonPrimitive)?.contentOrNull?.startsWith("collie.native.") == true &&
+                    response.view.keys.all { it in setOf("source", "label", "filter", "sort") }))
+        }
+    }
+
+    override suspend fun setAgentView(connection: Connection, request: AgentViewRequest): ApiResult<AgentViewRouteResponse> {
+        if (!validAgentViewRequest(request)) return ApiResult.Failure(ApiFailure.Protocol("Agent view is outside the bounded schema"))
+        val body = json.encodeToString(request)
+        val result = executeJson(post(connection, url(connection.origin, path("host", "agent-view")), body), AgentViewRouteResponse.serializer(), MUTATION_TIMEOUT_SECONDS, maxResponseBytes = 16 * 1024)
+        return requireContract(result, "Malformed agent-view acknowledgment") { it.ok && it.requestId == request.requestId && it.receipt && it.reconcileRequired && it.source?.startsWith("collie.native.") == true ||
+            !it.ok && it.requestId == null && it.operation?.let { op -> op.validFor(request.requestId) && op.capability == "agentViews" && op.state in setOf("pending", "unknown") } == true }
+    }
+
+    override suspend fun clearAgentView(connection: Connection, requestId: String): ApiResult<AgentViewRouteResponse> {
+        if (!validRequestId(requestId)) return ApiResult.Failure(ApiFailure.Protocol("Agent-view request id is malformed"))
+        val body = json.encodeToString(mapOf("requestId" to requestId)).toRequestBody(JSON_MEDIA_TYPE)
+        val url = url(connection.origin, path("host", "agent-view"))
+        val req = requestBuilder(connection, url).header("Origin", connection.origin.headerValue).method("DELETE", OneShotRequestBody(body)).build()
+        val result = executeJson(req, AgentViewRouteResponse.serializer(), MUTATION_TIMEOUT_SECONDS, maxResponseBytes = 16 * 1024)
+        return requireContract(result, "Malformed agent-view clear acknowledgment") { it.ok && it.requestId == requestId && it.receipt && it.reconcileRequired && it.source?.startsWith("collie.native.") == true ||
+            !it.ok && it.requestId == null && it.operation?.let { op -> op.validFor(requestId) && op.capability == "agentViews" && op.state in setOf("pending", "unknown") } == true }
+    }
+
     override suspend fun refresh(connection: Connection, scope: Scope): ApiResult<ActionResponse> {
         val url = scopedUrl(connection.origin, path("refresh"), scope)
-        return executeAction(post(connection, url, EMPTY_JSON))
+        return executeAction(post(connection, url, ""))
     }
 
     override suspend fun pair(origin: CollieOrigin, code: String, label: String): ApiResult<PairResult> {
         val bootstrap = Connection(origin, label, null)
-        val request = post(bootstrap, url(origin, path("pair")), json.encodeToString(PairRequest(code, label)))
-        val response = try {
-            client.newCall(request).await(MUTATION_TIMEOUT_SECONDS)
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: InterruptedIOException) {
-            return ApiResult.Failure(ApiFailure.Timeout)
-        } catch (io: IOException) {
-            return ApiResult.Failure(ApiFailure.Network(io.message))
-        }
-        response.use {
-            if (it.code in REDIRECT_CODES) return ApiResult.Failure(ApiFailure.Redirect(it.code))
+        val candidate = post(bootstrap, url(origin, path("pair")), json.encodeToString(PairRequest(code, label)))
+        val request = candidate.newBuilder().tag(NativeBootstrapAdmission::class.java,
+            NativeBootstrapAdmission(bootstrap, "POST", candidate.url.toString())).build()
+        return executeResponse(request, MUTATION_TIMEOUT_SECONDS) {
+            if (it.code in REDIRECT_CODES) return@executeResponse ApiResult.Failure(ApiFailure.Redirect(it.code))
             val body = it.body?.string().orEmpty()
             val decoded = decode(PairResponse.serializer(), body)
             if (it.code == 400) {
-                return if (decoded != null) {
+                return@executeResponse if (decoded != null) {
                     ApiResult.Success(PairResult.Refused(decoded.error ?: "bad-request"), it.code)
                 } else {
-                    failure(it.code, body)
+                    failure(it, body)
                 }
             }
-            if (!it.isSuccessful) return failure(it.code, body)
-            if (decoded == null) return ApiResult.Failure(ApiFailure.Protocol("Malformed pairing response"))
+            if (!it.isSuccessful) return@executeResponse failure(it, body)
+            if (decoded == null) return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Malformed pairing response"))
             val token = decoded.token
             val returnedLabel = decoded.label
-            return if (token.isNullOrBlank() || returnedLabel.isNullOrBlank()) {
-                ApiResult.Failure(ApiFailure.Protocol("Pairing response omitted required fields"))
+            if (token.isNullOrBlank() || returnedLabel.isNullOrBlank() || returnedLabel.length > DeviceLabel.MAX_CHARS ||
+                token.any { char -> char <= ' ' || char >= '\u007f' }
+            ) {
+                ApiResult.Failure(ApiFailure.Protocol("Pairing response omitted or invalidated required fields"))
             } else {
                 ApiResult.Success(PairResult.Paired(token, returnedLabel), it.code)
             }
@@ -295,6 +698,68 @@ class CollieApiClient(
             result.error.status == 404 && result.error.code != "crew.not_lead"
         ) return executeJson(request(connection, url(connection.origin, path("pack"))), CrewStatusResponse.serializer(), READ_TIMEOUT_SECONDS)
         return result
+    }
+
+    override suspend fun machines(connection: Connection, spark: Int): ApiResult<MachinesResponse> {
+        require(spark in 1..MAX_MACHINE_SPARK_MINUTES)
+        val url = url(connection.origin, path("machines")).newBuilder()
+            .addQueryParameter("spark", spark.toString()).build()
+        return requireContract(
+            executeJson(request(connection, url), MachinesResponse.serializer(), READ_TIMEOUT_SECONDS, maxResponseBytes = MAX_MACHINE_RESPONSE_BYTES),
+            "Malformed machine resources response",
+        ) { it.isValid() }
+    }
+
+    override suspend fun machineHistory(connection: Connection, machineId: String, since: Long?): ApiResult<MachineHistoryResponse> {
+        if (!isValidMachineId(machineId) || since?.let { it !in 0..9_007_199_254_740_991L } == true) {
+            return ApiResult.Failure(ApiFailure.Protocol("Machine history request is malformed"))
+        }
+        val leadingQuery = since?.let { listOf("since" to it.toString()) }.orEmpty()
+        val url = scopedUrl(connection.origin, path("machines", machineId, "history"), Scope(), leadingQuery)
+        return requireContract(
+            executeJson(request(connection, url), MachineHistoryResponse.serializer(), READ_TIMEOUT_SECONDS, maxResponseBytes = MAX_MACHINE_RESPONSE_BYTES),
+            "Malformed machine history response",
+        ) { it.isValid(since) }
+    }
+
+    override suspend fun replaceMachineAlerts(
+        connection: Connection,
+        machineId: String,
+        alerts: MachineAlerts,
+        rulesRevision: String,
+        machineIncarnation: String,
+        requestId: String,
+        extensions: JsonObject?,
+    ): ApiResult<MachineRuleWriteResponse> {
+        if (!isValidMachineId(machineId) || !rulesRevision.matches(Regex("(?:0|[1-9][0-9]{0,19})")) ||
+            runCatching { rulesRevision.toULong() }.isFailure || !machineIncarnation.matches(Regex("[0-9a-f]{64}")) ||
+            !requestId.matches(Regex("[A-Za-z0-9_-]{16,96}")) || !alerts.isValidForWrite() ||
+            (extensions?.toString()?.toByteArray(StandardCharsets.UTF_8)?.size ?: 0) > MAX_MACHINE_RULE_EXTENSIONS_BYTES
+        ) return ApiResult.Failure(ApiFailure.Protocol("Machine alert rule request is malformed"))
+        val fields = linkedMapOf<String, JsonElement>()
+        alerts.cpu?.let { fields["cpu"] = json.encodeToJsonElement(MachineAlertRule.serializer(), it) }
+        alerts.mem?.let { fields["mem"] = json.encodeToJsonElement(MachineAlertRule.serializer(), it) }
+        alerts.disk?.let { fields["disk"] = json.encodeToJsonElement(MachineAlertRule.serializer(), it) }
+        fields["rulesRevision"] = JsonPrimitive(rulesRevision)
+        fields["machineIncarnation"] = JsonPrimitive(machineIncarnation)
+        fields["requestId"] = JsonPrimitive(requestId)
+        extensions?.let { fields["extensions"] = it }
+        val body = json.encodeToString(JsonObject.serializer(), JsonObject(fields))
+        val url = url(connection.origin, path("machines", machineId, "alerts"))
+        return executeResponse(post(connection, url, body), MUTATION_TIMEOUT_SECONDS) { response ->
+            if (response.code in REDIRECT_CODES) return@executeResponse ApiResult.Failure(ApiFailure.Redirect(response.code))
+            val wire = readBoundedBody(response, MAX_MACHINE_RULE_RESPONSE_BYTES)
+                ?: return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Machine alert rule response exceeded its size limit"))
+            if (response.code == 200 || response.code == 409) {
+                val decoded = decode(MachineRuleWriteResponse.serializer(), wire)
+                if (decoded != null && ((response.code == 200 && decoded.isValidSuccess()) ||
+                        (response.code == 409 && decoded.isValidConflict()))) {
+                    return@executeResponse ApiResult.Success(decoded, response.code, response.header("ETag"), response.header(BUILD_HEADER), responseAuthority(response))
+                }
+            }
+            if (!response.isSuccessful) return@executeResponse failure(response, wire)
+            ApiResult.Failure(ApiFailure.Protocol("Malformed machine alert rule response"))
+        }
     }
 
     override suspend fun history(
@@ -341,9 +806,125 @@ class CollieApiClient(
             "Malformed live chat response",
         ) { page ->
             if (!page.available) !page.reason.isNullOrBlank()
-            else page.gen != null && page.upserts.all { it.seq != null } &&
-                if (before != null) page.page == "older" else page.page == "live" && page.rev != null && page.head != null && page.oldest != null
+            else page.gen != null && page.gen >= 0L && page.upserts.all { it.seq != null && it.seq >= 0L } &&
+                if (before != null) page.page == "older" else page.page == "live" &&
+                    (page.rev == null || page.rev >= 0L) && page.head != null && page.head >= 0L &&
+                    page.oldest != null && page.oldest >= 0L
         }
+    }
+
+    override suspend fun changes(
+        connection: Connection,
+        target: ChangesTarget,
+        scope: Scope,
+        lookup: ChangesLookup,
+    ): ApiResult<ChangesListAnswer> {
+        validateChangesTarget(target)
+        val query = listOf("depth" to lookup.depth.toString(), "nested" to if (lookup.nested) "1" else "0")
+        val url = scopedUrl(connection.origin, changesPath(target), scope, query)
+        return executeChanges(request(connection, url), "Malformed Changes response") { ChangesWire.list(it, target) }
+    }
+
+    override suspend fun changeDiff(
+        connection: Connection,
+        target: ChangesTarget,
+        scope: Scope,
+        lookup: ChangesLookup,
+        repo: String,
+        path: String,
+    ): ApiResult<ChangeDiffAnswer> {
+        validateChangesTarget(target)
+        validateChangesReference(repo, path)
+        val query = listOf(
+            "depth" to lookup.depth.toString(), "nested" to if (lookup.nested) "1" else "0",
+            "repo" to repo, "path" to path,
+        )
+        val url = scopedUrl(connection.origin, changesPath(target), scope, query)
+        return executeChanges(request(connection, url), "Malformed Changes diff response") {
+            ChangesWire.diff(it, target, repo, path, commit = false)
+        }
+    }
+
+    override suspend fun changeCommit(
+        connection: Connection,
+        target: ChangesTarget,
+        scope: Scope,
+        lookup: ChangesLookup,
+        repo: String,
+        commitHash: String?,
+    ): ApiResult<ChangeCommitAnswer> {
+        validateChangesTarget(target)
+        validateChangesReference(repo, commitHash = commitHash)
+        val query = listOf(
+            "depth" to lookup.depth.toString(), "nested" to if (lookup.nested) "1" else "0",
+            "view" to "commit", "repo" to repo,
+        ) + listOfNotNull(commitHash?.let { "commit" to it })
+        val url = scopedUrl(connection.origin, changesPath(target), scope, query)
+        return executeChanges(request(connection, url), "Malformed Changes commit response") {
+            ChangesWire.commit(it, target, repo, commitHash)
+        }
+    }
+
+    override suspend fun changeCommitDiff(
+        connection: Connection,
+        target: ChangesTarget,
+        scope: Scope,
+        lookup: ChangesLookup,
+        repo: String,
+        path: String,
+        commitHash: String?,
+    ): ApiResult<ChangeCommitDiffAnswer> {
+        validateChangesTarget(target)
+        validateChangesReference(repo, path, commitHash)
+        val query = listOf(
+            "depth" to lookup.depth.toString(), "nested" to if (lookup.nested) "1" else "0",
+            "repo" to repo, "path" to path, "view" to "commit",
+        )
+        val scopedQuery = query + listOfNotNull(commitHash?.let { "commit" to it })
+        val url = scopedUrl(connection.origin, changesPath(target), scope, scopedQuery)
+        return executeChanges(request(connection, url), "Malformed Changes commit diff response") { element ->
+            ChangesWire.diff(element, target, repo, path, commit = true, expectedHash = commitHash)?.let {
+                ChangeCommitDiffAnswer(it.target, it.workspaceLabel, it.state)
+            }
+        }
+    }
+
+    override suspend fun changeCommitHistory(
+        connection: Connection,
+        target: ChangesTarget,
+        scope: Scope,
+        lookup: ChangesLookup,
+        repo: String,
+        head: String?,
+        offset: Int,
+        limit: Int,
+    ): ApiResult<ChangeCommitHistoryAnswer> {
+        validateChangesTarget(target)
+        validateChangesReference(repo, commitHash = head)
+        require(offset in 0..10_000 && limit in 1..50)
+        val query = listOf(
+            "depth" to lookup.depth.toString(), "nested" to if (lookup.nested) "1" else "0",
+            "view" to "history", "repo" to repo, "offset" to offset.toString(), "limit" to limit.toString(),
+        ) + listOfNotNull(head?.let { "head" to it })
+        val url = scopedUrl(connection.origin, changesPath(target), scope, query)
+        return executeChanges(request(connection, url), "Malformed Changes history response") {
+            ChangesWire.history(it, target, repo, head, offset, limit)
+        }
+    }
+
+    private fun changesPath(target: ChangesTarget): List<String> = when (target) {
+        is ChangesTarget.Pane -> path("pane", target.id, "changes")
+        is ChangesTarget.Workspace -> path("workspace", target.id, "changes")
+    }
+
+    private fun validateChangesTarget(target: ChangesTarget) {
+        require(target.id.isNotBlank() && target.id.length <= MAX_CHANGES_ID_CHARS && '\u0000' !in target.id)
+    }
+
+    private fun validateChangesReference(repo: String, path: String? = null, commitHash: String? = null) {
+        require(repo.isNotBlank() && repo.length <= MAX_CHANGES_ID_CHARS && '\u0000' !in repo)
+        require(path == null || (path.isNotBlank() && path.length <= MAX_CHANGES_ID_CHARS && '\u0000' !in path))
+        require(commitHash == null || Regex("(?:[0-9a-f]{40}|[0-9a-f]{64})").matches(commitHash))
     }
 
     override suspend fun startLaunch(connection: Connection, scope: Scope, target: StartTarget, requestId: String, cwd: String?): ApiResult<CreateResponse> {
@@ -351,6 +932,285 @@ class CollieApiClient(
         val body = StartLaunchRequest(requestId, cwd, target.harness, target.command, target.shell)
         return executeCreate(post(connection, scopedUrl(connection.origin, path("launch"), scope), json.encodeToString(body)))
     }
+
+    override suspend fun startLaunchFrozen(connection: Connection, scope: Scope, canonicalBody: String): ApiResult<CreateResponse> {
+        require(canonicalBody.isNotBlank() && canonicalBody.length <= 16_384)
+        return executeCreate(post(connection, scopedUrl(connection.origin, path("launch"), scope), canonicalBody))
+    }
+
+    override suspend fun addLauncherFrozen(connection: Connection, scope: Scope, canonicalBody: String): ApiResult<AddedLauncherResponse> {
+        require(canonicalBody.isNotBlank() && canonicalBody.length <= 65_536)
+        val expected = expectedAddedLauncher(canonicalBody)
+            ?: return ApiResult.Failure(ApiFailure.Protocol("Malformed frozen launcher request"))
+        return requireContract(
+            executeJson(
+                post(connection, scopedUrl(connection.origin, path("launchers", "added"), scope), canonicalBody),
+                AddedLauncherResponse.serializer(),
+                MUTATION_TIMEOUT_SECONDS,
+            ),
+            "Malformed launcher add response",
+        ) { response ->
+            if (response.ok) validAddedLauncherRow(response, expected)
+            else !response.error.isNullOrBlank() || !response.code.isNullOrBlank()
+        }
+    }
+
+    override suspend fun renameAddedLauncher(connection: Connection, scope: Scope, id: String, label: String): ApiResult<AddedLauncherResponse> {
+        require(id.isNotBlank() && id.length <= 128 && label.isNotBlank() && label.length <= 120)
+        val body = json.encodeToString(AddedLauncherRenameRequest.serializer(), AddedLauncherRenameRequest(id, label))
+        return requireContract(
+            executeJson(post(connection, scopedUrl(connection.origin, path("launchers", "added", "rename"), scope), body), AddedLauncherResponse.serializer(), MUTATION_TIMEOUT_SECONDS),
+            "Malformed launcher rename response",
+        ) { response -> if (response.ok) response.row != null else !response.error.isNullOrBlank() || !response.code.isNullOrBlank() }
+    }
+
+    override suspend fun removeAddedLauncher(connection: Connection, scope: Scope, id: String): ApiResult<AddedLauncherMutationResponse> {
+        require(id.isNotBlank() && id.length <= 128)
+        val body = json.encodeToString(AddedLauncherRemoveRequest.serializer(), AddedLauncherRemoveRequest(id))
+        return requireContract(
+            executeJson(post(connection, scopedUrl(connection.origin, path("launchers", "added", "remove"), scope), body), AddedLauncherMutationResponse.serializer(), MUTATION_TIMEOUT_SECONDS),
+            "Malformed launcher removal response",
+        ) { response -> if (response.ok) response.removed != null && response.removed >= 0 else !response.error.isNullOrBlank() || !response.code.isNullOrBlank() }
+    }
+
+    /** Paired read only: this endpoint validates a line and never checks run permission or probes PATH. */
+    override suspend fun checkRun(connection: Connection, scope: Scope, run: String): ApiResult<LaunchCheckResponse> {
+        require(run.length <= 4096)
+        val body = json.encodeToString(RunCheckRequest.serializer(), RunCheckRequest(run))
+        return requireContract(
+            executeJson(post(connection, scopedUrl(connection.origin, path("launch", "check"), scope), body), LaunchCheckResponse.serializer(), READ_TIMEOUT_SECONDS),
+            "Malformed run validation response",
+        ) { answer -> answer.ok && answer.problem in setOf(null, "empty", "too_long", "forbidden_character") }
+    }
+
+    override suspend fun startRunFrozen(connection: Connection, scope: Scope, canonicalBody: String): ApiResult<CreateResponse> {
+        require(canonicalBody.isNotBlank() && canonicalBody.length <= 16_384)
+        val request = runCatching { json.parseToJsonElement(canonicalBody).jsonObject }.getOrNull()
+            ?: return ApiResult.Failure(ApiFailure.Protocol("Malformed frozen run request"))
+        val requestId = request["requestId"]?.let { (it as? JsonPrimitive)?.contentOrNull }
+        val line = request["run"]?.let { (it as? JsonPrimitive)?.takeIf(JsonPrimitive::isString)?.content }
+        if (requestId.isNullOrBlank() || line.isNullOrBlank() || line.length > 200) {
+            return ApiResult.Failure(ApiFailure.Protocol("Malformed frozen run request"))
+        }
+        return executeCreate(post(connection, scopedUrl(connection.origin, path("launch"), scope), canonicalBody))
+    }
+
+    override suspend fun removeRecentRun(connection: Connection, scope: Scope, line: String): ApiResult<RecentRunsResponse> {
+        require(line.isNotBlank() && line.length <= 200)
+        val body = json.encodeToString(RecentRunRemoveRequest.serializer(), RecentRunRemoveRequest(line))
+        return requireContract(
+            executeJson(post(connection, scopedUrl(connection.origin, path("launch", "recent", "remove"), scope), body), RecentRunsResponse.serializer(), MUTATION_TIMEOUT_SECONDS),
+            "Malformed recent run removal response",
+        ) { response -> if (response.ok) response.removed != null && response.removed >= 0 else !response.error.isNullOrBlank() || !response.code.isNullOrBlank() }
+    }
+
+    override suspend fun clearRecentRuns(connection: Connection, scope: Scope): ApiResult<RecentRunsResponse> =
+        requireContract(
+            executeJson(post(connection, scopedUrl(connection.origin, path("launch", "recent", "clear"), scope), "{}"), RecentRunsResponse.serializer(), MUTATION_TIMEOUT_SECONDS),
+            "Malformed recent run clear response",
+        ) { response -> if (response.ok) response.removed != null && response.removed >= 0 else !response.error.isNullOrBlank() || !response.code.isNullOrBlank() }
+
+    private data class ExpectedAddedLauncher(
+        val requestId: String,
+        val addedAs: String,
+        val kind: String,
+        val harness: String?,
+        val command: String,
+        val label: String,
+        val noPrompts: Boolean,
+    )
+
+    private data class RecipeOptionContract(
+        val id: String,
+        val label: String,
+        val args: String,
+        val group: String? = null,
+        val noPrompts: Boolean = false,
+    )
+
+    private data class RecipeContract(
+        val binary: String,
+        val label: String,
+        val options: List<RecipeOptionContract> = emptyList(),
+    )
+
+    /** Mirror the versioned Collie recipe IDs and their actual executable names, never assume id == binary. */
+    private val launcherRecipes = mapOf(
+        "claude" to RecipeContract("claude", "Claude Code", listOf(
+            RecipeOptionContract("skip", "Skip permission prompts", "--dangerously-skip-permissions", "permissions", true),
+            RecipeOptionContract("plan", "Plan mode", "--permission-mode plan", "permissions"),
+            RecipeOptionContract("opus", "Model: opus", "--model opus", "model"),
+            RecipeOptionContract("sonnet", "Model: sonnet", "--model sonnet", "model"),
+            RecipeOptionContract("continue", "Continue last", "--continue"),
+        )),
+        "codex" to RecipeContract("codex", "Codex", listOf(
+            RecipeOptionContract("bypass", "Skip approvals and sandbox", "--dangerously-bypass-approvals-and-sandbox", "mode", true),
+            RecipeOptionContract("never", "Never ask", "--ask-for-approval never", "mode", true),
+            RecipeOptionContract("readonly", "Read-only sandbox", "--sandbox read-only", "mode"),
+            RecipeOptionContract("search", "Web search", "--search"),
+        )),
+        "opencode" to RecipeContract("opencode", "opencode", listOf(
+            RecipeOptionContract("auto", "Auto-approve", "--auto", noPrompts = true),
+            RecipeOptionContract("plan", "Plan agent", "--agent plan"),
+            RecipeOptionContract("continue", "Continue last", "--continue"),
+        )),
+        "pi" to RecipeContract("pi", "pi", listOf(
+            RecipeOptionContract("continue", "Continue last", "--continue"),
+            RecipeOptionContract("thinking-high", "Thinking: high", "--thinking high"),
+        )),
+        "omp" to RecipeContract("omp", "omp", listOf(
+            RecipeOptionContract("continue", "Continue last", "--continue"),
+            RecipeOptionContract("thinking-high", "Thinking: high", "--thinking=high"),
+        )),
+        "grok" to RecipeContract("grok", "Grok"),
+        "hermes" to RecipeContract("hermes", "Hermes"),
+        "muse" to RecipeContract("muse", "Muse"),
+        "agy" to RecipeContract("agy", "Antigravity"),
+    )
+    private data class AddedLauncherRowContract(
+        val requestId: String,
+        val kind: String,
+        val harness: String?,
+        val command: String,
+        val label: String,
+        val noPrompts: Boolean,
+        val addedBy: String,
+        val addedAt: Long,
+        val addedAs: String,
+    )
+
+    /** The response row is evidence for this exact frozen request, not an arbitrary `ok: true`. */
+    private fun expectedAddedLauncher(body: String): ExpectedAddedLauncher? {
+        return try {
+            val request = json.parseToJsonElement(body).jsonObject
+            val requestId = request["requestId"]?.stringValue() ?: return null
+            if (!requestId.matches(Regex("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", RegexOption.IGNORE_CASE))) return null
+            val explicitLabel = request["label"]
+            val requestedLabel = when {
+                explicitLabel == null || explicitLabel == JsonNull -> null
+                else -> {
+                    val value = explicitLabel.stringValue() ?: return null
+                    if (value == "") null else java.text.Normalizer.normalize(value.trim(), java.text.Normalizer.Form.NFC)
+                }
+            }
+            val recipe = request["recipe"] as? JsonObject
+            val typed = request["text"]?.let { it as? JsonPrimitive }?.takeIf { it.isString }
+            when {
+                recipe != null && "text" !in request -> {
+                    val harness = recipe["harness"]?.stringValue()?.takeIf { it.isNotBlank() && it.length <= 48 } ?: return null
+                    val contract = launcherRecipes[harness] ?: return null
+                    val rawOptions = recipe["options"] as? kotlinx.serialization.json.JsonArray ?: return null
+                    val optionIds = mutableListOf<String>()
+                    for (element in rawOptions) {
+                        val id = (element as? JsonPrimitive)?.takeIf { it.isString }?.content ?: return null
+                        optionIds += id
+                    }
+                    if (optionIds.size != optionIds.toSet().size) return null
+                    val chosenIds = optionIds.toSet()
+                    val chosen = contract.options.filter { it.id in chosenIds }
+                    if (chosen.size != chosenIds.size) return null
+                    val groups = chosen.mapNotNull { it.group }
+                    if (groups.size != groups.toSet().size) return null
+                    val command = (listOf(contract.binary) + chosen.map { it.args }).joinToString(" ")
+                    val label = requestedLabel ?: if (chosen.isEmpty()) contract.label else
+                        "${contract.label}, ${chosen.joinToString(", ") { it.label }}"
+                    ExpectedAddedLauncher(
+                        requestId, "recipe", "agent", harness, command, label, chosen.any { it.noPrompts },
+                    )
+                }
+                recipe == null && request["recipe"] == null && typed != null -> {
+                    val command = java.text.Normalizer.normalize(typed.content.trim(), java.text.Normalizer.Form.NFC)
+                    val defaultLabel = command.split(Regex("\\s+"), limit = 2).firstOrNull().orEmpty()
+                    val expectedLabel = requestedLabel ?: takeCodePoints(defaultLabel, 60)
+                    val noPrompts = request["noPrompts"] == JsonPrimitive(true) || scanNoPromptsForReceipt(command)
+                    when (request["kind"]?.stringValue()) {
+                        "command" -> {
+                            if ("harness" in request) return null
+                            ExpectedAddedLauncher(requestId, "text", "command", null, command, expectedLabel, noPrompts)
+                        }
+                        "agent" -> {
+                            val harness = request["harness"]?.stringValue()?.takeIf { launcherRecipes.containsKey(it) } ?: return null
+                            ExpectedAddedLauncher(requestId, "text", "agent", harness, command, expectedLabel, noPrompts)
+                        }
+                        else -> null
+                    }
+                }
+                else -> null
+            }
+        } catch (_: IllegalArgumentException) {
+            null
+        } catch (_: kotlinx.serialization.SerializationException) {
+            null
+        }
+    }
+
+    private fun scanNoPromptsForReceipt(command: String): Boolean {
+        val words = command.trim().split(Regex("\\s+")).map { word ->
+            if (word.length >= 2 && (word.first() == '\'' || word.first() == '\"') && word.last() == word.first()) {
+                word.substring(1, word.length - 1)
+            } else word
+        }
+        val flags = setOf(
+            "--dangerously-skip-permissions", "--permission-mode=bypassPermissions",
+            "--dangerously-bypass-approvals-and-sandbox", "--yolo", "--ask-for-approval=never",
+        )
+        if (words.any { it in flags }) return true
+        if (words.zipWithNext().any { (flag, value) ->
+                (flag == "--permission-mode" && value == "bypassPermissions") ||
+                    (flag == "--ask-for-approval" && value == "never")
+            }) return true
+        val executable = words.firstOrNull()?.substringAfterLast('/')?.substringAfterLast('\\')
+            ?.replace(Regex("\\.(?:exe|cmd|ps1)$", RegexOption.IGNORE_CASE), "")
+        return executable == "codex" && words.zipWithNext().any { (flag, value) -> flag == "-a" && value == "never" } ||
+            executable == "opencode" && "--auto" in words
+    }
+
+    private fun validAddedLauncherRow(response: AddedLauncherResponse, expected: ExpectedAddedLauncher): Boolean =
+        response.replayed != false && parseAddedLauncherRow(response.row, expected) != null
+
+    private fun parseAddedLauncherRow(row: JsonObject?, expected: ExpectedAddedLauncher): AddedLauncherRowContract? {
+        row ?: return null
+        val allowedFields = setOf("source", "id", "kind", "harness", "command", "label", "noPrompts", "addedBy", "addedAt", "addedAs")
+        val expectedFieldCount = if (expected.harness == null) 9 else 10
+        if (row.size != expectedFieldCount || row.keys.any { it !in allowedFields }) return null
+        fun string(key: String): String? = row[key]?.let { (it as? JsonPrimitive)?.takeIf { value -> value.isString }?.contentOrNull }
+        if (string("source") != "added") return null
+        val requestId = string("id")?.takeIf { it == expected.requestId } ?: return null
+        val kind = string("kind")?.takeIf { it == expected.kind } ?: return null
+        val addedAs = string("addedAs")?.takeIf { it == expected.addedAs } ?: return null
+        val harness = if (expected.harness == null) {
+            if ("harness" in row) return null
+            null
+        } else string("harness")?.takeIf { it == expected.harness } ?: return null
+        val command = string("command")?.takeIf { validLauncherText(it, 200) && it == expected.command } ?: return null
+        val label = string("label")?.takeIf { validLauncherText(it, 60) && it == expected.label } ?: return null
+        val addedBy = string("addedBy")?.takeIf {
+            it.isNotBlank() && it.length <= 48 && it == it.trim() && it.none { character -> character.isISOControl() }
+        } ?: return null
+        val noPromptsPrimitive = row["noPrompts"] as? JsonPrimitive ?: return null
+        if (noPromptsPrimitive.isString) return null
+        val noPrompts = noPromptsPrimitive.booleanOrNull?.takeIf { it == expected.noPrompts } ?: return null
+        val addedAtPrimitive = row["addedAt"] as? JsonPrimitive ?: return null
+        if (addedAtPrimitive.isString) return null
+        val addedAt = addedAtPrimitive.longOrNull?.takeIf { it in 0..9_007_199_254_740_991L } ?: return null
+        return AddedLauncherRowContract(requestId, kind, harness, command, label, noPrompts, addedBy, addedAt, addedAs)
+    }
+
+    private fun validLauncherText(value: String, maxCodePoints: Int): Boolean {
+        if (value.isBlank() || value != java.text.Normalizer.normalize(value.trim(), java.text.Normalizer.Form.NFC)) return false
+        if (value.codePointCount(0, value.length) > maxCodePoints) return false
+        return value.codePoints().noneMatch { code ->
+            code < 0x20 || code in 0x7f..0x9f || code == 0x2028 || code == 0x2029 ||
+                code in 0x202a..0x202e || code in 0x2066..0x2069 || code == 0x200e || code == 0x200f || code == 0x061c
+        }
+    }
+
+    private fun takeCodePoints(value: String, count: Int): String {
+        val end = value.offsetByCodePoints(0, minOf(count, value.codePointCount(0, value.length)))
+        return value.substring(0, end)
+    }
+
+    private fun JsonElement?.stringValue(): String? = (this as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
 
     override suspend fun planWorktree(connection: Connection, scope: Scope, cwd: String, branch: String?, parent: String?): ApiResult<WorktreePlanResponse> {
         require(cwd.isNotBlank())
@@ -362,6 +1222,11 @@ class CollieApiClient(
         require(cwd.isNotBlank() && branch.isNotBlank() && requestId.isNotBlank())
         val body = WorktreeAtRequest(cwd, branch, base, folder, requestId, target.harness, target.command, target.shell)
         return executeWorktreeOpen(post(connection, scopedUrl(connection.origin, path("worktree"), scope), json.encodeToString(body)))
+    }
+
+    override suspend fun createWorktreeAtFrozen(connection: Connection, scope: Scope, canonicalBody: String): ApiResult<WorktreeOpenResponse> {
+        require(canonicalBody.isNotBlank() && canonicalBody.length <= 16_384)
+        return executeWorktreeOpen(post(connection, scopedUrl(connection.origin, path("worktree"), scope), canonicalBody))
     }
 
     override suspend fun closePane(connection: Connection, address: PaneAddress): ApiResult<ActionResponse> =
@@ -425,11 +1290,66 @@ class CollieApiClient(
     }
 
     override suspend fun launchers(connection: Connection, scope: Scope): ApiResult<LaunchersResponse> =
-        executeJson(
-            request(connection, scopedUrl(connection.origin, path("launchers"), scope)),
-            LaunchersResponse.serializer(),
-            READ_TIMEOUT_SECONDS,
-        )
+        requireContract(
+            executeJson(
+                request(connection, scopedUrl(connection.origin, path("launchers"), scope)),
+                LaunchersResponse.serializer(),
+                READ_TIMEOUT_SECONDS,
+            ),
+            "Malformed launcher catalog",
+        ) { response ->
+            response.home.isNotBlank() && response.home.length <= 4096 && response.launchers.size <= 128 &&
+                response.launchers.all { it.label.isNotBlank() && it.label.length <= 120 && it.command.length <= 4096 &&
+                    (it.id == null || it.id.length <= 128) && (it.addedBy == null || it.addedBy.length <= 120) } &&
+                (response.adding == null || response.adding.let { adding ->
+                    adding.max in 1..20 && adding.count in 0..adding.max && adding.file.isNotBlank() && adding.file.length <= 4096 &&
+                        adding.recipes.size <= 64 && adding.off.size <= 20 &&
+                        adding.recipes.all { recipe -> recipe.harness.isNotBlank() && recipe.harness.length <= 80 &&
+                            recipe.label.isNotBlank() && recipe.label.length <= 120 && recipe.binary.isNotBlank() &&
+                            recipe.binary.length <= 256 && recipe.options.size <= 32 &&
+                            recipe.options.map { it.id }.toSet().size == recipe.options.size &&
+                            recipe.options.all { option -> option.id.isNotBlank() && option.id.length <= 80 &&
+                                option.label.isNotBlank() && option.label.length <= 120 && option.args.length <= 512 &&
+                                (option.group == null || option.group.length <= 80) } } &&
+                        adding.off.all { it.id.isNotBlank() && it.id.length <= 128 && it.label.length <= 120 &&
+                            it.command.length <= 4096 && it.kind.length <= 32 && it.reason.length <= 80 }
+                }) &&
+                (response.recentRuns == null || response.recentRuns.size <= 12 && response.recentRuns.all { recent ->
+                    recent.line.isNotBlank() && recent.line.length <= 200 && (recent.cwd == null || recent.cwd.length <= 4096) &&
+                        (recent.reason == null || recent.reason.length <= 80)
+                })
+        }
+
+    override suspend fun folders(connection: Connection, scope: Scope): ApiResult<FoldersResponse> =
+        requireContract(
+            executeJson(request(connection, scopedUrl(connection.origin, path("folders"), scope)), FoldersResponse.serializer(), READ_TIMEOUT_SECONDS),
+            "Malformed folder list response",
+        ) { response -> response.home.isNotBlank() && response.recent.size <= 8 && response.favourites.size <= 12 &&
+            response.recent.all { it.isNotBlank() && it.length <= 4096 } &&
+            response.favourites.all { it.isNotBlank() && it.length <= 4096 } && response.recent.toSet().intersect(response.favourites.toSet()).isEmpty()
+        }
+
+    override suspend fun starFolder(connection: Connection, scope: Scope, folder: String, starred: Boolean): ApiResult<FoldersResponse> {
+        require(folder.isNotBlank() && folder.length <= 4096)
+        val body = json.encodeToString(StarFolderRequest(folder, starred))
+        return requireContract(
+            executeJson(post(connection, scopedUrl(connection.origin, path("folders", "star"), scope), body), FoldersResponse.serializer(), MUTATION_TIMEOUT_SECONDS),
+            "Malformed folder star response",
+        ) { response -> response.home.isNotBlank() && response.recent.size <= 8 && response.favourites.size <= 12 &&
+            response.recent.all { it.isNotBlank() && it.length <= 4096 } &&
+            response.favourites.all { it.isNotBlank() && it.length <= 4096 } && response.recent.toSet().intersect(response.favourites.toSet()).isEmpty()
+        }
+    }
+
+    override suspend fun agentCapabilities(connection: Connection, scope: Scope): ApiResult<AgentCapabilitiesResponse> =
+        requireContract(
+            executeJson(
+                request(connection, scopedUrl(connection.origin, path("agents", "capabilities"), scope)),
+                AgentCapabilitiesResponse.serializer(),
+                READ_TIMEOUT_SECONDS,
+            ),
+            "Unsupported agent capability schema",
+        ) { it.schema == 1 }
 
     override suspend fun launch(
         connection: Connection,
@@ -469,6 +1389,17 @@ class CollieApiClient(
         return executeWorktreeOpen(post(connection, url, body))
     }
 
+    override suspend fun createWorktreeFrozen(
+        connection: Connection,
+        scope: Scope,
+        workspaceId: String,
+        canonicalBody: String,
+    ): ApiResult<WorktreeOpenResponse> {
+        require(workspaceId.isNotBlank() && canonicalBody.isNotBlank())
+        val url = scopedUrl(connection.origin, path("workspace", workspaceId, "worktree"), scope)
+        return executeWorktreeOpen(post(connection, url, canonicalBody))
+    }
+
     override suspend fun openWorktree(
         connection: Connection,
         scope: Scope,
@@ -481,25 +1412,62 @@ class CollieApiClient(
         return executeWorktreeOpen(post(connection, url, body))
     }
 
+    override suspend fun planWorktreeRemoval(connection: Connection, scope: Scope, workspaceId: String, force: Boolean): ApiResult<WorktreeRemovePlanResponse> {
+        require(workspaceId.matches(Regex("[A-Za-z0-9_.:-]{1,128}")))
+        val url = scopedUrl(connection.origin, path("workspace", workspaceId, "worktree", "remove-plan"), scope, listOf("force" to force.toString()))
+        return requireContract(executeJson(request(connection, url), WorktreeRemovePlanResponse.serializer(), READ_TIMEOUT_SECONDS), "Malformed worktree removal plan") {
+            it.validFor(workspaceId, force) || (!it.ok && !it.code.isNullOrBlank() && !it.error.isNullOrBlank())
+        }
+    }
+
+    override suspend fun removeWorktree(connection: Connection, scope: Scope, workspaceId: String, request: WorktreeRemoveRequest): ApiResult<WorktreeRemoveResponse> {
+        require(workspaceId.matches(Regex("[A-Za-z0-9_.:-]{1,128}")) && request.requestId.matches(Regex("[A-Za-z0-9_-]{1,128}")) && request.planToken.matches(Regex("[A-Za-z0-9_.:-]{1,128}")))
+        val url = scopedUrl(connection.origin, path("workspace", workspaceId, "worktree", "remove"), scope)
+        val body = json.encodeToString(request)
+        return executeResponse(post(connection, url, body), MUTATION_TIMEOUT_SECONDS) { response ->
+            if (response.code in REDIRECT_CODES) return@executeResponse ApiResult.Failure(ApiFailure.Redirect(response.code))
+            val bytes = readBoundedBody(response, 64 * 1024) ?: return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Removal response exceeded its limit"))
+            val value = decode(WorktreeRemoveResponse.serializer(), bytes)
+            val knownRefusal = response.code == 409 && response.header("x-collie-error-source") == "collie" &&
+                response.header("x-collie-error-factor") == "operation" && value?.knownRefusalFor(workspaceId, request.requestId) == true &&
+                response.header("x-collie-error-code") == value.code
+            if (!response.isSuccessful && !knownRefusal) return@executeResponse failure(response, bytes)
+            if (value == null || !(value.validFor(workspaceId, request.force, request.requestId) || knownRefusal ||
+                !value.ok && value.operation?.let { it.validFor(request.requestId) && it.state in setOf("pending", "unknown") && it.capability == "worktreeRemove" } == true))
+                return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Malformed worktree removal response"))
+            ApiResult.Success(value, response.code, controlAuthority = responseAuthority(response))
+        }
+    }
+
     override suspend fun upload(
         connection: Connection,
         address: PaneAddress,
         upload: ImageUpload,
+    ): ApiResult<UploadResponse> = upload(connection, address, UploadSource.Image(upload))
+
+    override suspend fun upload(
+        connection: Connection,
+        address: PaneAddress,
+        upload: UploadSource,
     ): ApiResult<UploadResponse> {
-        val body = MultipartBody.Builder()
-            .setType(MultipartBody.FORM)
-            .addFormDataPart(
-                "file",
-                upload.fileName,
-                upload.bytes.toRequestBody(upload.contentType.toMediaTypeOrNull()),
-            )
-            .build()
-        val url = scopedUrl(connection.origin, path("pane", address.paneId, "upload"), address.scope)
-        return requireContract(
-            executeJson(post(connection, url, body), UploadResponse.serializer(), UPLOAD_TIMEOUT_SECONDS),
-            "Malformed upload response",
-        ) { response ->
-            if (response.ok) !response.path.isNullOrBlank() else !response.error.isNullOrBlank()
+        try {
+            val body = MultipartBody.Builder()
+                .setType(MultipartBody.FORM)
+                .addFormDataPart(
+                    "file",
+                    safeUploadFilename(upload.fileName),
+                    UploadStreamRequestBody(upload),
+                )
+                .build()
+            val url = scopedUrl(connection.origin, path("pane", address.paneId, "upload"), address.scope)
+            return requireContract(
+                executeJson(post(connection, url, body), UploadResponse.serializer(), UPLOAD_TIMEOUT_SECONDS),
+                "Malformed upload response",
+            ) { response ->
+                if (response.ok) !response.path.isNullOrBlank() else !response.error.isNullOrBlank()
+            }
+        } finally {
+            upload.dispose()
         }
     }
 
@@ -520,6 +1488,94 @@ class CollieApiClient(
             if (response.ok) !response.text.isNullOrBlank() else !response.error.isNullOrBlank()
         }
     }
+
+    override suspend fun cacheRules(connection: Connection, etag: String?): ApiResult<CacheRulesResponse> {
+        val builder = requestBuilder(connection, url(connection.origin, path("cache-rules")))
+        if (!etag.isNullOrBlank()) builder.header("If-None-Match", etag)
+        return requireContract(
+            executeJson(
+                builder.get().build(),
+                CacheRulesResponse.serializer(),
+                READ_TIMEOUT_SECONDS,
+                allowNotModified = true,
+                maxResponseBytes = MAX_CACHE_RULES_BODY_BYTES,
+                limitMessage = "Cache rule catalog exceeded its size limit",
+            ),
+            "Malformed cache rule catalog",
+        ) { catalog ->
+            catalog.rules.size <= MAX_CACHE_RULES && catalog.rules.all { rule ->
+                rule.id.length in 1..128 && rule.label.length in 1..256 && rule.ttlSeconds in 1..MAX_CACHE_TTL_SECONDS &&
+                    rule.confidence.length <= 32 && rule.sourceTitle.length <= 256 && rule.sourceUrl.length in 1..MAX_CACHE_URL_CHARS &&
+                    rule.retrievedAt.length <= 32 && (rule.note?.length ?: 0) <= MAX_CACHE_NOTE_CHARS &&
+                    (rule.overridden == null || rule.overridden.ttlSeconds in 1..MAX_CACHE_TTL_SECONDS &&
+                        rule.overridden.sourceUrl.length in 1..MAX_CACHE_URL_CHARS && rule.overridden.retrieved.length <= 32 &&
+                        (rule.overridden.note?.length ?: 0) <= MAX_CACHE_NOTE_CHARS)
+            }
+        }
+    }
+
+    override suspend fun cacheWatch(connection: Connection, address: PaneAddress): ApiResult<CacheWatchResponse> {
+        val target = scopedUrl(
+            connection.origin,
+            path("notifications", "cache-watch"),
+            address.scope,
+            listOf("pane" to address.paneId),
+        )
+        return validateCacheWatch(executeJson(request(connection, target), CacheWatchResponse.serializer(), READ_TIMEOUT_SECONDS))
+    }
+
+    override suspend fun setCacheWatch(
+        connection: Connection,
+        address: PaneAddress,
+        on: Boolean,
+    ): ApiResult<CacheWatchResponse> {
+        val target = scopedUrl(
+            connection.origin,
+            path("notifications", "cache-watch"),
+            address.scope,
+            listOf("pane" to address.paneId),
+        )
+        return validateCacheWatch(
+            executeJson(post(connection, target, json.encodeToString(CacheWatchRequest(on))), CacheWatchResponse.serializer(), MUTATION_TIMEOUT_SECONDS),
+        )
+    }
+
+    override suspend fun cacheWatchList(connection: Connection): ApiResult<CacheWatchListResponse> = validateCacheWatchList(
+        executeJson(
+            request(connection, path("notifications", "cache-watch", "list")),
+            CacheWatchListResponse.serializer(),
+            READ_TIMEOUT_SECONDS,
+            maxResponseBytes = MAX_CACHE_WATCH_LIST_BODY_BYTES,
+            limitMessage = "Cache watch list exceeded its size limit",
+        ),
+    )
+
+    override suspend fun forgetCacheWatch(connection: Connection, id: String): ApiResult<CacheWatchListResponse> {
+        require(id.isNotBlank())
+        return validateCacheWatchList(
+            executeJson(
+                post(connection, url(connection.origin, path("notifications", "cache-watch", "forget")), json.encodeToString(CacheWatchForgetRequest(id))),
+                CacheWatchListResponse.serializer(),
+                MUTATION_TIMEOUT_SECONDS,
+                maxResponseBytes = MAX_CACHE_WATCH_LIST_BODY_BYTES,
+                limitMessage = "Cache watch list exceeded its size limit",
+            ),
+        )
+    }
+
+    private fun validateCacheWatch(result: ApiResult<CacheWatchResponse>): ApiResult<CacheWatchResponse> =
+        requireContract(result, "Malformed cache watch response") { it.warnSeconds in 1..MAX_CACHE_TTL_SECONDS }
+
+    private fun validateCacheWatchList(result: ApiResult<CacheWatchListResponse>): ApiResult<CacheWatchListResponse> =
+        requireContract(result, "Malformed cache watch list") { response ->
+            response.entries.size <= MAX_CACHE_WATCHES && response.entries.all { entry ->
+                entry.id.length in 1..128 && entry.label.length <= 256 &&
+                    (entry.host?.length ?: 0) <= 128 && (entry.session?.length ?: 0) <= 128 &&
+                    (entry.paneId?.length ?: 0) <= 256 &&
+                    (entry.host == null || entry.host.isNotBlank()) && (entry.session == null || entry.session.isNotBlank()) &&
+                    (entry.paneId == null || entry.paneId.isNotBlank())
+            }
+        }
 
     override suspend fun notificationPreferences(connection: Connection): ApiResult<NotifyPreferences> =
         executeJson(
@@ -572,7 +1628,8 @@ class CollieApiClient(
     override suspend fun standbyUpdate(connection: Connection): ApiResult<StandbyUpdateResponse> =
         requireContract(
             executeJson(
-                request(connection, url(connection.origin, listOf("standby", "update"))),
+                requestBuilder(connection, url(connection.origin, listOf("standby", "update")))
+                    .removeHeader("Authorization").get().build(),
                 StandbyUpdateResponse.serializer(),
                 READ_TIMEOUT_SECONDS,
             ),
@@ -611,6 +1668,23 @@ class CollieApiClient(
             MUTATION_TIMEOUT_SECONDS,
         )
 
+    override suspend fun dismissUpdate(
+        connection: Connection,
+        version: String,
+        scope: UpdateDismissalScope,
+    ): ApiResult<UpdateInfo> {
+        require(version.isNotBlank())
+        return executeJson(
+            post(
+                connection,
+                url(connection.origin, path("update", "dismiss")),
+                json.encodeToString(UpdateDismissRequest(version, scope)),
+            ),
+            UpdateInfo.serializer(),
+            MUTATION_TIMEOUT_SECONDS,
+        )
+    }
+
     override suspend fun reply(
         connection: Connection,
         address: PaneAddress,
@@ -631,6 +1705,22 @@ class CollieApiClient(
         require(keys.isNotEmpty() && keys.all(MuxKeyGrammar::isValid))
         val url = scopedUrl(connection.origin, path("pane", address.paneId, "keys"), address.scope)
         return executeAction(post(connection, url, json.encodeToString(KeysRequest(keys, expectedPrompt))))
+    }
+
+    override suspend fun queuedSendNow(
+        connection: Connection,
+        address: PaneAddress,
+        keys: List<String>,
+        expectedPrompt: String,
+        guard: QueuedSendGuard,
+    ): ApiResult<ActionResponse> {
+        if (keys.isEmpty() || keys.size > MAX_QUEUED_SEND_KEYS || !keys.all(MuxKeyGrammar::isValid) ||
+            guard.generation < 0L || guard.revision < 0L ||
+            !isCanonicalQueuedSendIdentity(guard.queueDigest) || !isCanonicalQueuedSendIdentity(guard.occupant)
+        ) return ApiResult.Failure(ApiFailure.Protocol("Queued send action is malformed"))
+        val url = scopedUrl(connection.origin, path("pane", address.paneId, "keys"), address.scope)
+        val body = GuardedQueuedSendRequest(keys.toList(), expectedPrompt, guard)
+        return executeAction(post(connection, url, json.encodeToString(body)))
     }
 
     private suspend fun paneAction(
@@ -666,55 +1756,546 @@ class CollieApiClient(
         is ApiResult.NotModified -> result
     }
 
-    private suspend fun executeAction(request: Request): ApiResult<ActionResponse> {
-        val response = try {
-            client.newCall(request).await(MUTATION_TIMEOUT_SECONDS)
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: InterruptedIOException) {
-            return ApiResult.Failure(ApiFailure.Timeout)
-        } catch (io: IOException) {
-            return ApiResult.Failure(ApiFailure.Network(io.message))
+    override suspend fun namedAgentRead(connection: Connection, address: PaneAddress, source: String, lines: Int): ApiResult<NamedAgentReadResponse> {
+        if (source !in setOf("visible", "recent", "recent_unwrapped", "detection") || lines !in 1..200) return ApiResult.Failure(ApiFailure.Protocol("Invalid bounded named read"))
+        val url = scopedUrl(connection.origin, path("pane", address.paneId, "agent", "read"), address.scope).newBuilder().addQueryParameter("source", source).addQueryParameter("lines", lines.toString()).build()
+        return executeAgentJson(request(connection, url), NamedAgentReadResponse.serializer(), READ_TIMEOUT_SECONDS,
+            { agentReadJson(it, address.paneId) }, { it.ok && it.schema == 1 && it.paneId == address.paneId && it.text.toByteArray().size <= 32 * 1024 })
+    }
+    override suspend fun namedAgentList(connection: Connection, scope: Scope): ApiResult<NamedAgentListResponse> = executeAgentJson(
+        request(connection, scopedUrl(connection.origin, path("agents", "named"), scope)), NamedAgentListResponse.serializer(), READ_TIMEOUT_SECONDS,
+        ::agentListJson, { it.ok && it.schema == 1 && it.agents.size <= 64 && it.agents.all { info -> info.validFor(info.paneId) } })
+    override suspend fun namedAgentControl(connection: Connection, address: PaneAddress): ApiResult<AgentAutomationResponse> = executeAgentJson(
+        request(connection, scopedUrl(connection.origin, path("pane", address.paneId, "agent", "control"), address.scope)),
+        AgentAutomationResponse.serializer(), READ_TIMEOUT_SECONDS, { agentControlJson(it, address.paneId) },
+        { it.ok && it.schema == 1 && it.info.validFor(address.paneId) && it.witness.matches(Regex("[a-f0-9]{64}")) },
+    )
+    override suspend fun namedAgentExplain(connection: Connection, address: PaneAddress): ApiResult<AgentExplainResponse> = executeAgentJson(
+        request(connection, scopedUrl(connection.origin, path("pane", address.paneId, "agent", "explain"), address.scope)),
+        AgentExplainResponse.serializer(), READ_TIMEOUT_SECONDS, { agentExplainJson(it, address.paneId) },
+        { it.ok && it.schema == 1 && it.explain.paneId == address.paneId && it.explain.status in setOf("idle", "working", "blocked", "done", "unknown") },
+    )
+    override suspend fun namedAgentAction(connection: Connection, address: PaneAddress, id: String, witness: String, action: NamedAgentAction, expectedText: String?): ApiResult<AgentActionResponse> {
+        if (!id.matches(Regex("[A-Za-z0-9_-]{1,128}")) || !witness.matches(Regex("[a-f0-9]{64}")) || !action.valid() || (action !is NamedAgentAction.Prompt && action !is NamedAgentAction.Keys && action !is NamedAgentAction.Input && expectedText != null)) return ApiResult.Failure(ApiFailure.Protocol("Invalid named agent intent"))
+        val body = json.encodeToString(kotlinx.serialization.json.buildJsonObject {
+            put("requestId", id); put("witness", witness); put("action", action.body()); put("expectedText", expectedText?.let(::JsonPrimitive) ?: JsonNull)
+        })
+        if (body.toByteArray(Charsets.UTF_8).size > AGENT_AUTOMATION_BODY_BYTES) return ApiResult.Failure(ApiFailure.Protocol("Named agent intent exceeds its wire bound"))
+        return executeAgentJson(post(connection, scopedUrl(connection.origin, path("pane", address.paneId, "agent", action.verb), address.scope), body),
+            AgentActionResponse.serializer(), (action.timeoutMs + 999) / 1000L + 10L,
+            { agentActionJson(it, address.paneId, id, witness) },
+            { it.ok && it.schema == 1 && it.operation.validFor(id) && it.operation.capability == "agentAutomation" && it.operation.targetIdentity == witness && (it.result == null || it.result.validFor(address.paneId)) },
+        )
+    }
+    override suspend fun startAgentWait(connection: Connection, address: PaneAddress, id: String, witness: String, condition: NamedAgentWait, timeoutMs: Int): ApiResult<AgentWaitResponse> {
+        if (!id.matches(Regex("[A-Za-z0-9_-]{1,128}")) || !witness.matches(Regex("[a-f0-9]{64}")) || !condition.valid() || timeoutMs !in 1..300_000) return ApiResult.Failure(ApiFailure.Protocol("Invalid bounded observation"))
+        val body = json.encodeToString(kotlinx.serialization.json.buildJsonObject {
+            put("requestId", id); put("paneId", address.paneId); put("witness", witness); put("condition", condition.body()); put("timeoutMs", timeoutMs)
+        })
+        if (body.toByteArray(Charsets.UTF_8).size > AGENT_AUTOMATION_BODY_BYTES) return ApiResult.Failure(ApiFailure.Protocol("Observation exceeds its wire bound"))
+        return executeAgentJson(post(connection, scopedUrl(connection.origin, path("waits"), address.scope), body), AgentWaitResponse.serializer(), READ_TIMEOUT_SECONDS,
+            { agentWaitJson(it, address.paneId, id) }, { it.ok && it.wait.schema == 1 && it.wait.id == id && it.wait.paneId == address.paneId && (it.wait.result?.info?.validFor(address.paneId) != false) })
+    }
+    override suspend fun agentWait(connection: Connection, address: PaneAddress, id: String, cancel: Boolean): ApiResult<AgentWaitResponse> {
+        if (!id.matches(Regex("[A-Za-z0-9_-]{1,128}"))) return ApiResult.Failure(ApiFailure.Protocol("Invalid observation id"))
+        val builder = requestBuilder(connection, scopedUrl(connection.origin, path("waits", id), address.scope))
+        val request = if (cancel) builder.delete().build() else builder.get().build()
+        return executeAgentJson(request, AgentWaitResponse.serializer(), READ_TIMEOUT_SECONDS,
+            { agentWaitJson(it, address.paneId, id) }, { it.ok && it.wait.schema == 1 && it.wait.id == id && it.wait.paneId == address.paneId && (it.wait.result?.info?.validFor(address.paneId) != false) })
+    }
+    private suspend fun executeClosedAgentObject(request: Request, timeoutSeconds: Long): ApiResult<JsonObject> = executeResponse(request, timeoutSeconds) { response ->
+        if (response.code in REDIRECT_CODES) return@executeResponse ApiResult.Failure(ApiFailure.Redirect(response.code))
+        if (response.isSuccessful && response.header("Content-Type")?.substringBefore(';')?.trim()?.lowercase(java.util.Locale.ROOT) != "application/json") return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Named agent response requires JSON media type"))
+        val body = readBoundedBody(response, AGENT_AUTOMATION_RESPONSE_BYTES)
+            ?: return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Named agent response exceeded its wire limit"))
+        if (!response.isSuccessful) return@executeResponse failure(response, body)
+        val value = ClosedAgentJson.parse(body) ?: return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Malformed closed named agent response"))
+        ApiResult.Success(value, response.code, response.header("ETag"), response.header(BUILD_HEADER), responseAuthority(response))
+    }
+    private suspend fun <T> executeAgentJson(request: Request, serializer: DeserializationStrategy<T>, timeoutSeconds: Long,
+        rawValid: (JsonObject) -> Boolean, valid: (T) -> Boolean): ApiResult<T> {
+        return when (val result = executeClosedAgentObject(request, timeoutSeconds)) {
+            is ApiResult.Failure -> result
+            is ApiResult.NotModified -> ApiResult.Failure(ApiFailure.Protocol("Named actions and waits require a complete current response"))
+            is ApiResult.Success -> try {
+                if (!rawValid(result.value)) ApiResult.Failure(ApiFailure.Protocol("Malformed named agent response"))
+                else {
+                    val decoded = json.decodeFromString(serializer, result.value.toString())
+                    if (!valid(decoded)) ApiResult.Failure(ApiFailure.Protocol("Mismatched named agent response"))
+                    else ApiResult.Success(decoded, result.status, result.etag, result.buildId, result.controlAuthority)
+                }
+            } catch (_: SerializationException) { ApiResult.Failure(ApiFailure.Protocol("Malformed named agent response")) }
         }
-        response.use {
-            if (it.code in REDIRECT_CODES) return ApiResult.Failure(ApiFailure.Redirect(it.code))
+    }
+
+    override suspend fun controlOperation(connection: Connection, scope: Scope, requestId: String): ApiResult<ControlOperationResponse> {
+        require(requestId.matches(Regex("[a-zA-Z0-9_-]{1,128}")))
+        val result = executeJson(request(connection, scopedUrl(connection.origin, listOf("api", "control", "operations", requestId), scope)), ControlOperationResponse.serializer(), READ_TIMEOUT_SECONDS)
+        return requireContract(result, "Unknown or mismatched control operation") { it.ok && it.operation.validFor(requestId) }
+    }
+
+    override suspend fun hostIntegrations(connection: Connection, scope: Scope): ApiResult<HostIntegrationsResponse> {
+        val result = executeJson(request(connection, scopedUrl(connection.origin, path("host", "integrations"), scope)), HostIntegrationsResponse.serializer(), READ_TIMEOUT_SECONDS)
+        return requireContract(result, "Malformed host integration inventory") { it.valid() }
+    }
+
+    override suspend fun hostPlugins(connection: Connection, scope: Scope): ApiResult<HostPluginsResponse> {
+        val result = executeJson(request(connection, scopedUrl(connection.origin, path("host", "plugins"), scope)), HostPluginsResponse.serializer(), READ_TIMEOUT_SECONDS, maxResponseBytes = MAX_LAYOUT_RESPONSE_BYTES)
+        return requireContract(result, "Malformed plugin inventory") { it.valid() }
+    }
+
+    override suspend fun hostPluginActions(connection: Connection, scope: Scope, pluginId: String): ApiResult<HostPluginActionsResponse> {
+        require(pluginId.matches(Regex("[A-Za-z0-9][A-Za-z0-9:._-]{0,119}")))
+        val result = executeJson(request(connection, scopedUrl(connection.origin, path("host", "plugins", pluginId, "actions"), scope)), HostPluginActionsResponse.serializer(), READ_TIMEOUT_SECONDS)
+        return requireContract(result, "Malformed plugin action inventory") { it.valid() && it.actions.all { action -> action.pluginId == pluginId } }
+    }
+
+    override suspend fun hostPluginLogs(connection: Connection, scope: Scope, pluginId: String): ApiResult<HostPluginLogsResponse> {
+        require(pluginId.matches(Regex("[A-Za-z0-9][A-Za-z0-9:._-]{0,119}")))
+        val result = executeJson(request(connection, scopedUrl(connection.origin, path("host", "plugins", pluginId, "logs"), scope)), HostPluginLogsResponse.serializer(), READ_TIMEOUT_SECONDS)
+        return requireContract(result, "Malformed plugin logs") { it.valid() && it.logs.all { log -> log.pluginId == pluginId } }
+    }
+
+    override suspend fun setHostPluginEnabled(connection: Connection, scope: Scope, pluginId: String, enabled: Boolean): ApiResult<ActionResponse> {
+        require(pluginId.matches(Regex("[A-Za-z0-9][A-Za-z0-9:._-]{0,119}")))
+        val verb = if (enabled) "enable" else "disable"
+        val result = executeJson(post(connection, scopedUrl(connection.origin, path("host", "plugins", pluginId, verb), scope), ""), ActionResponse.serializer(), MUTATION_TIMEOUT_SECONDS)
+        return requireContract(result, "Malformed plugin enabled-state response") { it.ok }
+    }
+
+    override suspend fun unlinkHostPlugin(connection: Connection, scope: Scope, pluginId: String): ApiResult<ActionResponse> {
+        require(pluginId.matches(Regex("[A-Za-z0-9][A-Za-z0-9:._-]{0,119}")))
+        val result = executeJson(post(connection, scopedUrl(connection.origin, path("host", "plugins", pluginId, "unlink"), scope), ""), ActionResponse.serializer(), MUTATION_TIMEOUT_SECONDS)
+        return requireContract(result, "Malformed plugin unlink response") { it.ok }
+    }
+
+    override suspend fun invokeHostPluginAction(connection: Connection, scope: Scope, pluginId: String, actionId: String, correlationId: String): ApiResult<HostPluginActionResponse> {
+        require(pluginId.matches(Regex("[A-Za-z0-9][A-Za-z0-9:._-]{0,119}")) && actionId.matches(Regex("[A-Za-z0-9][A-Za-z0-9:_-]{0,119}")) && correlationId.matches(Regex("[A-Za-z0-9_-]{1,128}")))
+        val body = json.encodeToString(HostPluginActionRequest.serializer(), HostPluginActionRequest(correlationId))
+        val result = executeJson(post(connection, scopedUrl(connection.origin, path("host", "plugins", pluginId, "actions", actionId, "invoke"), scope), body), HostPluginActionResponse.serializer(), MUTATION_TIMEOUT_SECONDS)
+        return requireContract(result, "Malformed plugin action response") { it.valid() && it.action.pluginId == pluginId && it.action.actionId == actionId }
+    }
+
+    override suspend fun openHostPluginPane(connection: Connection, scope: Scope, pluginId: String, request: HostPluginPaneRequest): ApiResult<HostPluginPaneResponse> {
+        require(pluginId.matches(Regex("[A-Za-z0-9][A-Za-z0-9:._-]{0,119}")) && request.entrypoint.matches(Regex("[A-Za-z0-9][A-Za-z0-9:_-]{0,119}")) && (request.placement == null || request.placement in setOf("overlay", "popup", "split", "tab", "zoomed")))
+        val body = json.encodeToString(HostPluginPaneRequest.serializer(), request)
+        val result = executeJson(post(connection, scopedUrl(connection.origin, path("host", "plugins", pluginId, "panes", "open"), scope), body), HostPluginPaneResponse.serializer(), MUTATION_TIMEOUT_SECONDS)
+        return requireContract(result, "Malformed plugin pane response") { it.valid() && it.pane.pluginId == pluginId && it.pane.entrypoint == request.entrypoint }
+    }
+
+    override suspend fun focusHostPluginPane(connection: Connection, scope: Scope, pluginId: String, paneId: String): ApiResult<ActionResponse> {
+        require(pluginId.matches(Regex("[A-Za-z0-9][A-Za-z0-9:._-]{0,119}")) && paneId.matches(Regex("[A-Za-z0-9:._-]{1,128}")))
+        val result = executeJson(post(connection, scopedUrl(connection.origin, path("host", "plugins", pluginId, "panes", paneId, "focus"), scope), ""), ActionResponse.serializer(), MUTATION_TIMEOUT_SECONDS)
+        return requireContract(result, "Malformed plugin pane focus response") { it.ok }
+    }
+
+    override suspend fun closeHostPluginPane(connection: Connection, scope: Scope, pluginId: String, paneId: String): ApiResult<ActionResponse> {
+        require(pluginId.matches(Regex("[A-Za-z0-9][A-Za-z0-9:._-]{0,119}")) && paneId.matches(Regex("[A-Za-z0-9:._-]{1,128}")))
+        val result = executeJson(post(connection, scopedUrl(connection.origin, path("host", "plugins", pluginId, "panes", paneId, "close"), scope), ""), ActionResponse.serializer(), MUTATION_TIMEOUT_SECONDS)
+        return requireContract(result, "Malformed plugin pane close response") { it.ok }
+    }
+
+    override suspend fun hostPluginConfigFiles(connection: Connection, scope: Scope, pluginId: String): ApiResult<HostPluginConfigFilesResponse> {
+        require(pluginId.matches(Regex("[A-Za-z0-9][A-Za-z0-9:._-]{0,119}")))
+        val result = executeJson(request(connection, scopedUrl(connection.origin, path("host", "plugins", pluginId, "config"), scope)), HostPluginConfigFilesResponse.serializer(), READ_TIMEOUT_SECONDS)
+        return requireContract(result, "Malformed plugin config inventory") { it.valid() }
+    }
+
+    override suspend fun hostPluginConfig(connection: Connection, scope: Scope, pluginId: String, file: String): ApiResult<HostPluginConfigResponse> {
+        require(pluginId.matches(Regex("[A-Za-z0-9][A-Za-z0-9:._-]{0,119}")) && file.matches(Regex("[A-Za-z0-9._/-]{1,512}")) && !file.split('/').any { it in setOf("", ".", "..") })
+        val url = scopedUrl(connection.origin, path("host", "plugins", pluginId, "config"), scope).newBuilder().addQueryParameter("file", file).build()
+        val result = executeJson(request(connection, url), HostPluginConfigResponse.serializer(), READ_TIMEOUT_SECONDS, maxResponseBytes = MAX_LAYOUT_RESPONSE_BYTES)
+        return requireContract(result, "Malformed plugin config file") { it.valid() && it.file.id == file }
+    }
+
+    override suspend fun planHostPluginConfigPrepare(connection: Connection, scope: Scope, pluginId: String): ApiResult<HostPluginConfigPlanResponse> {
+        require(pluginId.matches(Regex("[A-Za-z0-9][A-Za-z0-9:._-]{0,119}")))
+        val result = executeJson(post(connection, scopedUrl(connection.origin, path("host", "plugins", pluginId, "config", "prepare", "plan"), scope), "{}"), HostPluginConfigPlanResponse.serializer(), MUTATION_TIMEOUT_SECONDS)
+        return requireContract(result, "Malformed plugin config preparation plan") { it.ok && it.plan.validFor(pluginId) }
+    }
+
+    override suspend fun applyHostPluginConfigPrepare(connection: Connection, scope: Scope, pluginId: String, request: HostPluginConfigPrepareRequest): ApiResult<HostPluginConfigOperationResponse> {
+        require(pluginId.matches(Regex("[A-Za-z0-9][A-Za-z0-9:._-]{0,119}")) && request.requestId.matches(Regex("[A-Za-z0-9_-]{1,128}")) && request.planToken.isNotBlank())
+        val body = json.encodeToString(HostPluginConfigPrepareRequest.serializer(), request)
+        val result = executeJson(post(connection, scopedUrl(connection.origin, path("host", "plugins", pluginId, "config", "prepare"), scope), body), HostPluginConfigOperationResponse.serializer(), MUTATION_TIMEOUT_SECONDS)
+        return requireContract(result, "Malformed plugin config preparation receipt") { it.valid() && it.operation.requestId == request.requestId && it.operation.capability == "plugins" && it.operation.targetIdentity == "plugin:$pluginId:config-user-dirs" }
+    }
+
+    override suspend fun planHostPluginConfigEdit(connection: Connection, scope: Scope, pluginId: String, request: HostPluginConfigFileRequest): ApiResult<HostPluginConfigPlanResponse> {
+        require(pluginId.matches(Regex("[A-Za-z0-9][A-Za-z0-9:._-]{0,119}")) && request.requestId.matches(Regex("[A-Za-z0-9_-]{1,128}")) && request.file.matches(Regex("[A-Za-z0-9._/-]{1,512}")) && !request.file.split('/').any { it in setOf("", ".", "..") } && request.content.length <= 65_536)
+        val body = json.encodeToString(HostPluginConfigFileRequest.serializer(), request)
+        val result = executeJson(post(connection, scopedUrl(connection.origin, path("host", "plugins", pluginId, "config", "plan"), scope), body), HostPluginConfigPlanResponse.serializer(), MUTATION_TIMEOUT_SECONDS)
+        return requireContract(result, "Malformed plugin config edit plan") { it.ok && it.plan.validFor(pluginId, request.file) }
+    }
+
+    override suspend fun applyHostPluginConfigEdit(connection: Connection, scope: Scope, pluginId: String, request: HostPluginConfigApplyRequest): ApiResult<HostPluginConfigOperationResponse> {
+        require(pluginId.matches(Regex("[A-Za-z0-9][A-Za-z0-9:._-]{0,119}")) && request.requestId.matches(Regex("[A-Za-z0-9_-]{1,128}")) && request.planToken.isNotBlank() && request.file.matches(Regex("[A-Za-z0-9._/-]{1,512}")) && !request.file.split('/').any { it in setOf("", ".", "..") } && request.content.length <= 65_536 && request.confirmed)
+        val body = json.encodeToString(HostPluginConfigApplyRequest.serializer(), request)
+        val result = executeJson(post(connection, scopedUrl(connection.origin, path("host", "plugins", pluginId, "config", "apply"), scope), body), HostPluginConfigOperationResponse.serializer(), MUTATION_TIMEOUT_SECONDS)
+        return requireContract(result, "Malformed plugin config operation receipt") { it.valid() && it.operation.requestId == request.requestId && it.operation.capability == "configuration" && it.operation.targetIdentity == "plugin:$pluginId:config:${request.file}" }
+    }
+
+    override suspend fun hostPluginLinkSelections(connection: Connection, scope: Scope): ApiResult<HostPluginLinkSelectionsResponse> {
+        val result = executeJson(request(connection, scopedUrl(connection.origin, path("host", "plugins", "link", "selections"), scope)), HostPluginLinkSelectionsResponse.serializer(), READ_TIMEOUT_SECONDS)
+        return requireContract(result, "Malformed plugin link selections") { it.valid() }
+    }
+
+    override suspend fun planHostPluginLink(connection: Connection, scope: Scope, selectionId: String): ApiResult<HostPluginLinkPlanResponse> {
+        require(selectionId.matches(Regex("[a-f0-9]{64}")))
+        val body = json.encodeToString(kotlinx.serialization.json.buildJsonObject { put("selectionId", selectionId) })
+        val result = executeJson(post(connection, scopedUrl(connection.origin, path("host", "plugins", "link", "plan"), scope), body), HostPluginLinkPlanResponse.serializer(), MUTATION_TIMEOUT_SECONDS)
+        return requireContract(result, "Malformed plugin link plan") { it.ok && it.plan.pluginId.length in 1..120 && it.plan.token.matches(Regex("[A-Fa-f0-9-]{36}")) && it.plan.effect.length in 1..2048 }
+    }
+
+    override suspend fun applyHostPluginLink(connection: Connection, scope: Scope, request: HostPluginLinkRequest): ApiResult<HostPluginMutationResponse> {
+        require(request.requestId.matches(Regex("[A-Za-z0-9_-]{1,128}")) && request.planToken.matches(Regex("[A-Fa-f0-9-]{36}")) && request.confirmed)
+        val body = json.encodeToString(HostPluginLinkRequest.serializer(), request)
+        val result = executeJson(post(connection, scopedUrl(connection.origin, path("host", "plugins", "link"), scope), body), HostPluginMutationResponse.serializer(), MUTATION_TIMEOUT_SECONDS)
+        return requireContract(result, "Malformed plugin link receipt") { it.validFor(request.requestId) && it.operation.targetIdentity.endsWith(":link") }
+    }
+
+    override suspend fun planHostPluginInstall(connection: Connection, scope: Scope, owner: String, repo: String, subdir: String?, ref: String?): ApiResult<HostPluginInstallPlanResponse> {
+        require(owner.matches(Regex("[A-Za-z0-9-]{1,100}")) && repo.matches(Regex("[A-Za-z0-9._-]{1,100}")) && (subdir == null || subdir.length <= 512 && !subdir.startsWith("/") && !subdir.split('/').any { it in setOf("", ".", "..") }) && (ref == null || ref.isNotBlank() && ref.length <= 256 && ref.none(Char::isISOControl)))
+        val body = json.encodeToString(HostPluginInstallPlanInput.serializer(), HostPluginInstallPlanInput(owner, repo, subdir, ref))
+        val result = executeJson(post(connection, scopedUrl(connection.origin, path("host", "plugins", "install", "plan"), scope), body), HostPluginInstallPlanResponse.serializer(), MUTATION_TIMEOUT_SECONDS, maxResponseBytes = MAX_LAYOUT_RESPONSE_BYTES)
+        return requireContract(result, "Malformed plugin install plan") { it.ok && it.plan.plugin.valid() && it.plan.source.owner.equals(owner, true) && it.plan.source.repo.equals(repo, true) && it.plan.source.subdir == subdir && (ref == null || it.plan.source.ref == ref) && it.plan.source.commit.matches(Regex("(?:[a-f0-9]{40}|[a-f0-9]{64})")) && it.plan.checksum.matches(Regex("[a-f0-9]{64}")) && it.plan.effects.size <= 64 && it.plan.effects.all { effect -> effect.length <= 2048 } }
+    }
+
+    override suspend fun applyHostPluginInstall(connection: Connection, scope: Scope, request: HostPluginInstallRequest): ApiResult<HostPluginMutationResponse> {
+        require(request.requestId.matches(Regex("[A-Za-z0-9_-]{1,128}")) && request.planToken.matches(Regex("[A-Fa-f0-9-]{36}")) && request.checksum.matches(Regex("[a-f0-9]{64}")) && request.confirmed)
+        val body = json.encodeToString(HostPluginInstallRequest.serializer(), request)
+        val result = executeJson(post(connection, scopedUrl(connection.origin, path("host", "plugins", "install"), scope), body), HostPluginMutationResponse.serializer(), MUTATION_TIMEOUT_SECONDS)
+        return requireContract(result, "Malformed plugin install receipt") { it.validFor(request.requestId) && it.operation.targetIdentity.endsWith(":install") }
+    }
+
+    override suspend fun planHostPluginUninstall(connection: Connection, scope: Scope, pluginId: String): ApiResult<HostPluginUninstallPlanResponse> {
+        require(pluginId.matches(Regex("[A-Za-z0-9][A-Za-z0-9:._-]{0,119}")))
+        val result = executeJson(post(connection, scopedUrl(connection.origin, path("host", "plugins", pluginId, "uninstall", "plan"), scope), "{}"), HostPluginUninstallPlanResponse.serializer(), MUTATION_TIMEOUT_SECONDS)
+        return requireContract(result, "Malformed plugin uninstall plan") { it.ok && it.plan.pluginId == pluginId && it.plan.token.matches(Regex("[A-Fa-f0-9-]{36}")) && it.plan.preservesConfigState && it.plan.effect.length in 1..2048 }
+    }
+
+    override suspend fun applyHostPluginUninstall(connection: Connection, scope: Scope, pluginId: String, request: HostPluginUninstallRequest): ApiResult<HostPluginMutationResponse> {
+        require(pluginId.matches(Regex("[A-Za-z0-9][A-Za-z0-9:._-]{0,119}")) && request.requestId.matches(Regex("[A-Za-z0-9_-]{1,128}")) && request.planToken.matches(Regex("[A-Fa-f0-9-]{36}")) && request.confirmed)
+        val body = json.encodeToString(HostPluginUninstallRequest.serializer(), request)
+        val result = executeJson(post(connection, scopedUrl(connection.origin, path("host", "plugins", pluginId, "uninstall"), scope), body), HostPluginMutationResponse.serializer(), MUTATION_TIMEOUT_SECONDS)
+        return requireContract(result, "Malformed plugin uninstall receipt") { it.validFor(request.requestId) && it.operation.targetIdentity == "plugin:$pluginId:uninstall" }
+    }
+
+    override suspend fun hostPluginOwnerOperation(connection: Connection, scope: Scope, requestId: String): ApiResult<HostPluginOwnerOperationResponse> {
+        require(requestId.matches(Regex("[A-Za-z0-9_-]{1,128}")))
+        val result = executeJson(request(connection, scopedUrl(connection.origin, path("host", "plugins", "operations", requestId), scope)), HostPluginOwnerOperationResponse.serializer(), READ_TIMEOUT_SECONDS, maxResponseBytes = MAX_LAYOUT_RESPONSE_BYTES)
+        return requireContract(result, "Malformed plugin owner operation receipt") { it.validFor(requestId) }
+    }
+
+    override suspend fun hostIntegrationStatus(connection: Connection, scope: Scope): ApiResult<HostIntegrationsResponse> {
+        val result = executeJson(request(connection, scopedUrl(connection.origin, path("host", "integrations", "status"), scope)), HostIntegrationsResponse.serializer(), READ_TIMEOUT_SECONDS)
+        return requireContract(result, "Malformed host integration status") { it.valid() }
+    }
+
+    override suspend fun agentManifestStatus(connection: Connection, scope: Scope): ApiResult<AgentManifestStatusResponse> {
+        val result = executeJson(request(connection, scopedUrl(connection.origin, path("host", "agent-manifests"), scope)), AgentManifestStatusResponse.serializer(), READ_TIMEOUT_SECONDS, maxResponseBytes = MAX_LAYOUT_RESPONSE_BYTES)
+        return requireContract(result, "Malformed agent manifest status") { it.ok && it.status.valid() }
+    }
+
+    override suspend fun planHostOperation(connection: Connection, scope: Scope, intent: HostOperationIntent): ApiResult<HostOperationPlanResponse> {
+        val result = executeJson(post(connection, scopedUrl(connection.origin, intent.path(plan = true), scope), ""), HostOperationPlanResponse.serializer(), READ_TIMEOUT_SECONDS, maxResponseBytes = MAX_LAYOUT_RESPONSE_BYTES)
+        return requireContract(result, "Malformed host operation plan") { response -> response.valid() && (response.plan == null || response.plan.targetIdentity == intent.targetIdentity) }
+    }
+
+    override suspend fun applyHostOperation(connection: Connection, scope: Scope, intent: HostOperationIntent, request: HostOperationRequest): ApiResult<HostOperationResponse> {
+        require(request.requestId.matches(Regex("[A-Za-z0-9_-]{1,128}")))
+        require(request.planToken.matches(Regex("[A-Za-z0-9_.:-]{1,128}")) && request.confirmed)
+        val body = json.encodeToString(HostOperationRequest.serializer(), request)
+        val result = executeJson(post(connection, scopedUrl(connection.origin, intent.path(plan = false), scope), body), HostOperationResponse.serializer(), MUTATION_TIMEOUT_SECONDS, maxResponseBytes = MAX_LAYOUT_RESPONSE_BYTES)
+        return requireContract(result, "Malformed host operation receipt") { it.validFor(request.requestId, intent.capability, intent.targetIdentity) }
+    }
+
+    override suspend fun paneLayout(connection: Connection, address: PaneAddress): ApiResult<PaneLayoutReadResponse> {
+        val result = executeJson(request(connection, scopedUrl(connection.origin, path("pane", address.paneId, "layout"), address.scope)), PaneLayoutReadResponse.serializer(), READ_TIMEOUT_SECONDS, maxResponseBytes = MAX_LAYOUT_RESPONSE_BYTES)
+        return requireContract(result, "Malformed pane layout") { it.ok && it.result.validForPane(address.paneId, "layout") }
+    }
+
+    override suspend fun paneLayoutRead(connection: Connection, address: PaneAddress, kind: String, direction: String?): ApiResult<PaneLayoutReadResponse> {
+        require(kind == "edges" || (kind == "neighbor" && direction in setOf("left", "right", "up", "down")))
+        val suffix = if (kind == "edges") "edges" else "neighbor"
+        val query = if (direction == null) emptyList() else listOf("direction" to direction)
+        val result = executeJson(request(connection, scopedUrl(connection.origin, path("pane", address.paneId, "layout", suffix), address.scope, query)), PaneLayoutReadResponse.serializer(), READ_TIMEOUT_SECONDS, maxResponseBytes = MAX_LAYOUT_RESPONSE_BYTES)
+        return requireContract(result, "Malformed pane layout inspection") { response ->
+            val row = response.result
+                response.ok && row.validForPane(address.paneId, kind) && (kind != "neighbor" || row.direction == direction)
+        }
+    }
+
+    override suspend fun planPaneLayout(connection: Connection, address: PaneAddress, action: kotlinx.serialization.json.JsonObject): ApiResult<PaneLayoutPlanResponse> {
+        val body = json.encodeToString(kotlinx.serialization.json.JsonObject.serializer(), kotlinx.serialization.json.buildJsonObject { put("action", action) })
+        val result = executeJson(post(connection, scopedUrl(connection.origin, path("pane", address.paneId, "layout", "plan"), address.scope), body), PaneLayoutPlanResponse.serializer(), READ_TIMEOUT_SECONDS, maxResponseBytes = MAX_LAYOUT_RESPONSE_BYTES)
+        val expectedKind = action["kind"]?.toString()?.trim('"')
+        return requireContract(result, "Malformed pane layout plan") { it.action == expectedKind && it.validForPane(address.paneId, action) }
+    }
+
+    override suspend fun planTabTransfer(connection: Connection, scope: Scope, tabId: String, body: kotlinx.serialization.json.JsonObject): ApiResult<PaneTransferPlanResponse> {
+        require(tabId.matches(Regex("[A-Za-z0-9_.:-]{1,128}")))
+        val encoded = json.encodeToString(kotlinx.serialization.json.JsonObject.serializer(), body)
+        val url = scopedUrl(connection.origin, path("tab", tabId, "transfer", "plan"), scope)
+        val result = executeJson(post(connection, url, encoded), PaneTransferPlanResponse.serializer(), READ_TIMEOUT_SECONDS, maxResponseBytes = MAX_LAYOUT_RESPONSE_BYTES)
+        return requireContract(result, "Malformed whole-tab transfer plan") { it.validForTab(tabId) }
+    }
+
+    override suspend fun applyPaneLayout(connection: Connection, address: PaneAddress, requestId: String, planToken: String, action: kotlinx.serialization.json.JsonObject): ApiResult<PaneLayoutOperationResponse> {
+        require(requestId.matches(Regex("[A-Za-z0-9_-]{1,128}")))
+        require(planToken.matches(Regex("[A-Za-z0-9_.:-]{1,128}")))
+        val body = json.encodeToString(kotlinx.serialization.json.buildJsonObject {
+            put("requestId", JsonPrimitive(requestId)); put("planToken", JsonPrimitive(planToken)); put("action", action)
+        })
+        val result = executeJson(post(connection, scopedUrl(connection.origin, path("pane", address.paneId, "layout", action["kind"]?.toString()?.trim('"') ?: "unknown"), address.scope), body), PaneLayoutOperationResponse.serializer(), MUTATION_TIMEOUT_SECONDS, maxResponseBytes = MAX_LAYOUT_RESPONSE_BYTES)
+        return requireContract(result, "Malformed pane layout operation") { response ->
+            val kind = action["kind"]?.toString()?.trim('"')
+            val capability = when (kind) { "split" -> "paneSplit"; "resize" -> "paneResize"; "zoom" -> "paneZoom"; "swap" -> "paneSwap"; "move" -> "paneMove"; "focus-direction" -> "paneDirectionalFocus"; else -> "" }
+            val operation = response.operation
+            if (operation == null || !operation.validFor(requestId) || operation.capability != capability) false
+            else if (response.ok) operation.state == "succeeded" && if (kind == "move") {
+                val move = response.move
+                move != null && move.kind == "pane-move" && move == operation.paneMoveResult() && move.previousPaneId == address.paneId && move.paneId != move.previousPaneId
+            } else response.move == null && operation.result == null
+            else operation.state in setOf("unknown", "pending") && response.code == "layout.outcome_unknown" && response.move == null && operation.result == null
+        }
+    }
+
+    override suspend fun exportPortableLayout(connection: Connection, scope: Scope, tabId: String): ApiResult<PortableLayoutExportResponse> {
+        require(tabId.matches(Regex("[A-Za-z0-9_.:-]{1,128}")))
+        val url = scopedUrl(connection.origin, path("tab", tabId, "layout", "export"), scope)
+        val result = executeJson(request(connection, url), PortableLayoutExportResponse.serializer(), READ_TIMEOUT_SECONDS, maxResponseBytes = MAX_PORTABLE_LAYOUT_BYTES)
+        // The request targets `tabId`; the exported document intentionally contains no live selection IDs.
+        return requireContract(result, "Malformed portable layout export") { it.ok && it.schema == 1 && it.layout.valid() }
+    }
+
+    override suspend fun planPortableLayout(connection: Connection, scope: Scope, body: kotlinx.serialization.json.JsonObject): ApiResult<PortableLayoutPlanResponse> {
+        val encoded = json.encodeToString(kotlinx.serialization.json.JsonObject.serializer(), body)
+        if (encoded.toByteArray(Charsets.UTF_8).size > MAX_PORTABLE_LAYOUT_BYTES) return ApiResult.Failure(ApiFailure.Protocol("Portable layout plan exceeds the supported size"))
+        val result = executeJson(post(connection, scopedUrl(connection.origin, path("layout", "plan"), scope), encoded), PortableLayoutPlanResponse.serializer(), READ_TIMEOUT_SECONDS, maxResponseBytes = MAX_PORTABLE_LAYOUT_BYTES)
+        return requireContract(result, "Malformed portable layout plan") { it.valid() }
+    }
+
+    override suspend fun applyPortableLayout(connection: Connection, scope: Scope, body: kotlinx.serialization.json.JsonObject): ApiResult<PortableLayoutApplyResponse> {
+        val requestId = (body["requestId"] as? JsonPrimitive)?.takeIf { it.isString }?.content ?: return ApiResult.Failure(ApiFailure.Protocol("Layout request is malformed"))
+        val encoded = json.encodeToString(kotlinx.serialization.json.JsonObject.serializer(), body)
+        if (encoded.toByteArray(Charsets.UTF_8).size > MAX_PORTABLE_LAYOUT_BYTES) return ApiResult.Failure(ApiFailure.Protocol("Portable layout apply exceeds the supported size"))
+        val result = executeJson(post(connection, scopedUrl(connection.origin, path("layout", "apply"), scope), encoded), PortableLayoutApplyResponse.serializer(), MUTATION_TIMEOUT_SECONDS, maxResponseBytes = MAX_PORTABLE_LAYOUT_BYTES)
+        return requireContract(result, "Malformed portable layout operation") { response -> response.operation.validFor(requestId) && response.operation.capability == "portableLayouts" &&
+            if (response.ok) response.operation.state == "succeeded" && response.operation.result?.kind == "portable-layout"
+            else response.operation.state in setOf("unknown", "pending") }
+    }
+
+    override suspend fun setSplitRatio(connection: Connection, scope: Scope, tabId: String, body: kotlinx.serialization.json.JsonObject): ApiResult<PortableLayoutApplyResponse> {
+        require(tabId.matches(Regex("[A-Za-z0-9_.:-]{1,128}")))
+        val requestId = (body["requestId"] as? JsonPrimitive)?.takeIf { it.isString }?.content ?: return ApiResult.Failure(ApiFailure.Protocol("Ratio request is malformed"))
+        val encoded = json.encodeToString(kotlinx.serialization.json.JsonObject.serializer(), body)
+        if (encoded.toByteArray(Charsets.UTF_8).size > MAX_PORTABLE_LAYOUT_BYTES) return ApiResult.Failure(ApiFailure.Protocol("Split ratio request exceeds the supported size"))
+        val url = scopedUrl(connection.origin, path("tab", tabId, "layout", "split-ratio"), scope)
+        val result = executeJson(post(connection, url, encoded), PortableLayoutApplyResponse.serializer(), MUTATION_TIMEOUT_SECONDS, maxResponseBytes = MAX_PORTABLE_LAYOUT_BYTES)
+        return requireContract(result, "Malformed split ratio operation") { response -> response.operation.validFor(requestId) && response.operation.capability == "portableLayouts" &&
+            if (response.ok) response.operation.state == "succeeded" && (response.operation.result as? SplitRatioResult)?.tabId == tabId
+            else response.operation.state in setOf("unknown", "pending") }
+    }
+
+    override suspend fun planOrganization(connection: Connection, scope: Scope, action: OrganizationAction): ApiResult<OrganizationPlanResponse> {
+        require(action.path.size in 2..3 && action.path.all { it.isNotBlank() && it.length <= 128 })
+        val url = scopedUrl(connection.origin, path(*(action.path + "plan").toTypedArray()), scope)
+        val body = json.encodeToString(kotlinx.serialization.json.JsonObject.serializer(), action.payload)
+        val result = executeJson(post(connection, url, body), OrganizationPlanResponse.serializer(), READ_TIMEOUT_SECONDS, maxResponseBytes = MAX_LAYOUT_RESPONSE_BYTES)
+        return requireContract(result, "Malformed workspace organization plan") { it.validFor(action) }
+    }
+
+    override suspend fun applyOrganization(connection: Connection, scope: Scope, requestId: String, planToken: String, action: OrganizationAction): ApiResult<OrganizationOperationResponse> {
+        require(requestId.matches(Regex("[A-Za-z0-9_-]{1,128}")))
+        require(planToken.matches(Regex("[A-Za-z0-9_.:-]{1,128}")))
+        require(action.path.size in 2..3 && action.path.all { it.isNotBlank() && it.length <= 128 })
+        val body = json.encodeToString(kotlinx.serialization.json.JsonObject.serializer(), kotlinx.serialization.json.buildJsonObject {
+            put("requestId", JsonPrimitive(requestId)); put("planToken", JsonPrimitive(planToken))
+            for ((key, value) in action.payload) put(key, value)
+        })
+        val url = scopedUrl(connection.origin, path(*action.path.toTypedArray()), scope)
+        val result = executeJson(post(connection, url, body), OrganizationOperationResponse.serializer(), MUTATION_TIMEOUT_SECONDS, maxResponseBytes = MAX_LAYOUT_RESPONSE_BYTES)
+        return requireContract(result, "Malformed workspace organization operation") { it.validFor(requestId, action) }
+    }
+
+    private suspend fun executeAction(request: Request): ApiResult<ActionResponse> =
+        executeResponse(request, MUTATION_TIMEOUT_SECONDS) {
+            if (it.code in REDIRECT_CODES) return@executeResponse ApiResult.Failure(ApiFailure.Redirect(it.code))
             val body = it.body?.string().orEmpty()
             val action = decode(ActionResponse.serializer(), body)
             if (action != null && (action.ok || !action.error.isNullOrBlank()) && (it.isSuccessful || it.code == 409)) {
-                return ApiResult.Success(action, it.code, buildId = it.header(BUILD_HEADER))
+                return@executeResponse ApiResult.Success(action, it.code, buildId = it.header(BUILD_HEADER), controlAuthority = responseAuthority(it))
             }
-            if (!it.isSuccessful) return failure(it.code, body)
-            return ApiResult.Failure(ApiFailure.Protocol("Malformed action response"))
+            if (!it.isSuccessful) return@executeResponse failure(it, body)
+            ApiResult.Failure(ApiFailure.Protocol("Malformed action response"))
         }
-    }
 
     private suspend fun <T> executeJson(
         request: Request,
         serializer: DeserializationStrategy<T>,
         timeoutSeconds: Long,
         allowNotModified: Boolean = false,
-    ): ApiResult<T> {
-        val response = try {
-            client.newCall(request).await(timeoutSeconds)
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: InterruptedIOException) {
-            return ApiResult.Failure(ApiFailure.Timeout)
-        } catch (io: IOException) {
-            return ApiResult.Failure(ApiFailure.Network(io.message))
-        }
-        response.use {
-            if (allowNotModified && it.code == 304) return ApiResult.NotModified(it.header("ETag"))
-            if (it.code in REDIRECT_CODES) return ApiResult.Failure(ApiFailure.Redirect(it.code))
-            val body = it.body?.string().orEmpty()
-            if (!it.isSuccessful) return failure(it.code, body)
-            val value = decode(serializer, body)
-                ?: return ApiResult.Failure(ApiFailure.Protocol("Malformed successful response"))
-            return ApiResult.Success(value, it.code, it.header("ETag"), it.header(BUILD_HEADER))
-        }
+        maxResponseBytes: Int? = null,
+        limitMessage: String = "Response exceeded its size limit",
+    ): ApiResult<T> = executeResponse(request, timeoutSeconds) {
+        if (allowNotModified && it.code == 304) return@executeResponse ApiResult.NotModified(it.header("ETag"), responseAuthority(it))
+        if (it.code in REDIRECT_CODES) return@executeResponse ApiResult.Failure(ApiFailure.Redirect(it.code))
+        val body = (if (maxResponseBytes == null) it.body?.string().orEmpty() else readBoundedBody(it, maxResponseBytes))
+            ?: return@executeResponse ApiResult.Failure(ApiFailure.Protocol(limitMessage))
+        if (!it.isSuccessful) return@executeResponse failure(it, body)
+        val value = decode(serializer, body)
+            ?: return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Malformed successful response"))
+        ApiResult.Success(value, it.code, it.header("ETag"), it.header(BUILD_HEADER), responseAuthority(it))
     }
 
-    private fun failure(status: Int, body: String): ApiResult.Failure {
+    /** Sensitive structured replies are bounded at the wire before a JSON String is materialized. */
+    private fun readBoundedBody(response: Response, maxBytes: Int): String? {
+        val body = response.body ?: return ""
+        if (body.contentLength() > maxBytes) return null
+        val output = ByteArrayOutputStream(minOf(maxBytes, 16 * 1024))
+        body.byteStream().use { input ->
+            val buffer = ByteArray(8 * 1024)
+            var total = 0
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                total += count
+                if (total > maxBytes) return null
+                output.write(buffer, 0, count)
+            }
+        }
+        return output.toString(StandardCharsets.UTF_8.name())
+    }
+
+    private suspend fun <T> executeChanges(
+        request: Request,
+        malformedMessage: String,
+        parse: (JsonElement) -> T?,
+    ): ApiResult<T> = executeResponse(request, READ_TIMEOUT_SECONDS) { response ->
+        if (response.code in REDIRECT_CODES) return@executeResponse ApiResult.Failure(ApiFailure.Redirect(response.code))
+        val body = response.body
+        if ((body?.contentLength() ?: 0L) > MAX_CHANGES_RESPONSE_BYTES) {
+            return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Changes response exceeds the size limit"))
+        }
+        val buffer = Buffer()
+        val source = body?.source()
+        if (source != null) {
+            while (buffer.size < MAX_CHANGES_RESPONSE_BYTES) {
+                val remaining = MAX_CHANGES_RESPONSE_BYTES - buffer.size
+                val read = source.read(buffer, minOf(remaining, 8_192L))
+                if (read == -1L) break
+            }
+            if (buffer.size == MAX_CHANGES_RESPONSE_BYTES && source.read(Buffer(), 1L) != -1L) {
+                return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Changes response exceeds the size limit"))
+            }
+        }
+        val text = buffer.readUtf8()
+        if (!response.isSuccessful) return@executeResponse failure(response, text)
+        val element = try {
+            json.parseToJsonElement(text)
+        } catch (_: SerializationException) {
+            null
+        } catch (_: IllegalArgumentException) {
+            null
+        }
+        val value = element?.let(parse)
+            ?: return@executeResponse ApiResult.Failure(ApiFailure.Protocol(malformedMessage))
+        ApiResult.Success(value, response.code, response.header("ETag"), response.header(BUILD_HEADER), responseAuthority(response))
+    }
+
+    /** Consume and close the body on OkHttp's worker, before handing a value to the caller. */
+    private suspend fun <T> executeBoundedJson(
+        request: Request,
+        maxBytes: Long,
+        malformedMessage: String,
+        parse: (kotlinx.serialization.json.JsonElement) -> T?,
+    ): ApiResult<T> = executeResponse(request, READ_TIMEOUT_SECONDS) { response ->
+        if (response.code in REDIRECT_CODES) return@executeResponse ApiResult.Failure(ApiFailure.Redirect(response.code))
+        val body = response.body
+        if ((body?.contentLength() ?: -1L) > maxBytes) {
+            return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Files response exceeds the size limit"))
+        }
+        val buffer = okio.Buffer()
+        val source = body?.source()
+        if (source != null) {
+            while (buffer.size < maxBytes) {
+                val read = source.read(buffer, minOf(maxBytes - buffer.size, 8_192L))
+                if (read == -1L) break
+            }
+            if (buffer.size == maxBytes && source.read(okio.Buffer(), 1L) != -1L) {
+                return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Files response exceeds the size limit"))
+            }
+        }
+        val text = buffer.readUtf8()
+        if (!response.isSuccessful) return@executeResponse failure(response, text)
+        if (response.code != 200) return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Unexpected successful Files status"))
+        if (!FilesJsonBounds.accepts(text)) {
+            return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Files response exceeded its structural limit"))
+        }
+        val element = try {
+            json.parseToJsonElement(text)
+        } catch (_: SerializationException) {
+            null
+        } catch (_: IllegalArgumentException) {
+            null
+        }
+        val value = element?.let(parse)
+            ?: return@executeResponse ApiResult.Failure(ApiFailure.Protocol(malformedMessage))
+        ApiResult.Success(value, response.code, response.header("ETag"), response.header(BUILD_HEADER), responseAuthority(response))
+    }
+
+    /** Consume and close the body on OkHttp's worker, before handing a value to the caller. */
+    private suspend fun <T> executeResponse(
+        request: Request,
+        timeoutSeconds: Long,
+        read: (Response) -> ApiResult<T>,
+    ): ApiResult<T> = try {
+        val actor = kotlin.coroutines.coroutineContext[com.lateapex.collie.data.OriginalReadActor]
+        if (actor != null && !actor.permitsDispatch()) throw IOException("Connection, scope or operation admission changed")
+        client.newBuilder()
+            .addNetworkInterceptor { chain ->
+                // Runs after application interceptor/readiness/TLS waits, immediately before send.
+                if (actor != null && !actor.permitsDispatch()) throw IOException("Connection, scope or operation admission changed")
+                chain.proceed(chain.request())
+            }
+            .followRedirects(false)
+            .followSslRedirects(false)
+            .readTimeout(timeoutSeconds, TimeUnit.SECONDS)
+            .writeTimeout(timeoutSeconds, TimeUnit.SECONDS)
+            .build()
+            .newCall(request).await(timeoutSeconds, read)
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: InterruptedIOException) {
+        ApiResult.Failure(ApiFailure.Timeout)
+    } catch (io: IOException) {
+        ApiResult.Failure(ApiFailure.Network(io.message))
+    }
+
+    private fun failure(response: Response, body: String): ApiResult.Failure {
+        val status = response.code
+        val ingress = response.request.tag(NativeIngressEvidence::class.java)
+        val ingressMatches = ingress != null && response.header("x-collie-native-request-id") == ingress.requestId
+        val marker = response.header("x-collie-response-source")
+        val source = when {
+            ingress != null && (!ingressMatches || marker !in setOf("collie", "native_gateway")) -> FailureSource.UNKNOWN
+            response.header("x-collie-error-source") == "native_gateway" -> {
+                if (NativeGatewayError.verified(response, body, ingress?.requestId)) FailureSource.GATEWAY else FailureSource.UNKNOWN
+            }
+            response.header("x-collie-error-source") == "collie" && (ingress == null || marker == "collie") -> FailureSource.COLLIE
+            response.header("x-collie-error-source") == "gateway" && ingress == null -> FailureSource.GATEWAY
+            else -> FailureSource.UNKNOWN
+        }
+        val factor = if (source == FailureSource.UNKNOWN) FailureFactor.UNKNOWN else when (response.header("x-collie-error-factor")) {
+            "pairing" -> FailureFactor.PAIRING
+            "identity" -> FailureFactor.IDENTITY
+            "device" -> FailureFactor.DEVICE
+            "scope" -> FailureFactor.SCOPE
+            "capability" -> FailureFactor.CAPABILITY
+            "operation" -> FailureFactor.OPERATION
+            else -> FailureFactor.UNKNOWN
+        }
         val parsed = decode(ErrorResponse.serializer(), body)
         val plainMessage = body.trim()
             .take(MAX_ERROR_MESSAGE_CHARS)
@@ -723,8 +2304,10 @@ class CollieApiClient(
             ApiFailure.Http(
                 status = status,
                 message = parsed?.error ?: plainMessage,
-                code = parsed?.code,
+                code = response.header("x-collie-error-code") ?: parsed?.code,
                 textDelivered = parsed?.textDelivered == true,
+                source = source,
+                factor = factor,
             ),
         )
     }
@@ -741,11 +2324,29 @@ class CollieApiClient(
     private fun request(connection: Connection, relativePath: List<String>): Request =
         request(connection, url(connection.origin, relativePath))
 
+    private fun validRequestId(value: String): Boolean = value.matches(Regex("[A-Za-z0-9_-]{1,128}"))
+    private fun validControlId(value: String): Boolean = value.length in 1..128 && value.matches(Regex("[A-Za-z0-9_.:-]+"))
+    private fun validMetadataText(value: String?): Boolean = value == null || value.length <= 256 && value.none(Char::isISOControl)
+    private fun validMetadataTokens(tokens: Map<String, String?>): Boolean = tokens.size <= 32 && tokens.all { (key, value) ->
+        key.matches(Regex("[A-Za-z0-9_-]{1,32}")) && (value == null || value.length <= 80 && value.none(Char::isISOControl))
+    }
+    private fun validMetadataCommon(requestId: String, seq: Long?, ttlMs: Long?): Boolean = validRequestId(requestId) &&
+        (seq == null || seq in 0L..9_007_199_254_740_991L) && (ttlMs == null || ttlMs in 1L..86_400_000L)
+    private fun validMetadataRequest(request: PaneMetadataRequest): Boolean =
+        validMetadataCommon(request.requestId, request.seq, request.ttlMs) && request.agent.length in 1..256 && request.agent.none(Char::isISOControl) &&
+        validMetadataTokens(request.tokens) && listOf(request.displayAgent, request.title).all { it == null || it.length <= 80 && it.none(Char::isISOControl) } &&
+        (request.stateLabels?.let { labels -> labels.size <= 5 && labels.all { (key, value) -> key in setOf("idle", "working", "blocked", "done", "unknown") && value.length <= 80 && value.none(Char::isISOControl) } } ?: true)
+    private fun validWorkspaceMetadataRequest(request: WorkspaceMetadataRequest): Boolean =
+        validMetadataCommon(request.requestId, request.seq, request.ttlMs) && validMetadataTokens(request.tokens)
+    private fun validAgentViewRequest(request: AgentViewRequest): Boolean = AgentViewSchema.valid(request)
+
     private fun request(connection: Connection, url: HttpUrl): Request =
         requestBuilder(connection, url).get().build()
 
     private fun requestBuilder(connection: Connection, url: HttpUrl): Request.Builder =
         Request.Builder()
+            .tag(Connection::class.java, connection)
+            .tag(com.lateapex.collie.data.ScopedReadContext::class.java, RequestActorCustody.actor())
             .url(url)
             .header("Accept", JSON_MEDIA_TYPE.toString())
             .header("X-Requested-With", "XMLHttpRequest")
@@ -761,6 +2362,13 @@ class CollieApiClient(
             .header("Origin", connection.origin.headerValue)
             .post(OneShotRequestBody(body))
             .build()
+
+    private fun responseAuthority(response: okhttp3.Response): ControlAuthority? {
+        val lead = response.header("X-Collie-Lead-Id") ?: return null
+        val epoch = response.header("X-Collie-Lead-Epoch") ?: return null
+        if (!lead.matches(Regex("[A-Za-z0-9_-]{1,128}")) || !epoch.matches(Regex("[A-Za-z0-9_-]{1,128}"))) return null
+        return ControlAuthority(lead, epoch)
+    }
 
     private fun url(origin: CollieOrigin, relativePath: List<String>): HttpUrl =
         origin.value.toHttpUrl().newBuilder().apply {
@@ -790,11 +2398,33 @@ class CollieApiClient(
         private const val BUILD_HEADER = "X-Collie-Build"
         private const val READ_TIMEOUT_SECONDS = 10L
         private const val MUTATION_TIMEOUT_SECONDS = 20L
+        private const val MAX_QUEUED_SEND_KEYS = 12
         private const val WORKTREE_TIMEOUT_SECONDS = 100L
         private const val UPLOAD_TIMEOUT_SECONDS = 60L
         private const val STT_PROVIDER_AND_OVERHEAD_SECONDS = 80L
         private const val STT_UPLINK_BITS_PER_SECOND = 256_000L
         private const val MAX_HISTORY_LIMIT = 5_000
+        private const val MAX_PROCESS_INFO_TEXT_CHARS = 220 * 1024
+        private const val MAX_PROCESS_INFO_BODY_BYTES = 1_000_000
+        internal const val MAX_MACHINE_RESPONSE_BYTES = 1_000_000
+        private const val MAX_MACHINE_RULE_RESPONSE_BYTES = 16_384
+        private const val MAX_MACHINE_RULE_EXTENSIONS_BYTES = 4_096
+        internal const val MAX_LAYOUT_RESPONSE_BYTES = 1_000_000
+        private const val MAX_PORTABLE_LAYOUT_BYTES = 64 * 1024
+        private const val MAX_CACHE_RULES_BODY_BYTES = 256_000
+        private const val MAX_CACHE_WATCH_LIST_BODY_BYTES = 256_000
+        private const val MAX_CACHE_RULES = 128
+        private const val MAX_CACHE_WATCHES = 1_000
+        private const val MAX_CACHE_TTL_SECONDS = 86_400L
+        private const val MAX_CACHE_URL_CHARS = 2_048
+        private const val MAX_CACHE_NOTE_CHARS = 1_024
+        private const val MAX_CHANGES_ID_CHARS = 8_192
+        private const val MAX_CHANGES_RESPONSE_BYTES = 5L * 1024L * 1024L
+        private const val MAX_FILES_ID_CHARS = 512
+        private const val MAX_FILES_EXIST_PATHS = 64
+        private const val MAX_FILES_RESPONSE_BYTES = 8L * 1024 * 1024
+        private const val FILE_IMAGE_TIMEOUT_SECONDS = 45L
+        private const val MAX_SAFE_INTEGER = 9_007_199_254_740_991L
         private const val MAX_ERROR_MESSAGE_CHARS = 512
         private val REDIRECT_CODES = setOf(301, 302, 303, 307, 308)
         internal fun sttTimeoutSeconds(bytes: Int): Long =
@@ -819,16 +2449,30 @@ class CollieApiClient(
     }
 }
 
-private suspend fun Call.await(timeoutSeconds: Long): Response = suspendCancellableCoroutine { continuation ->
-    timeout().timeout(timeoutSeconds, TimeUnit.SECONDS)
-    continuation.invokeOnCancellation { cancel() }
-    enqueue(object : Callback {
-        override fun onFailure(call: Call, error: IOException) {
-            if (continuation.isActive) continuation.resumeWithException(error)
-        }
+private fun String?.isWireSequence(): Boolean =
+    this == null || this == "0" || (
+        matches(Regex("[1-9][0-9]{0,19}")) &&
+            (length < 20 || compareTo("18446744073709551615") <= 0)
+        )
 
-        override fun onResponse(call: Call, response: Response) {
-            if (continuation.isActive) continuation.resume(response) else response.close()
-        }
-    })
-}
+private suspend fun <T> Call.await(timeoutSeconds: Long, read: (Response) -> T): T =
+    suspendCancellableCoroutine { continuation ->
+        timeout().timeout(timeoutSeconds, TimeUnit.SECONDS)
+        // Remains installed while the callback reads the body, so cancellation closes the socket.
+        continuation.invokeOnCancellation { cancel() }
+        enqueue(object : Callback {
+            override fun onFailure(call: Call, error: IOException) {
+                if (continuation.isActive) continuation.resumeWithException(error)
+            }
+
+            override fun onResponse(call: Call, response: Response) {
+                val result = runCatching {
+                    response.use {
+                        if (!continuation.isActive) return
+                        read(it)
+                    }
+                }
+                if (continuation.isActive) result.fold(continuation::resume, continuation::resumeWithException)
+            }
+        })
+    }

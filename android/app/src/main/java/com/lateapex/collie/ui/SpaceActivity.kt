@@ -28,6 +28,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.google.android.material.button.MaterialButton
+import com.lateapex.collie.CollieApplication
 import com.lateapex.collie.R
 import com.lateapex.collie.databinding.ActivitySpaceBinding
 import com.lateapex.collie.domain.Scope
@@ -65,12 +66,16 @@ internal object SpaceActionModel {
 }
 
 class SpaceActivity : AppCompatActivity() {
+    private var renderedContext: com.lateapex.collie.data.ScopedReadContext? = null
+    private var authorityRegistration: AutoCloseable? = null
     private lateinit var binding: ActivitySpaceBinding
     private lateinit var viewModel: SpaceViewModel
     private lateinit var scope: Scope
     private lateinit var workspaceId: String
     private val adapter = SpaceAdapter(::openPane)
     private var selectedTabId: String? = null
+    private var tabCreateContext: com.lateapex.collie.data.ScopedReadContext? = null
+    private var spaceCreateContext: com.lateapex.collie.data.ScopedReadContext? = null
     private var creatingTab = false
     private var creatingSpace = false
     private var everRenderedSpace = false
@@ -92,9 +97,19 @@ class SpaceActivity : AppCompatActivity() {
             host = intent.getStringExtra(EXTRA_HOST)?.takeIf(String::isNotBlank),
             session = intent.getStringExtra(EXTRA_SESSION)?.takeIf(String::isNotBlank),
         )
+        binding.filesButton.setOnClickListener {
+            startActivity(FilesActivity.intent(this, com.lateapex.collie.network.FilesTarget.Workspace(workspaceId), scope))
+        }
         selectedTabId = savedInstanceState?.getString(STATE_SELECTED_TAB)
         binding.backButton.setOnClickListener { returnToDashboard() }
+        binding.changesButton.setOnClickListener {
+            startActivity(ChangesActivity.intentForWorkspace(this, workspaceId, scope, intent.getStringExtra(EXTRA_TITLE)))
+        }
+        binding.metadataButton.setOnClickListener {
+            startActivity(AgentMetadataActivity.intentForWorkspace(this, workspaceId, scope))
+        }
         binding.settingsButton.setOnClickListener { startActivity(Intent(this, SettingsActivity::class.java)) }
+        binding.newWorkflowButton.setOnClickListener { startActivity(NewActivity.intent(this, scope)) }
         binding.spaceList.layoutManager = LinearLayoutManager(this)
         binding.spaceList.adapter = adapter
         binding.swipeRefresh.setOnRefreshListener { viewModel.refresh() }
@@ -103,9 +118,25 @@ class SpaceActivity : AppCompatActivity() {
             this,
             SpaceViewModel.Factory(application, workspaceId, scope),
         )[SpaceViewModel::class.java]
+        authorityRegistration = repository.onAuthorityRetired { event ->
+            withRetirementOnMain(event, { renderedContext }) {
+                if (event.reason in setOf(com.lateapex.collie.data.AuthorityInvalidation.CONNECTION_CHANGED,
+                    com.lateapex.collie.data.AuthorityInvalidation.DISCONNECTED, com.lateapex.collie.data.AuthorityInvalidation.PAIRING_RETIRED)) {
+                    renderedContext = null
+                    render(SpaceUiState())
+                }
+            }
+            withRetirementOnMain(event, { tabCreateContext }) { creatingTab = false; tabCreateContext = null }
+            withRetirementOnMain(event, { spaceCreateContext }) { creatingSpace = false; spaceCreateContext = null }
+        }
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) { viewModel.state.collect(::render) }
         }
+    }
+
+    override fun onDestroy() {
+        authorityRegistration?.close()
+        super.onDestroy()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -124,6 +155,7 @@ class SpaceActivity : AppCompatActivity() {
     }
 
     private fun render(state: SpaceUiState) = with(binding) {
+        renderedContext = state.originalReadContext ?: renderedContext
         if (state.error == getString(R.string.space_missing) && !missingRedirected) {
             missingRedirected = true
             Toast.makeText(
@@ -150,6 +182,10 @@ class SpaceActivity : AppCompatActivity() {
                     else -> R.string.read_only_device_unauthorised
                 },
             )
+            (state.readSource as? ReadSourceState.SavedCopy)?.let { saved ->
+                spaceReadOnlyBanner.text = getString(R.string.read_only_saved_copy,
+                    android.text.format.DateUtils.getRelativeTimeSpanString(saved.capturedAt))
+            }
             spaceReadOnlyBanner.setOnClickListener(
                 if (state.paired) null else View.OnClickListener {
                     startActivity(SettingsActivity.intent(this@SpaceActivity, focusDevices = true))
@@ -162,7 +198,11 @@ class SpaceActivity : AppCompatActivity() {
         if (content != null) {
             val tabs = resources.getQuantityString(R.plurals.space_tab_count, content.workspace.tabCount, content.workspace.tabCount)
             val panes = resources.getQuantityString(R.plurals.space_pane_count, content.workspace.paneCount, content.workspace.paneCount)
-            spaceSubtitle.text = getString(R.string.space_header_counts, tabs, panes)
+            val counts = getString(R.string.space_header_counts, tabs, panes)
+            val freshness = TopologyStatus.describe(state.mux, state.readSource.capturedAt, System.currentTimeMillis())
+            spaceSubtitle.text = "$counts · $freshness"
+            if (state.refreshNotice != null) spaceSubtitle.text = "${state.refreshNotice} · $freshness"
+            spaceSubtitle.contentDescription = "$counts. $freshness${state.refreshNotice?.let { ". $it" }.orEmpty()}"
             spaceSubtitle.isVisible = true
             tabsStrip.isVisible = content.tabs.isNotEmpty()
             renderTabStrip(content, state)
@@ -238,7 +278,7 @@ class SpaceActivity : AppCompatActivity() {
     ): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER
-        minimumWidth = dp(44)
+        minimumWidth = dp(48)
         isClickable = true
         isFocusable = true
         isSelected = active
@@ -338,16 +378,28 @@ class SpaceActivity : AppCompatActivity() {
             }
         }
 
+    private val repository get() = (application as com.lateapex.collie.CollieApplication).container.repository
+
+    private suspend fun <T> currentActorResult(action: suspend () -> T): T? {
+        val context = repository.readContext(scope, workspaceId) ?: return null
+        val result = action()
+        return result.takeIf { repository.isCurrent(context) }
+    }
+
     private fun showNewTab() {
         if (creatingTab) return
+        val context = repository.readContext(scope, workspaceId) ?: return
+        tabCreateContext = context
         creatingTab = true
         viewModel.state.value.content?.let { renderTabStrip(it, viewModel.state.value) }
         lifecycleScope.launch {
             try {
-                handleCreate(viewModel.createTab(null, null))
+                handleCreate(currentActorResult { viewModel.createTab(null, null) } ?: return@launch)
             } finally {
-                creatingTab = false
-                viewModel.state.value.content?.let { renderTabStrip(it, viewModel.state.value) }
+                if (repository.isCurrent(context)) {
+                    creatingTab = false
+                    viewModel.state.value.content?.let { renderTabStrip(it, viewModel.state.value) }
+                }
             }
         }
     }
@@ -358,18 +410,51 @@ class SpaceActivity : AppCompatActivity() {
         val body = sheetBody()
         val label = textField(R.string.space_label_optional)
         val cwd = textField(R.string.space_directory_optional)
+        val repository = (application as CollieApplication).container.repository
+        val folderContext = repository.readContext(scope, workspaceId)
+        var folderResponse: com.lateapex.collie.network.FoldersResponse? = null
+        lateinit var picker: FolderPickerView
+        picker = FolderPickerView(this, onSelect = { cwd.setText(it.orEmpty()) }, onStar = { folder, starred ->
+            if (folderContext != null) lifecycleScope.launch {
+                when (val result = repository.starFolder(scope, folder, starred)) {
+                    is ApiResult.Success -> if (repository.isCurrent(folderContext)) {
+                        folderResponse = result.value
+                        picker.render(folderResponse, cwd.valueOrNull(), repository.writesAllowed(scope))
+                    }
+                    is ApiResult.Failure -> if (repository.isCurrent(folderContext)) {
+                        binding.errorText.text = MainViewModel.describe(resources, result.error)
+                    }
+                    is ApiResult.NotModified -> if (repository.isCurrent(folderContext)) {
+                        binding.errorText.setText(R.string.folder_star_failed_unknown)
+                    }
+                }
+            }
+        })
         body.addView(label, matchRow(top = 4))
         body.addView(cwd, matchRow(top = 8))
+        picker.render(null, cwd.valueOrNull(), repository.writesAllowed(scope))
+        body.addView(picker, matchRow(top = 4))
+        if (folderContext != null) lifecycleScope.launch {
+            val result = repository.folders(scope)
+            if (repository.isCurrent(folderContext) && result is ApiResult.Success) {
+                folderResponse = result.value
+                picker.render(folderResponse, cwd.valueOrNull(), repository.writesAllowed(scope))
+            }
+        }
         body.addView(sheetActionButton(getString(R.string.action_create)) {
             dialog.dismiss()
+            val context = repository.readContext(scope, workspaceId) ?: return@sheetActionButton
+            spaceCreateContext = context
             creatingSpace = true
             viewModel.state.value.content?.let { renderTabStrip(it, viewModel.state.value) }
             lifecycleScope.launch {
                 try {
-                    handleCreate(viewModel.createWorkspace(label.valueOrNull(), cwd.valueOrNull()))
+                    handleCreate(currentActorResult { viewModel.createWorkspace(label.valueOrNull(), cwd.valueOrNull()) } ?: return@launch)
                 } finally {
-                    creatingSpace = false
-                    viewModel.state.value.content?.let { renderTabStrip(it, viewModel.state.value) }
+                    if (repository.isCurrent(context)) {
+                        creatingSpace = false
+                        viewModel.state.value.content?.let { renderTabStrip(it, viewModel.state.value) }
+                    }
                 }
             }
         }, matchRow(top = 12))
@@ -420,7 +505,7 @@ class SpaceActivity : AppCompatActivity() {
             val value = label.text.toString().trim()
             if (value.isNotEmpty()) {
                 dialog.dismiss()
-                lifecycleScope.launch { handleAction(viewModel.renameTab(tab.tabId, value)) }
+                lifecycleScope.launch { handleAction(currentActorResult { viewModel.renameTab(tab.tabId, value) } ?: return@launch) }
             }
         }
         body.addView(label, matchRow(top = 4))
@@ -442,7 +527,7 @@ class SpaceActivity : AppCompatActivity() {
                 dialog.dismiss()
                 val closedId = tab.tabId
                 if (selectedTabId == closedId) selectedTabId = null
-                lifecycleScope.launch { handleAction(viewModel.closeTab(closedId)) }
+                lifecycleScope.launch { handleAction(currentActorResult { viewModel.closeTab(closedId) } ?: return@launch) }
             }
         }
     }
@@ -456,7 +541,7 @@ class SpaceActivity : AppCompatActivity() {
             text = label
             isAllCaps = false
             gravity = Gravity.START or Gravity.CENTER_VERTICAL
-            minHeight = dp(44)
+            minHeight = dp(48)
             setOnClickListener { action() }
         }
 
@@ -472,7 +557,7 @@ class SpaceActivity : AppCompatActivity() {
         inputType = InputType.TYPE_CLASS_TEXT
         isSingleLine = true
         filters = arrayOf(InputFilter.LengthFilter(160))
-        minHeight = dp(44)
+        minHeight = dp(48)
         setTextColor(color(R.color.collie_foreground))
         setHintTextColor(color(R.color.collie_muted))
     }
@@ -538,7 +623,7 @@ class SpaceActivity : AppCompatActivity() {
 
     private fun stripParams(end: Int) = LinearLayout.LayoutParams(
         ViewGroup.LayoutParams.WRAP_CONTENT,
-        dp(44),
+        dp(48),
     ).apply { marginEnd = dp(end) }
 
     private fun matchRow(top: Int = 0) = LinearLayout.LayoutParams(

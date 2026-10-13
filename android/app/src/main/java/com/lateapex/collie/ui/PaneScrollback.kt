@@ -7,9 +7,15 @@ import com.lateapex.collie.network.PaneSummary
 internal object PaneScrollbackWindow {
     const val INITIAL_LINES = 600
     const val STEP_LINES = 600
-    const val MAX_LINES = 1_000
+    const val LEGACY_MAX_LINES = 1_000
+    const val MAX_DESIRED_LINES = 10_000
 
-    fun grow(lines: Int): Int = (lines + STEP_LINES).coerceAtMost(MAX_LINES)
+    fun maxLines(mux: MuxConfigResponse?): Int = mux?.readLimits?.verifiedMaximum() ?: LEGACY_MAX_LINES
+
+    fun grow(lines: Int, maximum: Int): Int = (lines + STEP_LINES).coerceAtMost(maximum)
+
+    /** Keep the user's desired depth even when the next effective request is capped. */
+    fun growDesired(lines: Int): Int = (lines + STEP_LINES).coerceAtMost(MAX_DESIRED_LINES)
 
     fun restoreTop(oldHeight: Int, oldTop: Int, newHeight: Int): Int =
         (oldTop + (newHeight - oldHeight)).coerceAtLeast(0)
@@ -33,21 +39,28 @@ internal data class PaneBufferAffordance(
 )
 
 internal object PaneBufferPolicy {
-    private val journalAgents = setOf("claude", "codex", "grok", "opencode", "pi")
+    // Muse discovers its own sessions; installing a Herdr hook cannot repair that adapter.
+    private val journalAgents = setOf("claude", "codex", "gemini", "grok", "hermes", "omp", "opencode", "pi")
 
     fun resolve(
         pane: PaneSummary?,
         mux: MuxConfigResponse?,
         requestedLines: Int,
+        read: com.lateapex.collie.network.PaneReadResponse? = null,
     ): PaneBufferAffordance {
         if (pane == null) return PaneBufferAffordance(PaneBufferAction.NONE)
 
         val sessionLogCapable = mux?.supports("agentSessionRef") != false
         val scrollbackCapable = mux?.supports("gridScrollback") != false
         val historyAvailable = pane.hasSession == true && sessionLogCapable
-        val moreScrollback = scrollbackCapable &&
+        // This only ends growth of the current terminal mirror window: a short non-truncated read is
+        // evidence that this request returned all rows its adapter currently offered, never proof
+        // that agent-owned alternate-screen history or a journal is complete.
+        val sameWindowReadHadNoMore = read?.requestedLines == requestedLines && !read.truncated &&
+            (read.servedLines ?: read.text.lineSequence().count()) < requestedLines
+        val moreScrollback = !sameWindowReadHadNoMore && scrollbackCapable &&
             pane.readableLines?.let { requestedLines < it } == true &&
-            requestedLines < PaneScrollbackWindow.MAX_LINES
+            requestedLines < PaneScrollbackWindow.maxLines(mux)
         val action = when {
             historyAvailable -> PaneBufferAction.SHOW_HISTORY
             moreScrollback -> PaneBufferAction.LOAD_OLDER

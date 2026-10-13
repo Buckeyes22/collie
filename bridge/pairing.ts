@@ -82,6 +82,24 @@ export type PairedDevice = {
   expiresAt?: number;
 };
 
+const IDENTITY_MATERIAL_VALID = new WeakSet<PairedDevice>();
+
+/**
+ * Stable opaque identity for one pairing record. This is a domain-separated digest of the stored
+ * high-entropy token digest and immutable pairing time, never the bearer or token digest itself.
+ */
+export function pairedDeviceIdentity(device: PairedDevice): string | null {
+  if (!IDENTITY_MATERIAL_VALID.has(device) || !/^[0-9a-f]{64}$/iu.test(device.tokenHash)) return null;
+  if (!Number.isSafeInteger(device.createdAt) || device.createdAt < 0) return null;
+  const tokenDigest = Buffer.from(device.tokenHash, "hex");
+  const createdAt = Buffer.from(String(device.createdAt), "utf8");
+  const prefix = Buffer.from("collie-paired-device-identity-v1\0", "utf8");
+  const lengths = Buffer.alloc(8);
+  lengths.writeUInt32BE(tokenDigest.length, 0);
+  lengths.writeUInt32BE(createdAt.length, 4);
+  return createHash("sha256").update(prefix).update(lengths).update(tokenDigest).update(createdAt).digest("hex");
+}
+
 /** The on-disk registry shape. An object (not a bare array) so it can gain keys without a migration. */
 export type PairedRegistry = {
   devices: PairedDevice[];
@@ -293,6 +311,9 @@ export function coerceRegistry(raw: JsonValue | undefined): PairedRegistry {
       createdAt: typeof d.createdAt === "number" ? d.createdAt : 0,
       lastSeenAt: typeof d.lastSeenAt === "number" ? d.lastSeenAt : 0,
     };
+    if (typeof d.createdAt === "number" && Number.isSafeInteger(d.createdAt) && d.createdAt >= 0) {
+      IDENTITY_MATERIAL_VALID.add(device);
+    }
     // Only a present value adds the key at all — an entry from before expiry existed keeps its exact
     // shape. `null` is read as "no expiry" (what a hand edit meaning "never" would write). Anything
     // else that is not a finite number (a string, a date written by hand) is read as ALREADY
@@ -747,6 +768,14 @@ export class PairingStore {
       });
     }
     return device;
+  }
+
+  /** The stable opaque identity for a current pairing; absent for malformed legacy identity material. */
+  identity(token: string | null): string | null {
+    if (token === null || token === "") return null;
+    const device = findByToken(this.registry(), token);
+    if (device === null || isExpired(device, this.now())) return null;
+    return pairedDeviceIdentity(device);
   }
 
   /**

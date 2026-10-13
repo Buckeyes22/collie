@@ -31,6 +31,7 @@ import {
 } from "../update-action.ts";
 import { UpdateTurns, type PeerLeg, type TurnMember } from "./follow.ts";
 import type { UpdateRun } from "../update-run.ts";
+import { MONITORING_CHECKPOINT_CAPABILITY, MONITORING_CHECKPOINT_RECORD_FORMAT, sendMonitoringCheckpoint, type BuiltMonitoringCheckpoint, type CheckpointFrame } from "./monitoring-checkpoint.ts";
 
 // The lead's side of the crew, assembled: sweep the peers, remember the last-good body, merge.
 //
@@ -81,6 +82,20 @@ const FRESH: PeerMemory = { body: null, incompatibleRuns: 0, probeAfter: 0 };
 
 /** No member is owed the proof — every lead that never took over, which is almost all of them. */
 const EMPTY_PENDING: ReadonlySet<string> = new Set<string>();
+
+function parseMonitoringCheckpointReport(outcome:PeerOutcome<unknown>): {receipt:{checkpointRevision:string;rootDigest:string}|null}|null {
+  if(!outcome.ok)return null;
+  const value=outcome.value;
+  if(typeof value!=="object" || value===null || !("monitoringCheckpoint" in value))return null;
+  const capability=value.monitoringCheckpoint;
+  if(typeof capability!=="object" || capability===null || !("schema" in capability) || !("maxChunkBytes" in capability) ||
+    !("maxGenerationBytes" in capability) || !("recordFormat" in capability) ||
+    capability.schema!==MONITORING_CHECKPOINT_CAPABILITY.schema || capability.maxChunkBytes!==MONITORING_CHECKPOINT_CAPABILITY.maxChunkBytes ||
+    capability.maxGenerationBytes!==MONITORING_CHECKPOINT_CAPABILITY.maxGenerationBytes || capability.recordFormat!==MONITORING_CHECKPOINT_RECORD_FORMAT)return null;
+  if(!("checkpointRevision" in capability) || !("rootDigest" in capability) || typeof capability.checkpointRevision!=="string" ||
+    !/^(0|[1-9][0-9]{0,19})$/.test(capability.checkpointRevision) || typeof capability.rootDigest!=="string" || !/^[0-9a-f]{64}$/.test(capability.rootDigest))return {receipt:null};
+  return {receipt:{checkpointRevision:capability.checkpointRevision,rootDigest:capability.rootDigest}};
+}
 
 /**
  * Fold one call's outcome into what the lead remembers. **Pure** — the whole point, so the three
@@ -210,7 +225,7 @@ export interface CrewLeadDeps {
    */
   readonly hello?: (
     link: CrewLink,
-  ) => Promise<PeerOutcome<{ readonly version: string | null; readonly mux?: MuxConfig | null }>>;
+  ) => Promise<PeerOutcome<{ readonly version: string | null; readonly mux?: MuxConfig | null; readonly controlCapabilities?: Record<string, boolean> | null; readonly hostControlCapabilities?: Record<string, boolean> | null; readonly receiptContextBound?: boolean | null }>>;
   /** This collie's member id and label — the `servers[0]` entry (§9.2). */
   readonly self: { readonly id: string; readonly name: string };
   /**
@@ -253,6 +268,7 @@ export interface CrewLeadDeps {
    * every lead that has never named a deputy and every test that is not about the standby door.
    */
   readonly pairing?: PairingDistribution;
+  readonly monitoringCheckpoint?: MonitoringCheckpointDistribution;
   readonly now?: () => number;
   /**
    * Where a `[crew]` line goes. Defaults to `console.log`, which is the bridge's journal.
@@ -293,6 +309,13 @@ export interface PairingDistribution {
    * collision finding raised by silence would be a fact this lead never learned.
    */
   collision?(labels: readonly string[] | null): void;
+}
+
+export interface MonitoringCheckpointDistribution {
+  readonly deputy: () => string | null;
+  readonly sourceRevision: () => string | null;
+  readonly current: () => Promise<{ readonly checkpoint: BuiltMonitoringCheckpoint; readonly originalOwnerCurrent: () => boolean } | null>;
+  readonly push: (link: CrewLink, frame: CheckpointFrame) => Promise<PeerOutcome<JsonValue>>;
 }
 
 /** What the sweep needs to state a release and hand out a turn (§20, M16/04). */
@@ -354,6 +377,11 @@ export interface WarrantDistribution {
  * keeps emitting a solo body: `servers` present ⇔ a crew with peers exists.
  */
 export class CrewLead {
+  /** A new lead incarnation invalidates actors even when the HTTP origin is unchanged. */
+  private readonly controlEpoch = crypto.randomUUID();
+  controlAuthority() {
+    return { leadId: this.deps.self.id, epoch: this.controlEpoch };
+  }
   private readonly memory = new Map<string, PeerMemory>();
   /**
    * What each member last said its own multiplexer can do (M22/03), for `/api/config?host=<member>`.
@@ -369,6 +397,9 @@ export class CrewLead {
    * the same reason: the member's current answer is "nothing", and "nothing" means the lead's.
    */
   private readonly muxBlocks = new Map<string, MuxConfig>();
+  private readonly controlBlocks = new Map<string, Record<string, boolean>>();
+  private readonly hostControlBlocks = new Map<string, Record<string, boolean>>();
+  private readonly receiptContextBlocks = new Map<string, boolean>();
   /**
    * Members whose CURRENT link has already answered a hello, so their block is as fresh as the link.
    *
@@ -394,6 +425,9 @@ export class CrewLead {
   private readonly pushingWarrant = new Set<string>();
   /** At most one pairing sync in flight. **Nothing about what landed is remembered** — §18.14. */
   private pushingPairing = false;
+  /** At most one latest-state checkpoint transfer to the named deputy. */
+  private pushingMonitoringCheckpoint = false;
+  private monitoringCheckpointAgain = false;
   /** Per member: when its backoff was last cleared by contact, and how many times running (M20/02). */
   private readonly contactResets = new Map<string, { at: number; count: number }>();
   /**
@@ -465,6 +499,9 @@ export class CrewLead {
         // A member that left takes its declaration with it, so nothing can answer `?host=` for a
         // machine this lead no longer knows.
         this.muxBlocks.delete(id);
+        this.controlBlocks.delete(id);
+        this.hostControlBlocks.delete(id);
+        this.receiptContextBlocks.delete(id);
         this.muxAsked.delete(id);
         this.loggedState.delete(id);
         this.contactResets.delete(id);
@@ -595,6 +632,7 @@ export class CrewLead {
       // Neither is the other's precondition, so neither may be the other's single point of failure.
       await this.guarded("warrant distribution", () => this.distributeWarrant(folded, outcomes));
       await this.guarded("pairing sync", async () => this.distributePairing(folded, outcomes));
+      this.distributeMonitoringCheckpoint(folded, outcomes);
     } catch (err) {
       // Defensive: nothing above is supposed to reject. If something does, the crew degrades to
       // "stale" rather than taking the lead's poll loop down with it.
@@ -824,6 +862,56 @@ export class CrewLead {
     })();
   }
 
+  private distributeMonitoringCheckpoint(due: readonly CrewLink[], outcomes: Map<string, PeerOutcome<unknown>>): void {
+    const distribution = this.deps.monitoringCheckpoint;
+    if (distribution === undefined) return;
+    const deputy = distribution.deputy();
+    if (deputy === null) return;
+    const link = due.find((item) => item.memberId === deputy);
+    const outcome = outcomes.get(deputy);
+    if (link === undefined || outcome === undefined || !outcome.ok) return;
+    const report=parseMonitoringCheckpointReport(outcome);
+    if(report===null)return;
+    const reported=report.receipt;
+    if (distribution.sourceRevision() === null) return;
+    if (this.pushingMonitoringCheckpoint) { this.monitoringCheckpointAgain = true; return; }
+    this.pushingMonitoringCheckpoint = true;
+    void (async () => {
+      try {
+        let again = true;
+        while (again) {
+          this.monitoringCheckpointAgain = false;
+          const current = await distribution.current();
+          if (current === null) return;
+          // Every coalesced capture must still target this sweep's exact admitted deputy link.
+          // A replacement designation requires a fresh sweep, never the older link's receipt.
+          if (!current.originalOwnerCurrent() || current.checkpoint.manifest.deputyMemberId !== link.memberId || distribution.deputy() !== link.memberId) { await current.checkpoint.cleanup?.(); return; }
+          if(reported!==null && reported.checkpointRevision===current.checkpoint.manifest.checkpointRevision && reported.rootDigest===current.checkpoint.manifest.rootDigest) {
+            await current.checkpoint.cleanup?.();return;
+          }
+          const result = await sendMonitoringCheckpoint(current.checkpoint, async (frame) => {
+            const pushed = await distribution.push(link, frame);
+            return pushed.ok
+              ? Response.json(pushed.value, { status: pushed.status })
+              : new Response(null, { status: 503 });
+          }, () => current.originalOwnerCurrent() && distribution.deputy() === link.memberId);
+          if (result !== "accepted" || !current.originalOwnerCurrent()) return;
+          // An accepted older immutable observation is not a receipt for the latest revision.
+          // Coalesce any intervening commits to one new capture, even before the next poll arrives.
+          again = this.monitoringCheckpointAgain || distribution.sourceRevision() !== current.checkpoint.manifest.checkpointRevision;
+        }
+      } catch (error) {
+        console.warn(`[crew] monitoring checkpoint failed: ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        this.pushingMonitoringCheckpoint = false;
+        if (this.monitoringCheckpointAgain) {
+          this.monitoringCheckpointAgain = false;
+          // A live minute or rule write arrived during the prior transfer; the next sweep owns the retry.
+        }
+      }
+    })();
+  }
+
   /**
    * Deliver one warrant, off the tick and never awaited — the same discipline {@link probe} follows,
    * for the same reason: a sweep must cost one strict budget no matter what else it decided to do.
@@ -905,7 +993,15 @@ export class CrewLead {
         // M22/03: ASSIGNED, never merged. Whatever this hello said about that member's multiplexer
         // is now the whole answer for it, and a hello that said nothing drops the entry — which
         // reads as "use the lead's", not as "every capability present". See {@link muxBlocks}.
-        if (outcome.ok) this.setCapabilities(link.memberId, outcome.value.mux ?? null);
+        if (outcome.ok) {
+          this.setCapabilities(link.memberId, outcome.value.mux ?? null);
+          if (outcome.value.controlCapabilities) this.controlBlocks.set(link.memberId, outcome.value.controlCapabilities);
+          else this.controlBlocks.delete(link.memberId);
+          if (outcome.value.hostControlCapabilities) this.hostControlBlocks.set(link.memberId, outcome.value.hostControlCapabilities);
+          else this.hostControlBlocks.delete(link.memberId);
+          if (outcome.value.receiptContextBound === true) this.receiptContextBlocks.set(link.memberId, true);
+          else this.receiptContextBlocks.delete(link.memberId);
+        }
       }
     } catch (err) {
       // Defensive, exactly as `sweep` is: failure is a value everywhere in the crew client, so a
@@ -941,6 +1037,20 @@ export class CrewLead {
    * gives every pane today. It dials nobody, for the reason {@link CrewLead.updateRows} does not: a
    * surface the phone polls must not be able to make the lead reach a machine.
    */
+  controlFor(memberId: string): Record<string, boolean> | null {
+    return this.controlBlocks.get(memberId) ?? null;
+  }
+
+  /** Member-local host administration bits; absent or old peers remain unsupported. */
+  hostControlFor(memberId: string): Record<string, boolean> | null {
+    return this.hostControlBlocks.get(memberId) ?? null;
+  }
+
+  /** True only when the member explicitly advertised owner-bound receipt readiness. */
+  receiptContextBoundFor(memberId: string): boolean | null {
+    return this.receiptContextBlocks.get(memberId) === true ? true : null;
+  }
+
   muxFor(memberId: string): MuxConfig | null {
     return this.muxBlocks.get(memberId) ?? null;
   }
@@ -967,6 +1077,7 @@ export class CrewLead {
     opts: {
       readonly audit?: ForwardDeps["audit"];
       readonly device?: string | null;
+      readonly pairedIdentity?: string | null;
       readonly mask?: ForwardDeps["mask"];
     } = {},
   ): Promise<Response> {
@@ -1114,12 +1225,12 @@ export class CrewLead {
    * `narrowPeerBody`, and this is its only call site — the merge narrows, nothing else does.
    */
   merge(local: SnapshotResponse, plan: SnapshotPlan): SnapshotResponse {
-    return mergeSnapshot(local, {
+    return { ...mergeSnapshot(local, {
       self: this.deps.self,
       peers: this.contributions().map((c) =>
         Object.assign({}, c, { body: narrowPeerBody(c.body, plan.peer(c.state.memberId)) }),
       ),
       now: this.now(),
-    });
+    }), controlAuthority: this.controlAuthority() };
   }
 }

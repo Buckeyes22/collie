@@ -111,6 +111,7 @@ class PromptBindingTest {
             "agy" to "agy--fresh-idle.txt",
             "agy" to "agy--working.txt",
             "antigravity" to "agy--done.txt",
+            "muse" to "muse--fresh-idle.txt",
         ).forEach { (agent, name) ->
             assertNotNull("Expected $agent composer in $name", PromptBinding.composerRegion(agent, fixture(name)))
         }
@@ -145,6 +146,10 @@ class PromptBindingTest {
             "antigravity" to "agy--plan-approval.txt",
             "antigravity" to "agy--select-menu.txt",
             "antigravity" to "agy--trust-prompt.txt",
+            "muse" to "muse--ask-color.txt",
+            "muse" to "muse--ask-toppings.txt",
+            "muse" to "muse--ask-toppings-notes-open.txt",
+            "muse" to "muse--draft-single.txt",
         ).forEach { (agent, name) ->
             assertNull("Expected $agent to refuse $name", PromptBinding.composerRegion(agent, fixture(name)))
         }

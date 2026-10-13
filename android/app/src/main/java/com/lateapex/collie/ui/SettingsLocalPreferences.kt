@@ -55,7 +55,7 @@ internal class SettingsLocalPreferences(
                         id = R.id.settings_diagnostics_send_button
                         text = text(R.string.settings_diagnostics_send_title)
                         isAllCaps = false
-                        minHeight = dp(44)
+                        minHeight = dp(48)
                     },
                     LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                         val margin = dp(16)
@@ -125,7 +125,7 @@ internal class SettingsLocalPreferences(
             isChecked = checked
             contentDescription = title
             setOnCheckedChangeListener { _, value -> onChange(value) }
-        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)))
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)))
         addView(row)
     }
 
@@ -198,14 +198,14 @@ internal class SettingsLocalPreferences(
                     text = if (index == current) text(R.string.settings_parity_selected_choice, entry) else entry
                     gravity = Gravity.START or Gravity.CENTER_VERTICAL
                     isAllCaps = false
-                    minHeight = dp(44)
+                    minHeight = dp(48)
                     setOnClickListener {
                         button.text = entry
                         current = index
                         dialog.dismiss()
                         onSelected(index)
                     }
-                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)))
+                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)))
             }
             dialog.setSheetContent(list)
             dialog.show()
@@ -262,9 +262,9 @@ internal class SettingsLocalPreferences(
             this.id = id
             text = label
             contentDescription = description
-            minWidth = dp(44)
-            minimumWidth = dp(44)
-            minHeight = dp(44)
+            minWidth = dp(48)
+            minimumWidth = dp(48)
+            minHeight = dp(48)
             setOnClickListener { action() }
         }
 

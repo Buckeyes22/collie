@@ -1,3 +1,4 @@
+import { cmdNativeAccess } from "./native-access.ts";
 import { appendFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -410,6 +411,7 @@ export function crewAliasRow(sub: Subcommand): AliasRow {
 // dispatched in before M6/01 turned that script into a bootstrap shim — so muscle memory carried
 // over from `collie-ctl.sh <verb>` still finds every verb where it was.
 export const COMMANDS: readonly Command[] = [
+  { name: "native-access", summary: "configure and run the explicit native DPoP identity gateway", run: (args, session) => cmdNativeAccess(args, session.io) },
   // `start` and `status` share one banner (`statusBanner`), so they share its surface too.
   lifecycleCommand("start", "start the bridge service (and publish the front door)", cmdStart, { rich: true }),
   lifecycleCommand("stop", "stop the bridge service", (deps) => cmdStop(deps)),

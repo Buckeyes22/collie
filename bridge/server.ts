@@ -1,8 +1,34 @@
+import { herdrTerminalIncarnation } from "./mux/herdr/adapter.ts";
+import type { AgentOccupant } from "./control/agent-models.ts";
+import { serveAgentRoute, AGENT_ACTION_ROUTE, type AgentCaller } from "./control/agents.ts";
+import { AgentWaitStore, serveWaitRoute, WAIT_ACTION_ROUTE } from "./control/waits.ts";
+import { withNativeFinalAdmission } from "./native-access/final-effect.ts";
+import type { GatewayIngress, VerifiedIngressActor } from "./native-access/ingress.ts";
+import { gatewayRefusal } from "./native-access/ingress.ts";
+import { controlScope, payloadHash, refusal, refusalResponse } from "./control/contracts.ts";
+import { OperationStore } from "./control/operations.ts";
+import { executeBoundIntent, ownerBoundCallerReady, ownerBoundOperationReady, type IntentOwnerContext } from "./intent-operation-binding.ts";
+import { PlanStore } from "./control/plans.ts";
+import { servePaneLayoutRoute } from "./control/layout.ts";
+import { serveLayoutRecipeRoute } from "./control/layout-recipes.ts";
+import { serveOrganizationRoute } from "./control/organization.ts";
+import { serveControlRoute } from "./control/routes.ts";
+import { MetadataStateStore, serveMetadataRoute } from "./control/metadata.ts";
+import { memoryAgentViewReceipts, serveAgentViewRoute } from "./host-control/agent-views.ts";
+import { serveWorktreeRemoveRoute } from "./control/worktree-remove.ts";
+import { servePaneProcesses } from "./control/processes.ts";
+import { servePaneAgentIdentity } from "./control/agent-identity.ts";
+import { AgentReporterRegistry, refuseUnsafeAgentMutation, type AgentMutationKind } from "./control/agent-authority.ts";
+import { HOST_CAPABILITIES, type HostControlPort } from "./host-control/types.ts";
+import { hostControlConfig } from "./host-control/registry.ts";
+import { serveHostIntegrationRoute } from "./host-control/integrations.ts";
+import { serveHostPluginsRoute } from "./host-control/plugins.ts";
 import { mkdir } from "node:fs/promises";
 import { isIP } from "node:net";
 import { homedir, networkInterfaces } from "node:os";
-import { dirname, extname, isAbsolute, join, normalize, sep } from "node:path";
+import { dirname, extname, join, normalize, sep } from "node:path";
 import { createAccessGate, DOOR_PRESETS, FORWARDING_HEADERS } from "./access-jwt.ts";
+import { admitCrewForward } from "./crew/forward.ts";
 import type { JsonObject, JsonValue } from "./json.ts";
 import type { ActivityLedger } from "./activity.ts";
 import { type AuditDetail, type AuditEntry, AuditLog } from "./audit.ts";
@@ -10,6 +36,7 @@ import { isLoopbackBindHost, type Config } from "./config.ts";
 import {
   changesParams,
   repoOfFolder,
+  sharedReadCommitHistory,
   sharedCommitFileDiff,
   sharedFileDiff,
   sharedListChanges,
@@ -31,19 +58,33 @@ import {
 import { apiError, type ApiErrorBody, type ApiErrorDetail, type ErrorCode } from "./error-codes.ts";
 import { keysDeliverable, MUX_CAPABILITIES, type MuxCapability, type MuxCapabilityDeclaration } from "./mux/capabilities.ts";
 import type { MuxAdapter, MuxAck, MuxGrid, MuxWorktreeCreateRequest } from "./mux/types.ts";
+
+/** Match private raw Herdr identity against its existing public incarnation projection. */
+export function currentOriginalHerdrPane(pane: Pick<AgentView, "paneId" | "terminalIncarnation" | "workspaceId" | "tabId"> | undefined, expected: AgentOccupant): boolean {
+  return pane !== undefined && pane.paneId === expected.paneId && pane.terminalIncarnation === herdrTerminalIncarnation(expected.terminalId) && pane.workspaceId === expected.workspaceId && pane.tabId === expected.tabId;
+}
+
+function parseAgentMutationAction(action: string | undefined): AgentMutationKind | null {
+  if (action === "agent/state") return "state";
+  if (action === "agent/session") return "session";
+  if (action === "agent/release") return "release";
+  if (action === "agent/authority/clear") return "authority-clear";
+  return null;
+}
+import { MAX_PANE_READ_LINES, negotiateReadLimit } from "./mux/read-limits.ts";
 import { allCacheRules } from "./cache/rules/index.ts";
 import type { CacheOverride } from "./cache/engine.ts";
 import type { GitHeadSurface } from "./git-head.ts";
-import { localWatchPane, peerWatchPane, type CacheWarnPane } from "./cache/watch-key.ts";
+import { localWatchPane, peerWatchPane, resolvePeerWatchPane, type CacheWarnPane } from "./cache/watch-key.ts";
 import { watchKeyOf, type CacheWatchSurface } from "./cache/watch.ts";
 import { createCacheRulesReader } from "./operator-cache-rules.ts";
 import { computeEtag, conditionalJsonResponse, gzipJsonResponse, notModified, wantsGzip } from "./http-cache.ts";
 import { pluginRoot } from "./root.ts";
 import { DEFAULT_NOTIFY_PREFS, type NotifyPrefs, type NotifyPrefsStore } from "./notify-prefs.ts";
-import { MAX_FAVOURITES, MAX_FOLDER_CHARS, type FolderSurface } from "./folders.ts";
+import { askedFolder, MAX_FAVOURITES, MAX_FOLDER_CHARS, type FolderSurface } from "./folders.ts";
 import { isValidWorktreeBranch } from "./worktree-branch.ts";
 import { createHarnessProbe, type HarnessProbe } from "./harness-launch.ts";
-import { launchReplay, memoryLaunchReceipts, type LaunchReceiptSurface } from "./launch-receipts.ts";
+import { launchReplay, memoryLaunchReceipts, type LaunchReceipt, type LaunchReceiptSurface } from "./launch-receipts.ts";
 import {
   memoryWorktreeChoices,
   type BaseKind,
@@ -52,7 +93,6 @@ import {
 } from "./worktree-choices.ts";
 import {
   diskFolderFs,
-  expandHome,
   herdrDefaultTarget,
   nearestWorkTree,
   resolveParentTarget,
@@ -62,8 +102,11 @@ import {
 import { askGit, parseBase, resolveBase, resolveDefaultBranch, type GitAsk } from "./worktree-base.ts";
 import { memoryWorktreeBases, type WorktreeBaseSurface } from "./worktree-bases.ts";
 import {
+  keyedIntentFingerprint,
+  matchReceiptBinding,
   isRequestId,
   memoryWorktreeReceipts,
+  type IntentReceiptBinding,
   type WorktreeReceipt,
   type WorktreeReceiptSurface,
 } from "./worktree-receipts.ts";
@@ -112,6 +155,13 @@ import type { Snooze } from "./snooze.ts";
 import { IMAGE_EXTS, TEXT_EXTS, TEXT_SNIFF_BYTES, uploadExt } from "./uploads.ts";
 import type { UpdateMonitor } from "./update.ts";
 import { readStagingLog } from "./staging-log.ts";
+import { queuedMessagesDigest, queuedSendOccupant } from "./journal/queued-send.ts";
+import { QueuedSendAdmissionLedger, parseGuardedQueuedSend, queuedSendActionKey } from "./journal/queued-send-admission.ts";
+import { buildBlocks } from "../web/src/lib/harness/index.ts";
+import { adapterFor as harnessAdapterFor } from "../web/src/lib/harness/registry.ts";
+import { parseAnsi } from "../web/src/lib/ansi.ts";
+import { splitLines } from "../web/src/lib/blocks.ts";
+import { detectNoEchoPrompt } from "../web/src/lib/no-echo.ts";
 import {
   parseUpdateStartRequest,
   updateStartVerdict,
@@ -148,17 +198,18 @@ import { LOCAL_LABEL, type LocalCredential } from "./local-secret.ts";
 import { modeForWire } from "./crew/mode.ts";
 import type { CrewRuntime } from "./crew/config.ts";
 import type { CrewLead } from "./crew/lead.ts";
-import { crewDeviceOf, crewGate, type GateLevel } from "./crew/peer-gate.ts";
+import { crewDeviceOf, crewPairedIdentityOf, crewGate, type GateLevel } from "./crew/peer-gate.ts";
 import { snapshotPlan } from "./crew/merge.ts";
 import { selectHostFrom, type HostSelector } from "./crew/registry.ts";
 import type { CrewHandler, CrewSurface } from "./crew/router.ts";
 import type { CrewTlsOptions } from "./crew/transport.ts";
 import { createSttAdmission, MAX_STT_AUDIO_BYTES, sttCapability, transcribeRequest } from "./stt/http.ts";
-import type { SttProvider } from "./stt/provider.ts";
+import { SttCancelledError, type SttProvider } from "./stt/provider.ts";
 import { uploadTooLarge } from "./uploads.ts";
+import { agentCapabilities } from "./agent-capabilities.ts";
 import { MUX_LOGO_PATH, OPERATOR_FONTS_PATH, journalAgentOf, toPaneWire } from "./types.ts";
-import type { LaunchCheckResponse, MachineAlertsResponse } from "./types.ts";
-import { parseMachineAlerts } from "./machine-parse.ts";
+import type { LaunchCheckResponse, MachineAlerts, MachineAlertsResponse } from "./types.ts";
+import { MACHINE_RULE_BODY_MAX_BYTES, parseMachineRuleRequest, parseMachineStrictJson } from "./machine-parse.ts";
 import { SPARK_MAX_MINUTES } from "./machine-history.ts";
 import type { MachineSurface } from "./machines.ts";
 import type {
@@ -183,8 +234,8 @@ import type {
   CacheRulesResponse,
   CacheRuleWire,
   CacheWatchListResponse,
-  CacheWatchResponse,
   PaneCache,
+  PaneChangeCommitHistoryResponse,
   PaneChangeCommitDiffResponse,
   PaneChangeCommitResponse,
   PaneChangeDiffResponse,
@@ -193,6 +244,7 @@ import type {
   WorkspaceChangeCommitDiffResponse,
   WorkspaceChangeCommitResponse,
   WorkspaceChangeDiffResponse,
+  WorkspaceChangeCommitHistoryResponse,
   WorkspaceChangesResponse,
   WorkspaceFilesResponse,
   ChatBody,
@@ -227,11 +279,12 @@ export function requestBodyCap(cfg: Config): number {
   return Math.max(cfg.maxUploadBytes, MAX_STT_AUDIO_BYTES) + REQUEST_BODY_HEADROOM;
 }
 // Upper bound on the pane-read `lines` param — don't trust the client (or Herdr) to cap it.
-const MAX_READ_LINES = 10_000;
+const MAX_READ_LINES = MAX_PANE_READ_LINES;
 // A bound region is whatever a dialog card covers, and a full-screen picker covers the whole pane:
 // about rows times columns, so 8192 refused a pane wider than ~134 columns at 59 rows. 32 KiB takes
 // a 220-column pane. A phone newer than this bridge gets the old 400 on such a pane and no key is sent.
 const MAX_EXPECTED_PROMPT_CHARS = 32_768;
+const MAX_QUEUED_SEND_KEYS = 12;
 // `expected_styled` carries the same rows as `expected_prompt` plus a style tag per run (about 30
 // extra characters each, and a chip row can hold a dozen runs), so it gets four times the room.
 const MAX_EXPECTED_STYLED_CHARS = 4 * MAX_EXPECTED_PROMPT_CHARS;
@@ -315,6 +368,19 @@ export function withHsts(handler: (req: Request) => Promise<Response>): (req: Re
   };
 }
 
+/** Stamp the answering lead's incarnation even on peer reads/304s; peer headers cannot lend it. */
+export function withControlAuthority(handler: (req: Request) => Promise<Response>, authority: () => { leadId: string; epoch: string } | null): (req: Request) => Promise<Response> {
+  return async (req) => {
+    const response = await handler(req);
+    const current = authority();
+    if (current !== null) {
+      response.headers.set("x-collie-lead-id", current.leadId);
+      response.headers.set("x-collie-lead-epoch", current.epoch);
+    }
+    return response;
+  };
+}
+
 export interface AccessLogRecord {
   at: "access";
   method: string;
@@ -370,7 +436,7 @@ export function isLoopbackPeer(address: string | null | undefined): boolean {
   return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(v4);
 }
 
-const PANE_ROUTE = /^\/api\/pane\/([^/]+)(?:\/(reply|keys|upload|close|rename|history|chat|changes|files|focus))?$/;
+const PANE_ROUTE = /^\/api\/pane\/([^/]+)(?:\/(reply|keys|upload|close|rename|history|chat|changes|files|focus|processes|agent|agent\/(?:state|session|release|authority\/clear)))?$/;
 
 /**
  * A pairing claim's refusal, as an error code.
@@ -502,6 +568,7 @@ export const SEEN_HEADER = "x-collie-seen";
  */
 export function marksPaneSeen(req: Request, action: string | undefined): boolean {
   if (req.headers.get(SEEN_HEADER) !== null) return true;
+  if (action?.startsWith("agent/")) return false;
   return action !== undefined && !isPaneReadAction(action);
 }
 
@@ -512,7 +579,7 @@ export function marksPaneSeen(req: Request, action: string | undefined): boolean
  * forwarded route's kind the same way.
  */
 export function isPaneReadAction(action: string | undefined): boolean {
-  return action === "history" || action === "chat" || action === "changes" || action === "files";
+  return action === "history" || action === "chat" || action === "changes" || action === "files" || action === "processes" || action === "agent";
 }
 
 /**
@@ -540,8 +607,13 @@ export function afterPaneInput(engine: Pick<StateEngine, "noteInput">, res: Resp
  * into or restructures a terminal.
  */
 export function paneGateLevel(action: string | undefined): GateLevel {
-  if (action === "files") return "device-read";
+  if (action === "files" || action === "processes" || action === "agent") return "device-read";
   return !action || isPaneReadAction(action) ? "read" : "write";
+}
+
+/** Process argv and paths stay masked on Crew even when the optional terminal redaction switch is off. */
+export function shouldMaskForwardedAnswer(pathname: string, redact: boolean): boolean {
+  return redact || pathname === "/api/agents/named" || AGENT_ACTION_ROUTE.test(pathname) || /^\/api\/pane\/[^/]+\/(processes|agent)$/.test(pathname) || WAIT_ACTION_ROUTE.test(pathname);
 }
 
 /**
@@ -574,6 +646,10 @@ interface RouteCaller {
   gate(level: GateLevel): Response | null;
   /** The device a write is attributed to. */
   device(): string | null;
+  /** Stable pairing-record identity; null for local credentials, legacy peers or malformed records. */
+  pairedIdentity?(): string | null;
+  /** `undefined` is a test/legacy caller, `null` is a production owner-bound receipt failure. */
+  intentReceiptKey?: Uint8Array | null;
   /** Where a write's audit line lands — the peer's is pre-stamped `via:"crew"` + originator (§12). */
   readonly audit: AuditLog;
   /**
@@ -582,6 +658,70 @@ interface RouteCaller {
    */
   readonly via?: "crew";
 }
+
+function receiptContextFor(
+  caller: RouteCaller,
+  runtime: string,
+  owningHost = "local",
+): IntentOwnerContext | null | undefined {
+  if (caller.intentReceiptKey === undefined) return undefined;
+  const deviceIdentity = caller.pairedIdentity?.() ?? null;
+  if (caller.intentReceiptKey === null || deviceIdentity === null) return null;
+  return { key: caller.intentReceiptKey, deviceIdentity, owningHost, runtime };
+}
+
+/** Capture before any request-body/durable await; recheck at the named owner adapter call. */
+function captureWorktreeCaller(caller: RouteCaller) { return { device: caller.device(), pairedIdentity: caller.pairedIdentity?.() ?? null }; }
+async function worktreeFinalAdmissionFor(caller: RouteCaller, mux: MuxAdapter, original = captureWorktreeCaller(caller), capability: "createWorktree" | "openWorktree" = "createWorktree"): Promise<(identity: string) => boolean> {
+  const { device, pairedIdentity } = original;
+  const runtimeIdentity = await mux.layoutRuntimeIdentity?.();
+  return (identity) => runtimeIdentity != null && caller.gate("write") === null &&
+    caller.device() === device && (caller.pairedIdentity?.() ?? null) === pairedIdentity &&
+    identity === runtimeIdentity && mux.capabilities.supports[capability] === true;
+}
+
+function intentBinding(
+  context: IntentOwnerContext | null | undefined,
+  operation: string,
+  body: JsonValue,
+): IntentReceiptBinding | undefined {
+  if (context == null) return undefined;
+  const binding: IntentReceiptBinding = {
+        deviceIdentity: context.deviceIdentity,
+        operation,
+        runtime: context.runtime,
+        intentFingerprint: keyedIntentFingerprint(context.key, body),
+      };
+  if (context.owningHost !== undefined) binding.owningHost = context.owningHost;
+  return binding;
+}
+
+function receiptBindingMismatch(
+  receipts: WorktreeReceiptSurface,
+  requestId: string,
+  incoming: IntentReceiptBinding | undefined,
+): boolean {
+  if (incoming === undefined) return false;
+  const stored = receipts.get(requestId);
+  if (stored !== undefined) return matchReceiptBinding(stored.binding, incoming) !== "match";
+  if (receipts.inflight(requestId) !== undefined) {
+    return matchReceiptBinding(receipts.inflightBinding(requestId), incoming) !== "match";
+  }
+  return false;
+}
+
+function intentAnswerStatus(answer: { readonly ok: boolean; readonly code?: string }): number {
+  if (answer.code === "launch.request_mismatch") return 409;
+  if (answer.code === "launch.receipts_unavailable") return 503;
+  return 200;
+}
+
+const worktreeIntentUnavailable = (): WorktreeCreateResponse => ({ ok: false, ...apiError("launch.receipts_unavailable") });
+const worktreeIntentUnknown = (): WorktreeCreateResponse => ({ ok: false, ...apiError("launch.outcome_unknown") });
+const worktreeIntentMismatch = (): WorktreeCreateResponse => ({ ok: false, ...apiError("launch.request_mismatch") });
+const launchIntentUnavailable = (): CreateResponse => ({ ok: false, ...apiError("launch.receipts_unavailable") });
+const launchIntentUnknown = (): CreateResponse => ({ ok: false, ...apiError("launch.outcome_unknown") });
+const launchIntentMismatch = (): CreateResponse => ({ ok: false, ...apiError("launch.request_mismatch") });
 
 /**
  * One adapter's declaration, as the phone reads it (M10/06).
@@ -594,7 +734,7 @@ interface RouteCaller {
  * operator (Herdr ships one, about how its scrollback depth is known), and shipping it would put
  * developer prose on the wire for every page load of the reference adapter.
  */
-export function muxConfigBody(mux: MuxPublication): MuxConfig {
+export function muxConfigBody(mux: MuxPublication, tabTransferReady = true): MuxConfig {
   const decl = mux.capabilities;
   const notes: Partial<Record<MuxCapability, string>> = {};
   for (const cap of MUX_CAPABILITIES) {
@@ -604,12 +744,13 @@ export function muxConfigBody(mux: MuxPublication): MuxConfig {
   }
   const wire: MuxConfig = {
     name: mux.mux,
-    capabilities: { ...decl.supports },
+    capabilities: { ...decl.supports, tabTransfer: decl.supports.tabTransfer === true && tabTransferReady },
     unsupportedKeys: [...decl.unsupportedKeys],
     notes,
     // Unconditional, like `capabilities`: the declaration is total, so there is nothing to omit and
     // an absent key means "a bridge too old to know", which the phone already reads as `"many"`.
     spaces: decl.spaces,
+    readLimits: { ...decl.readLimits },
   };
   // Assigned only when the adapter actually has a mark — the key's ABSENCE is what tells the phone
   // to render its text alone, so a bridge that published `logoUrl` unconditionally would point every
@@ -781,6 +922,8 @@ export function bridgeConfigBody(opts: {
   push: boolean;
   vapidPublicKey: string;
   build: string;
+  receiptContextBound?: boolean;
+  machineRulesRevision?: 1;
   mode: CrewRuntime["mode"];
   /**
    * The active adapter, when there is one. Optional so the crew-mode assertions below (and any
@@ -788,6 +931,7 @@ export function bridgeConfigBody(opts: {
    * always passes it.
    */
   mux?: MuxPublication;
+  muxTabTransferReady?: boolean;
   /**
    * A MEMBER's own block, already in wire shape, for `/api/config?host=<member>` (M22/03).
    *
@@ -828,6 +972,8 @@ export function bridgeConfigBody(opts: {
    * member's own switch is not in the capability block the lead holds.
    */
   redact?: boolean;
+  control?: { capabilities: Record<string, boolean> };
+  hostControl?: ReturnType<typeof hostControlConfig>;
 }): BridgeConfig {
   const mode = modeForWire(opts.mode);
   const mine = opts.operatorCommands ?? [];
@@ -839,6 +985,8 @@ export function bridgeConfigBody(opts: {
     vapidPublicKey: opts.vapidPublicKey,
     build: opts.build,
   };
+  if (opts.machineRulesRevision === 1) wire.machineRulesRevision = 1;
+  if (opts.receiptContextBound !== undefined) wire.receiptContextBound = opts.receiptContextBound;
   // Assigned, never conditionally spread: a solo instance's body must carry NEITHER key, byte for
   // byte as before the crew existed (CREW_PROTOCOL.md §11).
   if (mode !== undefined) wire.mode = mode;
@@ -851,7 +999,7 @@ export function bridgeConfigBody(opts: {
   // phone (an older bridge, read as fully capable), so a Herdr bridge staying silent here would be
   // indistinguishable from one that cannot answer.
   if (opts.muxWire !== undefined) wire.mux = opts.muxWire;
-  else if (opts.mux !== undefined) wire.mux = muxConfigBody(opts.mux);
+  else if (opts.mux !== undefined) wire.mux = muxConfigBody(opts.mux, opts.muxTabTransferReady ?? true);
   // Appended after the mux block, and omit-when-absent for the reason `mode` is: no key means no
   // microphone, which is precisely true of a collie with no provider configured.
   if (opts.stt !== undefined) wire.stt = opts.stt;
@@ -861,6 +1009,8 @@ export function bridgeConfigBody(opts: {
   // Appended last and omit-when-absent: no key is an older bridge, or a member's scoped answer, and
   // the phone shows "unknown" for both rather than guessing "on".
   if (opts.redact !== undefined) wire.redact = opts.redact;
+  if (opts.control !== undefined) wire.control = opts.control;
+  if (opts.hostControl !== undefined) wire.hostControl = opts.hostControl;
   return wire;
 }
 
@@ -890,8 +1040,10 @@ export interface UpdateActionDeps {
   beginCrewRun?: (a: { runId: string; to: string }) => void;
 }
 
-export function startServer(opts: {
+export async function startServer(opts: {
   cfg: Config;
+  /** Explicit operator native gateway only; absent preserves direct Tailscale/browser ingress. */
+  nativeIngress?: { ingress: GatewayIngress; mappedLogin: string };
   registry: SessionRegistry;
   push: Push;
   snooze: Snooze;
@@ -1059,6 +1211,8 @@ export function startServer(opts: {
    * writes nothing until a create succeeds.
    */
   worktreeReceipts?: WorktreeReceiptSurface;
+  /** `undefined` keeps unit callers on their legacy in-memory contract; `null` is production fail-closed. */
+  intentReceiptKey?: Uint8Array | null;
   /**
    * The ref each new worktree was cut from (ADR 0089, amended, `bridge/worktree-bases.ts`). Absent
    * means an in-memory store, which is every caller that builds this server by hand in a test.
@@ -1071,6 +1225,10 @@ export function startServer(opts: {
    * Absent means an in-memory store; `bridge/index.ts` passes the file-backed one.
    */
   launchReceipts?: LaunchReceiptSurface;
+  controlOperations?: OperationStore;
+  controlPlans?: PlanStore;
+  controlHostId?: string;
+  hostControl?: HostControlPort;
   /**
    * The launcher rows phones added on this machine (ADR 0094, `bridge/launchers-added.ts`). Absent
    * means an in-memory store; `bridge/index.ts` passes the file-backed one, which writes nothing until
@@ -1103,6 +1261,7 @@ export function startServer(opts: {
   machines?: MachineSurface;
 }) {
   const { cfg, registry, push, snooze, notifyPrefs, updateMonitor, audit, activity, crew } = opts;
+  const agentReporters = await AgentReporterRegistry.load(cfg.stateDir);
   // The prompt-cache ledger, built in bridge/index.ts beside the journal registry it probes through,
   // because the state engine's poll is what drives it and that poll is wired there. Undefined when
   // `COLLIE_TRANSCRIPT` is off: no journal, no probe, and every pane reads exactly as it did in 1.8.2.
@@ -1123,8 +1282,19 @@ export function startServer(opts: {
       : browserPairingGate(pairing, localCredential, (req) => server.requestIP(req)?.address, cfg.host);
   const folders = opts.folders;
   const worktreeReceipts = opts.worktreeReceipts ?? memoryWorktreeReceipts();
+  const queuedSendLedger = new QueuedSendAdmissionLedger();
   const worktreeBases = opts.worktreeBases ?? memoryWorktreeBases();
   const launchReceipts = opts.launchReceipts ?? memoryLaunchReceipts();
+  const controlOperations = opts.controlOperations ?? new OperationStore(cfg.stateDir);
+  const metadataState = new MetadataStateStore();
+  const agentViewReceipts = memoryAgentViewReceipts();
+  const controlPlans = opts.controlPlans ?? new PlanStore();
+  const agentWaits = new AgentWaitStore(cfg.stateDir);
+  const controlHostId = opts.controlHostId ?? opts.crewStatus?.()?.self.id ?? "local";
+  await controlOperations.prepare();
+  const ownerBoundReady = () => ownerBoundOperationReady(opts.intentReceiptKey, controlOperations.isReady());
+  const worktreeRemoveReady = (mux = registry.get()?.herdr) =>
+    ownerBoundReady() && mux?.capabilities.supports.removeWorktree === true && mux.removeWorktree !== undefined;
   const harnesses = opts.harnesses ?? createHarnessProbe();
   const worktreeChoices = opts.worktreeChoices ?? memoryWorktreeChoices();
   const machines = opts.machines;
@@ -1244,6 +1414,19 @@ export function startServer(opts: {
 
   /** One in-flight "look now" per session — see bridge/refresh.ts for why it coalesces. */
   const refreshes = new RefreshCoalescer();
+  const metadataCleanupEngines = new WeakSet<StateEngine>();
+  const reconcileMetadataTargets = (session: string, snapshot: ReturnType<StateEngine["current"]>): void => {
+    const active = new Set<string>();
+    for (const p of [...snapshot.agents, ...snapshot.shellPanes]) {
+      const targetIdentity = payloadHash({ pane: p.paneId, terminal: p.terminalIncarnation ?? null, agent: p.agent });
+      active.add(`${controlHostId}\0${session}\0pane\0${p.paneId}\0${targetIdentity}`);
+    }
+    for (const workspace of snapshot.workspaces) {
+      const targetIdentity = payloadHash({ workspace: workspace.workspaceId });
+      active.add(`${controlHostId}\0${session}\0workspace\0${workspace.workspaceId}\0${targetIdentity}`);
+    }
+    metadataState.retainSessionTargets(controlHostId, session, active);
+  };
 
   /**
    * Take a fresh look at one session's multiplexer, then make the bridge re-read it.
@@ -1281,6 +1464,11 @@ export function startServer(opts: {
     const rt = registry.get(sessionName);
     if (!rt) return undefined;
     const { workspaces, tabs, bridge } = rt.engine.current();
+    if (!metadataCleanupEngines.has(rt.engine)) {
+      metadataCleanupEngines.add(rt.engine);
+      rt.engine.onUpdate((snapshot) => reconcileMetadataTargets(rt.name, snapshot));
+    }
+    reconcileMetadataTargets(rt.name, rt.engine.current());
     // Attach each pane's activity timestamps. Done here rather than in the state engine so the
     // engine stays a pure Herdr-poller with no knowledge of the ledger — and so the two numbers
     // are read at serialise time, i.e. as fresh as the request. The ledger is keyed by SESSION, so
@@ -1375,20 +1563,13 @@ export function startServer(opts: {
     }
     for (const contribution of crewLead?.contributions() ?? []) {
       for (const wire of contribution.body?.agents ?? []) {
+        if (contribution.body === null || resolvePeerWatchPane(contribution.body, wire.paneId, wire.session) !== wire) continue;
         const pane = peerWatchPane(wire, contribution.state.memberId);
         if (pane !== undefined) out.set(pane.key, pane.paneId);
       }
     }
     return out;
   };
-
-  /** One pane's place in the list, as the sheet reads it. */
-  const cacheWatchBody = (watch: CacheWatchSurface, pane: CacheWarnPane): CacheWatchResponse => ({
-    on: watch.has(pane.key),
-    global: notifyPrefs.current().cache,
-    watchable: cacheWatchable(pane),
-    warnSeconds: cfg.cacheWarnSeconds,
-  });
 
   /** The whole bridge's list, with a pane id on every row whose pane is in sight. */
   const cacheWatchListBody = (watch: CacheWatchSurface): CacheWatchListResponse => {
@@ -1432,6 +1613,166 @@ export function startServer(opts: {
   ): Promise<Response | null> => {
     const { pathname } = url;
 
+    const worktreeRemoveAnswer = await serveWorktreeRemoveRoute(req, url, {
+      gate: (level) => caller.gate(level),
+      pairedIdentity: () => caller.pairedIdentity?.() ?? null,
+      audit: (action, target, host, session, outcome) => audit.record({
+        action, paneId: target, host, session: session ?? undefined, device: whois(req).device,
+        detail: { outcome },
+      }),
+      resolve: async () => {
+        const runtime = await caller.resolve();
+        return runtime instanceof Response ? runtime : { host: controlHostId, session: runtime.name, mux: runtime.herdr };
+      },
+    }, { plans: controlPlans, operations: controlOperations });
+    if (worktreeRemoveAnswer) {
+      if (req.method === "POST") server.timeout(req, WORKTREE_ROUTE_BUDGET_S);
+      return worktreeRemoveAnswer;
+    }
+
+    const hostPluginsAnswer = await serveHostPluginsRoute(req, url, {
+      gate: (level) => caller.gate(level),
+      pairedIdentity: () => caller.pairedIdentity?.() ?? null,
+      resolve: async () => {
+        const runtime = await caller.resolve();
+        if (runtime instanceof Response) return runtime;
+        const port = opts.hostControl ?? runtime.herdr.hostControl;
+        return port ? { host: controlHostId, port } : refusalResponse(refusal(
+          "host.control_unsupported", "This host has no verified host-administration adapter", "capability",
+        ), 501);
+      },
+    }, controlPlans, controlOperations);
+    if (hostPluginsAnswer) {
+      if (req.method === "POST") server.timeout(req, WORKTREE_ROUTE_BUDGET_S);
+      return hostPluginsAnswer;
+    }
+
+    const hostIntegrationAnswer = await serveHostIntegrationRoute(req, url, {
+      gate: (level) => caller.gate(level),
+      pairedIdentity: () => caller.pairedIdentity?.() ?? null,
+      audit: (action, target, host, outcome) => audit.record({
+        action, host, device: whois(req).device, detail: { target, outcome },
+      }),
+      resolve: async () => {
+        const runtime = await caller.resolve();
+        if (runtime instanceof Response) return runtime;
+        const port = opts.hostControl ?? runtime.herdr.hostControl;
+        return port ? { host: controlHostId, port } : refusalResponse(refusal(
+          "host.control_unsupported", "This host has no verified host-administration adapter", "capability",
+        ), 501);
+      },
+    }, controlPlans, controlOperations);
+    if (hostIntegrationAnswer) {
+      if (req.method === "POST") server.timeout(req, WORKTREE_ROUTE_BUDGET_S);
+      return hostIntegrationAnswer;
+    }
+
+    if (pathname === "/api/agents/named" || AGENT_ACTION_ROUTE.test(pathname) || WAIT_ACTION_ROUTE.test(pathname)) {
+      // The long one-shot action may legitimately await vendor activity/settling. Observer starts
+      // return immediately; polls and cancellation retain the normal short read budget.
+      if (AGENT_ACTION_ROUTE.test(pathname) && req.method === "POST") server.timeout(req, 310);
+      const agentCaller: AgentCaller = {
+        gate: (level) => caller.gate(level), pairedIdentity: () => caller.pairedIdentity?.() ?? null,
+        receiptKey: caller.intentReceiptKey, redact: cfg.redact,
+        composerSafe: queuedSendScreenSafe, visiblePrompt: (raw) => cfg.redact ? redactAnsi(raw) : raw,
+        audit: (action, paneId, state) => caller.audit.record({ action, paneId, device: caller.device() ?? undefined, detail: { state } }),
+        resolve: async () => {
+          const captured = await caller.resolve(); if (captured instanceof Response) return captured;
+          return { host: controlHostId, session: captured.name, mux: captured.herdr, currentRuntime: () => registry.get(captured.name) === captured, current: (expected) => {
+            if (registry.get(captured.name) !== captured) return false;
+            const pane = [...captured.engine.current().agents, ...captured.engine.current().shellPanes].find((candidate) => candidate.paneId === expected.paneId);
+            return currentOriginalHerdrPane(pane, expected);
+          } };
+        },
+      };
+      const agentAnswer = await serveAgentRoute(req, url, agentCaller, controlOperations);
+      if (agentAnswer) return agentAnswer;
+      const waitAnswer = await serveWaitRoute(req, url, agentCaller, agentWaits);
+      if (waitAnswer) return waitAnswer;
+    }
+    const agentViewAnswer = await serveAgentViewRoute(req, url, {
+      gate: (level) => caller.gate(level),
+      pairedIdentity: () => caller.pairedIdentity?.() ?? null,
+      audit: (action, host, outcome) => audit.record({ action, host, device: whois(req).device, detail: { outcome } }),
+      resolve: async () => {
+        const runtime = await caller.resolve();
+        if (runtime instanceof Response) return runtime;
+        const port = opts.hostControl ?? runtime.herdr.hostControl;
+        return port ? { host: controlHostId, port } : Response.json({ ok: false, code: "host_control.unavailable", error: "Host control is unavailable on this runtime" }, { status: 501 });
+      },
+    }, agentViewReceipts, controlOperations);
+    if (agentViewAnswer) return agentViewAnswer;
+
+    const metadataAnswer = await serveMetadataRoute(req, url, {
+      gate: (level) => caller.gate(level),
+      pairedIdentity: () => caller.pairedIdentity?.() ?? null,
+      audit: (action, target, host, session, outcome) => audit.record({ action, host, paneId: target, session: session ?? undefined, device: whois(req).device, detail: { outcome } }),
+      resolve: async () => {
+        const runtime = await caller.resolve();
+        return runtime instanceof Response ? runtime : { host: controlHostId, session: runtime.name, mux: runtime.herdr, currentRuntime: () => registry.get(runtime.name) === runtime };
+      },
+    }, metadataState, controlOperations);
+    if (metadataAnswer) return metadataAnswer;
+
+    const controlled = await serveControlRoute(req, url, {
+      gate: (level) => caller.gate(level),
+      device: () => caller.device(),
+      pairedIdentity: () => caller.pairedIdentity?.() ?? null,
+      resolve: async () => {
+        const runtime = await caller.resolve();
+        return runtime instanceof Response ? runtime : { host: controlHostId, session: runtime.name };
+      },
+    }, controlOperations);
+    if (controlled) return controlled;
+
+    const recipesControlled = await serveLayoutRecipeRoute(req, url, {
+      gate: (level) => caller.gate(level),
+      pairedIdentity: () => caller.pairedIdentity?.() ?? null,
+      launchers: allowedLaunchers,
+      audit: (action, target, host, session, outcome) => audit.record({
+        action, paneId: target, host, session: session ?? undefined, device: whois(req).device,
+        detail: { outcome },
+      }),
+      resolve: async () => {
+        const runtime = await caller.resolve();
+        if (runtime instanceof Response) return runtime;
+        const resolved = { host: controlHostId, session: runtime.name, mux: runtime.herdr };
+        return folders === undefined ? resolved : Object.assign(resolved, { folders });
+      },
+    }, { plans: controlPlans, operations: controlOperations });
+    if (recipesControlled) return recipesControlled;
+
+    const layoutControlled = await servePaneLayoutRoute(req, url, {
+      gate: (level) => caller.gate(level),
+      pairedIdentity: () => caller.pairedIdentity?.() ?? null,
+      audit: (action, paneId, host, session, outcome) => audit.record({
+        action, paneId, host, session: session ?? undefined, device: whois(req).device,
+        detail: { outcome },
+      }),
+      resolve: async () => {
+        const runtime = await caller.resolve();
+        if (runtime instanceof Response) return runtime;
+        const resolved = { host: controlHostId, session: runtime.name, mux: runtime.herdr };
+        return folders === undefined ? resolved : Object.assign(resolved, { folders });
+      },
+    }, { plans: controlPlans, operations: controlOperations });
+    if (layoutControlled) return layoutControlled;
+
+    const organizationControlled = await serveOrganizationRoute(req, url, {
+      gate: (level) => caller.gate(level),
+      pairedIdentity: () => caller.pairedIdentity?.() ?? null,
+      audit: (action, target, host, session, outcome) => audit.record({
+        action, paneId: target, host, session: session ?? undefined, device: whois(req).device,
+        detail: { outcome },
+      }),
+      resolve: async () => {
+        const runtime = await caller.resolve();
+        if (runtime instanceof Response) return runtime;
+        return { host: controlHostId, session: runtime.name, mux: runtime.herdr };
+      },
+    }, { plans: controlPlans, operations: controlOperations });
+    if (organizationControlled) return organizationControlled;
+
     // ── "Look now" ────────────────────────────────────────────────────────
     // A READ, and gated as one. It changes nothing — `mux.refresh()` takes a listing and moves a
     // timer (mux/types.ts) — so gating it behind a device would refuse the one thing a read-only
@@ -1440,6 +1781,7 @@ export function startServer(opts: {
     if (pathname === "/api/refresh" && req.method === "POST") {
       const denied = caller.gate("read");
       if (denied) return denied;
+      if (!controlScope(url, "session")) return refusalResponse(refusal("scope.malformed", "Malformed refresh scope", "scope"), 400);
       const rt = await caller.resolve();
       if (rt instanceof Response) return rt;
       // A refresh is a phone asking to be shown something, which is attention by any reading.
@@ -1474,6 +1816,8 @@ export function startServer(opts: {
       return launch(rt.herdr, rt.engine, req, caller.audit, caller.device(), rt.name, allowedLaunchers, {}, {
         harnesses,
         receipts: launchReceipts,
+        receiptContext: receiptContextFor(caller, rt.name, controlHostId),
+        operations: controlOperations,
         folders,
         switches: launcherSources.switches,
         recentRuns,
@@ -1491,10 +1835,26 @@ export function startServer(opts: {
       if (rt instanceof Response) return rt;
       return launchersRoute(allowedLaunchers, req.headers.get("accept-encoding"), harnesses, launchersAdding);
     }
+    // Per-kind implementation evidence is scoped to the owning runtime just like launchers. It is
+    // a paired read and contains no PATH or argv; only the allowlisted bounded --version probes run.
+    if (pathname === "/api/agents/capabilities" && req.method === "GET") {
+      const denied = caller.gate("read");
+      if (denied) return denied;
+      if (!controlScope(url, "session")) {
+        return refusalResponse(refusal("scope.malformed", "Malformed agent capability scope", "scope"), 400);
+      }
+      const rt = await caller.resolve();
+      if (rt instanceof Response) return rt;
+      return json(await agentCapabilities({
+        mux: rt.herdr,
+        harnesses,
+        journals: journals ?? {},
+      }), req.headers.get("accept-encoding"));
+    }
     // Add, remove or rename a row a phone added (ADR 0094). Writes, on the write gate, and
     // session-scoped for `/api/launchers`' reason: `?host=` reaches THAT machine's own store through
     // the ordinary forward, and nothing is ever copied to another machine.
-    const addedAnswer = await serveAddedLauncherRoute(req, pathname, caller, launcherSources);
+    const addedAnswer = await serveAddedLauncherRoute(req, pathname, caller, launcherSources, controlOperations, controlHostId);
     if (addedAnswer !== null) return addedAnswer;
     // Remove one line from this machine's one-off history, or clear it (ADR 0095). Writes, and
     // session-scoped for the same reason: `?host=` reaches that member's own history.
@@ -1634,6 +1994,7 @@ export function startServer(opts: {
       return planWorktree(req, worktreeChoices);
     }
     if (pathname === "/api/worktree" && req.method === "POST") {
+      const originalWorktreeCaller = captureWorktreeCaller(caller);
       const denied = caller.gate("write");
       if (denied) return denied;
       const rt = await caller.resolve();
@@ -1641,6 +2002,9 @@ export function startServer(opts: {
       server.timeout(req, WORKTREE_ROUTE_BUDGET_S);
       return createWorktreeAt(rt.herdr, rt.engine, req, caller.audit, caller.device(), rt.name, allowedLaunchers, {
         receipts: worktreeReceipts,
+        receiptContext: receiptContextFor(caller, rt.name, controlHostId),
+        finalAdmission: await worktreeFinalAdmissionFor(caller, rt.herdr, originalWorktreeCaller),
+        operations: controlOperations,
         bases: worktreeBases,
         choices: worktreeChoices,
         harnesses,
@@ -1649,6 +2013,7 @@ export function startServer(opts: {
     }
     const worktreeMatch = pathname.match(WORKTREE_ACTION_ROUTE);
     if (worktreeMatch && req.method === "POST") {
+      const originalWorktreeCaller = captureWorktreeCaller(caller);
       const denied = caller.gate("write");
       if (denied) return denied;
       const rt = await caller.resolve();
@@ -1661,7 +2026,7 @@ export function startServer(opts: {
       // host and the phone is handed a dropped connection (ADR 0089). Probed on Bun 1.4.1.
       server.timeout(req, WORKTREE_ROUTE_BUDGET_S);
       if (action === "open") {
-        return openWorktree(rt.herdr, rt.engine, spaceId, req, caller.audit, device, rt.name);
+        return openWorktree(rt.herdr, rt.engine, spaceId, req, caller.audit, device, rt.name, await worktreeFinalAdmissionFor(caller, rt.herdr, originalWorktreeCaller, "openWorktree"));
       }
       return createWorktree(
         rt.herdr,
@@ -1674,7 +2039,7 @@ export function startServer(opts: {
         allowedLaunchers,
         worktreeReceipts,
         {},
-        { bases: worktreeBases },
+        { bases: worktreeBases, receiptContext: receiptContextFor(caller, rt.name, controlHostId), operations: controlOperations, finalAdmission: await worktreeFinalAdmissionFor(caller, rt.herdr, originalWorktreeCaller) },
       );
     }
 
@@ -1705,6 +2070,9 @@ export function startServer(opts: {
       // `files` is a read that still needs an authorised device (ADR 0083); see paneGateLevel.
       const denied = caller.gate(paneGateLevel(action));
       if (denied) return denied;
+      if ((action === "processes" || action === "agent" || action?.startsWith("agent/")) && !controlScope(url, "session")) {
+        return refusalResponse(refusal("scope.malformed", "Malformed agent inspection scope", "scope"), 400);
+      }
       const rt = await caller.resolve();
       if (rt instanceof Response) return rt;
       const { herdr, name: session } = rt;
@@ -1735,21 +2103,34 @@ export function startServer(opts: {
       const device = isRead ? null : caller.device();
       const audit_ = caller.audit;
 
-      if (!action && req.method === "GET") return readPane(herdr, cfg, paneId, url, req);
+      if (!action && req.method === "GET") {
+        const pane = [...rt.engine.current().agents, ...rt.engine.current().shellPanes].find((item) => item.paneId === paneId);
+        return readPane(herdr, cfg, paneId, url, req, pane?.readableLines,
+          () => caller.gate("device-read") === null);
+      }
       if (action === "history" && req.method === "GET")
         return paneHistory(cfg, journals, transcripts, rt.engine, paneId, url, req);
       if (action === "chat" && req.method === "GET")
-        return paneChat(cfg, journals, live, rt.engine, herdr.capabilities, paneId, url, req);
+        return paneChat(cfg, journals, live, rt.engine, herdr.capabilities, rt.name, paneId, url, req, queuedSendLedger);
       if (action === "changes" && req.method === "GET") return paneChanges(rt.engine, paneId, url, req, homedir(), cfg.redact);
       if (action === "files" && req.method === "GET")
         return paneFiles(rt.engine, paneId, url, req, filesPrivateFolders(cfg), homedir(), cfg.redact);
+      if (action === "processes" && req.method === "GET")
+        return servePaneProcesses(herdr, rt.engine, paneId);
+      if (action === "agent" && req.method === "GET")
+        return servePaneAgentIdentity(herdr, rt.engine, paneId);
+      const agentMutation = parseAgentMutationAction(action);
+      if (agentMutation && req.method === "POST")
+        return refuseUnsafeAgentMutation(herdr, rt.engine, paneId, agentMutation, req, agentReporters);
       // A landed input makes the engine hot for a few polls (§ isPaneInput). On a member this runs
       // through the crew dispatch, so the member that owns the pane is the one that goes hot.
       if (action === "reply" && req.method === "POST")
         return afterPaneInput(rt.engine, await replyPane(herdr, cfg, paneId, req, audit_, device, session));
       if (action === "keys" && req.method === "POST")
-        return afterPaneInput(rt.engine, await keysPane(herdr, cfg, paneId, req, audit_, device, session));
-      if (action === "upload" && req.method === "POST") return uploadPane(cfg, paneId, req, audit_, device, session);
+        return afterPaneInput(rt.engine, await keysPane(
+          herdr, cfg, paneId, req, audit_, device, session, live, journals, rt.engine, queuedSendLedger,
+        ));
+      if (action === "upload" && req.method === "POST") return uploadPane(cfg, paneId, req, audit_, device, session, () => caller.gate("write"));
       if (action === "close" && req.method === "POST") return closePane(herdr, rt.engine, paneId, req, audit_, device, session);
       if (action === "rename" && req.method === "POST") return renamePane(herdr, rt.engine, paneId, req, audit_, device, session);
       if (action === "focus" && req.method === "POST") return focusPane(herdr, rt.engine, paneId, req, audit_, device, session);
@@ -1778,9 +2159,15 @@ export function startServer(opts: {
     // M22/03: this collie's own capability declaration, for `hello`. The SAME expression the
     // `/api/config` route below publishes to a browser — the primary session's adapter — so a peer
     // cannot report capabilities that differ from the ones it serves its own operator.
+    controlCapabilities: () => ({ controlOperations: ownerBoundReady(), worktreeRemove: worktreeRemoveReady(), filesDiscovery: true }),
+    hostControlCapabilities: () => {
+      const port = opts.hostControl ?? registry.get()?.herdr.hostControl;
+      return Object.fromEntries(HOST_CAPABILITIES.map((name) => [name, port?.capabilities[name] === true]));
+    },
+    receiptContextBound: ownerBoundReady,
     mux: () => {
       const active = registry.get();
-      return active === undefined ? null : muxConfigBody(active.herdr);
+      return active === undefined ? null : muxConfigBody(active.herdr, ownerBoundReady());
     },
     dispatch: async (req, url, from) => {
       const session = url.searchParams.get("session") ?? undefined;
@@ -1806,9 +2193,16 @@ export function startServer(opts: {
         resolve: async () => localRuntime(session, null),
         gate: (level) => {
           const verdict = crewGate(level, cfg, device);
-          return verdict.ok ? null : text(verdict.reason, 403);
+          if (verdict.ok) return null;
+          const response = text(verdict.reason, 403);
+          response.headers.set("x-collie-error-source", "collie");
+          response.headers.set("x-collie-error-factor", "device");
+          response.headers.set("x-collie-error-code", "device.not_authorised");
+          return response;
         },
         device: () => device,
+        pairedIdentity: () => crewPairedIdentityOf(req),
+        intentReceiptKey: opts.intentReceiptKey,
         audit: audit.scoped({ via: "crew", from }),
         via: "crew",
       });
@@ -1918,7 +2312,8 @@ export function startServer(opts: {
     // certificate never reaches `fetch` at all, so nothing below has to defend against it.
     tls: listenerTls,
 
-    fetch: withAccessLog(withHsts(async (req: Request) => {
+    fetch: withAccessLog(withHsts(withControlAuthority(async (req: Request) => {
+      let nativeBinding: VerifiedIngressActor | undefined;
       const url = new URL(req.url);
       // A mounted collie (`COLLIE_BASE_PATH`, ADR 0052) is normally reached through a proxy that
       // strips the mount before it forwards — `tailscale serve` does, `http.StripPrefix` on the
@@ -1926,6 +2321,8 @@ export function startServer(opts: {
       // `/collie/api/health`, so an inbound path that still carries the mount is read as if it had
       // been stripped. Before the crew surface and every gate, because all of them read the path.
       if (cfg.basePath !== "/") url.pathname = stripMount(url.pathname, cfg.basePath);
+      const browserIngress = opts.nativeIngress !== undefined && cfg.basePath !== "/" && new URL(req.url).pathname.startsWith(cfg.basePath);
+      if (opts.nativeIngress) url.pathname = stripMount(url.pathname, new URL(opts.nativeIngress.ingress.publicBase).pathname);
       const { pathname } = url;
 
       // The federated surface, before anything else. It answers only the prefix it owns and returns
@@ -1953,6 +2350,27 @@ export function startServer(opts: {
         return text("non-loopback peer rejected", 403);
       }
 
+      // The browser mount is retained ONLY by the separately authenticated existing front door.
+      // Native gateway targets are stripped and carry a current MAC. Native phone paths cannot
+      // select the browser branch through the gateway; public browser routing retains its SSO gate.
+      if (opts.nativeIngress && browserIngress && pathname.startsWith("/api/") &&
+          (cfg.basePath === new URL(opts.nativeIngress.ingress.publicBase).pathname || !cfg.trustedUser || req.headers.get("tailscale-user-login") !== cfg.trustedUser || req.headers.has("x-collie-native-ingress"))) {
+        return gatewayRefusal("identity", "identity.browser_ingress", 403);
+      }
+      if (opts.nativeIngress && !browserIngress && pathname.startsWith("/api/")) {
+        const identity = pairedIdentityOf(req, pairingGate);
+        const binding = opts.nativeIngress.ingress.verify(req, identity, pathname);
+        if (!binding) return gatewayRefusal("device", "device.ingress_required", 403);
+        nativeBinding = binding;
+        const currentBinding = opts.nativeIngress.ingress.bindings.current(binding);
+        if (!currentBinding) return gatewayRefusal("device", "device.binding_revoked", 403);
+        // Only the locally validated store, not an injected phone header, supplies either identity.
+        const headers = new Headers(req.headers);
+        headers.set("Tailscale-User-Login", opts.nativeIngress.mappedLogin);
+        if (cfg.deviceHeader) headers.set(cfg.deviceHeader, currentBinding.deviceName);
+        req = new Request(req, { headers });
+      }
+
       // The Access gate: after the crew surface (its own admission) and the peer check, before the
       // deposed page and every route. `/api/health` and local callers are exempt inside it.
       if (accessGate) {
@@ -1967,6 +2385,34 @@ export function startServer(opts: {
       // deposed collie has none.
       const deposedAnswer = opts.deposed?.(req, url);
       if (deposedAnswer) return secure(deposedAnswer);
+
+      // Original ingress custody remains mandatory after every observable route await. Never
+      // replace it with a newly enrolled map or retain trust in an earlier injected device name.
+      const currentCallerGate = (level: GateLevel): Response | null => {
+        if (nativeBinding && opts.nativeIngress) {
+          if (!opts.nativeIngress.ingress.identityCurrent(nativeBinding)) return gatewayRefusal("identity", "identity.expired", 401, nativeBinding.requestId);
+          if (req.signal.aborted) return gatewayRefusal("device", "device.request_retired", 403);
+          const currentBinding = opts.nativeIngress.ingress.bindings.current(nativeBinding);
+          if (!currentBinding || pairedIdentityOf(req, pairingGate) !== nativeBinding.pairedDeviceId) return gatewayRefusal("device", "device.binding_revoked", 403);
+          // Reconstruct trusted values on this handler-owned Request; its body and original
+          // immutable target remain intact even after parsing. No await separates this gate.
+          req.headers.set("Tailscale-User-Login", opts.nativeIngress.mappedLogin);
+          if (cfg.deviceHeader) req.headers.set(cfg.deviceHeader, currentBinding.deviceName);
+          const roleDenied = opts.deposed?.(req, url);
+          if (roleDenied) return secure(roleDenied);
+          return guard(req, cfg, level, pairingGate);
+        }
+        return guard(req, cfg, level, pairingGate);
+      };
+      const nativeGate = (level: GateLevel): Response | null => nativeBinding ? currentCallerGate(level) : null;
+      let finalNativeRefusal: Response | null = null;
+      const boundRuntime = (runtime: SessionRuntime | Response): SessionRuntime | Response =>
+        runtime instanceof Response || !nativeBinding ? runtime : { ...runtime,
+          herdr: withNativeFinalAdmission(runtime.herdr, () => {
+            const denied = currentCallerGate("write");
+            if (denied) finalNativeRefusal = denied;
+            return denied === null;
+          }) };
 
       // ── The health check (M15/04) ────────────────────────────────────────
       // `GET /api/health`: is this collie up, and WHICH BUILD is answering? The detached updater
@@ -2033,7 +2479,7 @@ export function startServer(opts: {
       ): { pane: CacheWarnPane; error?: undefined } | { pane?: undefined; error: ErrorCode } => {
         if (selector.kind === "member") {
           const body = crewLead?.contributions().find((c) => c.state.memberId === selector.id)?.body;
-          const wire = body?.agents.find((p) => p.paneId === paneId);
+          const wire = body === null || body === undefined ? undefined : resolvePeerWatchPane(body, paneId, session);
           if (wire === undefined) return { error: "cache.pane_unknown" };
           // A peer's pane carries no ref, so `hasSession` is what "names a session" means here — the
           // same flag the History affordance is gated on.
@@ -2076,6 +2522,25 @@ export function startServer(opts: {
             );
           }
           if (resolved.kind === "peer") {
+            // A pre-B06 member cannot compare the queued action's occupant and queue identity. An
+            // old capability map therefore refuses this new guarded form before forwarding; it
+            // must never degrade into the member's unbound generic keys route.
+            if (req.method === "POST" && /\/api\/pane\/[^/]+\/keys$/.test(pathname)) {
+              let guarded = false;
+              try {
+                // SAFETY: Request.json returns JSON values; only own-key presence is inspected before the owner parses fields.
+                const candidate = await req.clone().json() as JsonValue;
+                guarded = typeof candidate === "object" && candidate !== null &&
+                  Object.prototype.hasOwnProperty.call(candidate, "queued_send");
+              } catch { /* The owning route returns the normal malformed-body answer. */ }
+              if (guarded && crewLead?.muxFor(resolved.link.memberId)?.capabilities?.guardedQueuedSend !== true) {
+                return json(
+                  { ok: false, error: "The selected Crew member does not support guarded queued send", code: "queued_send.unsupported_peer" },
+                  req.headers.get("accept-encoding"),
+                  409,
+                );
+              }
+            }
             // An input forwarded to a member makes the member's engine hot there, and the LEAD's
             // too: the lead sees the member's panes only through its sweep, which rides this
             // engine's tick (CREW_PROTOCOL.md §10.1), so a cold lead would show the member's answer
@@ -2085,11 +2550,12 @@ export function startServer(opts: {
             // write, plus the target host — two independent logs of one event, neither depending on
             // the other machine's disk.
             const forwarded = secure(
-              await crewLead!.forward(req, url, resolved, {
+              await admitCrewForward(pathname, req.method, currentCallerGate, () => crewLead!.forward(req, url, resolved, {
                 device: whois(req).device,
-                // A member's text is masked here too, by the lead's own switch, so a member one
-                // release behind cannot send a key to the phone in clear (CREW_PROTOCOL.md §9.1).
-                mask: cfg.redact ? maskForwardedAnswer : undefined,
+                pairedIdentity: pairedIdentityOf(req, pairingGate),
+                // A member's text is masked here too. Process details are always masked because
+                // argv and paths are sensitive regardless of the operator's terminal-redaction preference.
+                mask: shouldMaskForwardedAnswer(pathname, cfg.redact) ? maskForwardedAnswer : undefined,
                 audit: (entry) => {
                   // Assigned, never conditionally spread: an entry without a pane or session must
                   // carry NO such key rather than record it as `undefined`.
@@ -2103,15 +2569,15 @@ export function startServer(opts: {
                   if (entry.session !== undefined) row.session = entry.session;
                   audit.record(row);
                 },
-              }),
+              })),
             );
             // The PRIMARY engine, because that is the one whose tick the sweep rides (index.ts).
             const own = registry.get()?.engine;
             return input && own !== undefined ? afterPaneInput(own, forwarded) : forwarded;
           }
-          return resolved.runtime;
+          return boundRuntime(resolved.runtime);
         }
-        return localRuntime(sessionName, req.headers.get("accept-encoding"));
+        return boundRuntime(localRuntime(sessionName, req.headers.get("accept-encoding")));
       };
 
       // ── Live state (polled by the client) ────────────────────────────────
@@ -2119,7 +2585,7 @@ export function startServer(opts: {
         // Through `guard` like every other read since reads need the pairing token (ADR 0086). It
         // was a bare `checkAccess` while reads were open, and a bare one here would be the one read
         // an unpaired browser could still make.
-        const denied = guard(req, cfg, "read", pairingGate);
+        const denied = guard(req, cfg, "read", pairingGate) ?? nativeGate("read");
         if (denied) return denied;
         const device = whois(req);
         // A BROWSER poll is a phone looking; the lead's own sweep of a peer is not, which is why
@@ -2169,7 +2635,7 @@ export function startServer(opts: {
       // SAME closure, passed to both, never a second call that agrees today. Two authorisation
       // checks meant to be identical drift the moment one of them is edited, so there is only one
       // (spec M15/05; `server.test.ts` → "same device auth as pane input").
-      const browserGate = (level: GateLevel): Response | null => guard(req, cfg, level, pairingGate);
+      const browserGate = (level: GateLevel) => currentCallerGate(level);
       // The crew's forget is never a browser route, on this machine or forwarded to a member.
       if (pathname === FORGET_DEVICE_PATH) {
         const denied = browserGate("read");
@@ -2180,16 +2646,18 @@ export function startServer(opts: {
         resolve: target,
         gate: browserGate,
         device: () => whois(req).device,
+        pairedIdentity: () => pairedIdentityOf(req, pairingGate),
+        intentReceiptKey: opts.intentReceiptKey,
         audit,
       });
-      if (sessionRouted) return sessionRouted;
+      if (sessionRouted) return finalNativeRefusal ?? sessionRouted;
 
       // ── Misc API ─────────────────────────────────────────────────────────
       // The rule catalog behind the cache chips, and the overrides this host applies. Gated exactly as
       // `/api/config` is — read-level, and through `guard` so COLLIE_PUBLIC_HOSTS covers it — because
       // it is the same kind of payload: Collie's own facts plus operator-authored text.
       if (pathname === "/api/cache-rules" && req.method === "GET") {
-        const denied = guard(req, cfg, "read", pairingGate);
+        const denied = guard(req, cfg, "read", pairingGate) ?? nativeGate("read");
         if (denied) return denied;
         return cacheRulesRoute(
           operatorCacheRules,
@@ -2206,7 +2674,7 @@ export function startServer(opts: {
         // didn't cover it and a rebound DNS name could still read the build id. The client only ever
         // calls this same-origin, and a refusal can't be mistaken for an outage: ConnectionBanner
         // short-circuits to AuthErrorBanner before its red-state probe runs. Noted in #32.
-        const denied = guard(req, cfg, "read", pairingGate);
+        const denied = guard(req, cfg, "read", pairingGate) ?? nativeGate("read");
         if (denied) return denied;
         // Re-read per request behind an mtime check, like buildId() — editing commands.toml is live,
         // with no restart. The path is cfg's, never the request's.
@@ -2221,6 +2689,8 @@ export function startServer(opts: {
         // is not a choice. `?.` only because `get()` is total over a Map — the primary is created
         // eagerly in the constructor and never disposed.
         const activeMux = registry.get();
+        const hostPort = opts.hostControl ?? activeMux?.herdr.hostControl;
+        await hostPort?.prepare?.();
         // ── `?host=<member>`: THIS MEMBER's capability declaration (M22/03) ──────────────────
         //
         // Answered from what the lead already holds, and never forwarded: `config` is on
@@ -2244,6 +2714,20 @@ export function startServer(opts: {
         // "use the lead's" — which is byte for byte the reading the phone gives every pane today.
         // The lead's own entry resolves `local`, so it takes its own branch and its own adapter.
         const memberMux = scoped?.kind === "peer" ? crewLead?.muxFor(scoped.link.memberId) : null;
+        const scopedControlCapabilities = scoped?.kind === "peer"
+          ? crewLead?.controlFor(scoped.link.memberId) ?? {}
+          : {
+              controlOperations: ownerBoundCallerReady(opts.intentReceiptKey, controlOperations.isReady(), pairedIdentityOf(req, pairingGate)),
+              worktreeRemove: ownerBoundCallerReady(opts.intentReceiptKey, controlOperations.isReady(), pairedIdentityOf(req, pairingGate)) && worktreeRemoveReady(),
+              filesDiscovery: true,
+            };
+        const muxWire = memberMux == null ? undefined : {
+          ...memberMux,
+          capabilities: {
+            ...memberMux.capabilities,
+            tabTransfer: memberMux.capabilities.tabTransfer === true && scopedControlCapabilities.controlOperations === true,
+          },
+        };
         // Re-resolved per request for the same reason `commands.toml` is: `collie stt setup` is
         // live, and this is where the phone learns whether to draw a microphone at all. `?? undefined`
         // because "no provider" must OMIT the key, never send a null one (CREW_PROTOCOL.md §11).
@@ -2254,14 +2738,21 @@ export function startServer(opts: {
             vapidPublicKey: push.publicKey,
             build: await buildId(),
             mode: crew.mode,
+            machineRulesRevision: scoped?.kind === "peer" || machines?.replaceRules === undefined ? undefined : 1,
             operatorCommands: mine,
             operatorKeys: myKeys,
             operatorQuickReplies: myReplies,
             operatorFonts: myFonts,
             mux: activeMux?.herdr,
+            muxTabTransferReady: scoped?.kind === "peer" ? false : scopedControlCapabilities.controlOperations === true,
+            // Peer support must be positively negotiated; the lead never lends its declarations.
+            control: { capabilities: scopedControlCapabilities },
+            hostControl: scoped?.kind === "peer"
+              ? hostControlConfig(undefined, crewLead?.hostControlFor(scoped.link.memberId) ?? undefined)
+              : hostControlConfig(hostPort),
             // Assigned through `?? undefined` rather than conditionally, so the no-`host=` request
             // builds the byte-identical body it always did (CREW_PROTOCOL.md §11).
-            muxWire: memberMux ?? undefined,
+            muxWire,
             stt: sttWire,
             // This host's own limits, read from cfg on every request like everything else here.
             // A crew member answers with ITS number, which is the number that will judge the bytes.
@@ -2275,6 +2766,14 @@ export function startServer(opts: {
             // switch is on, so the lead's value is what decides what reaches this phone, and the
             // member's own is not something the lead has been told.
             redact: scoped === undefined || scoped.kind === "local" ? cfg.redact : undefined,
+            // A lead cannot infer a member's receipt-key readiness from its own key. Host-scoped
+            // configuration stays absent until that member publishes its own capability.
+            receiptContextBound:
+              scoped?.kind === "peer"
+                ? crewLead?.receiptContextBoundFor(scoped.link.memberId) ?? undefined
+                : opts.intentReceiptKey !== null &&
+                  opts.intentReceiptKey !== undefined &&
+                  ownerBoundCallerReady(opts.intentReceiptKey, controlOperations.isReady(), pairedIdentityOf(req, pairingGate)),
           }),
           req.headers.get("accept-encoding"),
         );
@@ -2286,7 +2785,7 @@ export function startServer(opts: {
         // where it is (writes), so a read-only device still sees the mark. The pairing token is
         // needed like on every read (ADR 0086), so the phone fetches the bytes with it and draws them
         // from an object URL: an `<img src>` cannot carry an `Authorization` header.
-        const denied = guard(req, cfg, "read", pairingGate);
+        const denied = guard(req, cfg, "read", pairingGate) ?? nativeGate("read");
         if (denied) return denied;
         // The PRIMARY session's adapter, for the reason `/api/config` gives: one collie drives one
         // multiplexer, so which runtime answers is not a choice.
@@ -2305,7 +2804,7 @@ export function startServer(opts: {
         // it is set to — a picker whose choice cannot render is worse than no picker. The pairing
         // token is needed like on every read (ADR 0086), so the phone loads the bytes with `fetch`
         // and hands them to `FontFace`: a CSS `url()` cannot carry an `Authorization` header.
-        const denied = guard(req, cfg, "read", pairingGate);
+        const denied = guard(req, cfg, "read", pairingGate) ?? nativeGate("read");
         if (denied) return denied;
         // `decodeURIComponent` is undone here and NOWHERE ELSE, because what comes back is only ever
         // used as a Map key. It is looked UP in the rows theme.toml declared; a name nobody declared
@@ -2328,7 +2827,7 @@ export function startServer(opts: {
       if (pathname === "/api/subscribe" && req.method === "POST") {
         // Read-level: registering for push isn't terminal-driving, so a read-only device may still
         // subscribe to notifications.
-        const denied = guard(req, cfg, "read", pairingGate);
+        const denied = guard(req, cfg, "read", pairingGate) ?? nativeGate("read");
         if (denied) return denied;
         let body: JsonValue;
         try {
@@ -2339,7 +2838,10 @@ export function startServer(opts: {
           return text("bad subscription", 400);
         }
         if (!isPushSubscription(body)) return text("bad subscription", 400);
+        const finalDenied = currentCallerGate("read"); if (finalDenied) return finalDenied;
         await push.addSubscription(body, {
+          nativeIngress: opts.nativeIngress !== undefined && !browserIngress,
+          nativeBinding,
           replaces: supersededEndpoint(body),
           userAgent: req.headers.get("user-agent") ?? undefined,
         });
@@ -2347,7 +2849,7 @@ export function startServer(opts: {
       }
       if (pathname === "/api/notifications/snooze" && req.method === "POST") {
         // Managing your own notification quiet-hours isn't terminal-driving — read-level, like subscribe.
-        const denied = guard(req, cfg, "read", pairingGate);
+        const denied = guard(req, cfg, "read", pairingGate) ?? nativeGate("read");
         if (denied) return denied;
         let body: JsonValue;
         try {
@@ -2359,6 +2861,7 @@ export function startServer(opts: {
         }
         const parsed = parseSnoozeRequest(body);
         if (!parsed.ok) return text("bad snoozedUntil", 400);
+        const finalDenied = currentCallerGate("read"); if (finalDenied) return finalDenied;
         await snooze.set(parsed.until);
         // Snoozing should also clear whatever's already on the lock screen — across every session,
         // since snooze is bridge-wide. Each session owns its own notification slot (tag).
@@ -2378,12 +2881,12 @@ export function startServer(opts: {
         // Which agent statuses push (bridge-wide). Read-level like snooze — managing your own
         // notification preferences isn't terminal-driving.
         if (req.method === "GET") {
-          const denied = guard(req, cfg, "read", pairingGate);
+          const denied = guard(req, cfg, "read", pairingGate) ?? nativeGate("read");
           if (denied) return denied;
           return json(notifyPrefs.current(), req.headers.get("accept-encoding"));
         }
         if (req.method === "POST") {
-          const denied = guard(req, cfg, "read", pairingGate);
+          const denied = guard(req, cfg, "read", pairingGate) ?? nativeGate("read");
           if (denied) return denied;
           let body: JsonValue;
           try {
@@ -2395,7 +2898,8 @@ export function startServer(opts: {
           }
           const patch = parseNotifyPrefsPatch(body);
           if (!patch) return text("bad prefs", 400);
-          const updated = await notifyPrefs.set(patch);
+          const finalDenied = currentCallerGate("read"); if (finalDenied) return finalDenied;
+        const updated = await notifyPrefs.set(patch);
           // Prefs may have just disabled a kind — retract any pending/outstanding alerts of it, in
           // every live session (prefs are bridge-wide; each session has its own coordinator).
           for (const rt of registry.all()) rt.notifications.applyPrefs();
@@ -2414,52 +2918,22 @@ export function startServer(opts: {
       // that is the only machine holding a push subscription (CREW_PROTOCOL.md §5). A segment on
       // `PANE_ROUTE` would have been forwarded to the peer and stored there, where nothing can send.
       if (pathname === "/api/notifications/cache-watch") {
-        const denied = guard(req, cfg, "read", pairingGate);
+        const denied = guard(req, cfg, "read", pairingGate) ?? nativeGate("read");
         if (denied) return denied;
         const watch = opts.cacheWatch;
         if (!watch) return text("not found", 404);
-        const paneId = url.searchParams.get("pane");
-        // A malformed REQUEST is refused the way the prefs block above refuses one: in plain text, with
-        // no code. A code is for a refusal the phone has to explain to the operator, and "you forgot a
-        // query parameter" is a bug in the caller. The two refusals below are the explainable ones.
-        if (paneId === null || paneId === "") return text("bad request", 400);
-        const found = watchTargetFor(paneId, host, sessionName);
-        if (found.error !== undefined) {
-          const status = found.error === "cache.pane_unknown" ? 404 : 409;
-          return jsonError(apiError(found.error, { paneId }), status, req.headers.get("accept-encoding"));
-        }
-        if (req.method === "POST") {
-          let body: JsonValue;
-          try {
-            // SAFETY: `Request.json()` output IS a JsonValue by construction; `parseCacheWatchRequest`
-            // rejects anything that is not a single boolean `on`.
-            body = (await req.json()) as JsonValue;
-          } catch {
-            return text("bad request", 400);
-          }
-          const parsed = parseCacheWatchRequest(body);
-          if (parsed === null) return text("bad on", 400);
-          // The 409 a race earns: the GET already reported `watchable: false` and the sheet already
-          // disabled the switch, so the ordinary operator never sees this. It exists for the tap that
-          // lands after the harness dropped its session, where accepting would leave a switch that lies.
-          if (parsed.on && !cacheWatchable(found.pane)) {
-            return jsonError(apiError("cache.no_session", { paneId }), 409, req.headers.get("accept-encoding"));
-          }
-          await watch.set(found.pane, found.pane.label, parsed.on);
-        } else if (req.method !== "GET") {
-          return text("method not allowed", 405);
-        }
-        return json(cacheWatchBody(watch, found.pane), req.headers.get("accept-encoding"));
+        return serveCacheWatchRoute(req, url, watch, (paneId) => watchTargetFor(paneId, host, sessionName),
+          () => notifyPrefs.current().cache, cfg.cacheWarnSeconds, () => currentCallerGate("read"));
       }
       if (pathname === "/api/notifications/cache-watch/list" && req.method === "GET") {
-        const denied = guard(req, cfg, "read", pairingGate);
+        const denied = guard(req, cfg, "read", pairingGate) ?? nativeGate("read");
         if (denied) return denied;
         const watch = opts.cacheWatch;
         if (!watch) return text("not found", 404);
         return json(cacheWatchListBody(watch), req.headers.get("accept-encoding"));
       }
       if (pathname === "/api/notifications/cache-watch/forget" && req.method === "POST") {
-        const denied = guard(req, cfg, "read", pairingGate);
+        const denied = guard(req, cfg, "read", pairingGate) ?? nativeGate("read");
         if (denied) return denied;
         const watch = opts.cacheWatch;
         if (!watch) return text("not found", 404);
@@ -2474,6 +2948,7 @@ export function startServer(opts: {
         if (id === null) return text("bad id", 400);
         // An id naming no entry is NOT an error: removing something already gone is the outcome the
         // operator asked for, and the answer is the list either way.
+        const finalDenied = currentCallerGate("read"); if (finalDenied) return finalDenied;
         await watch.forget(id);
         return json(cacheWatchListBody(watch), req.headers.get("accept-encoding"));
       }
@@ -2481,7 +2956,7 @@ export function startServer(opts: {
         // Force an immediate upstream check (the "check for updates" button), instead of waiting for
         // the periodic timer. Read-level — checking a version isn't terminal-driving — and idempotent
         // (the monitor de-dupes concurrent checks). Returns the fresh status the client revalidates on.
-        const denied = guard(req, cfg, "read", pairingGate);
+        const denied = guard(req, cfg, "read", pairingGate) ?? nativeGate("read");
         if (denied) return denied;
         await updateMonitor.checkRelease();
         return json(updateMonitor.status(), req.headers.get("accept-encoding"));
@@ -2490,7 +2965,7 @@ export function startServer(opts: {
         // "Remind me next digest" — dismisses the CURRENT update push without touching the `updates`
         // pref, which stays the only off switch. Read-level like the notification snooze: managing
         // your own notifications isn't terminal-driving. The banner keeps showing; only the push waits.
-        const denied = guard(req, cfg, "read", pairingGate);
+        const denied = guard(req, cfg, "read", pairingGate) ?? nativeGate("read");
         if (denied) return denied;
         await updateMonitor.snoozeDigest();
         return json(updateMonitor.status(), req.headers.get("accept-encoding"));
@@ -2504,7 +2979,7 @@ export function startServer(opts: {
         // Read-level, exactly like the snooze beside it: declining a notification about your own
         // machine isn't terminal-driving. Not a mute either — `updatesEnabled()` stays the only off
         // switch, and a NEWER release raises the band again.
-        const denied = guard(req, cfg, "read", pairingGate);
+        const denied = guard(req, cfg, "read", pairingGate) ?? nativeGate("read");
         if (denied) return denied;
         let body: JsonValue;
         try {
@@ -2525,12 +3000,12 @@ export function startServer(opts: {
         if (scope !== undefined && scope !== "offer" && scope !== "crew") {
           return text("bad scope", 400);
         }
+        const finalDenied = currentCallerGate("read"); if (finalDenied) return finalDenied;
         await updateMonitor.dismiss(version, scope ?? "offer");
         return json(updateMonitor.status(), req.headers.get("accept-encoding"));
       }
       if (pathname === "/api/update/check" && req.method === "GET") {
-        // The card's own read: everything `POST /api/update/check` answers, plus the PREFLIGHT that
-        // decides whether the update button is live and what it says when it is not (M15/05).
+        // Read the update status and the preflight that explains whether Update is available (M15/05).
         //
         // A GET because it is a read in the strictest sense — it starts nothing, takes no upstream
         // look and mutates no state — and read-gated for the same reason the snapshot is. It is safe
@@ -2540,7 +3015,7 @@ export function startServer(opts: {
         // It is deliberately NOT folded into the snapshot. The snapshot is polled by every open
         // client on a burst cadence, and the preflight shells out to git and to `doctor`; paying that
         // on every poll for a card nobody has opened is the wrong trade.
-        const denied = guard(req, cfg, "read", pairingGate);
+        const denied = guard(req, cfg, "read", pairingGate) ?? nativeGate("read");
         if (denied) return denied;
         // Right after a restart `latest` is null until the monitor's own first poll — deliberately
         // delayed so the bridge never probes the network mid-boot (bridge/index.ts). A card opened in
@@ -2634,6 +3109,8 @@ export function startServer(opts: {
         // ONE id per confirm, minted here and nowhere else. It is what the peers' turns carry and
         // what a member that rolled back keys its "not twice" memory on — so a fresh confirm, and
         // only a fresh confirm, permits one further attempt at the same tag.
+        const finalDenied = browserGate("write");
+        if (finalDenied) return finalDenied;
         const runId = action.newRunId();
         // ── A PEERS-ONLY RUN MOVES NOTHING HERE ────────────────────────────
         // The lead is already current. It starts no updater, spawns nothing and restarts nothing:
@@ -2690,16 +3167,25 @@ export function startServer(opts: {
         // WRITE-gated, exactly like typing into a pane — and for the same reason. This route's whole
         // purpose is to put words in the composer, and the audio leaves the host for an
         // operator-configured endpoint. A read-only device watches; it does not speak.
-        const denied = guard(req, cfg, "write", pairingGate);
+        const denied = guard(req, cfg, "write", pairingGate) ?? nativeGate("write");
         if (denied) return denied;
         // Deliberately NOT session- or pane-scoped: the transcript is text handed back to the
         // phone, which then decides what to do with it. Nothing here touches a terminal, so there is
         // no pane to attribute it to and no `x-collie-seen` meaning to claim.
-        const { response, attempt } = await transcribeRequest(await stt(), req, sttAdmission);
+        const provider = await stt();
+        const capturedProvider: SttProvider | null = provider === null || !nativeBinding ? provider : {
+          id: provider.id, status: () => provider.status(),
+          transcribe: (audio, signal) => {
+            const finalDenied = currentCallerGate("write");
+            if (finalDenied) { finalNativeRefusal = finalDenied; throw new SttCancelledError(); }
+            return provider.transcribe(audio, signal);
+          },
+        };
+        const { response, attempt } = await transcribeRequest(capturedProvider, req, sttAdmission);
         // One line per attempt, and route metadata only: the recording, the transcript and the
         // provider's own words never reach the audit log.
         audit.record({ action: "stt", device: whois(req).device, detail: { ...attempt } });
-        return secure(response);
+        return finalNativeRefusal ?? secure(response);
       }
 
       // ── Device pairing (bridge/pairing.ts) ───────────────────────────────
@@ -2714,7 +3200,13 @@ export function startServer(opts: {
         // same reasoning: it answers "is this device allowlisted", which is the question pairing
         // exists to stop asking.
         const gate = checkAccess(req, cfg, "write");
-        if (!gate.ok) return text(gate.reason, 403);
+        if (!gate.ok) {
+    const response = text(gate.reason, 403);
+    // Access is this bridge's verdict, separate from pairing. Never label arbitrary upstream bodies.
+    response.headers.set("x-collie-error-source", "collie");
+    response.headers.set("x-collie-error-factor", gate.reason.startsWith("identity") ? "identity" : "scope");
+    return response;
+  }
         // The outer brake, before the body is read: ten attempts per source address per minute, then
         // 429 with `retry-after`. The five-tries-per-code rule in `pairing.claim` still applies on
         // top of this. The source is the socket address, or the rightmost `x-forwarded-for` entry only
@@ -2746,6 +3238,7 @@ export function startServer(opts: {
         }
         let claimed: Awaited<ReturnType<PairingStore["claim"]>>;
         try {
+          if (nativeBinding) { const finalDenied = currentCallerGate("write"); if (finalDenied) return finalDenied; }
           claimed = await pairing.claim(parsed.code, parsed.label);
         } catch (err) {
           // The registry is there and unreadable: enrolling now would write this one device over the
@@ -2787,7 +3280,7 @@ export function startServer(opts: {
         // Read-level, exactly like `/api/devices` and `/api/config`: this is a report about machines
         // the operator already owns, and it drives nothing. Every field is a fact this process was
         // already holding — the route reads no disk, dials no member, and cannot start a call.
-        const denied = guard(req, cfg, "read", pairingGate);
+        const denied = guard(req, cfg, "read", pairingGate) ?? nativeGate("read");
         if (denied) return denied;
         // 404 for a solo instance AND for a peer, from one closure. A peer is not a front door
         // (ADR 0013), and a solo instance has no crew to describe — the phone's move is the same in
@@ -2804,8 +3297,9 @@ export function startServer(opts: {
         req,
         pathname,
         {
-          gate: (level) => guard(req, cfg, level, pairingGate),
+          gate: currentCallerGate,
           device: () => whois(req).device,
+          pairedIdentity: () => pairedIdentityOf(req, pairingGate),
           audit: (entry) => audit.record(entry),
         },
         machines,
@@ -2817,7 +3311,7 @@ export function startServer(opts: {
         // device learns that it is unpaired from the 403 itself. Labels are the operator's own names
         // for their own phones; the token hashes never reach this shape (see toDeviceWire).
         // `enforced` is always true now and stays on the wire for older phones.
-        const denied = guard(req, cfg, "read", pairingGate);
+        const denied = guard(req, cfg, "read", pairingGate) ?? nativeGate("read");
         if (denied) return denied;
         const token = bearerToken(req.headers);
         let body: DevicesResponseBody;
@@ -2846,7 +3340,7 @@ export function startServer(opts: {
         // paired device (and the header gate, if configured). Revoking YOURSELF is allowed — that is
         // how a device un-pairs. Revoking the last device leaves a bridge that refuses every route
         // but health and pair (ADR 0086); `collie pair` on the host is the way back in.
-        const denied = guard(req, cfg, "write", pairingGate);
+        const denied = guard(req, cfg, "write", pairingGate) ?? nativeGate("write");
         if (denied) return denied;
         let body: unknown;
         try {
@@ -2862,7 +3356,8 @@ export function startServer(opts: {
         }
         let revoked: boolean;
         try {
-          revoked = await pairing.revoke(label);
+          const finalDenied = currentCallerGate("write"); if (finalDenied) return finalDenied;
+        revoked = await pairing.revoke(label);
         } catch {
           // An unreadable registry is not "no such device", and revoking from it would write a torn
           // reading back. Nothing was changed; the phone retries.
@@ -2892,7 +3387,7 @@ export function startServer(opts: {
       // caller never gets here now (`apiFrontGate` refused it before routing, ADR 0086); the read
       // gate stays so this branch is closed on its own too, and a paired caller gets an honest 404.
       if (pathname.startsWith("/api/")) {
-        const denied = guard(req, cfg, "read", pairingGate);
+        const denied = guard(req, cfg, "read", pairingGate) ?? nativeGate("read");
         if (denied) return denied;
         return text("not found", 404);
       }
@@ -2907,7 +3402,7 @@ export function startServer(opts: {
 
       // ── Static PWA (with SPA fallback) ───────────────────────────────────
       return serveStatic(pathname, req.headers.get("accept-encoding"), WEB_DIR, cfg.basePath);
-    })),
+    }, () => crewLead?.controlAuthority() ?? null))),
   });
 
   console.log(`[bridge] listening on http://${cfg.host}:${cfg.port}  (poll ${cfg.pollMs}ms)`);
@@ -2922,7 +3417,7 @@ export function startServer(opts: {
       `[bridge] per-device auth ON: trusting '${cfg.deviceHeader}', ${cfg.deviceAllowlist.length} device(s) allowlisted`,
     );
   }
-  for (const w of startupWarnings(cfg)) console.warn(w);
+  for (const w of startupWarnings(cfg, opts.nativeIngress !== undefined)) console.warn(w);
 
   return server;
 }
@@ -2936,7 +3431,7 @@ export function startServer(opts: {
  * COLLIE_DEVICE_HEADER instead), whereas under `tailscale serve` an empty trustedUser is the open
  * door Variant A closes.
  */
-export function startupWarnings(cfg: Config): string[] {
+export function startupWarnings(cfg: Config, nativeIngressConfigured = false): string[] {
   const warnings: string[] = [];
   if (!isLoopbackBindHost(cfg.host)) {
     warnings.push(
@@ -2951,7 +3446,7 @@ export function startupWarnings(cfg: Config): string[] {
   if (cfg.skipServe) {
     // Reverse-proxy mode: no tailscale serve injects Tailscale-User-Login, so checkAccess never has
     // an identity to enforce — trustedUser is dead config. Only nag when it's set (a likely mistake).
-    if (cfg.trustedUser) {
+    if (cfg.trustedUser && !nativeIngressConfigured) {
       warnings.push(
         `[bridge] WARNING: COLLIE_TRUSTED_USER has no effect under COLLIE_SKIP_SERVE=1 — without tailscale serve in front, the Tailscale-User-Login header is never injected. Use COLLIE_DEVICE_HEADER for per-device auth (see docs/deployment.md → Variant C).`,
       );
@@ -3047,13 +3542,23 @@ export async function readPane(
   paneId: string,
   url: URL,
   req: Request,
+  readableLines?: number,
+  filesReadAdmission?: () => boolean,
 ): Promise<Response> {
   const linesParam = Number.parseInt(url.searchParams.get("lines") ?? "", 10);
-  // Clamp to a sane ceiling — don't trust the client (or Herdr) to bound an enormous read.
-  const lines =
-    Number.isFinite(linesParam) && linesParam > 0
-      ? Math.min(linesParam, MAX_READ_LINES)
-      : cfg.readLines;
+  const desiredLines = Number.isFinite(linesParam) && linesParam > 0 ? linesParam : cfg.readLines;
+  // A hand-built/older adapter boundary is treated like a legacy peer until it declares a verified limit.
+  const adapterLimit = negotiateReadLimit(herdr.capabilities?.readLimits).maxRequestedLines;
+  const lines = Math.min(desiredLines, adapterLimit, MAX_READ_LINES);
+  // Name the tightest active bound: an adapter-specific lower ceiling wins; the bridge ceiling wins ties.
+  const ceilingReason: "adapter-ceiling" | "server-ceiling" | undefined =
+    desiredLines > adapterLimit && adapterLimit < MAX_READ_LINES
+      ? "adapter-ceiling"
+      : desiredLines > MAX_READ_LINES
+        ? "server-ceiling"
+        : desiredLines > adapterLimit
+          ? "adapter-ceiling"
+          : undefined;
   try {
     // "ansi" so the client can render a faithful, colored terminal mirror. It is also, as far as we
     // have probed, why this read leaves the operator's terminal alone: a `recent` read only harvests
@@ -3062,6 +3567,12 @@ export async function readPane(
     // to `strip` would move someone's screen on every revalidate — see the adapter's `readGrid`.
     const read = await herdr.readGrid(paneId, { scope: "recent", lines, styling: "preserve" });
     if (!read.ok) return text(`${herdr.mux} read failed: ${read.detail}`, 502);
+    // The declaration is an admission ceiling, not permission to return an unbounded payload.
+    // Refuse a misbehaving adapter rather than truncating its answer here and fabricating
+    // truncation/read-depth metadata that the owning runtime did not provide.
+    if (lineCount(read.value.text) > lines) {
+      return text(`${herdr.mux} read exceeded admitted line limit`, 502);
+    }
     // A URL the pane's column edge cut in two is the one thing the mirror cannot repair on its own,
     // and the repair needs the same rows with soft wraps undone. Ask for them only when the grid
     // shows such a URL — this is a second round trip, and a multiplexer without the source has
@@ -3076,9 +3587,19 @@ export async function readPane(
       read.value,
       logical?.ok ? stripSgr(logical.value) : undefined,
       cfg.redact,
+      lines,
+      readableLines,
+      ceilingReason ?? (read.value.truncated === false && readableLines !== undefined &&
+        readableLines < desiredLines && readableLines <= lineCount(read.value.text)
+        ? "available-depth"
+        : undefined),
     );
     // ETag is derived from the serialised body — if content hasn't changed the client gets a 304
     // and skips the whole transfer (the big win on a cellular link).
+    // This is the owning caller's device-read verdict after the suspended grid read. A crew
+    // peer evaluates its own policy; the lead cannot lend its authorization. Bind it into the
+    // body/ETag so a changed factor cannot preserve a previous positive through a 304.
+    if (filesReadAdmission !== undefined) data.filesReadReady = filesReadAdmission();
     const bodyStr = JSON.stringify(data);
     const etag = computeEtag(bodyStr);
     // Tag pane polls too (both the 304 and the full body), so a client that only has a pane open —
@@ -3105,6 +3626,10 @@ export async function readPane(
   }
 }
 
+function lineCount(gridText: string): number {
+  return gridText.length === 0 ? 0 : gridText.split("\n").length - (gridText.endsWith("\n") ? 1 : 0);
+}
+
 /**
  * Map a multiplexer's grid to the REST response body. Pure + exported so the `revision` passthrough
  * (the client's prompt-select race guard depends on it) is covered by the bridge unit tests without
@@ -3120,6 +3645,9 @@ export function paneReadResponse(
   read: MuxGrid,
   logicalText?: string,
   redact = false,
+  requestedLines?: number,
+  readableLines?: number,
+  limitReason?: "adapter-ceiling" | "server-ceiling" | "available-depth",
 ): PaneReadResponse {
   const body: PaneReadResponse = {
     paneId,
@@ -3127,6 +3655,10 @@ export function paneReadResponse(
     truncated: read.truncated,
     revision: read.revision,
   };
+  if (requestedLines !== undefined) body.requestedLines = requestedLines;
+  body.servedLines = read.text.length === 0 ? 0 : read.text.split("\n").length - (read.text.endsWith("\n") ? 1 : 0);
+  if (readableLines !== undefined && Number.isSafeInteger(readableLines) && readableLines >= 0) body.readableLines = readableLines;
+  if (limitReason !== undefined) body.limitReason = limitReason;
   // Absent, never empty, when there is nothing to repair: the ETag is computed over this body, so an
   // always-present key would invalidate every client's cached copy once for no gain.
   if (logicalText !== undefined) body.logicalText = logicalText;
@@ -3236,9 +3768,11 @@ async function paneChat(
   live: LiveWindows | null,
   engine: StateEngine,
   mux: Pick<MuxCapabilityDeclaration, "supports" | "unsupportedKeys">,
+  session: string,
   paneId: string,
   url: URL,
   req: Request,
+  queuedSendLedger: QueuedSendAdmissionLedger,
 ): Promise<Response> {
   const accept = req.headers.get("accept-encoding");
   const unavailable = (reason: "disabled" | "no-session" | "no-log") =>
@@ -3269,7 +3803,26 @@ async function paneChat(
     if (read === null) return unavailable("no-log");
     // Masked before the ETag is hashed, so the tag describes what was actually sent (bridge/redact.ts).
     const body = chatBodyForMux(cfg.redact ? maskChatBody(read) : read, mux);
-    const data = { paneId, available: true, ...body } satisfies PaneChatResponse;
+    const data: Extract<PaneChatResponse, { available: true }> = { paneId, available: true, ...body };
+    if (
+      mux.supports.guardedQueuedSend && read.page === "live" && body.page === "live" && body.queued.length > 0 &&
+      body.sendQueuedNow !== undefined && body.sendQueuedNow.length <= MAX_QUEUED_SEND_KEYS &&
+      keysDeliverable(mux, body.sendQueuedNow) &&
+      pane.status === "working" && pane.agent !== "shell"
+    ) {
+      // Bind the action to the owner's exact queue, including bytes the read-only redactor masks on
+      // the phone. Only the opaque digest crosses the wire; a masked collision must not authorize
+      // sending a different queued message.
+      data.queuedDigest = queuedMessagesDigest(read.queued);
+      data.queuedSendOccupant = queuedSendOccupant(session, pane, new URL(req.url).origin);
+      queuedSendLedger.observe(
+        queuedSendActionKey([session, paneId]),
+        queuedSendActionKey([
+          session, paneId, String(body.gen), data.queuedDigest, data.queuedSendOccupant,
+          ...body.sendQueuedNow,
+        ]),
+      );
+    }
     const etag = computeEtag(JSON.stringify(data));
     if (notModified(req.headers.get("if-none-match"), etag)) {
       // RFC 7232 §4.1: 304 MUST echo the ETag; body MUST be empty.
@@ -3348,6 +3901,9 @@ export async function paneChanges(
       }
       return json({ ...subject, ...(await sharedReadCommit(root, params)) } satisfies PaneChangeCommitResponse, accept);
     }
+    if (params.view === "history") {
+      return json({ ...subject, ...(await sharedReadCommitHistory(root, params)) } satisfies PaneChangeCommitHistoryResponse, accept);
+    }
     if (wantsDiff) return json({ ...subject, ...maskDiff(await sharedFileDiff(root, params), redact) } satisfies PaneChangeDiffResponse, accept);
     const list = await sharedListChanges(root, params);
     const paneRepo = list.available ? await repoOfFolder(list.root, list.repos, pane.cwd) : undefined;
@@ -3394,6 +3950,9 @@ export async function workspaceChanges(
         );
       }
       return json({ ...subject, ...(await sharedReadCommit(found.root, params)) } satisfies WorkspaceChangeCommitResponse, accept);
+    }
+    if (params.view === "history") {
+      return json({ ...subject, ...(await sharedReadCommitHistory(found.root, params)) } satisfies WorkspaceChangeCommitHistoryResponse, accept);
     }
     if (wantsDiff) {
       return json({ ...subject, ...maskDiff(await sharedFileDiff(found.root, params), redact) } satisfies WorkspaceChangeDiffResponse, accept);
@@ -3611,8 +4170,8 @@ export async function filesImage(
 
 /** Just the two port calls a reply needs — the real adapter in the bridge, a fake in tests. */
 export interface ReplySender {
-  typeText(paneId: string, text: string): Promise<MuxAck>;
-  sendKeys(paneId: string, keys: readonly string[]): Promise<MuxAck>;
+  typeText(paneId: string, text: string, finalAdmission?: (runtimeIdentity: string) => boolean): Promise<MuxAck>;
+  sendKeys(paneId: string, keys: readonly string[], finalAdmission?: (runtimeIdentity: string) => boolean): Promise<MuxAck>;
 }
 
 /** Outcome of the two-step send. `textDelivered` is only meaningful on the failure branch. */
@@ -3639,6 +4198,7 @@ export async function sendReplySteps(
   submit: boolean,
   submitKeys: string[],
   sleep: SleepFn = defaultSleep,
+  custody?: { prepare: () => Promise<boolean>; finalAdmission: (runtimeIdentity: string) => boolean },
 ): Promise<ReplyOutcome> {
   let textDelivered = false;
   // One shape for both ways a step can fail — a refusal the adapter returned and an exception it
@@ -3657,13 +4217,15 @@ export async function sendReplySteps(
         { ok: false, textDelivered, ...apiError("reply.send_failed", { reason }) };
   try {
     if (txt) {
-      const typed = await client.typeText(paneId, txt);
+      if (custody && !await custody.prepare()) return failed("worktree.authority_changed");
+      const typed = await client.typeText(paneId, txt, custody?.finalAdmission);
       if (!typed.ok) return failed(typed.detail);
       textDelivered = true;
     }
     if (submit) {
       if (txt) await sleep(REPLY_SETTLE_MS);
-      const sent = await client.sendKeys(paneId, submitKeys);
+      if (custody && !await custody.prepare()) return failed("worktree.authority_changed");
+      const sent = await client.sendKeys(paneId, submitKeys, custody?.finalAdmission);
       if (!sent.ok) return failed(sent.detail);
     }
     return { ok: true, textDelivered };
@@ -3774,13 +4336,14 @@ export async function typeIntoFreshShell(
   command: string,
   wait: PaneReadyOptions = {},
   tag = "launch",
+  custody?: { prepare: () => Promise<boolean>; finalAdmission: (runtimeIdentity: string) => boolean },
 ): Promise<ReplyOutcome> {
   const ready = await awaitPaneReady(herdr, paneId, wait);
   if (!ready.ready) {
     const what = tag === "run" ? `a ${[...command].length}-character line` : `"${command}"`;
     console.warn(`[${tag}] pane ${paneId} did not settle after ${ready.ms}ms — sending ${what} anyway`);
   }
-  return sendReplySteps(herdr, paneId, command, true, ["Enter"], wait.sleep);
+  return sendReplySteps(herdr, paneId, command, true, ["Enter"], wait.sleep, custody);
 }
 
 export async function replyPane(
@@ -3872,6 +4435,10 @@ export async function keysPane(
   audit: AuditLog,
   device: string | null,
   session: string,
+  live: LiveWindows | null = null,
+  journals: Record<string, JournalAdapter> | null = null,
+  engine: StateEngine | null = null,
+  queuedSendLedger: QueuedSendAdmissionLedger = new QueuedSendAdmissionLedger(),
 ): Promise<Response> {
   let body: JsonValue;
   try {
@@ -3883,12 +4450,28 @@ export async function keysPane(
     return text("bad body", 400);
   }
   const fields = asJsonRecord(body) ?? {};
+  const guardedPresent = Object.prototype.hasOwnProperty.call(fields, "queued_send");
+  const guarded = guardedPresent ? parseGuardedQueuedSend(fields.queued_send) : null;
+  if (guardedPresent && guarded === null) return text("bad queued_send guard", 400);
+  if (guardedPresent && Object.keys(fields).some((key) => !["keys", "expected_prompt", "queued_send"].includes(key))) {
+    return text("unknown guarded queued-send field", 400);
+  }
   const expected = expectedPrompt(fields);
   if (!expected.ok) return text("bad expected_prompt", 400);
   const styled = expectedStyled(fields, expected.present);
   if (!styled.ok) return text("bad expected_styled", 400);
   const keys = Array.isArray(fields.keys) ? fields.keys.filter((k): k is string => typeof k === "string") : [];
   if (keys.length === 0) return text("no keys", 400);
+  if (guardedPresent && (!expected.present || !Array.isArray(fields.keys) || keys.length !== fields.keys.length || keys.length > MAX_QUEUED_SEND_KEYS)) {
+    return text("bad guarded queued-send payload", 400);
+  }
+  if (guardedPresent && guarded !== null) {
+    if (!expected.present) return text("expected_prompt required for guarded queued send", 400);
+    return guardedQueuedSendPane(
+      herdr, cfg, paneId, keys, expected.value, guarded, req, audit, device, session,
+      live, journals, engine, queuedSendLedger,
+    );
+  }
   const ae = req.headers.get("accept-encoding");
   const binding = expected.present
     ? await checkPromptBinding(herdr, cfg, paneId, expected.value, styled.value)
@@ -3932,6 +4515,168 @@ export async function keysPane(
   );
 }
 
+/**
+ * The new guarded form of the existing keys route. The queue text never crosses this boundary; the
+ * owner re-reads it from the journal, checks the server-declared recipe, and verifies the current
+ * owner pane before the one adapter call. Herdr 0.9.3 still cannot atomically compare that identity
+ * with `pane.send_keys`, so the final upstream check-to-write window remains an acceptance limitation.
+ */
+async function guardedQueuedSendPane(
+  herdr: MuxAdapter,
+  cfg: Config,
+  paneId: string,
+  keys: string[],
+  expectedPromptText: string,
+  queuedGuard: NonNullable<ReturnType<typeof parseGuardedQueuedSend>>,
+  req: Request,
+  audit: AuditLog,
+  device: string | null,
+  session: string,
+  live: LiveWindows | null,
+  journals: Record<string, JournalAdapter> | null,
+  engine: StateEngine | null,
+  ledger: QueuedSendAdmissionLedger,
+): Promise<Response> {
+  const ae = req.headers.get("accept-encoding");
+  if (!herdr.capabilities.supports.guardedQueuedSend || live === null || journals === null || engine === null) {
+    return text("guarded queued send unsupported", 409);
+  }
+  if (keys.length === 0 || keys.length > MAX_QUEUED_SEND_KEYS || !keysDeliverable(herdr.capabilities, keys)) {
+    return text("invalid guarded queued-send keys", 400);
+  }
+  const actionKey = queuedSendActionKey([
+    session, paneId, String(queuedGuard.generation), queuedGuard.queueDigest, queuedGuard.occupant, ...keys,
+  ]);
+  const ownerKey = queuedSendActionKey([session, paneId]);
+  const refuse = (status = 409): Response => {
+    ledger.releaseBeforeDispatch(actionKey);
+    audit.record({ action: "keys", paneId, session, device, detail: { keys, queuedSendGuard: "refused" } });
+    return json({ ok: false, error: "Queued send is no longer current", code: "queued_send.stale" }, ae, status);
+  };
+  const admission = ledger.begin(actionKey, ownerKey);
+  if (admission !== "admitted") {
+    return json(
+      { ok: false, error: "This queued action already has an attempt", code: "queued_send.already_attempted" },
+      ae,
+      409,
+    );
+  }
+  let dispatched = false;
+  try {
+    const muxSnapshot = await herdr.snapshot();
+    const pane = muxSnapshot.panes.find((candidate) => candidate.paneId === paneId);
+    if (pane === undefined || !pane.alive || pane.status !== "working" || pane.agent === "shell") return refuse();
+    const occupant = queuedSendOccupant(session, pane, new URL(req.url).origin);
+    const journal = journals[journalAgentOf({
+      paneId: pane.paneId,
+      workspaceId: pane.spaceId,
+      workspaceLabel: pane.spaceLabel,
+      workspaceNumber: pane.spaceNumber,
+      tabId: pane.tabId,
+      agent: pane.agent,
+      status: pane.status,
+      cwd: pane.cwd,
+      focused: pane.focused,
+      sessionAgent: pane.sessionAgent,
+      agentSession: pane.agentSession,
+    })];
+    if (journal === undefined) return refuse();
+    const ref = pane.agentSession ?? (await journal.discover?.(pane.cwd)) ?? null;
+    if (ref === null) return refuse();
+
+    // A guarded action requires an adapter-owned source fence: it spans the forced source read and
+    // remains synchronously checkable after the later prompt read. Unsupported journal sources
+    // refuse instead of trusting a cached live window.
+    const fresh = await live.windowFresh(journal, ref, { limit: 40 });
+    if (fresh === null || fresh.body.page !== "live") return refuse();
+    const read = fresh.body;
+    const chat = chatBodyForMux(cfg.redact ? maskChatBody(read) : read, herdr.capabilities);
+    if (chat.page !== "live") return refuse();
+    // Recompute over the raw owner-side queue, before redaction, for the same reason the GET digest
+    // is raw: the redactor is a presentation boundary, never the action identity.
+    const queueDigest = queuedMessagesDigest(read.queued);
+    const currentAction = queuedSendActionKey([
+      session, paneId, String(chat.gen), queueDigest, occupant, ...(chat.sendQueuedNow ?? []),
+    ]);
+    ledger.observe(ownerKey, currentAction);
+    if (
+      chat.gen !== queuedGuard.generation || chat.rev !== queuedGuard.revision ||
+      queueDigest !== queuedGuard.queueDigest || occupant !== queuedGuard.occupant ||
+      chat.queued.length === 0 || chat.sendQueuedNow === undefined ||
+      chat.sendQueuedNow.length > MAX_QUEUED_SEND_KEYS ||
+      !keysDeliverable(herdr.capabilities, chat.sendQueuedNow) ||
+      chat.sendQueuedNow.length !== keys.length || chat.sendQueuedNow.some((key, index) => key !== keys[index])
+    ) return refuse();
+
+    // Read the prompt AFTER the forced journal source read. The source lease below then detects a
+    // queue/file change during this last asynchronous terminal read; a prompt that changes during
+    // the journal read itself is caught by this fresh screen. Together they close both crossed
+    // preflight awaits without pretending Herdr offers an atomic compare-and-send primitive.
+    const binding = await checkPromptBinding(herdr, cfg, paneId, expectedPromptText);
+    if (!binding.ok) {
+      ledger.releaseBeforeDispatch(actionKey);
+      audit.record({ action: "keys", paneId, session, device, detail: { keys, promptBinding: binding.audit } });
+      return promptBindingFailure(binding, ae);
+    }
+    if (!fresh.isCurrent()) return refuse();
+
+    // The final checks are synchronous and lead directly into the one adapter call; no await is
+    // allowed between source/occupant queuedGuard settlement and dispatch.
+    if (!queuedSendScreenSafe(pane.agent, binding.screen)) return refuse();
+    const enginePane = [...engine.current().agents, ...engine.current().shellPanes].find((item) => item.paneId === paneId);
+    if (
+      enginePane === undefined || enginePane.status !== "working" || enginePane.agent === "shell" ||
+      queuedSendOccupant(session, enginePane, new URL(req.url).origin) !== occupant ||
+      !herdr.capabilities.supports.guardedQueuedSend || !keysDeliverable(herdr.capabilities, keys)
+    ) return refuse();
+
+    // Synchronously retire the action before invoking the one owning adapter call. No await or
+    // unrelated asynchronous work is allowed between this check and sendKeys.
+    if (!ledger.retireBeforeDispatch(actionKey)) return refuse(503);
+    dispatched = true;
+    let sent: MuxAck;
+    try {
+      const pendingSend = herdr.sendKeys(paneId, keys);
+      sent = await pendingSend;
+    } catch {
+      audit.record({ action: "keys", paneId, session, device, detail: { keys, outcome: "unknown" } });
+      return json(
+        { ok: false, error: "Queued send outcome is unknown; refresh the queue before acting again", code: "queued_send.outcome_unknown" },
+        ae,
+        502,
+      );
+    }
+    if (sent.ok) {
+      audit.record({ action: "keys", paneId, session, device, detail: { keys, promptBinding: binding.audit, queuedSendGuard: "accepted" } });
+      return json({ ok: true } satisfies ActionResponse, ae);
+    }
+    audit.record({ action: "keys", paneId, session, device, detail: { keys, sent: false, promptBinding: binding.audit } });
+    return json({ ok: false, ...apiError("keys.send_failed", { reason: sent.detail }) } satisfies ActionResponse, ae);
+  } catch {
+    if (!dispatched) return refuse(502);
+    return json(
+      { ok: false, error: "Queued send outcome is unknown; refresh the queue before acting again", code: "queued_send.outcome_unknown" },
+      ae,
+      502,
+    );
+  } finally {
+    if (!dispatched) ledger.releaseBeforeDispatch(actionKey);
+  }
+}
+
+/** Requires the known target harness to positively own a composer and no semantic/no-echo prompt. */
+export function queuedSendScreenSafe(agent: string, screen: string): boolean {
+  const harness = harnessAdapterFor(agent);
+  if (harness?.composerReady === undefined) return false;
+  try {
+    const lines = splitLines(parseAnsi(screen));
+    if (!harness.composerReady(lines) || detectNoEchoPrompt(lines) !== null) return false;
+    return buildBlocks(lines, { agent }).every((block) => block.kind === "raw");
+  } catch {
+    return false;
+  }
+}
+
 type ExpectedPrompt =
   | { ok: true; present: false }
   | { ok: true; present: true; value: string }
@@ -3970,6 +4715,8 @@ function expectedStyled(body: JsonObject, promptPresent: boolean): ExpectedStyle
 type PromptBindingCheck =
   | {
       ok: true;
+      /** Fresh owner-side screen used only by this request's semantic/no-echo gate. */
+      screen: string;
       // `styled` is present only when the phone sent `expected_styled`: `checked`, or
       // `skipped_unknown_version` when the text check alone decided (ADR 0080 point 7).
       audit: { checked: true; passed: true; expected: string; styled?: StyledOutcome };
@@ -4070,7 +4817,7 @@ async function checkPromptBinding(
   const passed: Extract<PromptBindingCheck, { ok: true }>["audit"] = { checked: true, passed: true, expected };
   // Assigned, never conditionally spread: a bound send without `expected_styled` records no `styled` key.
   if (result.styled !== undefined) passed.styled = result.styled;
-  return { ok: true, audit: passed };
+  return { ok: true, audit: passed, screen: freshText };
 }
 
 function promptBindingFailure(
@@ -4571,7 +5318,13 @@ export async function createWorktree(
   wait: PaneReadyOptions = {},
   // The starting-point half (ADR 0089, amended): where the base is remembered and how git is asked.
   // Both default to the real thing, so a caller that predates `base` passes neither.
-  deps: { bases?: WorktreeBaseSurface; ask?: GitAsk } = {},
+  deps: {
+    bases?: WorktreeBaseSurface;
+    ask?: GitAsk;
+    receiptContext?: IntentOwnerContext | null;
+    operations?: OperationStore;
+    finalAdmission?: (runtimeIdentity: string) => boolean;
+  } = {},
 ): Promise<Response> {
   const ae = req.headers.get("accept-encoding");
   let body: JsonValue;
@@ -4588,10 +5341,18 @@ export async function createWorktree(
   const rawId = fields.requestId;
   if (rawId !== undefined && !isRequestId(rawId)) return text("bad requestId", 400);
   const requestId = rawId;
+  if (requestId !== undefined && deps.receiptContext === null) {
+    return json({ ok: false, ...apiError("launch.receipts_unavailable") } satisfies WorktreeCreateResponse, ae, 503);
+  }
+  // `spaceId` is part of the frozen target even though it is carried in the URL, not the JSON body.
+  // Include it in the keyed payload so a caller cannot replay one request ID against another repo.
+  const binding = intentBinding(deps.receiptContext, "worktree.create", { workspaceId: spaceId, body });
   if (requestId !== undefined) {
     const stored = receipts.get(requestId);
+    if (stored && receiptBindingMismatch(receipts, requestId, binding)) return json({ ok: false, ...apiError("launch.request_mismatch") } satisfies WorktreeCreateResponse, ae, 409);
     if (stored) return json(replayOf(stored, engine), ae);
     const running = receipts.inflight(requestId);
+    if (running && receiptBindingMismatch(receipts, requestId, binding)) return json({ ok: false, ...apiError("launch.request_mismatch") } satisfies WorktreeCreateResponse, ae, 409);
     if (running) return json(await joined(running), ae);
   }
 
@@ -4644,11 +5405,21 @@ export async function createWorktree(
   // past the check above cannot both start a create.
   if (requestId !== undefined) {
     const stored = receipts.get(requestId);
+    if (stored && receiptBindingMismatch(receipts, requestId, binding)) return json({ ok: false, ...apiError("launch.request_mismatch") } satisfies WorktreeCreateResponse, ae, 409);
     if (stored) return json(replayOf(stored, engine), ae);
     const running = receipts.inflight(requestId);
+    if (running && receiptBindingMismatch(receipts, requestId, binding)) return json({ ok: false, ...apiError("launch.request_mismatch") } satisfies WorktreeCreateResponse, ae, 409);
     if (running) return json(await joined(running), ae);
   }
-  const work = runWorktreeCreate(
+  let noEffect = false;
+  const finalAdmission = deps.finalAdmission === undefined ? undefined : (identity: string): boolean => {
+    const allowed = deps.finalAdmission!(identity);
+    if (!allowed) noEffect = true;
+    return allowed;
+  };
+  const dispatch = async (): Promise<WorktreeCreateResponse> => {
+    if (repoRootOf(engine, spaceId) !== repoRoot) { noEffect = true; return { ok: false, ...apiError("worktree.create_failed", { reason: "worktree.target_changed" }) }; }
+    return runWorktreeCreate(
     herdr,
     engine,
     repoRoot,
@@ -4662,9 +5433,36 @@ export async function createWorktree(
     receipts,
     deps.bases ?? memoryWorktreeBases(),
     wait,
+    binding,
+    undefined,
+    undefined,
+    finalAdmission,
+    async () => {
+      const stillOwned = repoRootOf(engine, spaceId) === repoRoot;
+      const lastBase = await resolveBase(parsedBase.base, repoRoot, deps.ask);
+      const same = stillOwned && repoRootOf(engine, spaceId) === repoRoot && lastBase.ok && lastBase.ref === resolved.ref;
+      if (!same) noEffect = true;
+      return same;
+    },
   );
-  if (requestId !== undefined) receipts.track(requestId, work);
-  return json(await work, ae);
+  };
+  const work = executeBoundIntent({
+    operations: deps.operations,
+    requestId,
+    context: deps.receiptContext,
+    operation: "worktree.create",
+    classify: (value) => value.ok ? { state: "succeeded" } : value.code === "launch.outcome_unknown" ? { state: "unknown", code: "worktree.outcome_unknown" } : noEffect || value.code === "worktree.target_exists" || value.code === "worktree.invalid_base" || value.code === "worktree.folder_link" || value.code === "worktree.folder_outside_home" ? { state: "refused", code: value.code } : { state: "unknown", code: "worktree.outcome_unknown" },
+    targetIdentity: JSON.stringify(["workspace", spaceId]),
+    body,
+    dispatch,
+    knownReceipt: () => requestId === undefined ? undefined : (receipts.get(requestId) ? replayOf(receipts.get(requestId)!, engine) : undefined),
+    unknown: worktreeIntentUnknown,
+    unavailable: worktreeIntentUnavailable,
+    mismatch: worktreeIntentMismatch,
+  });
+  if (requestId !== undefined) receipts.track(requestId, work, binding);
+  const answer = await work;
+  return json(answer, ae, intentAnswerStatus(answer));
 }
 
 /** The half of a create that touches the multiplexer, run at most once per `requestId`. */
@@ -4682,18 +5480,29 @@ async function runWorktreeCreate(
   receipts: WorktreeReceiptSurface,
   bases: WorktreeBaseSurface,
   wait: PaneReadyOptions,
+  binding?: IntentReceiptBinding,
   // The folder the checkout is made in (ADR 0093), already checked; absent is the multiplexer's own.
   path?: string,
   // Run once the multiplexer said yes, before the answer: the New sheet's memory of this repo's choices.
   afterCreate?: () => Promise<void>,
+  finalAdmission?: (runtimeIdentity: string) => boolean,
+  beforeDispatch?: () => Promise<boolean>,
 ): Promise<WorktreeCreateResponse> {
   // `base` and `path` join the request only when there is one, so a call without them is the call
   // this route always made.
   let request: MuxWorktreeCreateRequest = { repoRoot, branch };
   if (base !== undefined) request = { ...request, base };
   if (path !== undefined) request = { ...request, path };
-  const outcome = await herdr.createWorktree(request);
+  let originalRuntime: string | null = null;
+  const creationAdmission = finalAdmission === undefined ? undefined : (identity: string) => {
+    if (!finalAdmission(identity) || originalRuntime !== null && originalRuntime !== identity) return false;
+    originalRuntime = identity; return true;
+  };
+  const outcome = await herdr.createWorktree(request, creationAdmission, beforeDispatch);
   if (!outcome.ok) {
+    // Unreachable includes an accepted prefix. Original admission may have since refused,
+    // but that diagnostic cannot convert a possibly dispatched create into known no effect.
+    if (outcome.reason === "unreachable") return worktreeIntentUnknown();
     // The half-done case gets its OWN code, because the recovery is the opposite one: the branch is
     // on disk and only the opening failed, so the phone must offer "open it", never "create it
     // again" (a second create refuses — the path is taken). Probed on herdr 0.8.2, 2026-08-28.
@@ -4708,12 +5517,18 @@ async function runWorktreeCreate(
   }
   const created = outcome.value;
   // Written only now, once the multiplexer said yes: a refusal leaves no checkout to describe.
-  if (base !== undefined) await bases.record(created.cwd, { base, createdAt: Date.now() });
-  if (afterCreate !== undefined) await afterCreate();
   let launcherStarted = false;
   let launcherError: string | undefined;
-  if (row !== undefined) {
-    const sent = await typeIntoFreshShell(herdr, created.paneId, row.command, wait, "worktree");
+  try {
+    if (base !== undefined) await bases.record(created.cwd, { base, createdAt: Date.now() });
+    if (afterCreate !== undefined) await afterCreate();
+  } catch { launcherError = "worktree.choice_record_failed"; }
+  if (row !== undefined && launcherError === undefined) {
+    const custody = finalAdmission === undefined ? undefined : {
+      prepare: async () => { const identity = await herdr.layoutRuntimeIdentity?.(); return originalRuntime !== null && identity === originalRuntime && finalAdmission(originalRuntime); },
+      finalAdmission: (identity: string) => originalRuntime !== null && identity === originalRuntime && finalAdmission(identity),
+    };
+    const sent = await typeIntoFreshShell(herdr, created.paneId, row.command, wait, "worktree", custody);
     launcherStarted = sent.ok;
     if (!sent.ok) launcherError = sent.error;
   }
@@ -4735,15 +5550,21 @@ async function runWorktreeCreate(
     },
   });
   if (requestId !== undefined) {
-    await receipts.record({
-      requestId,
-      at: Date.now(),
-      workspaceId: created.spaceId,
-      paneId: created.paneId,
-      path: created.cwd,
-      branch,
-      launcherStarted,
-    });
+    try {
+      const receipt: WorktreeReceipt = {
+        requestId,
+        at: Date.now(),
+        workspaceId: created.spaceId,
+        paneId: created.paneId,
+        path: created.cwd,
+        branch,
+        launcherStarted,
+      };
+      if (binding !== undefined) receipt.binding = binding;
+      await receipts.record(receipt);
+    } catch {
+      return { ok: false, ...apiError("launch.outcome_unknown") };
+    }
   }
   await settleTopology(herdr, engine);
   const answer: WorktreeCreateResponse = {
@@ -4902,6 +5723,9 @@ export async function createWorktreeAt(
   getLaunchers: () => Promise<Launcher[]>,
   deps: FolderWorktreeDeps & {
     receipts: WorktreeReceiptSurface;
+    receiptContext?: IntentOwnerContext | null;
+    operations?: OperationStore;
+    finalAdmission?: (runtimeIdentity: string) => boolean;
     bases?: WorktreeBaseSurface;
     choices?: WorktreeChoiceSurface;
     harnesses?: Pick<HarnessProbe, "launch">;
@@ -4927,10 +5751,16 @@ export async function createWorktreeAt(
   const rawId = fields.requestId;
   if (rawId !== undefined && !isRequestId(rawId)) return text("bad requestId", 400);
   const requestId = rawId;
+  if (requestId !== undefined && deps.receiptContext === null) {
+    return json({ ok: false, ...apiError("launch.receipts_unavailable") } satisfies WorktreeCreateResponse, ae, 503);
+  }
+  const binding = intentBinding(deps.receiptContext, "worktree.createAt", body);
   if (requestId !== undefined) {
     const stored = receipts.get(requestId);
+    if (stored && receiptBindingMismatch(receipts, requestId, binding)) return json({ ok: false, ...apiError("launch.request_mismatch") } satisfies WorktreeCreateResponse, ae, 409);
     if (stored) return json(replayOf(stored, engine), ae);
     const running = receipts.inflight(requestId);
+    if (running && receiptBindingMismatch(receipts, requestId, binding)) return json({ ok: false, ...apiError("launch.request_mismatch") } satisfies WorktreeCreateResponse, ae, 409);
     if (running) return json(await joined(running), ae);
   }
 
@@ -4967,8 +5797,10 @@ export async function createWorktreeAt(
   // Checked again with no await between it and `track` (see createWorktree).
   if (requestId !== undefined) {
     const stored = receipts.get(requestId);
+    if (stored && receiptBindingMismatch(receipts, requestId, binding)) return json({ ok: false, ...apiError("launch.request_mismatch") } satisfies WorktreeCreateResponse, ae, 409);
     if (stored) return json(replayOf(stored, engine), ae);
     const running = receipts.inflight(requestId);
+    if (running && receiptBindingMismatch(receipts, requestId, binding)) return json({ ok: false, ...apiError("launch.request_mismatch") } satisfies WorktreeCreateResponse, ae, 409);
     if (running) return json(await joined(running), ae);
   }
   const baseKind: BaseKind = parsedBase.base?.kind === "ref" ? "current" : "default";
@@ -4981,7 +5813,24 @@ export async function createWorktreeAt(
           if (path !== undefined) choice.parent = dirname(path);
           return choices.record(repo.repoRoot, choice);
         };
-  const work = runWorktreeCreate(
+  let noEffect = false;
+  const finalAdmission = deps.finalAdmission === undefined ? undefined : (identity: string): boolean => {
+    const allowed = deps.finalAdmission!(identity);
+    if (!allowed) noEffect = true;
+    return allowed;
+  };
+  const dispatch = async (): Promise<WorktreeCreateResponse> => {
+    const freshRepo = await repoForBranch(cwd, deps);
+    if (!freshRepo || freshRepo.repoRoot !== repo.repoRoot || freshRepo.workTree !== repo.workTree || !(await gitAcceptsBranch(freshRepo.repoRoot, branch, ask)))
+      { noEffect = true; return { ok: false, ...apiError("worktree.create_failed", { reason: "worktree.target_changed" }) }; }
+    const freshBase = await resolveBase(parsedBase.base, freshRepo.repoRoot, ask);
+    if (!freshBase.ok || freshBase.ref !== resolved.ref) return { ok: false, ...apiError("worktree.invalid_base") };
+    if (folder.kind === "parent") {
+      const freshParent = await resolveParentTarget({ parent: folder.parent, branch, repoRoot: freshRepo.repoRoot, home, fs: deps.fs });
+      if (!freshParent.ok) return { ok: false, ...apiError(freshParent.code, { path: freshParent.path ?? folder.parent }) };
+      if (freshParent.path !== path) { noEffect = true; return { ok: false, ...apiError("worktree.create_failed", { reason: "worktree.target_changed" }) }; }
+    }
+    return runWorktreeCreate(
     herdr,
     engine,
     repo.repoRoot,
@@ -4995,11 +5844,40 @@ export async function createWorktreeAt(
     receipts,
     deps.bases ?? memoryWorktreeBases(),
     deps.wait ?? {},
+    binding,
     path,
     remember,
+    finalAdmission,
+    async () => {
+      const lastRepo = await repoForBranch(cwd, deps);
+      if (!lastRepo || lastRepo.repoRoot !== repo.repoRoot || lastRepo.workTree !== repo.workTree || !await gitAcceptsBranch(lastRepo.repoRoot, branch, ask)) { noEffect = true; return false; }
+      const lastBase = await resolveBase(parsedBase.base, lastRepo.repoRoot, ask);
+      if (!lastBase.ok || lastBase.ref !== resolved.ref) { noEffect = true; return false; }
+      if (folder.kind !== "parent") return true;
+      const lastParent = await resolveParentTarget({ parent: folder.parent, branch, repoRoot: lastRepo.repoRoot, home, fs: deps.fs });
+      const same = lastParent.ok && lastParent.path === path;
+      if (!same) noEffect = true;
+      return same;
+    },
   );
-  if (requestId !== undefined) receipts.track(requestId, work);
-  return json(await work, ae);
+  };
+  const work = executeBoundIntent({
+    operations: deps.operations,
+    requestId,
+    context: deps.receiptContext,
+    operation: "worktree.createAt",
+    classify: (value) => value.ok ? { state: "succeeded" } : value.code === "launch.outcome_unknown" ? { state: "unknown", code: "worktree.outcome_unknown" } : noEffect || value.code === "worktree.target_exists" || value.code === "worktree.invalid_base" || value.code === "worktree.folder_link" || value.code === "worktree.folder_outside_home" ? { state: "refused", code: value.code } : { state: "unknown", code: "worktree.outcome_unknown" },
+    targetIdentity: JSON.stringify(["folder", repo.repoRoot, path ?? repo.repoRoot]),
+    body,
+    dispatch,
+    knownReceipt: () => requestId === undefined ? undefined : (receipts.get(requestId) ? replayOf(receipts.get(requestId)!, engine) : undefined),
+    unknown: worktreeIntentUnknown,
+    unavailable: worktreeIntentUnavailable,
+    mismatch: worktreeIntentMismatch,
+  });
+  if (requestId !== undefined) receipts.track(requestId, work, binding);
+  const answer = await work;
+  return json(answer, ae, intentAnswerStatus(answer));
 }
 
 /** A create body's `folder`: absent or `{ kind: "default" }`, or a parent string; `null` for anything else. */
@@ -5015,7 +5893,7 @@ function parseFolderChoice(
   return null;
 }
 
-async function openWorktree(
+export async function openWorktree(
   herdr: MuxAdapter,
   engine: StateEngine,
   spaceId: string,
@@ -5023,7 +5901,9 @@ async function openWorktree(
   audit: AuditLog,
   device: string | null,
   session: string,
+  finalAdmission?: (runtimeIdentity: string) => boolean,
 ): Promise<Response> {
+  const originalRepoRoot = repoRootOf(engine, spaceId);
   const ae = req.headers.get("accept-encoding");
   let body: JsonValue;
   try {
@@ -5045,7 +5925,8 @@ async function openWorktree(
       ae,
     );
   }
-  const outcome = await herdr.openWorktree({ repoRoot, path });
+  if (repoRoot !== originalRepoRoot) return json({ ok: false, ...apiError("worktree.open_failed", { reason: "worktree.target_changed" }) } satisfies WorktreeOpenResponse, ae, 409);
+  const outcome = await herdr.openWorktree({ repoRoot, path }, finalAdmission, async () => repoRootOf(engine, spaceId) === originalRepoRoot);
   if (!outcome.ok) {
     return json(
       {
@@ -5123,7 +6004,7 @@ export async function launchersRoute(
 export const FORGET_DEVICE_PATH = "/api/launchers/added/forget-device";
 
 /** What the added-launcher routes need of their caller. */
-export type AddedRouteCaller = Pick<RouteCaller, "gate" | "resolve" | "device" | "audit" | "via">;
+export type AddedRouteCaller = Pick<RouteCaller, "gate" | "resolve" | "device" | "audit" | "via" | "pairedIdentity" | "intentReceiptKey">;
 
 /** Serve one of the three added-launcher writes, or `null` when `pathname` is none of them. */
 export async function serveAddedLauncherRoute(
@@ -5131,6 +6012,8 @@ export async function serveAddedLauncherRoute(
   pathname: string,
   caller: AddedRouteCaller,
   sources: LauncherSources,
+  operations?: OperationStore,
+  owningHost = "local",
 ): Promise<Response | null> {
   const act =
     pathname === "/api/launchers/added"
@@ -5152,12 +6035,15 @@ export async function serveAddedLauncherRoute(
   } catch {
     return text("bad body", 400);
   }
+  const finalDenied = caller.gate("write"); if (finalDenied) return finalDenied;
   const answer: RouteAnswer = await act(body, {
     sources,
     device: caller.device(),
     via: caller.via === "crew" ? "crew" : "local",
     audit: caller.audit,
     session: rt.name,
+    receiptContext: receiptContextFor(caller, rt.name, owningHost),
+    operations,
   });
   return json(answer.body, req.headers.get("accept-encoding"), answer.status);
 }
@@ -5189,6 +6075,7 @@ export async function serveRecentRunRoute(
   } catch {
     return text("bad body", 400);
   }
+  const finalDenied = caller.gate("write"); if (finalDenied) return finalDenied;
   const answer: RecentRouteAnswer = await act(body, { recent, device: caller.device(), audit: caller.audit, session: rt.name });
   return json(answer.body, req.headers.get("accept-encoding"), answer.status);
 }
@@ -5298,11 +6185,11 @@ export async function serveFolderRoute(
       return text("the folder list could not be saved", 500);
     }
     if (!outcome.ok) {
-      const refusal =
+      const folderRefusal =
         outcome.code === "folders.unknown"
           ? apiError(outcome.code, { folder: parsed.folder })
           : apiError(outcome.code, { max: MAX_FAVOURITES });
-      return jsonError(refusal, 409, ae);
+      return jsonError(folderRefusal, 409, ae);
     }
     return json(foldersBody(folders), ae);
   }
@@ -5321,6 +6208,8 @@ export interface MachineRouteCaller {
   gate(level: "read" | "write"): Response | null;
   /** The requesting device's name across both gates, or `null` when neither names one. */
   device(): string | null;
+  /** Stable private paired-record identity, captured before any request-body/store await. */
+  pairedIdentity?(): string | null;
   audit(entry: AuditEntry): void;
 }
 
@@ -5330,6 +6219,41 @@ function queryCount(req: Request, key: string, min: number, max: number): number
   if (raw === null || !/^\d{1,16}$/.test(raw)) return null;
   const n = Number(raw);
   return n >= min && n <= max ? n : null;
+}
+
+async function boundedMachineRuleBody(req: Request): Promise<{ readonly value: JsonValue } | { readonly status: 400 | 413 }> {
+  const declared = req.headers.get("content-length");
+  if (declared !== null && /^\d+$/.test(declared) && Number(declared) > MACHINE_RULE_BODY_MAX_BYTES) return { status: 413 };
+  if (req.body === null) return { status: 400 };
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > MACHINE_RULE_BODY_MAX_BYTES) {
+        await reader.cancel().catch(() => {});
+        return { status: 413 };
+      }
+      chunks.push(value);
+    }
+  } catch {
+    return { status: 400 };
+  } finally {
+    reader.releaseLock();
+  }
+  try {
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+    const source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    const value = parseMachineStrictJson(source);
+    return value === null ? { status: 400 } : { value };
+  } catch {
+    return { status: 400 };
+  }
 }
 
 /** The three machine routes, or `null` when `pathname` is none of them. */
@@ -5360,6 +6284,8 @@ export async function serveMachinesRoute(
   // takes the device gates a send takes, and it is audited.
   const denied = caller.gate(isHistory ? "read" : "write");
   if (denied) return denied;
+  const originalActor = caller.pairedIdentity?.() ?? null;
+  const hasActorWitness = caller.pairedIdentity !== undefined;
   if (machines === undefined) return jsonError(apiError("crew.not_lead"), 404, ae);
   const unknownMachine = () => jsonError(apiError("host.unknown", { host: id }), 404, ae);
   if (isHistory) {
@@ -5371,18 +6297,52 @@ export async function serveMachinesRoute(
   }
   const entry = machines.entry(id);
   if (entry === undefined) return unknownMachine();
-  let raw: JsonValue;
-  try {
-    // SAFETY: `Request.json()` output IS a JsonValue by construction; `parseMachineAlerts` re-checks
-    // every field of it before any of it is used.
-    raw = (await req.json()) as JsonValue;
-  } catch {
-    return text("bad request", 400);
+  const originalEnrollment = JSON.stringify([entry.id, entry.fingerprint ?? null, entry.enrolledAt ?? null, entry.solo ?? false]);
+  const parsedBody = await boundedMachineRuleBody(req);
+  if ("status" in parsedBody) return text(parsedBody.status === 413 ? "payload too large" : "bad request", parsedBody.status);
+  const request = parseMachineRuleRequest(parsedBody.value);
+  if (request === null) return text("bad alerts", 400);
+  if (request.requestId !== undefined && machines.replaceRules === undefined) return json({ ok: false, code: "machine.rules_unsupported" }, ae, 409);
+  if (request.requestId !== undefined && (originalActor === null || !hasActorWitness)) return text("paired identity unavailable", 503);
+  const currentAuthority = (): boolean => {
+    const gate = caller.gate("write");
+    if (gate !== null) return false;
+    const currentEntry = machines.entry(id);
+    if (currentEntry === undefined || JSON.stringify([currentEntry.id, currentEntry.fingerprint ?? null, currentEntry.enrolledAt ?? null, currentEntry.solo ?? false]) !== originalEnrollment) return false;
+    return !hasActorWitness || (caller.pairedIdentity?.() ?? null) === originalActor;
+  };
+  if (!currentAuthority()) return text("write authority changed", 403);
+  let stored: MachineAlerts;
+  let rulesRevision: string | undefined;
+  let machineIncarnation: string | undefined;
+  let extensions: JsonObject | undefined;
+  if (machines.replaceRules !== undefined) {
+    const input:Parameters<NonNullable<typeof machines.replaceRules>>[0]={id,alerts:request.alerts,actor:originalActor,observedAt:Date.now()};
+    if(request.rulesRevision!==undefined)input.rulesRevision=request.rulesRevision;
+    if(request.machineIncarnation!==undefined)input.machineIncarnation=request.machineIncarnation;
+    if(request.requestId!==undefined)input.requestId=request.requestId;
+    if(request.extensions!==undefined)input.extensions=request.extensions;
+    const outcome=await machines.replaceRules(input,currentAuthority);
+    if(!currentAuthority()) return text("write authority changed",403);
+    if (outcome.kind === "retired") return unknownMachine();
+    if (outcome.kind === "unavailable") return json({ ok: false, code: "machine.monitoring_state_unavailable" }, ae, 503);
+    if(outcome.kind==="conflict") {
+      const current:MachineAlertsResponse={alerts:outcome.current.rules,rulesRevision:outcome.current.rulesRevision,machineIncarnation:outcome.current.machineIncarnation};
+      if(outcome.current.extensions!==undefined)current.extensions=outcome.current.extensions;
+      return json({ok:false,code:"machine.rules_conflict",current},ae,409);
+    }
+    stored = outcome.current.rules;
+    rulesRevision = outcome.current.rulesRevision;
+    machineIncarnation = outcome.current.machineIncarnation;
+    extensions = outcome.current.extensions;
+  } else {
+    const finalDenied = caller.gate("write"); if (finalDenied) return finalDenied;
+    if (hasActorWitness && (caller.pairedIdentity?.() ?? null) !== originalActor) return text("write authority changed", 403);
+    const legacy = await machines.setAlerts(id, request.alerts);
+    if(!currentAuthority()) return text("write authority changed",403);
+    if (legacy === null) return unknownMachine();
+    stored = legacy;
   }
-  const alerts = parseMachineAlerts(raw);
-  if (alerts === null) return text("bad alerts", 400);
-  const stored = await machines.setAlerts(id, alerts);
-  if (stored === null) return unknownMachine();
   // The machine rides the envelope's `host`, absent for this collie's own machine as on every other
   // line, and the rule rides as numbers, which no `audit.content` setting redacts.
   const detail: AuditDetail = {};
@@ -5403,7 +6363,11 @@ export async function serveMachinesRoute(
   if (device !== null) row.device = device;
   if (!entry.isLead) row.host = id;
   caller.audit(row);
-  return json({ alerts: stored } satisfies MachineAlertsResponse, ae);
+  const response:MachineAlertsResponse={alerts:stored};
+  if(rulesRevision!==undefined)response.rulesRevision=rulesRevision;
+  if(machineIncarnation!==undefined)response.machineIncarnation=machineIncarnation;
+  if(extensions!==undefined)response.extensions=extensions;
+  return json(response,ae);
 }
 
 // GET /api/cache-rules — the rule catalog behind every cache chip on THIS host, plus the overrides
@@ -5506,7 +6470,20 @@ export async function launch(
   const rawId = fields.requestId;
   if (rawId !== undefined && !isRequestId(rawId)) return text("bad requestId", 400);
   const requestId = rawId;
-  const replay = requestId === undefined ? null : earlierLaunch(receipts, requestId);
+  if (requestId !== undefined && deps.receiptContext === null) {
+    return json({ ok: false, ...apiError("launch.receipts_unavailable") } satisfies CreateResponse, ae, 503);
+  }
+  const binding: IntentReceiptBinding | undefined =
+    requestId === undefined || deps.receiptContext == null
+      ? undefined
+      : {
+          deviceIdentity: deps.receiptContext.deviceIdentity,
+          operation: "launch",
+          runtime: deps.receiptContext.runtime,
+          intentFingerprint: keyedIntentFingerprint(deps.receiptContext.key, body),
+        };
+  const replay = requestId === undefined ? null : earlierLaunch(receipts, requestId, binding);
+  if (replay === "mismatch") return json({ ok: false, ...apiError("launch.request_mismatch") } satisfies CreateResponse, ae, 409);
   if (replay !== null) return json(await replay, ae);
 
   const picked = await pickLaunch(fields, getLaunchers, deps.harnesses, {
@@ -5549,10 +6526,11 @@ export async function launch(
   // Checked again with no await between it and `track`, so two requests with one id that both got
   // past the check above cannot both start a launch.
   if (requestId !== undefined) {
-    const again = earlierLaunch(receipts, requestId);
+    const again = earlierLaunch(receipts, requestId, binding);
+    if (again === "mismatch") return json({ ok: false, ...apiError("launch.request_mismatch") } satisfies CreateResponse, ae, 409);
     if (again !== null) return json(await again, ae);
   }
-  const work = runLaunch(herdr, engine, {
+  const dispatch = () => runLaunch(herdr, engine, {
     row,
     kind: picked.kind,
     cwd: resolvedCwd,
@@ -5562,10 +6540,26 @@ export async function launch(
     device,
     session,
     receipts,
+    binding,
     wait,
   });
-  if (requestId !== undefined) receipts.track(requestId, work);
+  const work = executeBoundIntent({
+    operations: deps.operations,
+    requestId,
+    context: deps.receiptContext,
+    operation: "launch",
+    targetIdentity: JSON.stringify(["launch", picked.kind, resolvedCwd, besidePane?.workspaceId ?? null, besidePane?.paneId ?? null]),
+    body,
+    dispatch,
+    knownReceipt: () => requestId === undefined ? undefined : (receipts.get(requestId) ? launchReplay(receipts.get(requestId)!) : undefined),
+    unknown: launchIntentUnknown,
+    unavailable: launchIntentUnavailable,
+    mismatch: launchIntentMismatch,
+  });
+  if (requestId !== undefined) receipts.track(requestId, work, binding);
   const answer = await work;
+  if (!answer.ok && answer.code === "launch.request_mismatch") return json(answer, ae, 409);
+  if (!answer.ok && answer.code === "launch.receipts_unavailable") return json(answer, ae, 503);
   // A folder the sheet named that worked joins Recent, as a space created there does. Never a row's
   // pinned folder, which the operator already wrote down, and never on a failure.
   if (answer.ok && asked !== undefined && row?.cwd === undefined && deps.folders !== undefined) {
@@ -5594,6 +6588,9 @@ export interface LaunchDeps {
   harnesses?: Pick<HarnessProbe, "launch">;
   /** Absent: an in-memory store. */
   receipts?: LaunchReceiptSurface;
+  /** Stable per-bridge HMAC key and paired caller identity, present only when bound receipts are ready. */
+  receiptContext?: IntentOwnerContext | null;
+  operations?: OperationStore;
   /** Where a launch into a named folder is recorded as Recent. Absent: nothing is recorded. */
   folders?: Pick<FolderSurface, "recordRecent">;
   /** This machine's home, for a leading `~` in `cwd`. */
@@ -5611,11 +6608,19 @@ export interface LaunchDeps {
  * new id. SYNCHRONOUS up to that `null` on purpose: the caller's second check must not yield between
  * the look and its `track`, or two requests with one id could both start a launch.
  */
-function earlierLaunch(receipts: LaunchReceiptSurface, requestId: string): Promise<CreateResponse> | null {
+function earlierLaunch(
+  receipts: LaunchReceiptSurface,
+  requestId: string,
+  binding?: IntentReceiptBinding,
+): Promise<CreateResponse> | "mismatch" | null {
   const stored = receipts.get(requestId);
-  if (stored) return Promise.resolve(launchReplay(stored));
+  if (stored) {
+    if (binding !== undefined && matchReceiptBinding(stored.binding, binding) !== "match") return "mismatch";
+    return Promise.resolve(launchReplay(stored));
+  }
   const running = receipts.inflight(requestId);
   if (running === undefined) return null;
+  if (binding !== undefined && matchReceiptBinding(receipts.inflightBinding(requestId), binding) !== "match") return "mismatch";
   return running.then((answer) => (answer.ok ? { ...answer, replayed: true } : answer));
 }
 
@@ -5686,22 +6691,6 @@ async function pickRun(raw: JsonValue | undefined, gate: RunGate | null): Promis
  * projects` is in a fresh shell. One rule for every client (M48): the page shows the full path
  * before Start, so nothing is rewritten silently.
  */
-function askedFolder(raw: JsonValue | undefined, home: string): string | undefined | false {
-  if (raw === undefined || raw === null) return undefined;
-  if (typeof raw !== "string") return false;
-  const trimmed = raw.trim();
-  if (trimmed === "") return undefined;
-  for (const ch of trimmed) {
-    const code = ch.codePointAt(0) ?? 0;
-    if (code < 0x20 || code === 0x7f) return false;
-  }
-  // On the string as sent: `join` below would quietly resolve a `..` away.
-  if (trimmed.split(/[\\/]+/u).includes("..")) return false;
-  if (trimmed.startsWith("~") && trimmed !== "~" && expandHome(trimmed, home) === trimmed) return false;
-  const expanded = expandHome(trimmed, home);
-  return isAbsolute(expanded) ? expanded : join(home, expanded);
-}
-
 /** The half of a launch that touches the multiplexer, run at most once per `requestId`. */
 async function runLaunch(
   herdr: MuxAdapter,
@@ -5716,6 +6705,7 @@ async function runLaunch(
     device: string | null;
     session: string;
     receipts: LaunchReceiptSurface;
+    binding?: IntentReceiptBinding;
     wait: PaneReadyOptions;
   },
 ): Promise<CreateResponse> {
@@ -5772,15 +6762,21 @@ async function runLaunch(
     ? (engine.current().workspaces.find((w) => w.workspaceId === created.spaceId)?.label ?? created.spaceLabel)
     : created.spaceLabel;
   if (job.requestId !== undefined) {
-    await job.receipts.record({
-      requestId: job.requestId,
-      at: Date.now(),
-      workspaceId: created.spaceId,
-      workspaceLabel,
-      paneId: created.paneId,
-      tabId: created.tabId,
-      cwd: created.cwd,
-    });
+    try {
+      const receipt: LaunchReceipt = {
+        requestId: job.requestId,
+        at: Date.now(),
+        workspaceId: created.spaceId,
+        workspaceLabel,
+        paneId: created.paneId,
+        tabId: created.tabId,
+        cwd: created.cwd,
+      };
+      if (job.binding !== undefined) receipt.binding = job.binding;
+      await job.receipts.record(receipt);
+    } catch {
+      return { ok: false, ...apiError("launch.outcome_unknown") };
+    }
   }
   return {
     ok: true,
@@ -5818,6 +6814,7 @@ async function uploadPane(
   audit: AuditLog,
   device: string | null,
   session: string,
+  finalAdmission: () => Response | null = () => null,
 ): Promise<Response> {
   const ae = req.headers.get("accept-encoding");
   // Reject an oversize upload by its declared Content-Length BEFORE buffering — req.formData()
@@ -5864,10 +6861,12 @@ async function uploadPane(
     const dir = join(cfg.stateDir, "uploads");
     // 0700 — uploads (and the state dir they live under) may hold sensitive images; keep them
     // owner-only. recursive:true applies the mode to any intermediate dirs it creates too.
+    const beforeDirectory = finalAdmission(); if (beforeDirectory) return beforeDirectory;
     await mkdir(dir, { recursive: true, mode: 0o700 });
     const safePane = paneId.replace(/[^A-Za-z0-9_-]/g, "_");
     const filename = `${safePane}-${Date.now().toString(36)}-${crypto.randomUUID().slice(0, 8)}.${ext}`;
     const fullPath = join(dir, filename);
+    const beforePublication = finalAdmission(); if (beforePublication) return beforePublication;
     await Bun.write(fullPath, file);
     audit.record({
       action: "upload",
@@ -5993,8 +6992,20 @@ export function guard(
   // rule for writes (a CSRF defence, and browsers send no `Origin` on a same-origin GET) does not
   // apply, and a cross-site page cannot read the answer anyway. Its DEVICE half is the write's.
   const gate = checkAccess(req, cfg, level === "write" ? "write" : "read");
-  if (!gate.ok) return text(gate.reason, 403);
-  if (level !== "read" && !deviceAuth(req, cfg).authorized) return text("device not authorised", 403);
+  if (!gate.ok) {
+    const response = text(gate.reason, 403);
+    // Access is this bridge's verdict, separate from pairing. Never label arbitrary upstream bodies.
+    response.headers.set("x-collie-error-source", "collie");
+    response.headers.set("x-collie-error-factor", gate.reason.startsWith("identity") ? "identity" : "scope");
+    return response;
+  }
+  if (level !== "read" && !deviceAuth(req, cfg).authorized) {
+    const response = text("device not authorised", 403);
+    response.headers.set("x-collie-error-source", "collie");
+    response.headers.set("x-collie-error-factor", "device");
+    response.headers.set("x-collie-error-code", "device.not_authorised");
+    return response;
+  }
   // The pairing credential, on every level: a read needs the token as much as a write does, and an
   // empty registry is not a pass (ADR 0086). Distinct refusal text on purpose: "not authorised" is
   // the operator's proxy allowlist, "not paired" is this device's own missing credential, and the two
@@ -6151,7 +7162,7 @@ export function carriesProxyMarker(headers: Headers): boolean {
  * amendment of 2026-10-08).
  */
 export function browserPairingGate(
-  store: Pick<PairingStore, "resolve" | "expired">,
+  store: Pick<PairingStore, "resolve" | "expired"> & Partial<Pick<PairingStore, "identity">>,
   localCredential: LocalCredential | undefined,
   peerOf: (req: Request) => string | null | undefined,
   bindHost: string,
@@ -6159,6 +7170,7 @@ export function browserPairingGate(
 ): PairingGate {
   return {
     resolve: (token) => store.resolve(token),
+    identity: (token) => store.identity?.(token) ?? null,
     expired: (token) => store.expired(token),
     local: (token, req) => {
       if (localCredential === undefined || !localCredential.matches(token)) return false;
@@ -6231,6 +7243,8 @@ export interface PairingGate {
    * registry cannot be read ({@link PairingStore.resolve}); the gate answers 503, never "not paired".
    */
   resolve(token: string | null): { label: string } | null;
+  /** Stable opaque identity for the validated pairing; absent for old/test gate providers. */
+  identity?(token: string | null): string | null;
   /**
    * Whether this token belongs to a device whose expiry passed. Optional so a test may still pass a
    * two-line gate; {@link PairingStore} always answers it.
@@ -6276,6 +7290,16 @@ export function requestDevice(req: Request, cfg: Config, pairing?: PairingGate):
     // device is still read-only, and vice versa.
     authorized: header.authorized && paired !== null,
   };
+}
+
+/** Return identity only from the validated pairing projection, never from a caller-supplied header. */
+function pairedIdentityOf(req: Request, pairing: PairingGate | undefined): string | null {
+  if (pairing?.identity === undefined) return null;
+  try {
+    return pairing.identity(bearerToken(req.headers));
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -6379,7 +7403,11 @@ function text(body: string, status: number): Response {
  * The phone's own wipe deletes exactly what the pairing left, and is the one mechanism.
  */
 function pairingRefusal(body: "device not paired" | "device expired"): Response {
-  return text(body, 403);
+  const response = text(body, 403);
+  response.headers.set("x-collie-error-source", "collie");
+  response.headers.set("x-collie-error-factor", "pairing");
+  response.headers.set("x-collie-error-code", body === "device expired" ? "pairing.expired" : "pairing.unpaired");
+  return response;
 }
 
 /**
@@ -6816,7 +7844,7 @@ async function gzippedStatic(
   const size = file.size;
   if (!wantsGzip(acceptEncoding, size, STATIC_GZIP_MIN_BYTES)) return null;
 
-  return gzippedBytes(`${full} ${file.lastModified} ${size}`, new Uint8Array(await file.arrayBuffer()), ext, acceptEncoding);
+  return gzippedBytes(`${full}\u0000${file.lastModified}\u0000${size}`, new Uint8Array(await file.arrayBuffer()), ext, acceptEncoding);
 }
 
 /**
@@ -6863,4 +7891,47 @@ function gzippedBytes(
  */
 export function cacheControlFor(rel: string): string {
   return rel.startsWith("assets/") ? "public, max-age=31536000, immutable" : "no-cache";
+}
+
+/** The actual lead-owned preference handler, injectable for scoped store/HTTP fixtures. */
+export async function serveCacheWatchRoute(
+  req: Request,
+  url: URL,
+  watch: CacheWatchSurface,
+  resolve: (paneId: string) => { pane: CacheWarnPane; error?: undefined } | { pane?: undefined; error: ErrorCode },
+  global: () => boolean,
+  warnSeconds: number,
+  currentCallerGate: () => Response | null = () => null,
+): Promise<Response> {
+  const paneId = url.searchParams.get("pane");
+  if (paneId === null || paneId === "") return text("bad request", 400);
+  let on: boolean | undefined;
+  if (req.method === "POST") {
+    let body: JsonValue;
+    try {
+      // SAFETY: JSON.parse returns JSON; the closed boolean parser validates its schema.
+      body = (await req.json()) as JsonValue;
+    } catch { return text("bad request", 400); }
+    const parsed = parseCacheWatchRequest(body);
+    if (parsed === null) return text("bad on", 400);
+    on = parsed.on;
+  } else if (req.method !== "GET") return text("method not allowed", 405);
+  const finalDenied = currentCallerGate();
+  if (finalDenied) return finalDenied;
+  // Resolve after body consumption so a suspended POST cannot use an earlier swept target.
+  const found = resolve(paneId);
+  if (found.error !== undefined) {
+    return jsonError(apiError(found.error, { paneId }), found.error === "cache.pane_unknown" ? 404 : 409,
+      req.headers.get("accept-encoding"));
+  }
+  if (on !== undefined) {
+    if (on && !cacheWatchable(found.pane)) {
+      return jsonError(apiError("cache.no_session", { paneId }), 409, req.headers.get("accept-encoding"));
+    }
+    await watch.set(found.pane, found.pane.label, on);
+  }
+  const publicationDenied = currentCallerGate();
+  if (publicationDenied) return publicationDenied;
+  return json({ on: watch.has(found.pane.key), global: global(), watchable: cacheWatchable(found.pane), warnSeconds },
+    req.headers.get("accept-encoding"));
 }
