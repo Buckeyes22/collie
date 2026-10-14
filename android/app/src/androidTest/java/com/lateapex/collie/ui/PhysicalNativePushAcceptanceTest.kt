@@ -348,20 +348,20 @@ class PhysicalNativePushAcceptanceTest {
     @Test fun liveDeliveredNotificationHasPrivateCustodyAndNormalTapOpensExactPane() = withLive { app, paired, automation ->
         val args = InstrumentationRegistry.getArguments()
         val destination = args.getString("expectedDestination") ?: "pane"
-        assertTrue("Only the existing pane route or explicit updates route is supported", destination in setOf("pane", "updates"))
+        assertTrue("Only the existing pane, updates or HOME route is supported", destination in setOf("pane", "updates", "home"))
         val pane = args.getString("expectedPaneId")
         if (destination == "pane") {
             assertTrue("Pane delivery acceptance requires explicit expectedPaneId", !pane.isNullOrBlank() && pane.length <= 256)
         } else {
-            assertNull("Updates delivery has no pane target", pane)
+            assertNull("Updates and HOME deliveries have no pane target", pane)
         }
         val manager = app.getSystemService(NotificationManager::class.java)
         val state = requireNotNull(NativePushStore(app).read()) { "Real persisted enrollment is required" }
         assertTrue("Delivery must retain a current enrolled owner", !state.retired &&
             app.container.nativePush.status() == app.getString(R.string.native_notifications_enrolled))
-        val committedOwner = if (destination == "updates") requireNotNull(app.container.connectionStore.captureCommitted()) else null
-        val actor = if (destination == "updates") requireNotNull(app.container.repository.readContext()) else null
-        if (destination == "updates") {
+        val committedOwner = if (destination != "pane") requireNotNull(app.container.connectionStore.captureCommitted()) else null
+        val actor = if (destination != "pane") requireNotNull(app.container.repository.readContext()) else null
+        if (destination != "pane") {
             val originalCommitted = requireNotNull(committedOwner)
             val originalActor = requireNotNull(actor)
             assertTrue("Delivery must begin under the original installed owner",
@@ -370,7 +370,7 @@ class PhysicalNativePushAcceptanceTest {
                 app.container.repository.isCurrent(originalActor) && originalActor.connection === paired && originalActor.committedStore &&
                     originalActor.connectionIncarnation == originalCommitted.incarnationId && originalActor.committedSnapshot == originalCommitted)
         }
-        val launchIntentsBefore = if (destination == "updates") app.container.launchIntentStore.all() else emptyList()
+        val launchIntentsBefore = if (destination != "pane") app.container.launchIntentStore.all() else emptyList()
         val deadline = SystemClock.uptimeMillis() + WAIT_MS
         var delivered: android.service.notification.StatusBarNotification? = null
         while (SystemClock.uptimeMillis() < deadline) {
@@ -429,7 +429,94 @@ class PhysicalNativePushAcceptanceTest {
                 } finally { instrumentation.runOnMainSync { opened?.finish() } }
             }
             "updates" -> assertUpdatesNotificationDestination(app, paired, requireNotNull(actor), requireNotNull(committedOwner), committed, launchIntentsBefore)
+            "home" -> assertHomeNotificationDestination(app, paired, requireNotNull(committedOwner), committed, launchIntentsBefore)
         }
+    }
+
+    /** Normal HOME taps load the real global dashboard; they grant no new terminal authority. */
+    private fun assertHomeNotificationDestination(
+        app: CollieApplication,
+        paired: Connection,
+        committedBefore: com.lateapex.collie.data.CommittedConnectionSnapshot,
+        pushBefore: com.lateapex.collie.notifications.PushEnrollment,
+        launchIntentsBefore: List<com.lateapex.collie.data.StoredLaunchIntent>,
+    ) {
+        val args = InstrumentationRegistry.getArguments()
+        assertNull("This HOME acceptance targets the lead's global dashboard", args.getString("expectedHost"))
+        assertNull("This HOME acceptance has no selected session", args.getString("expectedSession"))
+        val repository = app.container.repository
+        fun owner() {
+            assertTrue("HOME tap preserves the exact paired credential instance", app.container.connectionStore.connection.value === paired)
+            assertEquals("HOME tap preserves the committed pairing revision and incarnation", committedBefore, app.container.connectionStore.captureCommitted())
+        }
+        val credentialHash = MessageDigest.getInstance("SHA-256")
+            .digest((paired.origin.value + "\u0000" + paired.token.orEmpty()).encodeToByteArray())
+            .joinToString("") { "%02x".format(it) }
+        assertTrue("HOME delivery belongs to the actual current enrollment and paired credential",
+            !pushBefore.retired && pushBefore.registrationId != null && pushBefore.signingPublicKey != null &&
+                pushBefore.origin == paired.origin.value && pushBefore.incarnation == committedBefore.incarnationId &&
+                pushBefore.credentialHash == credentialHash)
+        owner()
+        var opened: MainActivity? = null
+        var accepted: ScopedReadContext? = null
+        try {
+            val deadline = SystemClock.uptimeMillis() + WAIT_MS
+            while (SystemClock.uptimeMillis() < deadline && accepted == null) {
+                owner()
+                instrumentation.runOnMainSync {
+                    val resumed = ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED)
+                    val activity = resumed.singleOrNull() as? MainActivity
+                    if (activity != null) {
+                        opened = activity
+                        val state = androidx.lifecycle.ViewModelProvider(activity)[MainViewModel::class.java].state.value
+                        val actor = state.originalReadContext
+                        val source = repository.readSource.value as? ReadSourceState.Live
+                        if (state.configured && state.paired && state.origin == paired.origin.value && state.snapshot != null &&
+                            state.savedCopy == null && state.savedCopyVersion == null && state.error == null && !state.authError &&
+                            !state.pairingRequired && !state.snapshotFailed && repository.selectedScope.value == com.lateapex.collie.domain.Scope() &&
+                            actor != null && repository.isCurrent(actor) && actor.connection === paired && actor.committedStore &&
+                            actor.connectionIncarnation == committedBefore.incarnationId && actor.committedSnapshot == committedBefore &&
+                            actor.key.host == null && actor.key.session == null && actor.key.subjectIdentity == null &&
+                            source?.key == actor.key && activity.findViewById<View>(R.id.dashboard_machines_button)?.isShown == true) accepted = actor
+                    }
+                }
+                if (accepted == null) SystemClock.sleep(150)
+            }
+            val actor = requireNotNull(accepted) { "Normal OS HOME tap did not load the real current global MainActivity dashboard" }
+            val home = requireNotNull(opened)
+            fun currentHome() {
+                owner()
+                assertTrue("The accepted dashboard actor remains current under its original owner", repository.isCurrent(actor))
+                instrumentation.runOnMainSync {
+                    val resumed = ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED)
+                    assertTrue("HOME tap leaves only the real MainActivity resumed", resumed.singleOrNull() === home)
+                    assertTrue("HOME tap must not take a Pane, Updates or Machines side route", resumed.none { it is PaneActivity || it is UpdatesActivity || it is MachinesActivity })
+                    val state = androidx.lifecycle.ViewModelProvider(home)[MainViewModel::class.java].state.value
+                    val shown = requireNotNull(state.originalReadContext)
+                    assertTrue("The live dashboard retains its accepted exact global actor", shown.key == actor.key &&
+                        shown.navigationGeneration == actor.navigationGeneration && shown.committedSnapshot == committedBefore && repository.isCurrent(shown))
+                    assertTrue("HOME dashboard remains live without a saved copy or read error", state.snapshot != null && state.savedCopy == null &&
+                        state.savedCopyVersion == null && state.error == null && !state.authError && !state.snapshotFailed && !state.pairingRequired &&
+                        repository.selectedScope.value == com.lateapex.collie.domain.Scope() &&
+                        (repository.readSource.value as? ReadSourceState.Live)?.key == actor.key)
+                }
+            }
+            currentHome()
+            val expectedCrew = args.getString("expectedCrewId")
+            val expectedLead = args.getString("expectedLeadId")
+            if (expectedCrew != null) assertTrue("Expected Crew identity must be an explicit bounded identifier", expectedCrew.isNotBlank() && expectedCrew.length <= 128)
+            if (expectedLead != null) assertTrue("Expected lead must be a bounded member identifier", expectedLead.matches(Regex("[a-z0-9][a-z0-9-]{0,62}")))
+            val result = runBlocking { repository.crew(actor) }
+            currentHome()
+            assertTrue("The actual authenticated current Crew must be readable", result is ApiResult.Success)
+            val crew = (result as ApiResult.Success).value
+            if (expectedCrew != null) assertEquals("HOME dashboard remains on the exact owned Crew", expectedCrew, crew.crew.id)
+            assertEquals("The responding Crew member must be its single actual lead", listOf(crew.self.id), crew.members.filter { it.isLead }.map { it.id })
+            if (expectedLead != null) assertEquals("The HOME dashboard must use the expected current lead", expectedLead, crew.self.id)
+            currentHome()
+            assertEquals("HOME tap preserves notification enrollment, credential custody and replay watermarks", pushBefore, NativePushStore(app).read())
+            assertEquals("HOME tap must not create, remove or change launch-journal entries", launchIntentsBefore, app.container.launchIntentStore.all())
+        } finally { instrumentation.runOnMainSync { opened?.finish() } }
     }
 
     /** Read-only proof for the fresh owned 1.19.0 -> 1.21.0 update offer; no update or dismiss action is clicked. */

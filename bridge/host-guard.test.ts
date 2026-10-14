@@ -76,6 +76,7 @@ const NOT_REACHED_BY_WINDOWS: readonly Allowed[] = [
   { file: "cli/install-kind.ts", pattern: "splitOnSlash", count: 2, why: "git remote URLs, always slashes" },
   { file: "cli/update.ts", pattern: "splitOnSlash", count: 2, why: "a literal list of payload names, joined by path.join; and a systemd unit path" },
   { file: "cli/fakes.ts", pattern: "splitOnSlash", count: 2, why: "test-only fake filesystem, keys are POSIX by design" },
+  { file: "scripts/android-sbom.ts", pattern: "splitOnSlash", count: 2, why: "canonical slash-separated native manifest inventory IDs; host paths are resolved separately after validation" },
 ];
 
 /**
