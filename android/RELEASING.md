@@ -176,7 +176,8 @@ Initial artifact smoke check:
 Required current-device checks:
 
 - Fresh HTTPS pairing, authorization refusal, device revocation and harmless exactly-once replies.
-- Prompts, Keys, history, attachments and configured STT against a disposable live server.
+- Prompts, Keys, history and non-speech attachments against a disposable live server.
+  Speech-to-text is excluded from this Android completion release.
 - Background/foreground, real network/VPN loss, server restart and process-death recovery.
 - Diagnostics opt-in and pairing-body exclusion on a real deployment.
 - Additional IMEs, insets, spoken TalkBack, large text, split window and both themes.
