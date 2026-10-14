@@ -247,20 +247,39 @@ describe("check-android-native validation", () => {
     }
   });
 
-  test("allows only network and explicit-recording permissions and only the native launcher export", () => {
+  test("rejects unrelated permissions and exported entry points", () => {
     const output = messages({
       androidManifestText: validManifest
-        .replace("</manifest>", '<uses-permission android:name="android.permission.POST_NOTIFICATIONS" /></manifest>')
+        .replace("</manifest>", '<uses-permission android:name="android.permission.CAMERA" /></manifest>')
         .replace("</application>", '<service android:name=".BrowserService" android:exported="true" /></application>'),
     });
     expect(output).toContain("may request only android.permission.INTERNET and android.permission.RECORD_AUDIO");
     expect(output).toContain("must export only com.lateapex.collie.ui.MainActivity");
   });
 
+  test("allows only the pinned connector exports and Android-protected job service", () => {
+    const service = `<service android:name="org.unifiedpush.android.connector.internal.RaiseToForegroundService" android:exported="true"><intent-filter><action android:name="org.unifiedpush.android.connector.RAISE_TO_FOREGROUND"/></intent-filter></service>`;
+    const receiver = `<receiver android:name="org.unifiedpush.android.connector.internal.MessagingReceiverImpl" android:exported="true"><intent-filter>${["MESSAGE", "UNREGISTERED", "NEW_ENDPOINT", "REGISTRATION_FAILED", "TEMP_UNAVAILABLE"].map((a) => `<action android:name="org.unifiedpush.android.connector.${a}"/>`).join("")}</intent-filter></receiver>`;
+    const jobs = `<service android:name="androidx.work.impl.background.systemjob.SystemJobService" android:exported="true" android:permission="android.permission.BIND_JOB_SERVICE"/>`;
+    const privateSelfClosed = `<receiver android:name=".data.AndroidReleaseInstallReceiver" android:exported="false"/><service android:name=".PrivateService" android:exported="false"/>`;
+    const merged = validManifest.replace("</application>", `${privateSelfClosed}${service}${receiver}${jobs}</application>`);
+    expect(messages({ mergedAndroidManifestText: merged })).toBe("");
+    for (const bad of [merged.replace("BIND_JOB_SERVICE", "INTERNET"), merged.replace("TEMP_UNAVAILABLE", "FOREIGN"), merged.replace("</receiver>", '<intent-filter><action android:name="android.intent.action.VIEW"/></intent-filter></receiver>')]) {
+      expect(messages({ mergedAndroidManifestText: bad })).toContain("must export only");
+    }
+    expect(messages({ androidManifestText: merged })).toContain("must export only");
+  });
+
   test("allows only the fixed exported transaction callback and retains unrelated export/browser refusals", () => {
     const callback = `<activity android:name=".ui.OpenLinkActivity" android:exported="true"><intent-filter><action android:name="android.intent.action.VIEW"/><category android:name="android.intent.category.DEFAULT"/><category android:name="android.intent.category.BROWSABLE"/><data android:scheme="com.lateapex.collie"/></intent-filter></activity>`;
     const manifest = validManifest.replace("</application>", `${callback}</application>`);
     expect(messages({ androidManifestText: manifest })).toBe("");
+    const share = `<intent-filter><action android:name="android.intent.action.SEND"/><category android:name="android.intent.category.DEFAULT"/><data android:mimeType="text/plain"/></intent-filter>`;
+    const sharedCallback = callback.replace("</activity>", `${share}</activity>`);
+    expect(messages({ androidManifestText: validManifest.replace("</application>", `${sharedCallback}</application>`) })).toBe("");
+    for (const badShare of [share.replace("<intent-filter>", '<intent-filter android:autoVerify="true">'), share.replace("text/plain", "*/*"), share.replace("SEND", "SEND_MULTIPLE"), share.replace("DEFAULT", "BROWSABLE"), share.replace('<data ', '<data android:scheme="https" '), share.replace('</intent-filter>', '<action android:name="android.intent.action.VIEW"/></intent-filter>'), share + share]) {
+      expect(messages({ androidManifestText: validManifest.replace("</application>", `${callback.replace("</activity>", `${badShare}</activity>`)}</application>`) })).not.toBe("");
+    }
     for (const changed of [callback.replace("com.lateapex.collie", "https"), callback.replace('<data ', '<data android:path="/oauth2redirect" '), callback.replace('<data ', '<data android:pathAdvancedPattern=".*" '), callback.replace('<data ', '<data android:port="443" '), callback.replace('<data ', '<data android:mimeType="text/plain" '), callback.replace('<data ', '<data android:host="foreign.example" '), callback.replace('</intent-filter>', '<action android:name="android.intent.action.SEND"/></intent-filter>')]) {
       expect(messages({ androidManifestText: validManifest.replace("</application>", `${changed}</application>`) })).toContain("native callback must accept only");
     }

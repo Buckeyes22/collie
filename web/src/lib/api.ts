@@ -1,3 +1,4 @@
+import type { ColumnRange } from "./column-range";
 // Thin REST client for the bridge. Everything is same-origin, so credentials/headers are
 // minimal. Each call throws on a non-2xx so callers (route loaders / action handlers) surface errors.
 
@@ -1130,6 +1131,7 @@ export function sendKeys(
   scope?: Scope,
   expectedPrompt?: string,
   expectedStyled?: string,
+  expectedColumns?: ColumnRange,
 ): Promise<ActionResponse> {
   stampSend(paneId);
   // Snapshot what the client has seen NOW, before the key can change anything: `settleAfterSend`
@@ -1146,7 +1148,7 @@ export function sendKeys(
         method: "POST",
         // As in `sendReply`: an `undefined` property is omitted by `JSON.stringify`. The bridge honours
         // `expected_styled` only beside `expected_prompt` (ADR 0080 point 7); an older bridge ignores it.
-        body: JSON.stringify({ keys, expected_prompt: expectedPrompt, expected_styled: expectedStyled }),
+        body: JSON.stringify({ keys, expected_prompt: expectedPrompt, expected_styled: expectedStyled, expected_columns: expectedColumns }),
       },
       recoverPromptChanged,
     ),

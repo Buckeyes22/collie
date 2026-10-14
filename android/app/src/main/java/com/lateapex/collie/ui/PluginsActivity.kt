@@ -58,8 +58,8 @@ class PluginsActivity : AppCompatActivity() {
             val result = repository.hostPlugins(session.scope, actor)
             if (!isCurrent()) { loading = false; renderStale(); return@launch }
             content.removeAllViews()
-            button("Install from GitHub") { promptInstall() }
-            button("Link managed plugin") { chooseLink() }
+            button(getString(R.string.plugin_install_from_github)) { promptInstall() }
+            button(getString(R.string.plugin_link_managed)) { chooseLink() }
             when (result) {
                 is ApiResult.Success -> {
                     if (result.value.plugins.isEmpty()) message(getString(R.string.host_plugins_empty))
@@ -81,13 +81,13 @@ class PluginsActivity : AppCompatActivity() {
     private fun promptInstall() {
         if (!isCurrent()) { renderStale(); return }
         val fields = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(8), dp(20), 0) }
-        val owner = EditText(this).apply { hint = "GitHub owner"; setSingleLine(true) }
-        val repo = EditText(this).apply { hint = "Repository"; setSingleLine(true) }
-        val subdir = EditText(this).apply { hint = "Plugin subdirectory (optional)"; setSingleLine(true) }
-        val ref = EditText(this).apply { hint = "Revision or tag (optional)"; setSingleLine(true) }
+        val owner = EditText(this).apply { hint = getString(R.string.plugin_github_owner); setSingleLine(true) }
+        val repo = EditText(this).apply { hint = getString(R.string.plugin_repository); setSingleLine(true) }
+        val subdir = EditText(this).apply { hint = getString(R.string.plugin_subdirectory_optional); setSingleLine(true) }
+        val ref = EditText(this).apply { hint = getString(R.string.plugin_revision_optional); setSingleLine(true) }
         fields.addView(owner); fields.addView(repo); fields.addView(subdir); fields.addView(ref)
-        AlertDialog.Builder(this).setTitle("Plan plugin install").setView(fields)
-            .setNegativeButton(android.R.string.cancel, null).setPositiveButton("Review") { _, _ ->
+        AlertDialog.Builder(this).setTitle(R.string.plugin_plan_install).setView(fields)
+            .setNegativeButton(android.R.string.cancel, null).setPositiveButton(R.string.plugin_review) { _, _ ->
                 if (!isCurrent()) { renderStale(); return@setPositiveButton }
                 lifecycleScope.launch {
                     val actor = session.actor ?: return@launch renderStale()
@@ -96,19 +96,19 @@ class PluginsActivity : AppCompatActivity() {
                     if (planned !is ApiResult.Success) { message((planned as? ApiResult.Failure)?.error?.pluginMessage ?: "Install plan unavailable"); return@launch }
                     val plan = planned.value.plan
                     val details = "${plan.plugin.name} ${plan.plugin.version}\n${plan.source.owner}/${plan.source.repo}${plan.source.subdir?.let { "/$it" }.orEmpty()}\nCommit ${plan.source.commit}\nSHA-256 ${plan.checksum}\n\n${plan.effects.joinToString("\n")}"
-                    AlertDialog.Builder(this@PluginsActivity).setTitle("Review plugin installation").setMessage(details)
-                        .setNegativeButton(android.R.string.cancel, null).setPositiveButton("Install") { _, _ ->
+                    AlertDialog.Builder(this@PluginsActivity).setTitle(R.string.plugin_review_installation).setMessage(details)
+                        .setNegativeButton(android.R.string.cancel, null).setPositiveButton(R.string.plugin_install) { _, _ ->
                             if (!isCurrent() || !repository.isCurrent(actor)) { renderStale(); return@setPositiveButton }
                             lifecycleScope.launch {
                                 val requestId = UUID.randomUUID().toString()
-                                if (!session.track(requestId, PluginReceiptKind.OWNER_OPERATION)) { message("Could not durably retain an operation receipt ID. No install was sent."); return@launch }
+                                if (!session.track(requestId, PluginReceiptKind.OWNER_OPERATION)) { message(getString(R.string.plugin_receipt_retain_failed, getString(R.string.plugin_install_operation))); return@launch }
                                 renderPendingReceipts()
                                 if (!isCurrent() || !repository.isCurrent(actor)) { renderStale(); return@launch }
                                 val applied = repository.applyHostPluginInstall(HostPluginInstallRequest(requestId, plan.token, plan.checksum), session.scope, actor)
                                 if (!isCurrent()) { renderStale(); return@launch }
                                 if (applied is ApiResult.Success && applied.value.operation.state == "succeeded") {
                                     session.reconcile(requestId)
-                                    message("Install succeeded.")
+                                    message(getString(R.string.plugin_install_succeeded))
                                     load()
                                 } else {
                                     retainForReceipt(requestId, if (applied is ApiResult.Success) "Install ${applied.value.operation.state}: ${applied.value.operation.code.orEmpty()}" else "Install result is not confirmed.")
@@ -125,10 +125,10 @@ class PluginsActivity : AppCompatActivity() {
             val actor = session.actor ?: return@launch renderStale()
             val result = repository.hostPluginLinkSelections(session.scope, actor)
             if (!isCurrent()) { renderStale(); return@launch }
-            if (result !is ApiResult.Success) { message((result as? ApiResult.Failure)?.error?.pluginMessage ?: "Link selections unavailable"); return@launch }
+            if (result !is ApiResult.Success) { message((result as? ApiResult.Failure)?.error?.pluginMessage ?: getString(R.string.plugin_link_selections_unavailable)); return@launch }
             val rows = result.value.selections
-            if (rows.isEmpty()) { message("No managed plugin folders are available to link."); return@launch }
-            AlertDialog.Builder(this@PluginsActivity).setTitle("Choose a managed plugin")
+            if (rows.isEmpty()) { message(getString(R.string.plugin_managed_folders_empty)); return@launch }
+            AlertDialog.Builder(this@PluginsActivity).setTitle(R.string.plugin_choose_managed)
                 .setItems(rows.map { "${it.name} ${it.version} · ${it.pluginId}" }.toTypedArray()) { _, index ->
                     if (!isCurrent()) { renderStale(); return@setItems }
                     val selected = rows[index]
@@ -138,19 +138,19 @@ class PluginsActivity : AppCompatActivity() {
                         if (!isCurrent()) { renderStale(); return@launch }
                         if (planned !is ApiResult.Success) { message((planned as? ApiResult.Failure)?.error?.pluginMessage ?: "Link plan unavailable"); return@launch }
                         val plan = planned.value.plan
-                        AlertDialog.Builder(this@PluginsActivity).setTitle("Review plugin link")
+                        AlertDialog.Builder(this@PluginsActivity).setTitle(R.string.plugin_review_link)
                             .setMessage("${plan.name} ${plan.version}\n${plan.effect}")
-                            .setNegativeButton(android.R.string.cancel, null).setPositiveButton("Link") { _, _ ->
+                            .setNegativeButton(android.R.string.cancel, null).setPositiveButton(R.string.plugin_link) { _, _ ->
                                     if (!isCurrent() || !repository.isCurrent(actorAtPlan)) { renderStale(); return@setPositiveButton }
                                 lifecycleScope.launch {
                                     val requestId = UUID.randomUUID().toString()
-                                    if (!session.track(requestId, PluginReceiptKind.OWNER_OPERATION)) { message("Could not durably retain an operation receipt ID. No link was sent."); return@launch }
+                                    if (!session.track(requestId, PluginReceiptKind.OWNER_OPERATION)) { message(getString(R.string.plugin_receipt_retain_failed, getString(R.string.plugin_link_operation))); return@launch }
                                     if (!isCurrent() || !repository.isCurrent(actorAtPlan)) { renderStale(); return@launch }
                                         val applied = repository.applyHostPluginLink(HostPluginLinkRequest(requestId, plan.token), session.scope, actorAtPlan)
                                     if (!isCurrent()) { renderStale(); return@launch }
                                     if (applied is ApiResult.Success && applied.value.operation.state == "succeeded") {
                                         session.reconcile(requestId)
-                                        message("Link succeeded.")
+                                        message(getString(R.string.plugin_link_succeeded))
                                         load()
                                     } else retainForReceipt(requestId, if (applied is ApiResult.Success) "Link ${applied.value.operation.state}" else "Link result is not confirmed.")
                                 }
@@ -162,14 +162,14 @@ class PluginsActivity : AppCompatActivity() {
 
     private fun retainForReceipt(requestId: String, status: String) {
         content.removeAllViews(); message("$status Check this receipt before taking any further action.")
-        button("Check receipt $requestId") { checkReceipt(requestId) }
+        button(getString(R.string.plugin_check_receipt, requestId)) { checkReceipt(requestId) }
     }
 
     private fun renderPendingReceipts() {
         if (session.receiptContext(repository) != null) {
-            session.pendingReceipts.keys.forEach { requestId -> button("Check receipt $requestId") { checkReceipt(requestId) } }
+            session.pendingReceipts.keys.forEach { requestId -> button(getString(R.string.plugin_check_receipt, requestId)) { checkReceipt(requestId) } }
         } else if (session.pendingReceipts.isNotEmpty()) {
-            message("No matching current paired profile is available for receipt reads. Unresolved operation IDs: ${session.pendingReceipts.keys.joinToString()}. No plugin write was replayed.")
+            message(getString(R.string.plugin_receipt_profile_unavailable, session.pendingReceipts.keys.joinToString()))
         }
     }
 
@@ -183,9 +183,9 @@ class PluginsActivity : AppCompatActivity() {
                     val status = receipt
                     if (status.state == "succeeded" || status.state == "refused") session.reconcile(requestId)
                     content.removeAllViews()
-                    message("Plugin operation receipt: ${status.state}${status.code?.let { " · $it" }.orEmpty()}")
-                    if (status.state == "running" || status.state == "pending" || status.state == "unknown") button("Check receipt $requestId") { checkReceipt(requestId) }
-                    button("Refresh plugins") { load() }
+                    message(if (status.code == null) getString(R.string.plugin_operation_receipt, status.state) else getString(R.string.plugin_operation_receipt_code, status.state, status.code))
+                    if (status.state == "running" || status.state == "pending" || status.state == "unknown") button(getString(R.string.plugin_check_receipt, requestId)) { checkReceipt(requestId) }
+                    button(getString(R.string.plugin_refresh_plugins)) { load() }
                 }
                 is PluginReceiptRead.Failure -> retainForReceipt(requestId, receipt.message ?: "Receipt remains unavailable.")
                 PluginReceiptRead.NotModified -> retainForReceipt(requestId, "Receipt remains unavailable.")

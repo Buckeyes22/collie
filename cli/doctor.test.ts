@@ -406,6 +406,7 @@ describe("collie doctor — the contract", () => {
       "integration-grok",
       "integration-hermes",
       "integration-muse",
+      "integration-openclaw",
       "integration-opencode",
       "integration-pi",
       "integration-omp",
@@ -1477,7 +1478,7 @@ describe("mux", () => {
     const finding = byCheck.get("mux")!;
     expect(finding.status).toBe("error");
     expect(finding.detail).toContain("no multiplexers are running");
-    expect(finding.remedy).toContain("COLLIE_MUX=<herdr|tern|tmux|tuios|zellij> collie start");
+    expect(finding.remedy).toContain("COLLIE_MUX=<durable|herdr|tern|tmux|tuios|zellij> collie start");
   });
 
   test("nothing configured and two multiplexers running is an error naming both", async () => {
@@ -2416,10 +2417,10 @@ describe("POSIX parity (M43 spec 04)", () => {
     ),
   });
 
-  // The golden was written by this same block run before spec 04, then gained the integration-omp row from main (the
+  // The golden was written by this same block run before spec 04, then gained the integration-omp and official v1.21 OpenClaw rows (the
   // healthy solo fixture, then a config.toml secret the mode rule could not tighten). The
   // `secrets-private` line is Windows-only: on a POSIX host it does not exist at all.
-  test("the plain doctor output on a POSIX host is byte-identical to the one before spec 04", async () => {
+  test("the plain doctor output matches the retained POSIX contract plus official v1.21 additions", async () => {
     const out = `${await render()}---\n${await render(blocked())}`;
     const golden = readFileSync(GOLDEN, "utf8");
     // Paths in the output are joined with the machine's own separator, so the byte comparison runs

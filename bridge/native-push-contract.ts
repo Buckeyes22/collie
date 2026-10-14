@@ -1,4 +1,4 @@
-// Prepared wire contract only. No provider, registration route or delivery service is enabled.
+// Shared native payload contract, delivered through the operator-configured UnifiedPush provider.
 import type { JsonObject, JsonValue } from "./json.ts";
 import { jsonNumberField, jsonRecord, jsonStringField } from "./stt/json.ts";
 export interface NativePushTarget {

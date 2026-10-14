@@ -47,13 +47,17 @@ interface Closure {
 }
 
 function staticClosure(entry: string): Closure {
-  const transpiler = new Bun.Transpiler({ loader: "tsx" });
+  const typescript = new Bun.Transpiler({ loader: "ts" });
+  const jsx = new Bun.Transpiler({ loader: "tsx" });
   const files = new Set<string>();
   const packages = new Set<string>();
   const unresolved = new Set<string>();
   const walk = (file: string): void => {
     if (files.has(file)) return;
     files.add(file);
+    // Parse ordinary TypeScript as TS: generic arrows such as async <T>(...) are
+    // valid there and ambiguous under the JSX grammar. Keep actual TSX edges in TSX.
+    const transpiler = file.endsWith(".tsx") ? jsx : typescript;
     for (const imported of transpiler.scanImports(readFileSync(file, "utf8"))) {
       // `scanImports` reports dynamic imports too; only the static ones cost a resolution at load.
       if (imported.kind !== "import-statement") continue;

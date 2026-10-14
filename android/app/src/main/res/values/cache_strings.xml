@@ -59,7 +59,7 @@
     <string name="cache_watch_device_preference">This watch is stored on the lead and affects subscribed bridge notification clients.</string>
     <string name="cache_watch_threshold">Bridge warning threshold: %1$s before expiry.</string>
     <string name="cache_watch_threshold_unknown">The bridge did not supply a warning threshold.</string>
-    <string name="cache_delivery_limit">Native background cache notifications are not available in this app. This preference does not enable delivery to this phone.</string>
+    <string name="cache_delivery_limit">To receive cache alerts on this phone, enroll in Native notifications and allow Android notifications. The server must also enable cache alerts or watch this eligible pane.</string>
     <string name="cache_no_billing_estimate">Cache timing is not a billing estimate.</string>
     <string name="cache_not_connected">Connect to the configured Collie server, then refresh.</string>
     <string name="cache_unsupported">This server does not provide cache-watch controls.</string>

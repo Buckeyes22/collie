@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="android_updates_title">Android app updates</string>
+    <string name="android_updates_back">Back to Settings</string>
+    <string name="android_updates_description">Check the public Collie release feed for a signed Android app update. This is separate from updates for your connected server.</string>
+    <string name="android_updates_status">Android app update status</string>
+    <string name="android_updates_progress">Download progress</string>
+    <string name="android_updates_check">Check for updates</string>
+    <string name="android_updates_download">Download verified update</string>
+    <string name="android_updates_install">Continue to system installer</string>
+    <string name="android_updates_cancel">Cancel download</string>
+    <string name="android_updates_idle">Check the public release feed when you are ready.</string>
+    <string name="android_updates_checking">Checking signed public releases…</string>
+    <string name="android_updates_available">Installed version code: %1$d\nNew version: %2$s (%3$d bytes)\nSource: %4$s\nRelease notes:\n%5$s</string>
+    <string name="android_updates_current">This app is up to date.</string>
+    <string name="android_updates_network_error">The public release feed could not be reached. Try again later.</string>
+    <string name="android_updates_invalid_release">The release metadata or APK failed verification. No package was opened.</string>
+    <string name="android_updates_no_release">No compatible stable Android release is available.</string>
+    <string name="android_updates_storage_error">There is not enough free storage to stage this update.</string>
+    <string name="android_updates_preparing">Preparing a verified download…</string>
+    <string name="android_updates_downloading">Downloaded %1$d of %2$d bytes.</string>
+    <string name="android_updates_ready">The APK bytes and installed app identity were verified. Review and continue to the system installer when ready.</string>
+    <string name="android_updates_download_failed">The update could not be downloaded or verified. You can try again.</string>
+    <string name="android_updates_staged_file_missing">Android removed the staged APK. Check for updates and download it again.</string>
+    <string name="android_updates_cancel_requested">Download cancellation requested.</string>
+    <string name="android_updates_confirm_title">Open Android package installer?</string>
+    <string name="android_updates_confirm_message">Collie will recheck the signed release and APK, then hand it to Android. Android shows the package details and requires your confirmation to install.</string>
+    <string name="android_updates_verifying">Rechecking release and APK before opening Android…</string>
+    <string name="android_updates_permission">Allow Collie to request package installation in Android settings, then return and press Install again.</string>
+    <string name="android_updates_installer_opened">Android package installer opened. Review its details and confirm there to install.</string>
+    <string name="android_updates_installer_missing">Android could not open a package installer. Check for updates and download again before a new deliberate install attempt.</string>
+    <string name="android_updates_installed">Android reports that the expected package version and signer are installed.</string>
+    <string name="android_updates_install_canceled">The package installer was canceled. No automatic retry was started.</string>
+    <string name="android_updates_install_refused">Collie could not durably authorize this installer handoff.</string>
+    <string name="android_updates_install_unknown">The installer result is unknown. Collie will not retry automatically; check the installed version and signer before starting another update.</string>
+    <string name="android_updates_offer_changed">The verified release changed since this offer. Check again and review the current release before downloading.</string>
+    <string name="android_updates_manual_verified">The APK was verified. This distribution does not offer installation. Use the official release source shown above and your distribution’s manual upgrade instructions.</string>
+    <string name="android_updates_offer_available">A verified release is available. Review its details before downloading.</string>
+    <string name="android_updates_installer_confirmation_ready">Android is ready. Continue to its confirmation screen to review and install this update.</string>
+    <string name="android_updates_preparing_installer">Waiting for Android package installer…</string>
+    <string name="android_updates_cancel_install">Cancel pending installation</string>
+    <string name="android_updates_release_page">View Android releases</string>
+    <string name="android_updates_browser_missing">Android could not find an app to open the official release page.</string>
+</resources>

@@ -49,10 +49,11 @@ data class StartTarget(
     val harness: String? = null,
     val command: String? = null,
     val shell: Boolean? = null,
+    val starter: String? = null,
 ) {
     init {
-        require(listOf(harness, command, shell?.takeIf { it }).count { it != null } == 1)
-        require(harness?.isNotBlank() != false && command?.isNotBlank() != false)
+        require(listOf(harness, command, shell?.takeIf { it }, starter).count { it != null } == 1)
+        require(harness?.isNotBlank() != false && command?.isNotBlank() != false && starter?.isNotBlank() != false)
     }
 }
 
@@ -168,6 +169,7 @@ internal data class StartLaunchRequest(
     val harness: String? = null,
     val command: String? = null,
     val shell: Boolean? = null,
+    val starter: String? = null,
 )
 
 @Serializable
@@ -248,6 +250,10 @@ data class WorktreePlanResponse(
 data class ChatAfter(val gen: Long, val rev: Long)
 data class ChatBefore(val seq: Long, val uuid: String)
 
+/** The operator prompt in the live window; absent means unknown, not an inferred turn. */
+@Serializable
+data class ChatPrompt(val uuid: String, val ts: String, val text: String, val truncated: Boolean = false)
+
 @Serializable
 data class PaneChatResponse(
     val paneId: String,
@@ -266,6 +272,7 @@ data class PaneChatResponse(
     val queuedSendOccupant: String? = null,
     /** Digest of the ordered queue, computed by the owner; no queued text is repeated on writes. */
     val queuedDigest: String? = null,
+    val lastPrompt: ChatPrompt? = null,
 )
 
 /** Server-issued binding for one guarded queue action; deliberately contains no queued message text. */
@@ -281,3 +288,16 @@ data class QueuedSendGuard(
     @SerialName("queue_digest") val queueDigest: String,
     val occupant: String,
 )
+
+@Serializable
+data class StandbyHealthResponse(val state: String, val silentForMs: Long? = null, val version: String? = null, val build: String? = null) {
+    fun valid(status: Int): Boolean = when (state) {
+        "leading" -> status == 200 && silentForMs == null
+        "armed" -> status == 200 && silentForMs != null && silentForMs >= 0 && !version.isNullOrBlank() && !build.isNullOrBlank()
+        "cold" -> status == 503 && silentForMs == null && !version.isNullOrBlank() && !build.isNullOrBlank()
+        else -> false
+    }
+}
+
+@Serializable
+data class TakeoverResponse(val ok: Boolean, val message: String)

@@ -76,6 +76,7 @@ web/e2e/.builds/
 android/.gradle/
 android/.kotlin/
 android/**/build/
+android/**/.cxx/
 android/local.properties
 .superpowers/
 

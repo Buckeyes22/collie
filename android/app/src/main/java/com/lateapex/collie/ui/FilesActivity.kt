@@ -236,7 +236,7 @@ class FilesActivity : AppCompatActivity() {
     private fun buildContent() {
         setContentView(R.layout.activity_files)
         window.prepareEdgeToEdgeContent()
-        window.applySafeContentInsets(findViewById(R.id.files_list))
+        window.applySafeContentInsets(findViewById(R.id.files_root))
         fileTitle = findViewById(R.id.files_title)
         breadcrumb = findViewById(R.id.files_breadcrumb)
         listingControls = findViewById(R.id.files_listing_controls)

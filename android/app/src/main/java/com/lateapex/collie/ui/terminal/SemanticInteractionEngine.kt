@@ -1,6 +1,7 @@
 package com.lateapex.collie.ui.terminal
 
 import kotlinx.coroutines.delay
+import com.lateapex.collie.network.PromptColumns
 
 data class SemanticPane(val text: String, val revision: Long)
 
@@ -8,6 +9,10 @@ enum class SemanticWriteOutcome { OK, CHANGED, FAILED }
 enum class SemanticInteractionResult { SENT, CHANGED, FAILED }
 
 interface SemanticInteractionTransport {
+    suspend fun keys(keys: List<String>, expectedPrompt: String?, expectedColumns: PromptColumns?): SemanticWriteOutcome =
+        if (expectedColumns == null) keys(keys, expectedPrompt) else SemanticWriteOutcome.CHANGED
+    suspend fun reply(text: String, submit: Boolean, expectedPrompt: String?, expectedColumns: PromptColumns?): SemanticWriteOutcome =
+        if (expectedColumns == null) reply(text, submit, expectedPrompt) else SemanticWriteOutcome.CHANGED
     suspend fun read(): SemanticPane?
     suspend fun keys(keys: List<String>, expectedPrompt: String?): SemanticWriteOutcome
     suspend fun reply(text: String, submit: Boolean, expectedPrompt: String?): SemanticWriteOutcome
@@ -42,7 +47,7 @@ class SemanticInteractionEngine(
         if (action !in displayed.actions) return SemanticInteractionResult.CHANGED
         val verified = fresh.actions.singleOrNull { it.id == action.id && it.keys == action.keys }
             ?: return SemanticInteractionResult.CHANGED
-        return transport.keys(verified.keys, fresh.regionSignature).asResult()
+        return transport.keys(verified.keys, fresh.regionSignature, fresh.expectedColumns).asResult()
     }
 
     private suspend fun pointerSelect(
@@ -79,7 +84,7 @@ class SemanticInteractionEngine(
             }
         }
         if (expectedArrows.isNotEmpty()) {
-            transport.keys(expectedArrows, fresh.regionSignature).takeUnless { it == SemanticWriteOutcome.OK }
+            transport.keys(expectedArrows, fresh.regionSignature, fresh.expectedColumns).takeUnless { it == SemanticWriteOutcome.OK }
                 ?.let { return it.asResult() }
         }
         val selected = if (expectedArrows.isEmpty()) fresh else poll(agent, prompt) { model ->
@@ -94,7 +99,7 @@ class SemanticInteractionEngine(
         if (selected.actions.none { it.id == verified.id && it.keys == listOf("Enter") }) {
             return SemanticInteractionResult.CHANGED
         }
-        return transport.keys(listOf("Enter"), selected.regionSignature).asResult()
+        return transport.keys(listOf("Enter"), selected.regionSignature, selected.expectedColumns).asResult()
     }
 
     private suspend fun promptFeedback(
@@ -111,20 +116,20 @@ class SemanticInteractionEngine(
         }
         if (original.family == "omp-select") {
             if (text.any { it == '\n' || it == '\r' }) return SemanticInteractionResult.CHANGED
-            transport.keys(listOf("n"), fresh.regionSignature).takeUnless { it == SemanticWriteOutcome.OK }
+            transport.keys(listOf("n"), fresh.regionSignature, fresh.expectedColumns).takeUnless { it == SemanticWriteOutcome.OK }
                 ?.let { return it.asResult() }
             val editor = pollOmpNote(original, requireText = null) ?: return SemanticInteractionResult.CHANGED
             val editorModel = editor.nativeModel as? NativeSemanticModel.Prompt ?: return SemanticInteractionResult.CHANGED
             if (editorModel.feedback?.text.orEmpty().isNotEmpty()) return SemanticInteractionResult.CHANGED
-            transport.reply(text, submit = false, expectedPrompt = editor.regionSignature)
+            transport.reply(text, submit = false, expectedPrompt = editor.regionSignature, expectedColumns = editor.expectedColumns)
                 .takeUnless { it == SemanticWriteOutcome.OK }?.let { return it.asResult() }
             val typed = pollOmpNote(original, requireText = text) ?: return SemanticInteractionResult.CHANGED
             val current = typed.nativeModel as? NativeSemanticModel.Prompt ?: return SemanticInteractionResult.CHANGED
             if (current.feedback?.text != text) return SemanticInteractionResult.CHANGED
             // The captured editor explicitly advertises Enter (as well as Ctrl+Q) for submit.
-            return transport.keys(listOf("Enter"), typed.regionSignature).asResult()
+            return transport.keys(listOf("Enter"), typed.regionSignature, typed.expectedColumns).asResult()
         }
-        transport.keys(listOf(intent.key), fresh.regionSignature).takeUnless { it == SemanticWriteOutcome.OK }
+        transport.keys(listOf(intent.key), fresh.regionSignature, fresh.expectedColumns).takeUnless { it == SemanticWriteOutcome.OK }
             ?.let { return it.asResult() }
         // Focus is not sufficient: another terminal user may have typed into the field during the
         // focus round-trip. Claude restores this input at position zero, so appending our reply and
@@ -134,7 +139,7 @@ class SemanticInteractionEngine(
             (it as? NativeSemanticModel.Prompt)?.feedback?.let { row -> row.focused && row.text.isEmpty() } == true
         }
             ?: return SemanticInteractionResult.CHANGED
-        transport.reply(text, submit = false, expectedPrompt = focused.regionSignature)
+        transport.reply(text, submit = false, expectedPrompt = focused.regionSignature, expectedColumns = focused.expectedColumns)
             .takeUnless { it == SemanticWriteOutcome.OK }?.let { return it.asResult() }
         val typed = poll(agent, original) {
             val value = (it as? NativeSemanticModel.Prompt)?.feedback
@@ -142,7 +147,7 @@ class SemanticInteractionEngine(
             // before the irreversible Enter rather than accepting a visible suffix.
             value?.focused == true && value.text == text
         } ?: return SemanticInteractionResult.CHANGED
-        return transport.keys(listOf("Enter"), typed.regionSignature).asResult()
+        return transport.keys(listOf("Enter"), typed.regionSignature, typed.expectedColumns).asResult()
     }
 
     private suspend fun pollOmpNote(original: NativeSemanticModel.Prompt, requireText: String?): SemanticSurface? {
@@ -169,12 +174,12 @@ class SemanticInteractionEngine(
         if (original.family != "omp-note-editor" || !feedback.focused || feedback.text.isNotEmpty() ||
             text.isBlank() || text.any { it == '\n' || it == '\r' }
         ) return SemanticInteractionResult.CHANGED
-        transport.reply(text, submit = false, expectedPrompt = fresh.regionSignature)
+        transport.reply(text, submit = false, expectedPrompt = fresh.regionSignature, expectedColumns = fresh.expectedColumns)
             .takeUnless { it == SemanticWriteOutcome.OK }?.let { return it.asResult() }
         val typed = pollOmpNote(original, requireText = text) ?: return SemanticInteractionResult.CHANGED
         val current = typed.nativeModel as? NativeSemanticModel.Prompt ?: return SemanticInteractionResult.CHANGED
         if (current.feedback?.text != text) return SemanticInteractionResult.CHANGED
-        return transport.keys(listOf("Enter"), typed.regionSignature).asResult()
+        return transport.keys(listOf("Enter"), typed.regionSignature, typed.expectedColumns).asResult()
     }
 
     /** Muse digits move the checkbox pointer; require a same-question read-back before Enter. */
@@ -198,7 +203,7 @@ class SemanticInteractionEngine(
             ?: return SemanticInteractionResult.CHANGED
         if (verifiedAction.keys != listOf(number.toString(), "Enter")) return SemanticInteractionResult.CHANGED
         if (current.pointerOptionNumber != number) {
-            transport.keys(listOf(number.toString()), fresh.regionSignature)
+            transport.keys(listOf(number.toString()), fresh.regionSignature, fresh.expectedColumns)
                 .takeUnless { it == SemanticWriteOutcome.OK }?.let { return it.asResult() }
         }
         val pointed = if (current.pointerOptionNumber == number) fresh else
@@ -212,7 +217,7 @@ class SemanticInteractionEngine(
             pointedModel.options.singleOrNull { it.number == number }?.checked != checkedBefore ||
             pointed.actions.none { it.id == action.id && it.keys == listOf("Enter") }
         ) return SemanticInteractionResult.CHANGED
-        transport.keys(listOf("Enter"), pointed.regionSignature)
+        transport.keys(listOf("Enter"), pointed.regionSignature, pointed.expectedColumns)
             .takeUnless { it == SemanticWriteOutcome.OK }?.let { return it.asResult() }
 
         // The toggle is reversible but an uncertain response must not become an automatic second
@@ -257,7 +262,7 @@ class SemanticInteractionEngine(
         val verified = fresh.actions.singleOrNull { it.id == action.id } ?: return SemanticInteractionResult.CHANGED
         if (verified.keys != arrows + "Space") return SemanticInteractionResult.CHANGED
         if (arrows.isNotEmpty()) {
-            transport.keys(arrows, fresh.regionSignature).takeUnless { it == SemanticWriteOutcome.OK }
+            transport.keys(arrows, fresh.regionSignature, fresh.expectedColumns).takeUnless { it == SemanticWriteOutcome.OK }
                 ?.let { return it.asResult() }
         }
         val pointed = if (arrows.isEmpty()) fresh else pollOmpMulti(agent, original, number, before, expectChanged = false)
@@ -267,7 +272,7 @@ class SemanticInteractionEngine(
             pointedModel.options.map { it.checked } != before.map { it as Boolean? } ||
             pointed.actions.singleOrNull { it.id == action.id }?.keys != listOf("Space")
         ) return SemanticInteractionResult.CHANGED
-        transport.keys(listOf("Space"), pointed.regionSignature).takeUnless { it == SemanticWriteOutcome.OK }
+        transport.keys(listOf("Space"), pointed.regionSignature, pointed.expectedColumns).takeUnless { it == SemanticWriteOutcome.OK }
             ?.let { return it.asResult() }
         return if (pollOmpMulti(agent, original, number, before, expectChanged = true) != null) {
             SemanticInteractionResult.SENT
@@ -315,7 +320,7 @@ class SemanticInteractionEngine(
 
         val pointed = if (current.reviewPointerId == action.id) fresh else {
             val direction = verified.keys.dropLast(1).singleOrNull() ?: return SemanticInteractionResult.CHANGED
-            transport.keys(listOf(direction), fresh.regionSignature)
+            transport.keys(listOf(direction), fresh.regionSignature, fresh.expectedColumns)
                 .takeUnless { it == SemanticWriteOutcome.OK }?.let { return it.asResult() }
             poll(agent, original) { model ->
                 (model as? NativeSemanticModel.Multi)?.let { it.review && it.reviewPointerId == action.id } == true
@@ -325,7 +330,7 @@ class SemanticInteractionEngine(
         if (!pointedModel.review || pointedModel.reviewPointerId != action.id ||
             pointed.actions.none { it.id == action.id && it.keys == listOf("Enter") }
         ) return SemanticInteractionResult.CHANGED
-        return transport.keys(listOf("Enter"), pointed.regionSignature).asResult()
+        return transport.keys(listOf("Enter"), pointed.regionSignature, pointed.expectedColumns).asResult()
     }
 
     private suspend fun previewOption(
@@ -338,12 +343,12 @@ class SemanticInteractionEngine(
         if (original.note.state == NoteState.EDITING || original.options.none { it.number == number }) {
             return SemanticInteractionResult.CHANGED
         }
-        transport.keys(listOf(number.toString()), fresh.regionSignature).takeUnless { it == SemanticWriteOutcome.OK }
+        transport.keys(listOf(number.toString()), fresh.regionSignature, fresh.expectedColumns).takeUnless { it == SemanticWriteOutcome.OK }
             ?.let { return it.asResult() }
         val pointed = poll(agent, original) { model ->
             (model as? NativeSemanticModel.Preview)?.options?.any { it.number == number && it.pointed } == true
         } ?: return SemanticInteractionResult.CHANGED
-        return transport.keys(listOf("Enter"), pointed.regionSignature).asResult()
+        return transport.keys(listOf("Enter"), pointed.regionSignature, pointed.expectedColumns).asResult()
     }
 
     private suspend fun previewNote(
@@ -357,13 +362,13 @@ class SemanticInteractionEngine(
             return SemanticInteractionResult.CHANGED
         }
         val text = intent.text.trim().take(MAX_NOTE_LENGTH)
-        transport.keys(listOf("n"), fresh.regionSignature).takeUnless { it == SemanticWriteOutcome.OK }
+        transport.keys(listOf("n"), fresh.regionSignature, fresh.expectedColumns).takeUnless { it == SemanticWriteOutcome.OK }
             ?.let { return it.asResult() }
         var editing = poll(agent, original) { (it as? NativeSemanticModel.Preview)?.note?.state == NoteState.EDITING }
             ?: return SemanticInteractionResult.CHANGED
         if (intent.replacing) {
             val clear = listOf("ctrl+k") + List(MAX_NOTE_LENGTH + 20) { "Backspace" }
-            transport.keys(clear, editing.regionSignature).takeUnless { it == SemanticWriteOutcome.OK }
+            transport.keys(clear, editing.regionSignature, editing.expectedColumns).takeUnless { it == SemanticWriteOutcome.OK }
                 ?.let { return it.asResult() }
             editing = poll(agent, original) {
                 val note = (it as? NativeSemanticModel.Preview)?.note
@@ -371,7 +376,7 @@ class SemanticInteractionEngine(
             } ?: return SemanticInteractionResult.CHANGED
         }
         if (text.isNotEmpty()) {
-            transport.reply(text, submit = false, expectedPrompt = editing.regionSignature)
+            transport.reply(text, submit = false, expectedPrompt = editing.regionSignature, expectedColumns = editing.expectedColumns)
                 .takeUnless { it == SemanticWriteOutcome.OK }?.let { return it.asResult() }
             editing = poll(agent, original) {
                 val note = (it as? NativeSemanticModel.Preview)?.note
@@ -379,7 +384,7 @@ class SemanticInteractionEngine(
             } ?: return SemanticInteractionResult.CHANGED
         }
         repeat(2) {
-            transport.keys(listOf("Escape"), editing.regionSignature).takeUnless { it == SemanticWriteOutcome.OK }
+            transport.keys(listOf("Escape"), editing.regionSignature, editing.expectedColumns).takeUnless { it == SemanticWriteOutcome.OK }
                 ?.let { return it.asResult() }
             val blurred = poll(agent, original, attempts = 4) {
                 (it as? NativeSemanticModel.Preview)?.note?.state != NoteState.EDITING
@@ -408,7 +413,7 @@ class SemanticInteractionEngine(
                 fresh.detail != "omp-multi" || freshModel.options.map { it.number to (it.label to it.checked) } !=
                 original.options.map { it.number to (it.label to it.checked) }
             ) return SemanticInteractionResult.CHANGED
-            return transport.keys(listOf("Enter"), fresh.regionSignature).asResult()
+            return transport.keys(listOf("Enter"), fresh.regionSignature, fresh.expectedColumns).asResult()
         }
         var current: SemanticSurface? = fresh
         repeat(original.options.size + 6) {
@@ -423,7 +428,7 @@ class SemanticInteractionEngine(
             if (!sameIdentity(original, model)) return SemanticInteractionResult.CHANGED
             val keys = if (model.pointer == MultiPointer.ADVANCE) listOf("Enter")
             else listOf(if (model.pointer == MultiPointer.CHAT) "Up" else "Down")
-            val outcome = transport.keys(keys, observed.regionSignature)
+            val outcome = transport.keys(keys, observed.regionSignature, observed.expectedColumns)
             if (outcome != SemanticWriteOutcome.OK) return outcome.asResult()
             if (keys.single() == "Enter") return SemanticInteractionResult.SENT
             current = null
@@ -436,9 +441,9 @@ class SemanticInteractionEngine(
 
     private suspend fun strictFresh(agent: String?, displayed: SemanticSurface): SemanticSurface? {
         val pane = transport.read() ?: return null
-        if (pane.revision != displayed.revision) return null
+        if (pane.revision != displayed.revision && displayed.expectedColumns == null) return null
         val fresh = AgentSemanticParser.detect(agent, pane.text, pane.revision) ?: return null
-        if (fresh.kind != displayed.kind || fresh.regionSignature != displayed.regionSignature || fresh.interactionLocked) return null
+        if (fresh.kind != displayed.kind || fresh.regionSignature != displayed.regionSignature || fresh.expectedColumns != displayed.expectedColumns || fresh.interactionLocked) return null
         return fresh
     }
 

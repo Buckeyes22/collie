@@ -16,6 +16,18 @@ import com.lateapex.collie.BuildConfig
 import com.lateapex.collie.CollieApplication
 import com.lateapex.collie.R
 import com.lateapex.collie.data.EncryptedConnectionStore
+import com.lateapex.collie.data.CollieRepository
+import com.lateapex.collie.data.ConnectionStore
+import com.lateapex.collie.domain.Scope
+import com.lateapex.collie.network.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.setMain
+import kotlinx.coroutines.test.resetMain
 import com.lateapex.collie.domain.CollieOrigin
 import com.lateapex.collie.domain.Connection
 import org.junit.After
@@ -301,45 +313,97 @@ class SettingsActivityTest {
 
     @Test
     fun freshInstallHasNoPrivateOriginAndIgnoresUnconfiguredDeepLinks() {
-        val activity = Robolectric.buildActivity(
+        val app = context.applicationContext as CollieApplication
+        val deadline = System.nanoTime() + 1_000_000_000L
+        while (app.container.connectionStore.connection.value != null && System.nanoTime() < deadline) {
+            shadowOf(android.os.Looper.getMainLooper()).idle(); Thread.yield()
+        }
+        assertNull(app.container.connectionStore.connection.value)
+        val ordinary = Robolectric.buildActivity(MainActivity::class.java).create()
+        assertEquals("", ordinary.get().findViewById<android.widget.EditText>(R.id.origin_input).text.toString())
+        ordinary.destroy()
+        val before = app.container.connectionStore.captureCommitted()
+        val controller = Robolectric.buildActivity(
             MainActivity::class.java,
             Intent(context, MainActivity::class.java)
-                .setData(Uri.parse("https://collie.example.com/settings?pair=AB12-CD34")),
-        ).create().get()
-
-        assertEquals("", activity.findViewById<android.widget.EditText>(R.id.origin_input).text.toString())
+                .setData(Uri.parse("https://collie.example.com/pane/w1:p1/history")),
+        ).create()
+        val activity = controller.get()
+        assertNull(activity.intent.data)
         assertNull(shadowOf(activity).nextStartedActivity)
+        assertTrue(activity.isFinishing)
+        assertEquals("An unpaired protected link must not configure a private server", before, app.container.connectionStore.captureCommitted())
+        controller.destroy()
     }
 
     @Test
     fun settingsDeepLinkRejectsAnotherServerAfterConnectionIsConfigured() {
         seedConnection(paired = false)
-        val activity = Robolectric.buildActivity(
+        val app = context.applicationContext as CollieApplication
+        val original = requireNotNull(app.container.connectionStore.captureCommitted()?.connection)
+        val deadline = System.nanoTime() + 1_000_000_000L
+        while (app.container.connectionStore.connection.value !== original && System.nanoTime() < deadline) {
+            shadowOf(android.os.Looper.getMainLooper()).idle(); Thread.yield()
+        }
+        assertTrue(app.container.connectionStore.connection.value === original)
+        val before = app.container.connectionStore.captureCommitted()
+        val controller = Robolectric.buildActivity(
             MainActivity::class.java,
             Intent(context, MainActivity::class.java)
-                .setData(Uri.parse("https://other.example.com/settings?pair=AB12-CD34")),
-        ).create().get()
-
+                .setData(Uri.parse("https://other.example.com/settings?pair=ABCD-EF23")),
+        ).create()
+        val activity = controller.get()
+        assertNull(activity.intent.data)
         assertNull(shadowOf(activity).nextStartedActivity)
+        assertTrue(activity.isFinishing)
+        assertEquals("A foreign pairing link must preserve the existing configured owner", before, app.container.connectionStore.captureCommitted())
+        controller.destroy()
     }
 
     @Test
     fun settingsDeepLinkPassesExplicitPairingEntryExtras() {
         seedConnection(paired = false)
+        val app = context.applicationContext as CollieApplication
+        val original = requireNotNull(app.container.connectionStore.captureCommitted()?.connection)
+        val deadline = System.nanoTime() + 1_000_000_000L
+        while (app.container.connectionStore.connection.value !== original && System.nanoTime() < deadline) {
+            shadowOf(android.os.Looper.getMainLooper()).idle(); Thread.yield()
+        }
+        assertTrue(app.container.connectionStore.connection.value === original)
+        val before = app.container.connectionStore.captureCommitted()
         val uri = Uri.parse("https://collie.example.com/").buildUpon()
             .path("/settings")
-            .appendQueryParameter("pair", "ab12-cd34")
+            .appendQueryParameter("pair", "abcd-ef23")
             .fragment("paired-devices")
             .build()
-        val activity = Robolectric.buildActivity(
+        val controller = Robolectric.buildActivity(
             MainActivity::class.java,
             Intent(context, MainActivity::class.java).setData(uri),
-        ).create().get()
-
-        val settings = shadowOf(activity).nextStartedActivity
+        ).create()
+        val activity = controller.get()
+        assertNull(activity.intent.data)
+        val previewIntent = requireNotNull(shadowOf(activity).nextStartedActivity)
+        assertEquals(LinkImportActivity::class.java.name, previewIntent.component?.className)
+        assertNull(previewIntent.data)
+        assertEquals(setOf(LinkImportHandoff.EXTRA_ID), previewIntent.extras!!.keySet())
+        val preview = Robolectric.buildActivity(LinkImportActivity::class.java, previewIntent).create().start().resume()
+        assertFalse(preview.get().findViewById<android.widget.TextView>(R.id.link_import_status).text.contains("ABCD-EF23"))
+        assertNull(shadowOf(preview.get()).nextStartedActivity)
+        assertTrue(preview.get().findViewById<android.view.View>(R.id.link_import_continue).performClick())
+        val confirmedIntent = requireNotNull(shadowOf(preview.get()).nextStartedActivity)
+        assertNull(confirmedIntent.data)
+        assertEquals(setOf(LinkImportHandoff.EXTRA_ID), confirmedIntent.extras!!.keySet())
+        val confirmedMain = Robolectric.buildActivity(MainActivity::class.java, confirmedIntent).create()
+        val settings = requireNotNull(shadowOf(confirmedMain.get()).nextStartedActivity)
         assertEquals(SettingsActivity::class.java.name, settings.component?.className)
-        assertEquals("AB12-CD34", settings.getStringExtra(SettingsActivity.EXTRA_PAIR_CODE))
+        assertNull(settings.data)
+        assertFalse(settings.hasExtra(SettingsActivity.EXTRA_PAIR_CODE))
         assertTrue(settings.getBooleanExtra(SettingsActivity.EXTRA_FOCUS_DEVICES, false))
+        val imported = requireNotNull(LinkImportHandoff.consumeConfirmed(settings, app))
+        assertEquals("ABCD-EF23", (imported.candidate as LinkImportCoordinator.Candidate.Pairing).code)
+        assertNull(LinkImportHandoff.consumeConfirmed(settings, app))
+        assertEquals("Preview and Continue only fill a guarded pairing form; neither changes credentials", before, app.container.connectionStore.captureCommitted())
+        confirmedMain.destroy(); preview.pause().stop().destroy(); controller.destroy()
     }
 
     @Test
@@ -446,6 +510,216 @@ class SettingsActivityTest {
         assertEquals(View.VISIBLE, card.visibility)
         val host = activity.findViewById<LinearLayout>(R.id.settings_pairing_host)
         assertEquals(R.id.settings_parity_pairing_card, host.getChildAt(0).id)
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun operatorRowsAreReadmittedAfterActorRetirementWithoutConnectionOrScopeChange() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val original = Connection(CollieOrigin("https://collie.example.com/"), "phone", "fixture-pairing")
+        val store = object : ConnectionStore {
+            override val connection = MutableStateFlow<Connection?>(original)
+            override fun save(connection: Connection) { this.connection.value = connection }
+            override fun clear() { connection.value = null }
+        }
+        var rows = listOf(OperatorFontRow("Original Face", "original-face.woff2", "400"))
+        var configs = 0
+        var timestamp = 1L
+        val api = object : CollieApi by com.lateapex.collie.network.CollieApiClient(
+            okhttp3.OkHttpClient(), kotlinx.serialization.json.Json { ignoreUnknownKeys = true },
+        ) {
+            override suspend fun config(connection: Connection, scope: Scope): ApiResult<BridgeConfigResponse> {
+                configs++
+                return ApiResult.Success(BridgeConfigResponse(operatorFonts = rows), 200)
+            }
+            override suspend fun snapshot(connection: Connection, scope: Scope) = ApiResult.Success(
+                SnapshotResponse("connected", agents = emptyList(), shellPanes = emptyList(), workspaces = emptyList(), tabs = emptyList(), ts = timestamp++), 200,
+            )
+            override suspend fun health(connection: Connection) = ApiResult.Success(HealthResponse(true, "1.21.0", false, "solo"), 200)
+            override suspend fun devices(connection: Connection): ApiResult<DevicesResponse> = ApiResult.Failure(ApiFailure.Protocol("Not declared"))
+            override suspend fun notificationPreferences(connection: Connection): ApiResult<NotifyPreferences> = ApiResult.Failure(ApiFailure.Protocol("Not declared"))
+            override suspend fun cacheWatchList(connection: Connection): ApiResult<CacheWatchListResponse> = ApiResult.Failure(ApiFailure.Protocol("Not declared"))
+            override suspend fun updateState(connection: Connection): ApiResult<UpdateCheckResponse> = ApiResult.Failure(ApiFailure.Protocol("Not declared"))
+            override suspend fun crew(connection: Connection): ApiResult<CrewStatusResponse> = ApiResult.Failure(ApiFailure.Protocol("Not declared"))
+        }
+        val repository = CollieRepository(api, store, OriginValidator())
+        val controller = Robolectric.buildActivity(SettingsActivity::class.java).also { it.get().repositoryForTests = repository }
+        fun choices(): List<String> {
+            controller.get().findViewById<View>(R.id.settings_ui_typeface_value).performClick()
+            val dialog = requireNotNull(ShadowDialog.getLatestDialog())
+            fun text(view: View): List<String> = (if (view is TextView) listOf(view.text.toString()) else emptyList()) +
+                (if (view is ViewGroup) (0 until view.childCount).flatMap { text(view.getChildAt(it)) } else emptyList())
+            return text(dialog.window!!.decorView).also { dialog.dismiss() }
+        }
+        try {
+            controller.create().start().resume()
+            runCurrent()
+            assertTrue(choices().contains("Original Face"))
+            val admitted = requireNotNull(repository.readContext())
+            // A real shipped-font preference does not retire its actor or remove admitted rows.
+            controller.get().findViewById<View>(R.id.settings_ui_typeface_value).performClick()
+            val sheet = requireNotNull(ShadowDialog.getLatestDialog())
+            fun choose(view: View): Boolean {
+                val label = controller.get().getString(R.string.settings_ui_typeface_aldrich)
+                if (view is TextView && view.text.toString() in setOf(label, controller.get().getString(R.string.settings_parity_selected_choice, label))) return view.performClick()
+                return view is ViewGroup && (0 until view.childCount).any { choose(view.getChildAt(it)) }
+            }
+            assertTrue(choose(sheet.window!!.decorView)); runCurrent()
+            assertTrue(repository.isCurrent(admitted))
+            assertTrue(choices().contains("Original Face"))
+            val before = configs
+            rows = listOf(OperatorFontRow("Fresh Face", "fresh-face.woff2", "400"))
+            repository.proxyIdentityChanged()
+            runCurrent()
+            assertFalse(repository.isCurrent(admitted))
+            assertFalse(choices().contains("Original Face"))
+            // A newly admitted live read changes readSource without changing connection/scope.
+            repository.snapshot(); runCurrent()
+            assertTrue(configs > before)
+            assertTrue(choices().contains("Fresh Face"))
+            assertFalse(choices().contains("Original Face"))
+            val readmitted = configs
+            repository.snapshot(); runCurrent()
+            assertEquals("Ordinary same-actor snapshot ticks do not refetch the font catalog", readmitted, configs)
+            assertTrue(store.connection.value === original)
+            assertEquals(Scope(), repository.selectedScope.value)
+        } finally {
+            if (controller.get().lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) controller.pause().stop()
+            controller.destroy()
+            Dispatchers.resetMain()
+        }
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun anInitialUnadmittedFontCatalogRetriesAfterSettingsReadsSettleOnTheSameActor() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val original = Connection(CollieOrigin("https://collie.example.com/"), "phone", "fixture-pairing")
+        val store = object : ConnectionStore {
+            override val connection = MutableStateFlow<Connection?>(original)
+            override fun save(connection: Connection) { this.connection.value = connection }
+            override fun clear() { connection.value = null }
+        }
+        val health = kotlinx.coroutines.CompletableDeferred<Unit>()
+        var admitConfig = false
+        var configs = 0
+        val api = object : CollieApi by CollieApiClient(okhttp3.OkHttpClient(), kotlinx.serialization.json.Json { ignoreUnknownKeys = true }) {
+            override suspend fun config(connection: Connection, scope: Scope): ApiResult<BridgeConfigResponse> {
+                configs++
+                return if (admitConfig) ApiResult.Success(BridgeConfigResponse(operatorFonts = listOf(OperatorFontRow("Fresh Face", "fresh-face.woff2", "400"))), 200)
+                else ApiResult.Failure(ApiFailure.Protocol("Initial admission is temporarily unavailable"))
+            }
+            override suspend fun snapshot(connection: Connection, scope: Scope): ApiResult<SnapshotResponse> = ApiResult.Failure(ApiFailure.Protocol("Not declared"))
+            override suspend fun health(connection: Connection): ApiResult<HealthResponse> {
+                health.await()
+                return ApiResult.Success(HealthResponse(true, "1.21.0", false, "solo"), 200)
+            }
+            override suspend fun devices(connection: Connection): ApiResult<DevicesResponse> = ApiResult.Failure(ApiFailure.Protocol("Not declared"))
+            override suspend fun notificationPreferences(connection: Connection): ApiResult<NotifyPreferences> = ApiResult.Failure(ApiFailure.Protocol("Not declared"))
+            override suspend fun cacheWatchList(connection: Connection): ApiResult<CacheWatchListResponse> = ApiResult.Failure(ApiFailure.Protocol("Not declared"))
+            override suspend fun updateState(connection: Connection): ApiResult<UpdateCheckResponse> = ApiResult.Failure(ApiFailure.Protocol("Not declared"))
+            override suspend fun crew(connection: Connection): ApiResult<CrewStatusResponse> = ApiResult.Failure(ApiFailure.Protocol("Not declared"))
+        }
+        val repository = CollieRepository(api, store, OriginValidator())
+        val actor = requireNotNull(repository.readContext())
+        val controller = Robolectric.buildActivity(SettingsActivity::class.java).also { it.get().repositoryForTests = repository }
+        fun offered(): Boolean {
+            controller.get().findViewById<View>(R.id.settings_ui_typeface_value).performClick()
+            val dialog = requireNotNull(ShadowDialog.getLatestDialog())
+            fun contains(view: View): Boolean = view is TextView && view.text.toString() == "Fresh Face" ||
+                view is ViewGroup && (0 until view.childCount).any { contains(view.getChildAt(it)) }
+            return contains(dialog.window!!.decorView).also { dialog.dismiss() }
+        }
+        try {
+            controller.create().start().resume(); runCurrent()
+            assertTrue(configs > 0)
+            assertFalse(offered())
+            assertTrue(repository.isCurrent(actor))
+            assertTrue(repository.readSource.value is ReadSourceState.Unavailable)
+            val initialAttempts = configs
+            admitConfig = true
+            health.complete(Unit); runCurrent()
+            assertTrue("A completed Settings refresh must perform a new config read", configs > initialAttempts)
+            assertTrue("Only the newly admitted config may offer the real operator row", offered())
+            assertTrue(repository.isCurrent(actor))
+            assertTrue(repository.readSource.value is ReadSourceState.Unavailable)
+            assertTrue(store.connection.value === original)
+        } finally {
+            if (controller.get().lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) controller.pause().stop()
+            controller.destroy(); Dispatchers.resetMain()
+        }
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun aHeldRetryCannotPublishAnOperatorRowAfterSettingsStops() = runTest {
+        Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+        val original = Connection(CollieOrigin("https://collie.example.com/"), "phone", "fixture-pairing")
+        val store = object : ConnectionStore {
+            override val connection = MutableStateFlow<Connection?>(original)
+            override fun save(connection: Connection) { this.connection.value = connection }
+            override fun clear() { connection.value = null }
+        }
+        val health = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val retryResponse = kotlinx.coroutines.CompletableDeferred<Unit>()
+        var admitConfig = false
+        var configs = 0
+        val api = object : CollieApi by CollieApiClient(okhttp3.OkHttpClient(), kotlinx.serialization.json.Json { ignoreUnknownKeys = true }) {
+            override suspend fun config(connection: Connection, scope: Scope): ApiResult<BridgeConfigResponse> {
+                configs++
+                if (!admitConfig) return ApiResult.Failure(ApiFailure.Protocol("Initial admission is temporarily unavailable"))
+                // A held external read deliberately ignores cancellation until its response arrives.
+                kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) { retryResponse.await() }
+                return ApiResult.Success(BridgeConfigResponse(operatorFonts = listOf(OperatorFontRow("Fresh Face", "fresh-face.woff2", "400"))), 200)
+            }
+            override suspend fun snapshot(connection: Connection, scope: Scope): ApiResult<SnapshotResponse> = ApiResult.Failure(ApiFailure.Protocol("Not declared"))
+            override suspend fun health(connection: Connection): ApiResult<HealthResponse> {
+                health.await()
+                return ApiResult.Success(HealthResponse(true, "1.21.0", false, "solo"), 200)
+            }
+            override suspend fun devices(connection: Connection): ApiResult<DevicesResponse> = ApiResult.Failure(ApiFailure.Protocol("Not declared"))
+            override suspend fun notificationPreferences(connection: Connection): ApiResult<NotifyPreferences> = ApiResult.Failure(ApiFailure.Protocol("Not declared"))
+            override suspend fun cacheWatchList(connection: Connection): ApiResult<CacheWatchListResponse> = ApiResult.Failure(ApiFailure.Protocol("Not declared"))
+            override suspend fun updateState(connection: Connection): ApiResult<UpdateCheckResponse> = ApiResult.Failure(ApiFailure.Protocol("Not declared"))
+            override suspend fun crew(connection: Connection): ApiResult<CrewStatusResponse> = ApiResult.Failure(ApiFailure.Protocol("Not declared"))
+        }
+        val repository = CollieRepository(api, store, OriginValidator())
+        val actor = requireNotNull(repository.readContext())
+        val controller = Robolectric.buildActivity(SettingsActivity::class.java).also { it.get().repositoryForTests = repository }
+        fun offered(): Boolean {
+            controller.get().findViewById<View>(R.id.settings_ui_typeface_value).performClick()
+            val dialog = requireNotNull(ShadowDialog.getLatestDialog())
+            fun contains(view: View): Boolean = view is TextView && view.text.toString() == "Fresh Face" ||
+                view is ViewGroup && (0 until view.childCount).any { contains(view.getChildAt(it)) }
+            return contains(dialog.window!!.decorView).also { dialog.dismiss() }
+        }
+        try {
+            controller.create().start().resume(); runCurrent()
+            assertTrue(configs > 0)
+            assertFalse(offered())
+            assertTrue(repository.isCurrent(actor))
+            assertTrue(repository.readSource.value is ReadSourceState.Unavailable)
+            val initialAttempts = configs
+            admitConfig = true
+            health.complete(Unit); runCurrent()
+            assertTrue("The retry must actually dispatch before stop", configs > initialAttempts)
+            assertFalse("The held reply must not yet offer a row", offered())
+            controller.pause().stop()
+            retryResponse.complete(Unit); runCurrent()
+            assertTrue("Stopping Settings does not retire the profile's original actor", repository.isCurrent(actor))
+            admitConfig = false
+            controller.start().resume()
+            // Inspect the real picker before the restarted collector can admit another config.
+            assertFalse("A response received while stopped must not leak its row on resume", offered())
+            runCurrent()
+            assertFalse(offered())
+            assertTrue(store.connection.value === original)
+        } finally {
+            if (controller.get().lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) controller.pause().stop()
+            controller.destroy()
+            health.complete(Unit); retryResponse.complete(Unit); runCurrent()
+            Dispatchers.resetMain()
+        }
     }
 
     private fun launchSettings(paired: Boolean, devices: List<com.lateapex.collie.network.DeviceRecord> = emptyList()): SettingsActivity {

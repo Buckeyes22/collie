@@ -11,9 +11,11 @@ import androidx.annotation.IdRes
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.AppCompatImageView
 import androidx.core.content.ContextCompat
+import androidx.core.view.isVisible
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.materialswitch.MaterialSwitch
 import com.lateapex.collie.R
+import com.lateapex.collie.network.OperatorFontRow
 
 /** Builds the device-local cards in the same compact, flat stack as the web Settings route. */
 internal class SettingsLocalPreferences(
@@ -21,6 +23,14 @@ internal class SettingsLocalPreferences(
     private val preferences: NativePreferences,
 ) {
     private var handsFreeCard: View? = null
+    private var typefaceButton: MaterialButton? = null
+    private var typefaceStatus: TextView? = null
+    private var operatorFonts: List<OperatorFontRow> = emptyList()
+    private var operatorFontOwner: String? = null
+    private var operatorFontLoading = false
+    private var operatorFontError: String? = null
+    private var onOperatorTypefaceSelected: (OperatorFontRow) -> Unit = {}
+    private var onTypefaceSelectionInvalidated: () -> Unit = {}
 
     fun bindDisplay(parent: LinearLayout) {
         parent.removeAllViews()
@@ -72,6 +82,47 @@ internal class SettingsLocalPreferences(
         handsFreeCard?.visibility = if (available) View.VISIBLE else View.GONE
     }
 
+    fun setOnOperatorTypefaceSelected(listener: (OperatorFontRow) -> Unit) {
+        onOperatorTypefaceSelected = listener
+    }
+
+    fun setOnTypefaceSelectionInvalidated(listener: () -> Unit) {
+        onTypefaceSelectionInvalidated = listener
+    }
+
+    fun updateOperatorFonts(rows: List<OperatorFontRow>, ownerFingerprint: String?, loading: Boolean, error: String? = null) {
+        operatorFonts = rows.filter(OperatorFontRow::valid).distinctBy { it.basename }
+        operatorFontOwner = ownerFingerprint
+        operatorFontLoading = loading
+        operatorFontError = error
+        renderTypefaceSelection()
+    }
+
+    fun operatorFontLoading(family: String) {
+        operatorFontLoading = true
+        operatorFontError = null
+        typefaceStatus?.text = text(R.string.settings_ui_typeface_loading, family)
+        typefaceStatus?.isVisible = true
+    }
+
+    fun operatorFontLoaded() {
+        operatorFontLoading = false
+        operatorFontError = null
+        renderTypefaceSelection()
+    }
+
+    fun operatorFontFailed(message: String) {
+        operatorFontLoading = false
+        operatorFontError = message
+        renderTypefaceSelection()
+    }
+
+    fun operatorFontUnavailable() {
+        operatorFontLoading = false
+        operatorFontError = text(R.string.settings_ui_typeface_unavailable)
+        renderTypefaceSelection()
+    }
+
     private fun terminalCard(): View {
         val card = card()
         card.addView(header(
@@ -79,6 +130,22 @@ internal class SettingsLocalPreferences(
             text(R.string.settings_terminal_font_description),
             R.drawable.ic_composer_terminal,
         ))
+        card.addView(divider())
+        card.addView(horizontalRow(text(R.string.settings_ui_typeface)).apply {
+            addView(MaterialButton(activity, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
+                id = R.id.settings_ui_typeface_value
+                isAllCaps = false
+                setOnClickListener { showTypefaceChoices() }
+                typefaceButton = this
+            })
+        })
+        typefaceStatus = TextView(activity).apply {
+            textSize = 12f
+            setTextColor(color(R.color.collie_muted))
+            setPadding(dp(16), dp(2), dp(16), dp(8))
+            isVisible = false
+        }.also(card::addView)
+        renderTypefaceSelection()
         card.addView(divider())
         card.addView(stepperRow(
             label = text(R.string.settings_terminal_size),
@@ -104,6 +171,75 @@ internal class SettingsLocalPreferences(
         return card
     }
 
+    private fun showTypefaceChoices() {
+        val selectedOperator = preferences.operatorTypefaceSelection?.takeIf { selected ->
+            selected.ownerFingerprint == operatorFontOwner && operatorFonts.any { it.family == selected.family && it.basename == selected.basename }
+        }
+        val selectedLabel = selectedOperator?.family ?: shippedTypefaceLabel(preferences.uiTypeface)
+        val sheet = CollieBottomSheetDialog(activity, text(R.string.settings_ui_typeface))
+        val entries = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        fun entry(label: String, selected: Boolean, onClick: () -> Unit) {
+            entries.addView(MaterialButton(activity, null, android.R.attr.borderlessButtonStyle).apply {
+                text = if (selected) text(R.string.settings_parity_selected_choice, label) else label
+                gravity = Gravity.START or Gravity.CENTER_VERTICAL
+                isAllCaps = false
+                minHeight = dp(48)
+                setOnClickListener {
+                    onClick()
+                    sheet.dismiss()
+                }
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)))
+        }
+        entry(text(R.string.settings_ui_typeface_system), selectedLabel == text(R.string.settings_ui_typeface_system)) {
+            selectShippedTypeface(NativePreferences.UiTypeface.SYSTEM)
+        }
+        entry(text(R.string.settings_ui_typeface_grotesk), selectedLabel == text(R.string.settings_ui_typeface_grotesk)) {
+            selectShippedTypeface(NativePreferences.UiTypeface.GROTESK)
+        }
+        entry(text(R.string.settings_ui_typeface_aldrich), selectedLabel == text(R.string.settings_ui_typeface_aldrich)) {
+            selectShippedTypeface(NativePreferences.UiTypeface.ALDRICH)
+        }
+        operatorFonts.forEach { row ->
+            entry(row.family, selectedOperator?.let { it.family == row.family && it.basename == row.basename } == true) {
+                typefaceStatus?.text = text(R.string.settings_ui_typeface_loading, row.family)
+                typefaceStatus?.isVisible = true
+                onOperatorTypefaceSelected(row)
+            }
+        }
+        sheet.setSheetContent(entries)
+        sheet.show()
+    }
+
+    private fun selectShippedTypeface(value: NativePreferences.UiTypeface) {
+        onTypefaceSelectionInvalidated()
+        preferences.clearOperatorTypeface()
+        PreferredTypeface.clearLoadedOperator()
+        preferences.uiTypeface = value
+        activity.window.decorView.applyAppTypeface()
+        operatorFontLoading = false
+        operatorFontError = null
+        renderTypefaceSelection()
+    }
+
+    private fun renderTypefaceSelection() {
+        val selection = preferences.operatorTypefaceSelection?.takeIf { selected ->
+            selected.ownerFingerprint == operatorFontOwner && operatorFonts.any { it.family == selected.family && it.basename == selected.basename }
+        }
+        typefaceButton?.text = selection?.family ?: shippedTypefaceLabel(preferences.uiTypeface)
+        val status = when {
+            operatorFontError != null -> operatorFontError
+            operatorFontLoading -> text(R.string.settings_ui_typeface_fetching)
+            else -> null
+        }
+        typefaceStatus?.text = status
+        typefaceStatus?.isVisible = status != null
+    }
+
+    private fun shippedTypefaceLabel(value: NativePreferences.UiTypeface): String = when (value) {
+        NativePreferences.UiTypeface.SYSTEM -> text(R.string.settings_ui_typeface_system)
+        NativePreferences.UiTypeface.GROTESK -> text(R.string.settings_ui_typeface_grotesk)
+        NativePreferences.UiTypeface.ALDRICH -> text(R.string.settings_ui_typeface_aldrich)
+    }
 
     private fun switchCard(
         title: String,

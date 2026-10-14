@@ -1,0 +1,141 @@
+{
+  "repository": "https://github.com/google/brotli",
+  "commit": "028fb5a23661f123017c060daa546b55cf4bde29",
+  "tag": "v1.2.0",
+  "archiveSha256": "0afe09a53c8bad9861c8dd1fc1284308d54f19d2979ba3541cfdcc9b05fe360f",
+  "files": [
+    {
+      "file": "LICENSE",
+      "sha256": "3d180008e36922a4e8daec11c34c7af264fed5962d07924aea928c38e8663c94"
+    },
+    {
+      "file": "c/common/constants.c",
+      "sha256": "630f40ca2ac787025175eaf39b9569a60aff6ddec7e5085197e4cb0d43641b0d"
+    },
+    {
+      "file": "c/common/constants.h",
+      "sha256": "c9c898542360e811dc44aa9be270d21ce0d18f3ecf45310f3d9f285f3692a59e"
+    },
+    {
+      "file": "c/common/context.c",
+      "sha256": "c9aa1acb35af38c90c4a38ba168885b649838236b2d57adb5e76d687bdbe252e"
+    },
+    {
+      "file": "c/common/context.h",
+      "sha256": "2745ef910928a4acd58e1cb98128a0a228fa1812c61e69538c9d393d405bf047"
+    },
+    {
+      "file": "c/common/dictionary.c",
+      "sha256": "0890056e4ae595efab6bbf3bf1fd244332e2cfad3adcb9f5793ee29a8f3a18c5"
+    },
+    {
+      "file": "c/common/dictionary.h",
+      "sha256": "bfb4f010a2279c53a039ec6f095a12ab62c7d49ab138e385a16caf3904341b10"
+    },
+    {
+      "file": "c/common/dictionary_inc.h",
+      "sha256": "55b98973df9dcb353bd78b2b573fb7338ab55d98fb5571ad93939095978768e8"
+    },
+    {
+      "file": "c/common/platform.c",
+      "sha256": "fce95889e6b1d1a91c0baa2ee0f3b83a41b670a4f51a5053185ffbed6bde71fd"
+    },
+    {
+      "file": "c/common/platform.h",
+      "sha256": "63d47925374e1015e35eaac73d9d9dfc79b7f0585fe73c19d1ccde7a36aaa407"
+    },
+    {
+      "file": "c/common/shared_dictionary.c",
+      "sha256": "0cf405b0155230e060b9e0855bb22379037362948828b98338f203be07923d0e"
+    },
+    {
+      "file": "c/common/shared_dictionary_internal.h",
+      "sha256": "e9e343e5d4ddd0f87a9579aab6796dd82af08639abfda122e874a97e896c6b6a"
+    },
+    {
+      "file": "c/common/static_init.h",
+      "sha256": "be55ce94cace1a6c9dd9460ae30a5b7942834fd8c1003ffdef56df0b35dbcfd7"
+    },
+    {
+      "file": "c/common/transform.c",
+      "sha256": "47f229a79c3542ea57ec07145d7eaf77300a02816d95695332f9911ea19d6ab3"
+    },
+    {
+      "file": "c/common/transform.h",
+      "sha256": "b79dd99d1dcc618c1a4284b74dd04adda099fc3f65f906924991a736e09c125c"
+    },
+    {
+      "file": "c/common/version.h",
+      "sha256": "792d03d8feff8168edf639899f72b71a37e9cbd9f178e3be397ccef29d3346b0"
+    },
+    {
+      "file": "c/dec/bit_reader.c",
+      "sha256": "ad4a7608173afe62bc7b36d83768e4ac73dadc4a6272437340ee46e8a61a0d92"
+    },
+    {
+      "file": "c/dec/bit_reader.h",
+      "sha256": "f23fbb82054c5e4405e2a262df9cf4c4756b3e0e476ac849c0dd8f741018d161"
+    },
+    {
+      "file": "c/dec/decode.c",
+      "sha256": "f7749b1296128c0add4eaa454b9d82ee1c7b0451c1c9ed47d96733e6de6f2d7b"
+    },
+    {
+      "file": "c/dec/huffman.c",
+      "sha256": "b7c973c2918c6765c4eb534c3ae314055d535b6d1fafb021cee5f7eae170aae6"
+    },
+    {
+      "file": "c/dec/huffman.h",
+      "sha256": "09f3a1f7608b09df131342c9759f4a63c19b0e784bda5e474ec01eb72699079d"
+    },
+    {
+      "file": "c/dec/prefix.c",
+      "sha256": "0a31304f440f7bb2017d52b83ae35cb428cbc5ac2fc172c8eec2fea449c2f7cd"
+    },
+    {
+      "file": "c/dec/prefix.h",
+      "sha256": "fe1f3630f78a0ed3f79146a52d8e480c12d130ccfe9781f03d0edc581c3b9e83"
+    },
+    {
+      "file": "c/dec/prefix_inc.h",
+      "sha256": "e1ade26b7b1e1e56b1a91af20ef93f81ef7a4ed83e0543fd6d9eb29f5c6d2983"
+    },
+    {
+      "file": "c/dec/state.c",
+      "sha256": "66a7c3d9c01cda374d33d3693ba45d059ff00b12114a8844ee4f2519ba2af14e"
+    },
+    {
+      "file": "c/dec/state.h",
+      "sha256": "8937c3799c177eacfaf3c0dba8da8c2558f435d6baffa2d787aec3212eaca041"
+    },
+    {
+      "file": "c/dec/static_init.c",
+      "sha256": "a4a308e394fe05a124d919977b3f457a06363615a882dce058f329edcf7dc851"
+    },
+    {
+      "file": "c/dec/static_init.h",
+      "sha256": "a4f13d0e5c770ad92fb2d6b8d4a8f93bfe70b1e97352306636a1119a6f44f270"
+    },
+    {
+      "file": "c/include/brotli/decode.h",
+      "sha256": "027b91e62e85de6955e6334628b2ba0c77901a449e169fd9f95d6ea1cc91f980"
+    },
+    {
+      "file": "c/include/brotli/encode.h",
+      "sha256": "f1842e38da557efac517a35f1b27d288d464a723ef50316d3d20fe03f6046c06"
+    },
+    {
+      "file": "c/include/brotli/port.h",
+      "sha256": "72b484d7a2561f3a9ad35ebd0d4f97f7a2d9863b619782ada5b083a4b6f40df5"
+    },
+    {
+      "file": "c/include/brotli/shared_dictionary.h",
+      "sha256": "86230f0aaf533044d85d92f84b5aec8b7e4e231d4b64b098604083e7866e8097"
+    },
+    {
+      "file": "c/include/brotli/types.h",
+      "sha256": "ebbd136dc411cc8167636d6f54b66ad0c234dc18989265c37a28c242eaae2efd"
+    }
+  ],
+  "localPatches": []
+}

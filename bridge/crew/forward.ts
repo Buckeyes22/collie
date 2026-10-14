@@ -65,12 +65,16 @@ export function crewRouteFor(pathname: string): string | null {
  * but not across a link (or, worse, the reverse).
  */
 const FORWARDABLE: readonly RegExp[] = [
+  // `answer` (ADR 0100): an answer to an ask by id, a WRITE that reaches the member that owns the
+  // pane, where its receipt lives. Additive-optional (§7.1): a member that predates it answers 404.
+  // `send` and `abort` (ADR 0101): a control that names the turn the phone saw, a WRITE to the member
+  // that owns the pane, where its receipt lives. Additive-optional the same way.
   /^refresh$/,
   /^pane\/[^/]+\/agent\/(?:control|explain|read|start|rename|prompt|focus|keys|input)$/,
   /^waits(?:\/[A-Za-z0-9_-]{1,128})?$/,
   /^control\/operations\/[a-zA-Z0-9_-]{1,128}$/,
   /^host\/agent-view$/,
-  /^pane\/[^/]+(?:\/(?:reply|keys|upload|close|rename|history|chat|changes|files|focus|processes|agent|agent\/(?:state|session|release|authority\/clear)))?$/,
+  /^pane\/[^/]+(?:\/(?:reply|keys|upload|close|rename|history|chat|changes|files|focus|answer|send|abort|processes|agent|agent\/(?:state|session|release|authority\/clear)))?$/,
   /^pane\/[^/]{1,128}\/metadata$/,
   /^pane\/[^/]+\/layout(?:\/(?:neighbor|edges|plan|split|resize|zoom|swap|move|focus-direction))?$/,
   /^tab\/[^/]+\/layout\/(?:export|split-ratio)$/,

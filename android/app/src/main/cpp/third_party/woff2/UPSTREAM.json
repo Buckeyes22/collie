@@ -1,0 +1,86 @@
+{
+  "repository": "https://github.com/google/woff2",
+  "commit": "1bccf208bca986e53a647dfe4811322adb06ecf8",
+  "tag": "v1.0.2",
+  "archiveSha256": "e407aff9148e52cfe0e975a88054d99ff4c7912d0f54ba4bec4a150175d047c8",
+  "files": [
+    {
+      "file": "LICENSE",
+      "sha256": "d42a3e363d99da22b860ab760faa37dfa9781d74c9f3ed634d05109081616513"
+    },
+    {
+      "file": "include/woff2/decode.h",
+      "sha256": "61f72631df4fef3594d42869fe793dbf0229e49007ca49edb496a5d466f63590"
+    },
+    {
+      "file": "include/woff2/output.h",
+      "sha256": "74e81096a81a890f78bb8331732d686dcc8cbcddaf30a654f5837441448661b2"
+    },
+    {
+      "file": "src/buffer.h",
+      "sha256": "a08c63f421d5b7a9ee1901d73b7553c1900f060b87b2aa5d234d57bd1a522f85"
+    },
+    {
+      "file": "src/port.h",
+      "sha256": "5d972808d797939c3ffd9918511f869b63e22f54c29f7d70996d59ac0303347f"
+    },
+    {
+      "file": "src/round.h",
+      "sha256": "ee898e4214da0a3d7cc9343bf0e0a2746a19c85f197a1ceb11ec50feecf09047"
+    },
+    {
+      "file": "src/store_bytes.h",
+      "sha256": "01a756e967ae40317c20abf85611c5437c73e96bb1521ac7d71c8ca406891131"
+    },
+    {
+      "file": "src/table_tags.cc",
+      "sha256": "e410b3da698a7d8f324d1062cf46cb8823c2dd35a51a14d4a4c491f681b4015f"
+    },
+    {
+      "file": "src/table_tags.h",
+      "sha256": "71e9f9d19769edf333431745f3f2fbdda06d15fdb1bf4fda5476ae79dd0d1240"
+    },
+    {
+      "file": "src/variable_length.cc",
+      "sha256": "312ae779051d6a58ba07b1d2ee3f67312d2bfe3b3d2b1826fddbffa303abdeb2"
+    },
+    {
+      "file": "src/variable_length.h",
+      "sha256": "0920156d67a1af76cde6a349b81dc42d488ff555bfe2fd92b990196419ce75b3"
+    },
+    {
+      "file": "src/woff2_common.cc",
+      "sha256": "f31ae8fbad4396a2566cdf454f5817928c615ecd9aa6d25b47698c1e6edc7e6b"
+    },
+    {
+      "file": "src/woff2_common.h",
+      "sha256": "6e3dfe560acc76b99d36ff17dc70c5cb1ae1e11ec6c0f2724e9decf1a2b828fb"
+    },
+    {
+      "file": "src/woff2_dec.cc",
+      "sha256": "d1d6390075cf6fdfabfc90bccc0feafcc9a64f36f1e1bfbdc48df80e919ee873"
+    },
+    {
+      "file": "src/woff2_out.cc",
+      "sha256": "3bc9fb694b3e0d226408145f62290442c27b642ac6aa0e3602cb7764b06e5b0e"
+    }
+  ],
+  "localPatches": [
+    {
+      "file": "include/woff2/output.h",
+      "currentSha256": "25467a92bf6d0034d261eacf32b849c5ba5c51cfe079032398c99f5c997d5c30"
+    },
+    {
+      "file": "src/port.h",
+      "currentSha256": "f0847a47f5e047e267fc9347c8517630b413f15f987bffa2c19e15917e3b1fcc"
+    },
+    {
+      "file": "src/woff2_dec.cc",
+      "currentSha256": "55e5cd4ea70e7288109b2f7da56540e967d36e87fa7b060982aa92b07f4929c6"
+    },
+    {
+      "file": "src/woff2_out.cc",
+      "currentSha256": "df04dc6697fad2cc702f5756984d5d6193acd6fadf31c156fc51fa9fd5846909"
+    }
+  ]
+}

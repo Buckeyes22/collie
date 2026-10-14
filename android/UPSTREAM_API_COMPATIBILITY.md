@@ -1,10 +1,54 @@
 # Native Android API compatibility
 
-The server foundation is synced to AltanS/collie `632a2bf784045b1e2576da112d89ed21fecc9eeb`
-(Collie 1.19.0, 2026-10-09). Android keeps its independent Kotlin screens, APK versioning,
-TLS verification, encrypted bearer storage, English-only UI and conservative terminal write gates.
-The Codex composer audit also examines openai/codex
-`c3d3b142d10f4316b46e35aad7e5317e7e506cb7` from a shallow clone fetched on 2026-10-10.
+The fixed server parity target is official AltanS/collie v1.21.0 at
+`b55b9d2f2aaa7426d7b97dbfdd2c6b196e58082f` (2026-10-13), reconciled from the
+1.19.0 base `632a2bf784045b1e2576da112d89ed21fecc9eeb`. The fork retains native
+Kotlin screens, independent APK versioning, TLS verification, encrypted bearer storage,
+English-only UI and conservative terminal write gates. Speech source is preserved; speech
+input, transcription and model setup are excluded from this completion goal.
+
+Ordinary dashboard, pane replies/keys, launch/worktrees, Files/Changes and Collie updates
+use stock Herdr v0.9.4 (`7e26bad94044eba205033111a0ce8033ede7e24f`). They require no
+private producer flag. Earlier custom agent automation, metadata/view editors, plugin owner
+operations, host administration and recorder source remain preserved optional extensions;
+the historical producer requirements below are not native release prerequisites. A missing
+custom capability never grants terminal authorization or disables ordinary stock workflows.
+
+The bridge adds the official durable adapter, receipt-backed asks and controls, starters,
+bridge-owned durable history, and fixed journal discovery/readers including OpenClaw.
+The Android-used workspace worktree list/create/open endpoints remain supported fork
+compatibility routes, even though upstream retired their PWA callers in 1.20.0. No claimed
+local runtime witness is vendor atomic compare-and-set.
+
+Herdr's exact `pi` agent name covers stock Pi and OmO/Senpi. Native single-question
+actions read the observed footer key contract and bind an OmO side-panel question to its
+display columns through optional `expected_columns`. Pi free-text sends require a recognized
+empty editor, type once, read back the complete Unicode draft, submit once, and positively
+observe consumption. Panel composer writes also bind their exact frame and columns; unknown
+dialogs, pickers, inline answer editors, partial drafts and uncertain outcomes preserve the
+phone draft. Each phase retains the original pane actor rather than acquiring a replacement.
+
+| Durable HTTP contract | Native consumer requirement |
+| --- | --- |
+| Pane `asks` and `turnId` | Optional, passed whole across Crew. Presence names data from a screenless adapter; do not synthesize terminal controls. |
+| `POST /api/pane/:id/answer` | UUID `requestId`, exact `askId`/`revision`/`optionId`, optional note. Read typed taken, too-late, stale, refused, unknown and maybe-applied results. |
+| `POST /api/pane/:id/send` and `/abort` | UUID `requestId`, exactly one observed `turnId` or `askId`; sends contain 1–32768 UTF-8 bytes and optional steer. A 409 stale/refused result is not a transport failure. |
+| Ambiguous durable outcomes | Keep the original intent and request identity. Never automatically replay, redirect a write, or mint a fresh ID to conceal uncertainty. Receipts live on the member owning the pane. |
+| `GET /api/launchers`, `POST /api/launch` | Starter rows have `kind=starter`; launch with `starter` ID and requestId. Starters accept no folder or branch. |
+| `POST …/reply` and `/keys` | A screenless adapter refuses these raw terminal routes with unsupported; durable send/abort stay separate. |
+
+Fixed upstream sources and fetch hashes are recorded in
+`/home/chris/git/collie/.project-docs/course-correction-20261013/upstream-v1.21.0/reference-manifest.json`.
+This source reconciliation and its local tests do not establish live Pixel, provider or signed
+release acceptance; those results belong in the existing acceptance records.
+
+Native font choices include System, Space Grotesk and Aldrich. Operator WOFF2 rows come from
+paired config reads and are fetched only from the same mounted origin after revalidation. Android's
+API 37 font builder rejected WOFF2 in the physical compatibility probe; the app therefore uses the
+pinned native WOFF2 decoder and builds a platform face from its decoded SFNT. Table-directory and
+transformed-stream admission is bounded to 16 MiB, the decoder's native output cap remains 128 MiB,
+and accepted decoded files are limited to 16 MiB. Font collections and unsupported transforms are
+refused visibly. Selection and reloads preserve original actor and latest-choice custody.
 
 ## Current Android support
 

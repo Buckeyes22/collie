@@ -19,6 +19,7 @@ data class HealthResponse(
 @Serializable
 data class BridgeConfigResponse(
     val mux: MuxConfigResponse? = null,
+    val operatorFonts: List<OperatorFontRow> = emptyList(),
     val operatorCommands: List<OperatorCommand> = emptyList(),
     val operatorKeys: List<OperatorKeyRow> = emptyList(),
     val operatorQuickReplies: List<OperatorQuickReplyRow> = emptyList(),
@@ -117,6 +118,8 @@ data class PaneSummary(
     val paneLabel: String? = null,
     val sessionName: String? = null,
     val hasSession: Boolean? = null,
+    val asks: List<DurableAsk>? = null,
+    val turnId: String? = null,
     /** Mux-reported depth may lag a shrinking buffer and never proves agent history exhaustive. */
     val readableLines: Int? = null,
     val tabLabel: String? = null,
@@ -145,7 +148,7 @@ data class PaneCacheReading(
     val label: String? = null,
     val confidence: String? = null,
     val lastRequestAt: Long? = null,
-    val measuredAt: Long? = null,
+    val measuredAt: Double? = null,
     val overridden: Boolean? = null,
     val coldReason: String? = null,
     val reset: PaneCacheReset? = null,
@@ -868,16 +871,23 @@ internal data class PairResponse(
 internal data class PairRequest(val code: String, val label: String)
 
 @Serializable
+data class PromptColumns(val start: Int, val end: Int) {
+    fun valid(): Boolean = start >= 0 && start < end && end <= 4096
+}
+
+@Serializable
 internal data class ReplyRequest(
     val text: String,
     val submit: Boolean,
     @SerialName("expected_prompt") val expectedPrompt: String? = null,
+    @SerialName("expected_columns") val expectedColumns: PromptColumns? = null,
 )
 
 @Serializable
 internal data class KeysRequest(
     val keys: List<String>,
     @SerialName("expected_prompt") val expectedPrompt: String? = null,
+    @SerialName("expected_columns") val expectedColumns: PromptColumns? = null,
 )
 
 @Serializable
@@ -946,3 +956,11 @@ internal data class ErrorResponse(
     val textDelivered: Boolean = false,
     val detail: JsonObject? = null,
 )
+
+@Serializable
+data class OperatorFontRow(val family: String, val basename: String, val weight: String? = null) {
+    fun valid(): Boolean = family.matches(Regex("^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$")) &&
+        family.lowercase() !in setOf("serif", "sans-serif", "monospace", "cursive", "fantasy", "system-ui", "math", "inherit", "initial", "unset", "revert", "revert-layer") &&
+        basename.length in 1..128 && !basename.startsWith(".") && basename.endsWith(".woff2") && basename.none { it == '/' || it == '\\' || it == '\u0000' } &&
+        (weight == null || weight.matches(Regex("[0-9]{3}( [0-9]{3})?")) && weight.split(" ").map(String::toInt).let { parts -> parts.all { it in 100..900 } && (parts.size == 1 || parts[0] <= parts[1]) })
+}

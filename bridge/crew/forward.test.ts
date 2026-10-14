@@ -199,6 +199,27 @@ describe("which routes cross a link", () => {
     expect(crewRouteFor("/api/tab/t1/move/other")).toBeNull();
   });
 
+  test("an answer to an ask crosses the link as a write, to the member that owns the pane (ADR 0100)", () => {
+    expect(crewRouteFor("/api/pane/w1:p1/answer")).toBe("pane/w1:p1/answer");
+    expect(apiPathFor("pane/w1:p1/answer")).toBe("/api/pane/w1:p1/answer");
+    expect(forwardKind("pane/w1:p1/answer")).toBe("write");
+    expect(forwardPaneId("pane/conv%2001/answer")).toBe("conv 01");
+    // Nothing hangs under it: an answer is one route, not a family.
+    expect(crewRouteFor("/api/pane/w1:p1/answer/x")).toBeNull();
+  });
+
+  test("a send and an abort cross the link as writes, to the member that owns the pane and its receipt (ADR 0101)", () => {
+    for (const action of ["send", "abort"]) {
+      expect(crewRouteFor(`/api/pane/conv-02/${action}`)).toBe(`pane/conv-02/${action}`);
+      expect(apiPathFor(`pane/conv-02/${action}`)).toBe(`/api/pane/conv-02/${action}`);
+      expect(forwardKind(`pane/conv-02/${action}`)).toBe("write");
+      expect(forwardPaneId(`pane/conv%2002/${action}`)).toBe("conv 02");
+      // The member's control route writes `send` or `abort` (bridge/durable/control.ts), so the lead's line matches.
+      expect(forwardAuditAction(`pane/conv-02/${action}`)).toBe(action);
+      expect(crewRouteFor(`/api/pane/conv-02/${action}/x`)).toBeNull();
+    }
+  });
+
   test("launch and its rows cross the link too — rows must come from the host that runs them", () => {
     expect(crewRouteFor("/api/launch")).toBe("launch");
     expect(crewRouteFor("/api/launchers")).toBe("launchers");
@@ -342,8 +363,8 @@ describe("which routes cross a link", () => {
     const pane = server.match(/^const PANE_ROUTE = (.+);$/m)![1]!;
     const tab = server.match(/^const TAB_ACTION_ROUTE = (.+);$/m)![1]!;
     const alternation = /\(([a-z]+(?:\|[a-z]+)+)\)/;
-    expect(pane).toBe("/^\\/api\\/pane\\/([^/]+)(?:\\/(reply|keys|upload|close|rename|history|chat|changes|files|focus|processes|agent|agent\\/(?:state|session|release|authority\\/clear)))?$/");
-    const paneActions = ["reply", "keys", "upload", "close", "rename", "history", "chat", "changes", "files", "focus", "processes", "agent"];
+    expect(pane).toBe("/^\\/api\\/pane\\/([^/]+)(?:\\/(reply|keys|upload|close|rename|history|chat|changes|files|focus|answer|send|abort|processes|agent|agent\\/(?:state|session|release|authority\\/clear)))?$/");
+    const paneActions = ["reply", "keys", "upload", "close", "rename", "history", "chat", "changes", "files", "focus", "answer", "send", "abort", "processes", "agent"];
     // The list IS the inventory of legacy single-segment actions; nested agent actions are checked
     // separately below so no subroute can accidentally become forwardable.
     for (const action of paneActions) expect(crewRouteFor(`/api/pane/x/${action}`)).toBe(`pane/x/${action}`);
@@ -410,7 +431,7 @@ describe("which routes cross a link", () => {
     expect(forwardGate("pane/w1:p1/metadata", "POST")).toBe("write");
     expect(forwardGate("pane/w1:p1/processes", "GET")).toBe("device-read");
     expect(forwardGate("pane/w1:p1/agent", "GET")).toBe("device-read");
-    for (const action of ["reply", "keys", "upload", "close", "rename"]) {
+    for (const action of ["reply", "keys", "upload", "close", "rename", "answer", "send", "abort"]) {
       expect(forwardKind(`pane/w1:p1/${action}`)).toBe("write");
     }
     for (const action of ["agent/state", "agent/session", "agent/release", "agent/authority/clear"]) {
@@ -454,6 +475,8 @@ describe("which routes cross a link", () => {
     expect(forwardAuditAction("pane/w1:p1/reply")).toBe("reply");
     expect(forwardAuditAction("pane/w1:p1/keys")).toBe("keys");
     expect(forwardAuditAction("pane/w1:p1/upload")).toBe("upload");
+    // The member's answer route writes `answer` (bridge/durable/answer.ts), so the lead's line matches.
+    expect(forwardAuditAction("pane/w1:p1/answer")).toBe("answer");
     expect(forwardAuditAction("pane/w1:p1/close")).toBe("pane.close");
     expect(forwardAuditAction("pane/w1:p1/rename")).toBe("pane.rename");
     expect(forwardAuditAction("tab")).toBe("tab.create");
@@ -1182,9 +1205,13 @@ describe("journal, uploads and state stay host-local", () => {
   // gap is right. If a route is added, this test goes red, and the table in MUX_CONTRACT.md
   // § "Conformance across a crew link" is what has to be corrected in the same change.
   test("four mux-port verbs have no forwardable crew route, and the contract says which", () => {
-    // The shapes a route for each would take, in this surface's own grammar.
+    // The shapes a route for each would take, in this surface's own grammar. The worktree create is
+    // lead-local at `POST /api/worktree` (and its plan); list and open have had no route at all since
+    // the space-scoped ones were removed in 1.20.0, so the old shapes must not forward either.
     const unreachable = [
       "sessions",
+      "worktree",
+      "worktree/plan",
       "workspace/w1/worktrees",
       "workspace/w1/worktree",
       "workspace/w1/worktree/open",

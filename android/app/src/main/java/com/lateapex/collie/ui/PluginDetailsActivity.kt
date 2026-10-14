@@ -78,8 +78,8 @@ class PluginDetailsActivity : AppCompatActivity() {
             selected.warnings.forEach { message(getString(R.string.host_plugin_warning, it)) }
             button(if (selected.enabled) R.string.host_plugin_disable else R.string.host_plugin_enable) { confirmEnabled(!selected.enabled) }
             button(R.string.host_plugin_configuration) { if (isCurrent()) startActivity(PluginConfigActivity.intent(this@PluginDetailsActivity, session.scope, pluginId)) else stale() }
-            button("Unlink plugin") { confirmUnlink() }
-            button("Uninstall plugin") { confirmUninstall() }
+            button(R.string.plugin_unlink) { confirmUnlink() }
+            button(R.string.plugin_uninstall) { confirmUninstall() }
             when (actions) {
                 is ApiResult.Success -> {
                     message(getString(R.string.host_plugin_actions_heading))
@@ -93,12 +93,12 @@ class PluginDetailsActivity : AppCompatActivity() {
             if (selected.panes.isEmpty()) message(getString(R.string.host_plugin_no_panes))
             selected.panes.forEach { pane ->
                 message("${pane.title} · ${pane.placement}${pane.description?.let { " · $it" }.orEmpty()}")
-                button("Open ${pane.title}") { openPane(pane.id, pane.placement) }
+                button(getString(R.string.plugin_open_pane, pane.title)) { openPane(pane.id, pane.placement) }
             }
             openedPanes.toMap().forEach { (entrypoint, paneId) ->
-                message("Opened pane $paneId")
-                button("Focus $paneId") { navigatePane(entrypoint, paneId, close = false) }
-                button("Close $paneId") { navigatePane(entrypoint, paneId, close = true) }
+                message(getString(R.string.plugin_pane_opened, paneId))
+                button(getString(R.string.plugin_focus_pane, paneId)) { navigatePane(entrypoint, paneId, close = false) }
+                button(getString(R.string.plugin_close_pane, paneId)) { navigatePane(entrypoint, paneId, close = true) }
             }
             message(getString(R.string.host_plugin_logs_heading))
             renderPendingReceipts()
@@ -203,9 +203,9 @@ class PluginDetailsActivity : AppCompatActivity() {
             busy = false
             if (result !is ApiResult.Success) { message((result as? ApiResult.Failure)?.error?.pluginMessage ?: "Plugin removal plan unavailable"); return@launch }
             val plan = result.value.plan
-            AlertDialog.Builder(this@PluginDetailsActivity).setTitle("Review plugin removal")
-                .setMessage("${plan.effect}\n\nPlugin configuration and state are preserved.")
-                .setNegativeButton(android.R.string.cancel, null).setPositiveButton("Remove plugin") { _, _ -> if (isCurrent() && repository.isCurrent(actor)) uninstall(plan.token, actor) else stale() }.show()
+                    AlertDialog.Builder(this@PluginDetailsActivity).setTitle(R.string.plugin_review_removal)
+                .setMessage(getString(R.string.plugin_removal_effect, plan.effect))
+                .setNegativeButton(android.R.string.cancel, null).setPositiveButton(R.string.plugin_remove) { _, _ -> if (isCurrent() && repository.isCurrent(actor)) uninstall(plan.token, actor) else stale() }.show()
         }
     }
 
@@ -214,14 +214,14 @@ class PluginDetailsActivity : AppCompatActivity() {
         busy = true
         lifecycleScope.launch {
             val requestId = UUID.randomUUID().toString()
-            if (!session.track(requestId, PluginReceiptKind.OWNER_OPERATION)) { message("Could not durably retain an operation receipt ID. No removal was sent."); return@launch }
+            if (!session.track(requestId, PluginReceiptKind.OWNER_OPERATION)) { message(getString(R.string.plugin_receipt_retain_failed, getString(R.string.plugin_removal))); return@launch }
             val result = repository.applyHostPluginUninstall(pluginId, HostPluginUninstallRequest(requestId, planToken), session.scope, actor)
             if (!isCurrent()) { stale(); return@launch }
             busy = false
             if (result is ApiResult.Success) {
                 if (result.value.operation.state == "succeeded") { session.reconcile(requestId); finish() }
-                else if (result.value.operation.state == "refused") { session.reconcile(requestId); message("Removal refused: ${result.value.operation.code.orEmpty()}") }
-                else retainForReceipt(requestId, "Removal ${result.value.operation.state}")
+                else if (result.value.operation.state == "refused") { session.reconcile(requestId); message(getString(R.string.plugin_removal_refused, result.value.operation.code.orEmpty())) }
+        else retainForReceipt(requestId, getString(R.string.plugin_removal_state, result.value.operation.state))
             } else {
                 retainForReceipt(requestId, "Removal result is not confirmed.")
             }
@@ -246,10 +246,10 @@ class PluginDetailsActivity : AppCompatActivity() {
     private fun confirmUnlink() {
         if (busy || !isCurrent()) { stale(); return }
         val actor = session.actor ?: return stale()
-        AlertDialog.Builder(this).setTitle("Unlink plugin")
-            .setMessage("Remove only this fixture/plugin registry entry. Plugin config and state are preserved.")
+        AlertDialog.Builder(this).setTitle(R.string.plugin_unlink)
+            .setMessage(R.string.plugin_unlink_effect)
             .setNegativeButton(android.R.string.cancel, null)
-            .setPositiveButton("Unlink") { _, _ -> if (isCurrent() && repository.isCurrent(actor)) unlink(actor) else stale() }.show()
+            .setPositiveButton(R.string.plugin_unlink) { _, _ -> if (isCurrent() && repository.isCurrent(actor)) unlink(actor) else stale() }.show()
     }
 
     private fun unlink(actor: ScopedReadContext) {
@@ -263,8 +263,8 @@ class PluginDetailsActivity : AppCompatActivity() {
                 is ApiResult.Success -> load()
                 is ApiResult.Failure -> {
                     content.removeAllViews()
-                    message("Unlink result is not confirmed. Refresh inventory to resolve it; do not submit unlink again yet.")
-                    button("Refresh plugin inventory") { load() }
+                    message(getString(R.string.plugin_unlink_unconfirmed))
+                    button(R.string.plugin_refresh_inventory) { load() }
                 }
                 is ApiResult.NotModified -> stale()
             }
@@ -274,14 +274,14 @@ class PluginDetailsActivity : AppCompatActivity() {
     private fun retainForReceipt(requestId: String, label: String) {
         busy = false
         content.removeAllViews(); message("$label Check the receipt before taking any further action.")
-        button("Check receipt $requestId") { checkReceipt(requestId) }
+        button(getString(R.string.plugin_check_receipt, requestId)) { checkReceipt(requestId) }
     }
 
     private fun renderPendingReceipts() {
         if (session.receiptContext(repository) != null) {
-            session.pendingReceipts.keys.forEach { requestId -> button("Check receipt $requestId") { checkReceipt(requestId) } }
+            session.pendingReceipts.keys.forEach { requestId -> button(getString(R.string.plugin_check_receipt, requestId)) { checkReceipt(requestId) } }
         } else if (session.pendingReceipts.isNotEmpty()) {
-            message("No matching current paired profile is available for receipt reads. Unresolved operation IDs: ${session.pendingReceipts.keys.joinToString()}. No plugin write was replayed.")
+            message(getString(R.string.plugin_receipt_profile_unavailable, session.pendingReceipts.keys.joinToString()))
         }
     }
 
@@ -294,9 +294,9 @@ class PluginDetailsActivity : AppCompatActivity() {
                 is PluginReceiptRead.Success -> {
                     val state = receipt
                     if (state.state == "succeeded" || state.state == "refused") session.reconcile(requestId)
-                    content.removeAllViews(); message("Plugin operation receipt: ${state.state}${state.code?.let { " · $it" }.orEmpty()}")
-                    if (state.state == "running" || state.state == "pending" || state.state == "unknown") button("Check receipt $requestId") { checkReceipt(requestId) }
-                    button("Refresh plugin") { load() }
+                    content.removeAllViews(); message(if (state.code == null) getString(R.string.plugin_details_operation_receipt, state.state) else getString(R.string.plugin_details_operation_receipt_code, state.state, state.code))
+                    if (state.state == "running" || state.state == "pending" || state.state == "unknown") button(getString(R.string.plugin_check_receipt, requestId)) { checkReceipt(requestId) }
+                    button(R.string.plugin_refresh_plugin) { load() }
                     if (state.state == "succeeded" && state.removed) finish()
                 }
                 is PluginReceiptRead.Failure -> retainForReceipt(requestId, receipt.message ?: "Receipt remains unavailable.")

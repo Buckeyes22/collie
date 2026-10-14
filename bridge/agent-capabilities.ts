@@ -8,12 +8,12 @@ import type { AgentCapabilityRow, AgentCapabilitiesResponse } from "./types.ts";
 /** The current PWA registry is deliberately exact-name keyed. Keep these implementation claims
  * aligned with web/src/lib/harness/registry.ts in agent-capabilities.test.ts. */
 export const PWA_SEMANTIC_ADAPTERS = [
-  "agy", "antigravity", "claude", "codex", "grok", "muse", "omp", "opencode",
+  "agy", "antigravity", "claude", "codex", "grok", "muse", "omp", "opencode", "pi",
 ] as const;
 
 /** These journal parsers currently extract image attachments from their source logs. */
 // OMP is the public pane name for pi's on-disk journal and image format.
-export const JOURNAL_IMAGE_ADAPTERS = ["claude", "muse", "omp", "opencode", "pi"] as const;
+export const JOURNAL_IMAGE_ADAPTERS = ["claude", "muse", "omp", "opencode", "pi", "pi"] as const;
 
 export interface AgentCapabilitiesInput {
   mux: Pick<MuxAdapter, "mux" | "capabilities" | "snapshot">;

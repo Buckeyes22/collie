@@ -152,6 +152,8 @@ interface CollieApi {
     suspend fun applyOrganization(connection: Connection, scope: Scope, requestId: String, planToken: String, action: OrganizationAction): ApiResult<OrganizationOperationResponse> = unavailable("Workspace organization action")
     suspend fun devices(connection: Connection): ApiResult<DevicesResponse>
     suspend fun revokeDevice(connection: Connection, label: String): ApiResult<DevicesResponse> = unavailable("Device revoke")
+    suspend fun standbyHealth(connection: Connection): ApiResult<StandbyHealthResponse> = unavailable("Standby health")
+    suspend fun takeover(connection: Connection): ApiResult<TakeoverResponse> = unavailable("Deputy takeover")
     suspend fun crew(connection: Connection): ApiResult<CrewStatusResponse> = unavailable("Crew status")
     /** Lead-owned census. The machine id is response data, never a request origin or crew selector. */
     suspend fun machines(connection: Connection, spark: Int = MAX_MACHINE_SPARK_MINUTES): ApiResult<MachinesResponse> = unavailable("Machine resources")
@@ -313,6 +315,15 @@ interface CollieApi {
         version: String,
         scope: UpdateDismissalScope,
     ): ApiResult<UpdateInfo> = unavailable("Update dismissal")
+    suspend fun operatorFont(connection: Connection, row: OperatorFontRow): ApiResult<ByteArray> = unavailable("Operator font")
+    suspend fun nativePush(connection: Connection, method: String, body: JsonObject?): ApiResult<JsonObject> = unavailable("Native notification registration")
+    suspend fun answerAsk(connection: Connection, address: PaneAddress, request: DurableAnswerRequest): ApiResult<DurableOutcome> = unavailable("Durable answers")
+    suspend fun durableSend(connection: Connection, address: PaneAddress, request: DurableControlRequest): ApiResult<DurableOutcome> = unavailable("Durable send")
+    suspend fun durableAbort(connection: Connection, address: PaneAddress, request: DurableControlRequest): ApiResult<DurableOutcome> = unavailable("Durable stop")
+    suspend fun reply(connection: Connection, address: PaneAddress, text: String, submit: Boolean, expectedPrompt: String?, expectedColumns: PromptColumns?): ApiResult<ActionResponse> =
+        if (expectedColumns == null) reply(connection, address, text, submit, expectedPrompt) else unavailable("Column-bound reply")
+    suspend fun keys(connection: Connection, address: PaneAddress, keys: List<String>, expectedPrompt: String?, expectedColumns: PromptColumns?): ApiResult<ActionResponse> =
+        if (expectedColumns == null) keys(connection, address, keys, expectedPrompt) else unavailable("Column-bound keys")
     suspend fun reply(
         connection: Connection,
         address: PaneAddress,
@@ -631,7 +642,7 @@ class CollieApiClient(
 
     override suspend fun clearAgentView(connection: Connection, requestId: String): ApiResult<AgentViewRouteResponse> {
         if (!validRequestId(requestId)) return ApiResult.Failure(ApiFailure.Protocol("Agent-view request id is malformed"))
-        val body = json.encodeToString(mapOf("requestId" to requestId)).toRequestBody(JSON_MEDIA_TYPE)
+        val body = json.encodeToString(mapOf("requestId" to requestId)).toRequestBody("application/json".toMediaType())
         val url = url(connection.origin, path("host", "agent-view"))
         val req = requestBuilder(connection, url).header("Origin", connection.origin.headerValue).method("DELETE", OneShotRequestBody(body)).build()
         val result = executeJson(req, AgentViewRouteResponse.serializer(), MUTATION_TIMEOUT_SECONDS, maxResponseBytes = 16 * 1024)
@@ -929,7 +940,7 @@ class CollieApiClient(
 
     override suspend fun startLaunch(connection: Connection, scope: Scope, target: StartTarget, requestId: String, cwd: String?): ApiResult<CreateResponse> {
         require(requestId.isNotBlank())
-        val body = StartLaunchRequest(requestId, cwd, target.harness, target.command, target.shell)
+        val body = StartLaunchRequest(requestId, if (target.starter == null) cwd else null, target.harness, target.command, target.shell, target.starter)
         return executeCreate(post(connection, scopedUrl(connection.origin, path("launch"), scope), json.encodeToString(body)))
     }
 
@@ -1625,6 +1636,29 @@ class CollieApiClient(
             READ_TIMEOUT_SECONDS,
         )
 
+    override suspend fun standbyHealth(connection: Connection): ApiResult<StandbyHealthResponse> = executeResponse(
+        requestBuilder(connection, url(connection.origin, listOf("standby", "health"))).removeHeader("Authorization").get().build(), READ_TIMEOUT_SECONDS,
+    ) { response ->
+        if (response.code in REDIRECT_CODES) return@executeResponse ApiResult.Failure(ApiFailure.Redirect(response.code))
+        val body = readBoundedBody(response, 4096) ?: return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Standby response exceeded its size limit"))
+        if (response.code !in setOf(200, 503)) return@executeResponse failure(response, body)
+        val value = decode(StandbyHealthResponse.serializer(), body)
+        if (value == null || !value.valid(response.code)) return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Malformed standby health"))
+        ApiResult.Success(value, response.code, buildId = response.header(BUILD_HEADER), controlAuthority = responseAuthority(response))
+    }
+
+    override suspend fun takeover(connection: Connection): ApiResult<TakeoverResponse> = executeResponse(
+        post(connection, url(connection.origin, listOf("standby", "takeover")), EMPTY_JSON), MUTATION_TIMEOUT_SECONDS,
+    ) { response ->
+        if (response.code in REDIRECT_CODES) return@executeResponse ApiResult.Failure(ApiFailure.Redirect(response.code))
+        val body = readBoundedBody(response, 4096) ?: return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Takeover response exceeded its size limit"))
+        if (response.code !in setOf(200, 409, 401)) return@executeResponse failure(response, body)
+        val value = decode(TakeoverResponse.serializer(), body)
+        if (value == null || value.message.isBlank() || value.ok != (response.code == 200)) return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Malformed takeover response"))
+        if (response.code == 401) return@executeResponse failure(response, body)
+        ApiResult.Success(value, response.code, buildId = response.header(BUILD_HEADER), controlAuthority = responseAuthority(response))
+    }
+
     override suspend fun standbyUpdate(connection: Connection): ApiResult<StandbyUpdateResponse> =
         requireContract(
             executeJson(
@@ -1683,6 +1717,75 @@ class CollieApiClient(
             UpdateInfo.serializer(),
             MUTATION_TIMEOUT_SECONDS,
         )
+    }
+
+    override suspend fun operatorFont(connection: Connection, row: OperatorFontRow): ApiResult<ByteArray> {
+        if (!row.valid()) return ApiResult.Failure(ApiFailure.Protocol("Malformed operator font row"))
+        return executeResponse(request(connection, url(connection.origin, path("fonts", row.basename))), READ_TIMEOUT_SECONDS) { response ->
+            if (response.code in REDIRECT_CODES) return@executeResponse ApiResult.Failure(ApiFailure.Redirect(response.code))
+            if (response.code != 200) return@executeResponse failure(response, readBoundedBody(response, 4096).orEmpty())
+            val body = response.body ?: return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Empty operator font"))
+            val limit = 2 * 1024 * 1024
+            if (body.contentLength() > limit) return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Operator font exceeded its size limit"))
+            val output = ByteArrayOutputStream()
+            body.byteStream().use { input ->
+                val buffer = ByteArray(8192)
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    if (output.size() + count > limit) return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Operator font exceeded its size limit"))
+                    output.write(buffer, 0, count)
+                }
+            }
+            val bytes = output.toByteArray()
+            if (bytes.size < 48 || !bytes.copyOfRange(0, 4).contentEquals(byteArrayOf(0x77, 0x4f, 0x46, 0x32))) return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Malformed WOFF2 operator font"))
+            ApiResult.Success(bytes, response.code, buildId = response.header(BUILD_HEADER), controlAuthority = responseAuthority(response))
+        }
+    }
+
+    override suspend fun nativePush(connection: Connection, method: String, body: JsonObject?): ApiResult<JsonObject> {
+        require(method in setOf("GET", "POST", "DELETE"))
+        val builder = requestBuilder(connection, url(connection.origin, path("native-push")))
+        if (method != "GET") builder.header("Origin", connection.origin.headerValue)
+        builder.method(method, if (method == "GET") null else OneShotRequestBody((body?.toString() ?: EMPTY_JSON).toRequestBody("application/json".toMediaType())))
+        return executeJson(builder.build(), JsonObject.serializer(), if (method == "GET") READ_TIMEOUT_SECONDS else MUTATION_TIMEOUT_SECONDS, maxResponseBytes = 4096)
+    }
+
+    override suspend fun answerAsk(connection: Connection, address: PaneAddress, request: DurableAnswerRequest): ApiResult<DurableOutcome> {
+        if (!request.valid()) return ApiResult.Failure(ApiFailure.Protocol("Malformed durable answer"))
+        return executeDurable(post(connection, scopedUrl(connection.origin, path("pane", address.paneId, "answer"), address.scope), json.encodeToString(request)), true)
+    }
+
+    override suspend fun durableSend(connection: Connection, address: PaneAddress, request: DurableControlRequest): ApiResult<DurableOutcome> = durableControl(connection, address, request, true)
+    override suspend fun durableAbort(connection: Connection, address: PaneAddress, request: DurableControlRequest): ApiResult<DurableOutcome> = durableControl(connection, address, request, false)
+
+    private suspend fun durableControl(connection: Connection, address: PaneAddress, request: DurableControlRequest, send: Boolean): ApiResult<DurableOutcome> {
+        if (!request.valid(send)) return ApiResult.Failure(ApiFailure.Protocol("Malformed durable control"))
+        return executeDurable(post(connection, scopedUrl(connection.origin, path("pane", address.paneId, if (send) "send" else "abort"), address.scope), json.encodeToString(request)), false)
+    }
+
+    private suspend fun executeDurable(request: Request, answer: Boolean): ApiResult<DurableOutcome> = executeResponse(request, MUTATION_TIMEOUT_SECONDS) { response ->
+        if (response.code in REDIRECT_CODES) return@executeResponse ApiResult.Failure(ApiFailure.Redirect(response.code))
+        val body = readBoundedBody(response, 256 * 1024)
+            ?: return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Durable response exceeded its size limit"))
+        if (response.code == 404) return@executeResponse ApiResult.Success(DurableOutcome(false, "stale", older = true), 404, buildId = response.header(BUILD_HEADER), controlAuthority = responseAuthority(response))
+        if (response.code !in setOf(200, 409, 504)) return@executeResponse failure(response, body)
+        val value = decode(DurableOutcome.serializer(), body)
+        if (value == null || !value.valid(answer, response.code)) return@executeResponse ApiResult.Failure(ApiFailure.Protocol("Malformed durable outcome"))
+        ApiResult.Success(value, response.code, buildId = response.header(BUILD_HEADER), controlAuthority = responseAuthority(response))
+    }
+
+    override suspend fun reply(connection: Connection, address: PaneAddress, text: String, submit: Boolean, expectedPrompt: String?, expectedColumns: PromptColumns?): ApiResult<ActionResponse> {
+        if (expectedColumns != null && (!expectedColumns.valid() || expectedPrompt == null)) return ApiResult.Failure(ApiFailure.Protocol("Invalid column-bound prompt"))
+        val target = scopedUrl(connection.origin, path("pane", address.paneId, "reply"), address.scope)
+        return executeAction(post(connection, target, json.encodeToString(ReplyRequest(text, submit, expectedPrompt, expectedColumns))))
+    }
+
+    override suspend fun keys(connection: Connection, address: PaneAddress, keys: List<String>, expectedPrompt: String?, expectedColumns: PromptColumns?): ApiResult<ActionResponse> {
+        if (expectedColumns != null && (!expectedColumns.valid() || expectedPrompt == null)) return ApiResult.Failure(ApiFailure.Protocol("Invalid column-bound prompt"))
+        require(keys.isNotEmpty() && keys.all(MuxKeyGrammar::isValid))
+        val target = scopedUrl(connection.origin, path("pane", address.paneId, "keys"), address.scope)
+        return executeAction(post(connection, target, json.encodeToString(KeysRequest(keys, expectedPrompt, expectedColumns))))
     }
 
     override suspend fun reply(
@@ -2355,7 +2458,7 @@ class CollieApiClient(
             }
 
     private fun post(connection: Connection, url: HttpUrl, body: String): Request =
-        post(connection, url, body.toRequestBody(JSON_MEDIA_TYPE))
+        post(connection, url, body.toRequestBody("application/json".toMediaType()))
 
     private fun post(connection: Connection, url: HttpUrl, body: RequestBody): Request =
         requestBuilder(connection, url)

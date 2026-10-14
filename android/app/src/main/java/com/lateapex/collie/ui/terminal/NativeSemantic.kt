@@ -1,5 +1,7 @@
 package com.lateapex.collie.ui.terminal
 
+import com.lateapex.collie.network.PromptColumns
+
 /** Typed, phone-oriented projection of a detected terminal dialog. */
 sealed interface NativeSemanticModel {
     val title: String
@@ -11,6 +13,7 @@ sealed interface NativeSemanticModel {
         val feedback: Feedback? = null,
         /** Stable capture identity beyond displayed choices (for bounded picker windows). */
         val identityDetails: String = "",
+        val expectedColumns: PromptColumns? = null,
     ) : NativeSemanticModel
 
     data class Wizard(
@@ -121,6 +124,7 @@ object NativeSemanticDeriver {
                 if (model.family in setOf("omp-resume", "omp-switch")) "${it.label}:${it.description.orEmpty()}" else it.label
             },
             model.feedback?.key.orEmpty(),
+            model.expectedColumns?.let { "${it.start}:${it.end}" }.orEmpty(),
             // OMP Ask's `identityDetails` also carries the currently pointed answer so the
             // follow-up note editor can bind to that exact choice. Pointer movement is expected
             // during a measured selection recipe, though; keep the question fixed while the

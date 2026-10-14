@@ -344,3 +344,25 @@ describe("HerdrClient agent identity diagnostics", () => {
     await expect(invalid.getAgent("w9:p1")).rejects.toThrow("malformed agent_status");
   });
 });
+
+describe("HerdrClient processInfo", () => {
+  const GROUP = {
+    pane_id: "w9:p1",
+    foreground_processes: [
+      { pid: 4242, name: "muse-bin-1.4.4", argv: ["muse", "resume", "01a0a28c-ba4b-76f2"] },
+      { pid: 4243, name: "rg", argv: null },
+    ],
+  };
+
+  test("it asks pane.process_info and validates the foreground group for journal discovery", async () => {
+    const client = new HerdrClient(await lateHerdr({ type: "pane_process_info", process_info: GROUP }), 1_000);
+    await expect(client.processInfo("w9:p1")).resolves.toEqual({ ...GROUP, foreground_processes: [{ pid: 4242, name: "muse-bin-1.4.4", argv: ["muse", "resume", "01a0a28c-ba4b-76f2"] }, { pid: 4243, name: "rg" }], truncated: false });
+    expect(lastRequest?.method).toBe("pane.process_info");
+    expect(lastRequest?.params).toEqual({ pane_id: "w9:p1" });
+  });
+
+  test("a pane with no foreground group supplies no discovery hint", async () => {
+    const client = new HerdrClient(await lateHerdr({ type: "pane_process_info", process_info: { pane_id: "w9:p1" } }), 1_000);
+    await expect(client.processInfo("w9:p1")).resolves.toEqual({ pane_id: "w9:p1", foreground_processes: [], truncated: false });
+  });
+});

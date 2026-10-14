@@ -678,8 +678,10 @@ class CollieRepository(
         reason: AuthorityInvalidation,
         change: () -> Boolean = { true },
         settled: () -> Unit = {},
+        admission: () -> Boolean = { true },
     ) {
         val transition = synchronized(readAdmissionLock) {
+            if (!admission()) return
             prepareAuthorityTransitionLocked {
                 val changed = change()
                 if (changed && reason == AuthorityInvalidation.CONNECTION_CHANGED) {
@@ -719,19 +721,27 @@ class CollieRepository(
         return api.health(candidate)
     }
 
-    suspend fun pair(origin: String, label: String, code: String): ApiResult<PairResult> {
+    suspend fun pair(origin: String, label: String, code: String, admission: (() -> Boolean)? = null): ApiResult<PairResult> {
         val normalized = originValidator.requireValid(origin)
         val cleanLabel = DeviceLabel.normalize(label)
         require(cleanLabel.isNotEmpty() && cleanLabel.length <= DeviceLabel.MAX_CHARS)
         require(code.isNotBlank())
+        val originalCommitted = if (admission != null) connectionStore.captureCommitted() ?: return staleScope() else null
+        if (admission?.invoke() == false) return staleScope()
         return when (val result = api.pair(normalized, code.trim(), cleanLabel)) {
             is ApiResult.Success -> {
                 val paired = result.value
                 if (paired is PairResult.Paired) {
-                    invalidateAuthority(AuthorityInvalidation.CONNECTION_CHANGED, change = {
-                        connectionStore.save(Connection(normalized, paired.label, paired.token))
-                        true
+                    var committed = false
+                    invalidateAuthority(AuthorityInvalidation.CONNECTION_CHANGED, admission = {
+                        admission?.invoke() != false
+                    }, change = {
+                        val replacement = Connection(normalized, paired.label, paired.token)
+                        committed = if (originalCommitted != null) connectionStore.compareAndSet(originalCommitted, replacement)
+                            else { connectionStore.save(replacement); true }
+                        committed
                     })
+                    if (!committed) return staleScope()
                 }
                 result
             }
@@ -972,7 +982,18 @@ class CollieRepository(
         return result
     }
 
-    suspend fun crew(): ApiResult<CrewStatusResponse> = withConnection(block = api::crew)
+    suspend fun crew(expectedContext: ScopedReadContext? = null): ApiResult<CrewStatusResponse> = if (expectedContext == null) withConnection(block = api::crew) else
+        withConnectionOf(expectedContext.connection, expectedContext.key.scope, expectedContext.key.subjectIdentity, expectedContext = expectedContext, block = api::crew)
+
+    suspend fun standbyHealth(actor: ScopedReadContext): ApiResult<com.lateapex.collie.network.StandbyHealthResponse> {
+        if (!isCurrent(actor) || !actor.connection.isPaired || !deviceOwnedAdmission()) return staleScope()
+        return withConnectionOf(actor.connection, actor.key.scope, actor.key.subjectIdentity, expectedContext = actor, deviceRead = true, block = api::standbyHealth)
+    }
+
+    suspend fun takeover(actor: ScopedReadContext): ApiResult<com.lateapex.collie.network.TakeoverResponse> {
+        if (!isCurrent(actor) || !actor.connection.isPaired || !deviceOwnedAdmission()) return staleScope()
+        return withConnectionOf(actor.connection, actor.key.scope, actor.key.subjectIdentity, mutation = true, expectedContext = actor, deviceRead = true, block = api::takeover)
+    }
 
     /** Machine telemetry is a lead-owned census; capture a deliberately unscoped, subject-free actor. */
     fun machineReadContext(): ScopedReadContext? = readContext(Scope(), null)
@@ -1338,7 +1359,7 @@ class CollieRepository(
         }
         val body = intentJson.encodeToString(
             StartLaunchRequest.serializer(),
-            StartLaunchRequest(requestId, cwd, target.harness, target.command, target.shell),
+            StartLaunchRequest(requestId, if (target.starter == null) cwd else null, target.harness, target.command, target.shell, target.starter),
         )
         if (!isCurrent(context)) return staleScope()
         val intent = FrozenLaunchIntent(
@@ -2591,6 +2612,38 @@ class CollieRepository(
 
     private fun String.rowCount(): Int =
         if (isEmpty()) 0 else split('\n').let { rows -> rows.size - if (endsWith('\n')) 1 else 0 }
+
+    /** Push custody belongs to pairing, independently of terminal mutation authorization. */
+    suspend fun operatorFont(row: com.lateapex.collie.network.OperatorFontRow, actor: ScopedReadContext): ApiResult<ByteArray> {
+        if (!row.valid() || !isCurrent(actor) || !actor.connection.isPaired) return staleScope()
+        val config = withConnectionOf(actor.connection, actor.key.scope, actor.key.subjectIdentity, expectedContext = actor) { api.config(it, actor.key.scope) }
+        if (config !is ApiResult.Success || row !in config.value.operatorFonts || !isCurrent(actor)) return staleScope()
+        return withConnectionOf(actor.connection, actor.key.scope, actor.key.subjectIdentity, expectedContext = actor) { api.operatorFont(it, row) }
+    }
+
+    suspend fun nativePush(method: String, body: kotlinx.serialization.json.JsonObject?, actor: ScopedReadContext): ApiResult<kotlinx.serialization.json.JsonObject> {
+        if (!isCurrent(actor) || !actor.connection.isPaired || !deviceOwnedAdmission()) return staleScope()
+        return withConnectionOf(actor.connection, actor.key.scope, actor.key.subjectIdentity,
+            mutation = method != "GET", expectedContext = actor, deviceRead = true) {
+            api.nativePush(it, method, body)
+        }
+    }
+
+    /** One explicit intent, one HTTP attempt, bound to the live actor that displayed its target. */
+    suspend fun answerAsk(address: PaneAddress, request: com.lateapex.collie.network.DurableAnswerRequest, actor: ScopedReadContext): ApiResult<com.lateapex.collie.network.DurableOutcome> =
+        withWritableConnection(address.scope, address.paneId, actor) { api.answerAsk(it, address, request) }
+
+    suspend fun durableSend(address: PaneAddress, request: com.lateapex.collie.network.DurableControlRequest, actor: ScopedReadContext): ApiResult<com.lateapex.collie.network.DurableOutcome> =
+        withWritableConnection(address.scope, address.paneId, actor) { api.durableSend(it, address, request) }
+
+    suspend fun durableAbort(address: PaneAddress, request: com.lateapex.collie.network.DurableControlRequest, actor: ScopedReadContext): ApiResult<com.lateapex.collie.network.DurableOutcome> =
+        withWritableConnection(address.scope, address.paneId, actor) { api.durableAbort(it, address, request) }
+
+    suspend fun reply(address: PaneAddress, text: String, submit: Boolean, expectedPrompt: String?, expectedColumns: com.lateapex.collie.network.PromptColumns?, expectedContext: ScopedReadContext? = null): ApiResult<ActionResponse> =
+        withWritableConnection(address.scope, address.paneId, expectedContext) { api.reply(it, address, text, submit, expectedPrompt, expectedColumns) }
+
+    suspend fun keys(address: PaneAddress, keys: List<String>, expectedPrompt: String?, expectedColumns: com.lateapex.collie.network.PromptColumns?, expectedContext: ScopedReadContext? = null): ApiResult<ActionResponse> =
+        withWritableConnection(address.scope, address.paneId, expectedContext) { api.keys(it, address, keys, expectedPrompt, expectedColumns) }
 
     suspend fun reply(
         address: PaneAddress,

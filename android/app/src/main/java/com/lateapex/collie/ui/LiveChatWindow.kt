@@ -29,6 +29,8 @@ internal class LiveChatWindow {
     private val turns = LinkedHashMap<String, TranscriptEntry>()
     var hasOlder = false
         private set
+    var lastPrompt: com.lateapex.collie.network.ChatPrompt? = null
+        private set
     var queued: List<String> = emptyList()
         private set
     var sendNow: QueuedSendNow? = null
@@ -57,6 +59,7 @@ internal class LiveChatWindow {
             revision = page.rev
             head = page.head
             queued = page.queued
+            lastPrompt = page.lastPrompt
             sendNow = if (page.queued.isNotEmpty() && !page.sendQueuedNow.isNullOrEmpty() &&
                 page.rev != null && page.rev >= 0L &&
                 isCanonicalQueuedSendIdentity(page.queuedDigest) &&
@@ -91,6 +94,7 @@ internal class LiveChatWindow {
         head = null
         turns.clear()
         queued = emptyList()
+        lastPrompt = null
         sendNow = null
         hasOlder = false
     }

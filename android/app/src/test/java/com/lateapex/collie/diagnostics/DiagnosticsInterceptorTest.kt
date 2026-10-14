@@ -49,6 +49,23 @@ class DiagnosticsInterceptorTest {
         server.close()
     }
 
+    @Test fun nativePushEnrollmentNeverCapturesEndpointOrKeysAndPreservesResponse() {
+        for (method in listOf("GET", "POST", "DELETE")) {
+            recorded.clear()
+            val responseText = """{"registrationId":"registration-sentinel","signingPublicKey":"public-key-sentinel"}"""
+            server.enqueue(MockResponse.Builder().body(responseText).build())
+            val request = Request.Builder().url(server.url("/nested/collie/api/%6Eative-push"))
+                .method(method, if (method == "GET") null else """{"endpoint":"https://private-endpoint-sentinel/topic","keys":{"auth":"auth-secret-sentinel"}}""".toRequestBody("application/json".toMediaType()))
+                .build()
+            client.newCall(request).execute().use { assertEquals(responseText, it.body!!.string()) }
+            server.takeRequest()
+            val fields = recorded.single().second
+            assertFalse(fields.containsKey("requestBody"))
+            assertFalse(fields.containsKey("responseBody"))
+            assertFalse(fields.values.any { it.toString().contains("sentinel") })
+        }
+    }
+
     @Test fun mountedWorktreeRemovalAllMimeAndChunkedErrorsRemainBoundedWithActualDiagnosticsEnabled(): Unit = kotlinx.coroutines.runBlocking {
         val certificate = HeldCertificate.Builder().commonName("localhost").addSubjectAlternativeName("localhost").build()
         val certificates = HandshakeCertificates.Builder().heldCertificate(certificate).build()

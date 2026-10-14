@@ -277,12 +277,7 @@
     <string name="worktree_base_ref">Optional base branch or ref</string>
     <string name="worktree_parent_folder">Optional parent folder</string>
     <string name="worktree_plan_title">Review worktree plan</string>
-    <string name="worktree_plan_preview">Repository: %1$s
-Default branch: %2$s
-Current branch: %3$s
-New branch: %4$s
-Base: %5$s
-Parent: %6$s</string>
+    <string name="worktree_plan_preview">Repository: %1$s\nDefault branch: %2$s\nCurrent branch: %3$s\nNew branch: %4$s\nBase: %5$s\nParent: %6$s</string>
     <string name="worktree_base_default">server default</string>
     <string name="worktree_folder_default">server default folder</string>
     <string name="worktree_plan_create">Create worktree and pane</string>

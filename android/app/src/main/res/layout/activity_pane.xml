@@ -39,7 +39,8 @@
 
             <LinearLayout
                 android:layout_width="match_parent"
-                android:layout_height="20dp"
+                android:layout_height="wrap_content"
+                android:minHeight="20dp"
                 android:gravity="center_vertical"
                 android:orientation="horizontal">
 
@@ -267,6 +268,12 @@
             android:text="@string/pane_close_symbol"
             android:textAllCaps="false" />
     </LinearLayout>
+
+    <com.lateapex.collie.ui.ChatPromptContextView
+        android:id="@+id/chat_prompt_context"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:visibility="gone" />
 
     <FrameLayout
         android:id="@+id/terminal_surface"
@@ -790,6 +797,7 @@
                     android:layout_height="wrap_content"
                     android:background="@drawable/bg_pane_reply"
                     android:fontFamily="monospace"
+                    app:fontFamily="monospace"
                     android:gravity="top|start"
                     android:hint="@string/pane_reply_hint"
                     android:inputType="textMultiLine|textNoSuggestions"

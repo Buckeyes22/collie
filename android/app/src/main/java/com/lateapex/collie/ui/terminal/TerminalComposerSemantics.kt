@@ -34,6 +34,7 @@ object TerminalComposerSemantics {
         return when (agent?.trim()?.lowercase()) {
             "claude" -> claudeDraft(rawLines, lines)
             "codex" -> CodexComposer.locate(tail)?.draft()?.let(::TerminalDraft)
+            "pi" -> PiComposer.locate(tail)?.draft()?.let(::TerminalDraft)
             "grok" -> grokDraft(lines)
             "agy", "antigravity" -> agyDraft(lines)
             "muse" -> museDraft(tail)

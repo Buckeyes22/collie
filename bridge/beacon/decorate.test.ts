@@ -21,6 +21,8 @@ import {
   type MuxSession,
   type MuxSnapshot,
   type MuxSpaceRequest,
+  type MuxStarterOutcome,
+  type MuxStarters,
   type MuxSubscription,
   type MuxTabRequest,
   type MuxWatchOptions,
@@ -29,6 +31,7 @@ import {
   type MuxWorktreeOpenRequest,
   type MuxWorktreeScope,
 } from "../mux/types.ts";
+import type { ForegroundProcess } from "../journal/types.ts";
 
 // THE DECORATOR'S OWN TESTS — the join, the two-way capability lift, and the pass-through.
 //
@@ -89,6 +92,20 @@ class StubAdapter implements MuxAdapter {
   agentIdentity?: (paneId: string) => Promise<MuxOutcome<import("../mux/types.ts").MuxAgentIdentity>>;
   reportPaneMetadata?: MuxAdapter["reportPaneMetadata"];
   reportWorkspaceMetadata?: MuxAdapter["reportWorkspaceMetadata"];
+  /** The starter pair of a durable program (ADR 0102). Absent by default, like every other multiplexer. */
+  listStarters?: () => Promise<MuxStarters>;
+  startStarter?: (starterId: string, requestId: string) => Promise<MuxStarterOutcome>;
+  /** The two ask methods (ADR 0100), when a case gives them. Absent by default, like every adapter
+   *  whose panes have a screen. */
+  openAsks?: MuxAdapter["openAsks"];
+  answerAsk?: MuxAdapter["answerAsk"];
+  /** The two control methods (ADR 0101), when a case gives them. Absent by default, like every
+   *  adapter whose panes have a screen. */
+  paneTurn?: MuxAdapter["paneTurn"];
+  controlTurn?: MuxAdapter["controlTurn"];
+  /** The foreground argv, when a case gives it one. Absent by default, like a multiplexer
+   *  without the call — the decorators must carry it without inventing it. */
+  foregroundProcesses?: (paneId: string) => Promise<MuxOutcome<readonly ForegroundProcess[]>>;
   capabilities = declareCapabilities({
     supports: ["paneGrid", "typeText", "sendKeys"],
     notes: { agentDetection: "the adapter's own note", closePane: "untouched" },
@@ -334,6 +351,13 @@ describe("a decorator preserves the adapter's whole surface", () => {
     setSplitRatio: true,
     applyLayout: true,
     layoutRuntimeIdentity: true,
+    listStarters: true,
+    startStarter: true,
+    openAsks: true,
+    answerAsk: true,
+    paneTurn: true,
+    controlTurn: true,
+    foregroundProcesses: true,
     typeText: true,
     sendKeys: true,
     renamePane: true,
@@ -414,6 +438,13 @@ describe("a decorator preserves the adapter's whole surface", () => {
     stub.reportPaneMetadata = async () => muxOk(undefined);
     stub.reportPaneMetadataOriginal = async () => muxOk(undefined);
     stub.reportWorkspaceMetadata = async () => muxOk(undefined);
+    stub.listStarters = () => Promise.resolve({ hostName: "stub", starters: [], reachable: true });
+    stub.startStarter = (starterId) => Promise.resolve({ kind: "started", paneId: starterId, replayed: false });
+    stub.openAsks = () => [];
+    stub.answerAsk = () => Promise.resolve(muxOk({ kind: "taken", replayed: false }));
+    stub.paneTurn = () => "turn-1";
+    stub.controlTurn = () => Promise.resolve({ kind: "ok", replayed: false });
+    stub.foregroundProcesses = () => Promise.resolve(muxOk([]));
     return stub;
   }
 
@@ -477,6 +508,12 @@ describe("a decorator preserves the adapter's whole surface", () => {
     // every multiplexer without the read look like it had one.
     expect("readLogicalText" in decorate(new StubAdapter(), [])).toBe(false);
     expect("readLogicalText" in withAgentHints(new StubAdapter(), { hooksInstalled: () => false })).toBe(false);
+    // The ask methods too (ADR 0100): a screen adapter must never come out looking like it answers by id.
+    // And the control methods (ADR 0101): a screen adapter must never come out refusing `/reply`.
+    for (const field of ["openAsks", "answerAsk", "paneTurn", "controlTurn"]) {
+      expect(field in decorate(new StubAdapter(), [])).toBe(false);
+      expect(field in withAgentHints(new StubAdapter(), { hooksInstalled: () => false })).toBe(false);
+    }
   });
 
   test("an adapter with no mark comes out with the KEY absent, through either decorator", () => {

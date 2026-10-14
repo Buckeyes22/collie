@@ -1,6 +1,7 @@
 import type { OpsRecord } from "../bridge/crew/ops-store.ts";
 import type { PeerClient, PeerOutcome } from "../bridge/crew/peer-client.ts";
 import type { TrustedMember, TrustStoreData, Warrant } from "../bridge/crew/trust-store.ts";
+import { rosterRowsOf } from "../bridge/crew/takeover.ts";
 import { commitCrewChange } from "../bridge/crew/enrollment.ts";
 import { currentWarrant, mintWarrant, warrantExpired, type WarrantPush } from "../bridge/crew/warrant.ts";
 import { EXIT } from "./io.ts";
@@ -334,10 +335,10 @@ async function pushToPeers(deps: CrewAddDeps, data: TrustStoreData, warrant: War
   const enrolled = data.peers.filter((p) => p.status === "enrolled");
   if (enrolled.length === 0) return rows;
   const client = clientFor(deps, data, data.crew?.secret ?? "");
-  const payload = payloadFor(data, warrant);
   await Promise.all(
     enrolled.map(async (member) => {
       const link = linkOf(member);
+      const payload = payloadFor(data, warrant, member.memberId);
       const first = await client.warrant(link, payload);
       // The retry rides a new timestamp because `PeerClient` stamps every dial from its own clock —
       // there is no stamp to reuse and nothing to reset.
@@ -387,10 +388,15 @@ async function confirmStored(
  * warrant names — §8.2's enrollment rule, for §8.2's reason. A revocation names nobody and therefore
  * carries nothing.
  */
-function payloadFor(data: TrustStoreData, warrant: Warrant): WarrantPush {
+function payloadFor(data: TrustStoreData, warrant: Warrant, recipient: string): WarrantPush {
   if (warrant.deputyMemberId === null) return { warrant };
   const deputy = data.peers.find((p) => p.memberId === warrant.deputyMemberId);
-  return deputy === undefined ? { warrant } : { warrant, deputyCertPem: deputy.certPem };
+  if (deputy === undefined) return { warrant };
+  const payload: WarrantPush = { warrant, deputyCertPem: deputy.certPem };
+  // The first designation carries the same deputy-only public roster as the hourly refresh.
+  // Otherwise a peer already reporting this warrant is skipped by the sweep for an hour.
+  if (recipient === warrant.deputyMemberId) return { ...payload, roster: rosterRowsOf(data.peers) };
+  return payload;
 }
 
 // ── Phase 2 — anchored (over the operator's ssh) ─────────────────────────────

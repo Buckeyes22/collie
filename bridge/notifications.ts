@@ -141,6 +141,8 @@ export function pushName(pane: NameableP): string {
 
 interface Alert {
   agent: string;
+  /** A durable ask uses a generic permission title, never tool data. */
+  ask?: true;
   /** What a push calls this pane — {@link pushName}, the operator's label and never the title. */
   label: string;
   /** Where it sits — `space › tab`, or the space alone. The one place rule, same module. */
@@ -177,7 +179,7 @@ export class NotificationCoordinator<H = unknown> {
   ) {}
 
   /** Wire to `StateEngine.onTransition`. */
-  onTransition(agent: AgentView, from: AgentStatus, rawTo: AgentStatus): void {
+  onTransition(agent: AgentView, from: AgentStatus, rawTo: AgentStatus, cause?: "ask"): void {
     const id = agent.paneId;
     // Herdr 0.9 can report a finished turn as `idle` instead of `done`, and tmux and zellij never
     // report `done` (issue #345), so a `working → idle` flip IS the completion and is read as `done` from here on: the Finished pref,
@@ -203,6 +205,7 @@ export class NotificationCoordinator<H = unknown> {
       // every other member of `AgentStatus`, so this branch cannot be entered with one.
       status: to as NotifiableStatus,
     };
+    if (cause === "ask" && to === "blocked") alert.ask = true;
     const handle = this.clock.schedule(() => {
       this.pending.delete(id);
       this.outstanding.set(id, alert);
@@ -270,7 +273,7 @@ export class NotificationCoordinator<H = unknown> {
       const [paneId, a] = entries[0]!;
       // One outstanding agent → deep-link straight to its pane on tap.
       return {
-        ...pushTitle(a.status === "blocked" ? "agent.blocked" : "agent.done", { agent: a.agent }),
+        ...(a.ask ? pushTitle("ask.permission", { pane: a.label }) : pushTitle(a.status === "blocked" ? "agent.blocked" : "agent.done", { agent: a.agent })),
         // The PLACE, and nothing else. A push says the same two things the screens say — what it is
         // called (the title, above) and where it sits — so the notification and the dashboard row it
         // deep-links to read alike. The cwd is deliberately gone: a full absolute path on a lock

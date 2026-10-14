@@ -29,6 +29,7 @@ newest tag. The phone PWA updates itself within about a minute; no reload needed
 Running a crew? Update the lead first; members follow on their own. Details:
 `docs/crew.md` → *Updating from 1.7.0*.
 
+
 ## [Unreleased]
 
 ### Added
@@ -65,7 +66,13 @@ Running a crew? Update the lead first; members follow on their own. Details:
 
 - **Machine rule updates compare the original enrolled machine and rule revision.** Keep lead-local, device-write whole-rule replacements, exact request receipts and bounded inert read extensions. Commit completed-minute history, episodes, reserved clears and the evaluator watermark in one durable generation. The backend exports an original-owner producer port and bounded, integrity-checked deputy checkpoints; the native editor, actual B22 signed enqueue, and B38 activation still require their source joins and actual acceptance.
 
+- **Deliver signed native notifications through a configured UnifiedPush provider.** Add paired installation registration, a bounded durable signed outbox, self-hosted ntfy delivery, exact binding retirement and independent device admission.
+- **Native link imports require explicit review before protected navigation.** Android paste, text sharing and QR image import preserve the exact mounted server and pairing owner, keep pairing codes out of internal intents and saved state, and accept only the separate plain-text share receiver alongside the existing OAuth callback.
+- **Pinned native panes keep their chosen place across status changes.** Add owner-bound device-local pin and unpin actions, stable pinned dashboard and switcher groups, dormant records and workspace reuse guards without sending terminal or server mutations.
+
 ### Changed
+
+- **Reconcile the released durable-agent contracts with stock multiplexer workflows.** Add screenless durable adapters, asks, guarded controls, starters, OpenClaw history and current Pi context handling while preserving fork authorization and optional custom source.
 
 - **The Android fork follows the current upstream server contract.** Merge Collie 1.19.0 while retaining native Kotlin screens, English-only UI, Android release isolation, transcript caching, and request trace correlation. Android handles scoped sessions, Crew, paired reads, mounted origins and live chat.
 
@@ -97,6 +104,14 @@ Running a crew? Update the lead first; members follow on their own. Details:
 - **Pending monitoring delivery cannot discard another machine’s recovery clear.** Keep an incomplete minute retryable when its opening slot is busy, release failed owned checkpoint transfers, share authoritative event-pair validation with checkpoint readers, and bind acknowledgements to the exact requested revision and digest.
 
 - **Committed monitoring snapshots survive later minute updates.** Complete each immutable observation under its original authority, coalesce the latest revision after its exact receipt, and retain original deputy, warrant and frame deadline checks. A deferred frame never certifies delivery or replays producer work.
+
+- **Fresh deputies receive their takeover roster immediately.** Include the existing deputy-only public roster in the initial signed warrant push so a newly configured deputy can take over without waiting for the hourly refresh.
+
+- **Android release signing recognizes the current verified certificate output.** Accept SDK 37's sole-signer labels and retained older formats only with exactly one verified APK certificate; ignore source-stamp custody and reject extra signers, ambiguous rotation sets and malformed fingerprints.
+- **Preserve legitimate Unicode joining controls in durable conversations.** Keep emoji sequences and script shaping intact in user turns, replies and ask text while retaining terminal-control filtering and bounded display fields.
+- **Native worktree previews keep plan fields on separate lines.** Preserve explicit line breaks for the repository, branch, base and destination in the native confirmation sheet.
+- **Local duplicate launcher refusals carry verified Collie error provenance.** Native clients can retain the known initial refusal while unmarked intermediaries and earlier uncertain requests remain unknown.
+- **Fractional Codex cache timestamps no longer hide native panes.** Android preserves the upstream numeric observation time and calculates its displayed age without rejecting the full live snapshot.
 
 ### Packaging
 

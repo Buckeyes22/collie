@@ -28,6 +28,8 @@ class CollieApplication : Application() {
         DocumentAttachment.cleanupPreviousProcessSpools(cacheDir)
         NativePreferences(this).applyTheme()
         container = AppContainer(this)
+        container.nativePush.resume()
+        container.operatorTypefaceRestorer.start()
         // Backstop for a process that died with the share sheet open: never leave a plaintext export behind.
         DiagnosticsExport.exportDir(cacheDir).deleteRecursively()
         installUncaughtExceptionHandler()

@@ -2014,6 +2014,8 @@ export const en = {
   "pushTitle.machine.cpu": "CPU stays high on {machine}",
   "pushTitle.machine.mem": "Memory stays high on {machine}",
   "pushTitle.machine.disk": "Disk stays full on {machine}",
+  "pushTitle.ask.permission": "Permission needed in {pane}",
+  "pushTitle.ask.flood": "A program on {host} is raising many asks",
 } as const;
 
 /** Every key that exists, as a union of string literals. The completeness contract. */

@@ -271,7 +271,7 @@ class CacheWatchActivity : AppCompatActivity() {
         val reset = cache.reset?.takeIf { it.label?.isNotBlank() == true }
             ?.let { getString(R.string.cache_reset_fact, it.label.orEmpty()) }.orEmpty()
         val observations = buildList {
-            CacheContextPresenter.ageSeconds(cache.lastRequestAt, serverAt)?.let {
+            CacheContextPresenter.ageSeconds(cache.lastRequestAt?.toDouble(), serverAt)?.let {
                 add(getString(R.string.cache_last_request_age, duration(it)))
             }
             CacheContextPresenter.ageSeconds(cache.measuredAt, serverAt)?.let {

@@ -484,7 +484,7 @@ function wirePid(row: JsonObject, field: string): number | undefined {
 function parsePaneProcessInfo(value: JsonValue): WirePaneProcessInfo {
   const result = wireObject(value, "result");
   const paneId = wireText(result, "pane_id");
-  const rows = result.foreground_processes;
+  const rows = result.foreground_processes ?? [];
   if (!Array.isArray(rows)) throw new Error("herdr pane.process_info: malformed foreground_processes");
   let truncated = rows.length > MAX_PROCESSES;
   const foregroundProcesses: WirePaneProcessInfo["foreground_processes"] = [];
@@ -526,6 +526,21 @@ function parsePaneProcessInfo(value: JsonValue): WirePaneProcessInfo {
   const tty = wireText(result, "tty", true);
   if (tty !== undefined) parsed.tty = redactText(tty);
   return parsed;
+}
+
+/** One foreground process, as `pane.process_info` reports it. argv is null when Herdr could not
+ *  read it — the adapter maps that to no argv rather than failing the whole read. */
+export interface WireForegroundProcess {
+  pid: number;
+  name: string;
+  argv?: string[] | null;
+}
+
+/** Raw wire shape of `pane.process_info`. Only `pane_id` is required by the schema; a pane
+ *  whose processes Herdr cannot list answers without the foreground group. */
+export interface WireProcessInfo {
+  pane_id: string;
+  foreground_processes?: WireForegroundProcess[] | null;
 }
 
 // Wire names are snake_case: `recent-unwrapped` is REJECTED by the server (`unknown variant`,
@@ -1619,6 +1634,7 @@ export class HerdrClient {
     });
     return r.read;
   }
+
 
   /** Type literal text into a pane's terminal (does not submit). */
   sendPaneText(paneId: string, text: string, originalAdmission?: HerdrDispatchAdmission): Promise<void> {

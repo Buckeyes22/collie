@@ -86,6 +86,8 @@ class AppContainer(context: Context) {
         offlineContentStore = nativePreferences.offlineContentStore,
     )
     val imageLoader = ScopedImageLoader(repository)
+    internal val operatorTypefaceRestorer = com.lateapex.collie.ui.OperatorTypefaceRestorer(context.applicationContext, repository)
+    val nativePush = com.lateapex.collie.notifications.NativePushRuntime(context.applicationContext, this)
     init {
         // Registered before Activity/View listeners: encrypted publication closes before any
         // main-thread wipe ACK can begin, with no monitor held across the later callbacks.
@@ -96,6 +98,7 @@ class AppContainer(context: Context) {
             proxyInterceptor.retire(event)
         }
         repository.onAuthorityRetired { event ->
+            nativePush.retire(event)
             val reason = event.reason
             if (reason == com.lateapex.collie.data.AuthorityInvalidation.ACCESS_FROZEN) {
                 com.lateapex.collie.ui.ProxyCallbackHandoff.retire(event)

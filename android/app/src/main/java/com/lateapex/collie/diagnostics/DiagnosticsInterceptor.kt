@@ -16,6 +16,7 @@ import okio.Buffer
  * they can contain operator-authored command lines. The `Authorization` header's VALUE is never
  * recorded, under any circumstance — only whether one was present. Pairing bodies are never
  * captured: the request contains a short-lived code and the response contains the device token.
+ * Native push enrollment is likewise metadata-only because endpoints and WebPush keys are credentials.
  *
  * A GET records only what is new since the last answer from the same URL ([ResponseDelta]); a
  * poll with nothing new is not recorded. A send (anything but GET) is recorded in full unless its
@@ -43,7 +44,7 @@ class DiagnosticsInterceptor internal constructor(
             "traceId" to traceId,
             "hadCredential" to (tagged.header("Authorization") != null),
         )
-        if (tagged.url.pathSegments.takeLast(2) == listOf("api", "pair")) {
+        if (tagged.url.pathSegments.takeLast(2) in setOf(listOf("api", "pair"), listOf("api", "native-push"))) {
             diagnostics.record("network", fields)
             return response
         }

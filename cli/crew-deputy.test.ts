@@ -10,12 +10,13 @@ import {
   parseTrustStore,
   serializeTrustStore,
   TrustStore,
+  type RosterRow,
   type TrustedMember,
   type TrustStoreData,
   type TrustStoreIo,
   type Warrant,
 } from "../bridge/crew/trust-store.ts";
-import { mintWarrant, type WarrantPush } from "../bridge/crew/warrant.ts";
+import { checkWarrantPush, mintWarrant, storeWarrant, type WarrantPush } from "../bridge/crew/warrant.ts";
 import { capture, context, fakeExec, fakeFiles, fakeOps, STATE, type SeededFiles, type SeededOps, probeDefaults, probeOutput, type ProbeField } from "./fakes.ts";
 import { EXIT } from "./io.ts";
 import { cmdCrewDeputy } from "./crew-deputy.ts";
@@ -37,6 +38,7 @@ interface PushedWarrant {
   readonly member: string;
   readonly warrant: Warrant;
   readonly certPem: string | null;
+  readonly roster: readonly RosterRow[] | undefined;
 }
 
 // `probeDefaults()` FIRST, then this suite's own values. The shared table is the one place the
@@ -184,7 +186,7 @@ function harness(opts: HarnessOptions = {}) {
         // `JSON.stringify` a few lines earlier in `pushToPeers`. The suite is reading back the bytes
         // it just watched the verb write, not foreign input, so there is nothing here to re-validate.
         const body = JSON.parse(String(init.body)) as WarrantPush;
-        pushed.push({ member: who, warrant: body.warrant, certPem: body.deputyCertPem ?? null });
+        pushed.push({ member: who, warrant: body.warrant, certPem: body.deputyCertPem ?? null, roster: body.roster });
         if (opts.refuse?.includes(who) === true) throw new Error("connection refused");
         if ((warrantPushes.get(who) ?? 0) <= (opts.unauthorized?.[who] ?? 0)) {
           // The bare 401 admission emits: no code, no cause, no version banner (§8.1).
@@ -355,6 +357,24 @@ describe("crew deputy refuses before it mints", () => {
 // ── The happy path: mint → push → one consent → restart batch (RFC §5) ───────
 
 describe("crew deputy arms the whole crew under one consent", () => {
+  test("the first signed designation gives only the deputy a verified public takeover roster", async () => {
+    const peers = [...twoPeers().peers, member({ memberId: "removed", status: "unenrolled" })];
+    const h = harness({ store: twoPeers({ peers }) });
+    expect(await cmdCrewDeputy(h.deps, ["nas"])).toBe(EXIT.OK);
+    const push = h.pushed.find((row) => row.member === "nas")!;
+    const fresh = peerStore({ self: { ...peerStore().self, memberId: "nas", ...material("nas") } });
+    const wire = { warrant: push.warrant, deputyCertPem: push.certPem, roster: push.roster };
+    // SAFETY: JSON.parse yields JSON values from the recorded production push; checkWarrantPush validates the wire shape.
+    const verdict = checkWarrantPush(fresh, JSON.parse(JSON.stringify(wire)) as JsonValue, T0);
+    expect(verdict.kind).toBe("accept");
+    if (verdict.kind !== "accept") throw new Error("Actual signed wire refused by fresh deputy");
+    const received = storeWarrant(fresh, verdict.stored, verdict.roster).next;
+    expect(received.standbyRoster?.map((row) => row.memberId)).toEqual(["nas", "attic"]);
+    expect(received.standbyRoster?.every((row) => !("keyPem" in row) && !("secret" in row))).toBe(true);
+    expect(received.standbyRoster?.find((row) => row.memberId === "nas")?.address).toBe("100.64.0.9:8787");
+    expect(h.pushed.find((row) => row.member === "attic")?.roster).toBeUndefined();
+  });
+
   test("mints, restarts this lead, pushes to every peer, then restarts them all", async () => {
     const h = harness();
     expect(await cmdCrewDeputy(h.deps, ["nas"])).toBe(EXIT.OK);
@@ -616,6 +636,7 @@ describe("crew deputy --revoke", () => {
       expect(push.warrant?.generation).toBe(2);
       expect(push.warrant?.deputyMemberId).toBeNull();
       expect(push.certPem).toBeNull();
+      expect(push.roster).toBeUndefined();
     }
     expect(text(h.io)).toContain("names NOBODY");
   });

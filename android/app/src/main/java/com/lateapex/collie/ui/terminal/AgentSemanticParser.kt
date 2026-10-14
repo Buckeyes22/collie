@@ -1,6 +1,7 @@
 package com.lateapex.collie.ui.terminal
 
 import com.lateapex.collie.domain.MuxKeyGrammar
+import com.lateapex.collie.network.PromptColumns
 
 enum class SemanticKind {
     PROMPT_SELECT,
@@ -30,6 +31,7 @@ data class SemanticSurface(
     val ownsKeyboard: Boolean = true,
     val interactionLocked: Boolean = false,
     val nativeModel: NativeSemanticModel? = null,
+    val expectedColumns: PromptColumns? = null,
 )
 
 /**
@@ -77,6 +79,7 @@ object AgentSemanticParser {
             "grok" -> detectGrok(lines, revision)
             "agy", "antigravity" -> detectAgy(lines, revision)
             "omp" -> detectOmp(lines, revision)
+            "pi" -> detectPiQuestion(window.text, revision)
             "muse" -> detectMuse(lines, revision)
             "opencode" -> detectOpenCodeQuestion(lines, revision, openCodeFocusedRows(window.text))
             else -> null
@@ -108,6 +111,159 @@ object AgentSemanticParser {
     }
 
     private data class AnalysisWindow(val text: String, val lineOffset: Int)
+
+    /** Fixed v1.21 Pi/OmO question shape and footer contract; unknown/multi/editor states stay raw. */
+    private fun detectPiQuestion(raw: String, revision: Long): SemanticSurface? {
+        val rawLines = raw.replace("\r\n", "\n").split('\n')
+        val original = rawLines.map { TerminalPlainText.strip(it).trimEnd() }
+        val end = original.indexOfLast(String::isNotBlank)
+        if (end < 0) return null
+        val bottom = (end downTo maxOf(0, end - 4)).firstOrNull {
+            original[it].takeWhile { c -> c == '─' }.length >= 8
+        } ?: return null
+        if (bottom == end) return null
+        val width = original[bottom].takeWhile { it == '─' }.length
+        if (width > 4096) return null
+        val columns = PromptColumns(0, width)
+        val croppedRaw = PromptColumnText.cropRaw(raw, columns).split('\n')
+        val cropped = croppedRaw.map { TerminalPlainText.strip(it).trimEnd() }
+        val ruleText = "─".repeat(width)
+        val top = (bottom - 1 downTo maxOf(0, bottom - 160)).firstOrNull { cropped[it] == ruleText } ?: return null
+        if (piRuleColour(rawLines[top]) != piRuleColour(rawLines[bottom])) return null
+        val statuses = (bottom + 1..end).filter { cropped[it].isNotBlank() }
+        if (statuses.isEmpty() || statuses.any { cropped[it].trimStart().startsWith("─") } ||
+            statuses.any { !piPainted(croppedRaw[it]) && !(it == statuses.last() && statuses.size > 1) }
+        ) return null
+        val panel = (top..bottom).any { row ->
+            val left = PromptColumnText.crop(rawLines[row], columns)
+            val rest = original[row].substring(left.length.coerceAtMost(original[row].length))
+            rest.isNotBlank() && (left.endsWith("─") || left.endsWith("  "))
+        }
+        val view = if (panel) cropped else original
+        val painted = if (panel) croppedRaw else rawLines
+        if (!panel && (top..bottom).any { view[it].length > width }) return null
+        var footerEnd = bottom - 1
+        if (view[footerEnd].isBlank()) footerEnd--
+        var footerStart = -1
+        var footer: PiFooter? = null
+        for (rows in 1..3) {
+            val first = footerEnd - rows + 1
+            if (first <= top || !view[first].startsWith(" ") || !piPainted(painted[first])) break
+            val candidate = piFooter(view.subList(first, footerEnd + 1).joinToString(" ") { it.trim() })
+            if (candidate != null) { footer = candidate; footerStart = first }
+        }
+        val hints = footer ?: return null
+        if (hints.toggle || hints.escape == null) return null
+        val optionPattern = Regex("^( {0,1})([ >→]) ([1-9])\\. (\\S.*)$")
+        val firstOption = (top + 1 until footerStart).firstOrNull { optionPattern.matchEntire(view[it])?.groupValues?.get(3) == "1" } ?: return null
+        val header = view.subList(top + 1, firstOption)
+        if (header.any { it.isNotBlank() && !it.startsWith(" ") }) return null
+        val strips = header.mapIndexedNotNull { index, row ->
+            val tokens = row.trim().split(Regex("\\s{2,}"))
+            if (tokens.size >= 2 && tokens.last() == "Submit" && tokens.first().startsWith("→ ")) index to tokens else null
+        }
+        // The bounded native reader handles one question; multiple-question review has another shape.
+        if (strips.size > 1 || strips.any { it.second.size != 2 } || header.any { it.trimStart().startsWith("←") }) return null
+        val questionRows = if (strips.isEmpty()) header else header.drop(strips.single().first + 1)
+        val question = questionRows.filter(String::isNotBlank).joinToString(" ") { it.trim() }
+        if (question.isBlank()) return null
+        data class PiChoice(val number: Int, val label: String, val pointed: Boolean, val description: String = "")
+        val choices = mutableListOf<PiChoice>()
+        var pointerColumn: Int? = null
+        var freeText = false
+        var cursor = firstOption
+        while (cursor < footerStart) {
+            val row = view[cursor]
+            if (row.isBlank()) { cursor++; break }
+            val option = optionPattern.matchEntire(row)
+            if (option != null) {
+                val col = option.groupValues[1].length
+                if (freeText || pointerColumn != null && pointerColumn != col) return null
+                pointerColumn = col
+                val number = option.groupValues[3].toInt()
+                if (number != choices.size + 1) return null
+                val label = option.groupValues[4]
+                val pointed = option.groupValues[2] in setOf(">", "→")
+                if (label.startsWith("Type ") && (label.endsWith(".") || label.endsWith("…"))) {
+                    if (pointed) return null
+                    freeText = true
+                } else choices += PiChoice(number, label, pointed)
+            } else {
+                val col = pointerColumn ?: return null
+                val prefix = row.take(col + 2)
+                val own = row.drop(col + 2)
+                if (prefix.trim() in setOf("", ">", "→") && own.startsWith("Type ") &&
+                    (own.endsWith(".") || own.endsWith("…"))
+                ) {
+                    if (prefix.trim().isNotEmpty() || freeText) return null
+                    freeText = true
+                } else {
+                    val indent = col + 5
+                    if (freeText || choices.isEmpty() || !row.startsWith(" ".repeat(indent)) || row.getOrNull(indent)?.isWhitespace() != false) break
+                    val previous = choices.removeAt(choices.lastIndex)
+                    choices += previous.copy(description = listOf(previous.description, row.drop(indent)).filter(String::isNotBlank).joinToString(" "))
+                }
+            }
+            cursor++
+        }
+        if (choices.size !in 1..9 || choices.count { it.pointed } != 1) return null
+        val trailers = view.subList(cursor, footerStart).filter(String::isNotBlank)
+        if (trailers.size > 2 || trailers.any { !it.startsWith(" ") || it.trimStart().startsWith("─") }) return null
+        val counter = trailers.mapNotNull { Regex("\\((\\d+)/(\\d+) answered\\)").find(it) }
+        if (counter.size > 1 || counter.any { it.groupValues[2] != "1" }) return null
+        val walk = hints.arrows && hints.enterSelect
+        if (!walk && (!hints.digits || hints.enterSelect || counter.any { it.groupValues[1] != "0" })) return null
+        val pointer = choices.indexOfFirst { it.pointed }
+        val actions = choices.mapIndexed { index, option ->
+            val keys = if (walk) List(kotlin.math.abs(index - pointer)) { if (index > pointer) "Down" else "Up" } + "Enter" else listOf(option.number.toString())
+            action("option-${option.number}", option.label, keys)
+        } + action("cancel", hints.escape.replaceFirstChar { it.uppercase() }, listOf("Escape"))
+        val range = columns.takeIf { panel }
+        val signature = view.subList(top, bottom + 1).joinToString("\n")
+        if (signature.length !in 1..32_000) return null
+        val model = NativeSemanticModel.Prompt(question, "Choose an option", choices.map { row ->
+            Option(row.number, row.label, row.description.takeIf(String::isNotBlank), "option-${row.number}", row.pointed)
+        }, identityDetails = header.joinToString("\n") + choices.joinToString("\n") { it.description }, expectedColumns = range)
+        return SemanticSurface(SemanticKind.PROMPT_SELECT, question, "pi-select", actions = actions,
+            regionSignature = signature, revision = revision, startLine = top, endLine = bottom,
+            nativeModel = model, expectedColumns = range)
+    }
+
+    private data class PiFooter(val arrows: Boolean, val enterSelect: Boolean, val digits: Boolean, val toggle: Boolean, val escape: String?)
+    private fun piFooter(text: String): PiFooter? {
+        val segments = text.split(Regex("\\s+[•·]\\s+|\\s{2,}")).map(String::trim).filter { it.isNotBlank() && it != "•" }
+        if (segments.size < 2) return null
+        var arrows = false; var enter: String? = null; var digits = false; var toggle = false; var escape: String? = null
+        for (segment in segments) {
+            if (segment.startsWith("type ", true)) continue
+            val pair = Regex("^(\\S+)\\s+(?:to\\s+)?(\\S.*)$", RegexOption.IGNORE_CASE).matchEntire(segment) ?: return null
+            val key = pair.groupValues[1].lowercase(); val verb = pair.groupValues[2].lowercase()
+            when {
+                key in setOf("↑↓", "↑/↓") -> arrows = arrows || verb in setOf("navigate", "move", "select")
+                key == "enter" -> { if (enter != null && enter != verb) return null; enter = verb }
+                key == "1-9" -> digits = digits || verb == "select"
+                key == "space" -> toggle = toggle || verb in setOf("toggle", "tick")
+                Regex("^(?:esc|escape)(?:/ctrl\\+c)?$").matches(key) -> { if (escape != null) return null; escape = verb }
+                key in setOf("←→", "←/→", "tab/←→", "tab/←/→", "tab", "shift+tab") || Regex("^(?:[a-z]|ctrl\\+[a-z])$").matches(key) -> Unit
+                else -> return null
+            }
+        }
+        return PiFooter(arrows, enter in setOf("select", "confirm"), digits, toggle, escape)
+    }
+    private val piSgr = Regex("\u001B\\[([0-9;:]*)m")
+    private fun piRuleColour(raw: String): String? = piSgr.findAll(raw.substringBefore('─')).map { it.groupValues[1] }
+        .lastOrNull { it.startsWith("38;") || (it.toIntOrNull() ?: -1) in 30..37 || (it.toIntOrNull() ?: -1) in 90..97 }
+    private fun piPainted(raw: String): Boolean {
+        var painted = false; var from = 0
+        for (match in piSgr.findAll(raw)) {
+            if (painted && raw.substring(from, match.range.first).any { !it.isWhitespace() }) return true
+            val codes = match.groupValues[1].split(';', ':').mapNotNull(String::toIntOrNull)
+            if (0 in codes) painted = false
+            if (codes.any { it == 2 || it in 30..37 || it in 90..97 || it == 38 }) painted = true
+            from = match.range.last + 1
+        }
+        return painted && raw.drop(from).any { !it.isWhitespace() }
+    }
 
     private fun detectOmp(lines: List<String>, revision: Long): SemanticSurface? {
         detectOmpNoteEditor(lines, revision)?.let { return it }
@@ -1364,9 +1520,9 @@ object SemanticActionGuard {
         freshText: String,
         freshRevision: Long,
     ): SemanticAction? {
-        if (freshRevision != displayed.revision || displayed.interactionLocked || action !in displayed.actions) return null
+        if ((freshRevision != displayed.revision && displayed.expectedColumns == null) || displayed.interactionLocked || action !in displayed.actions) return null
         val fresh = AgentSemanticParser.detect(agent, freshText, freshRevision) ?: return null
-        if (fresh.kind != displayed.kind || fresh.regionSignature != displayed.regionSignature || fresh.interactionLocked) return null
+        if (fresh.kind != displayed.kind || fresh.expectedColumns != displayed.expectedColumns || fresh.regionSignature != displayed.regionSignature || fresh.interactionLocked) return null
         return fresh.actions.singleOrNull { it.id == action.id && it.keys == action.keys }
     }
 }

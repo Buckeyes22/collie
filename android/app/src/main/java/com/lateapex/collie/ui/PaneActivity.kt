@@ -273,6 +273,7 @@ class PaneActivity : AppCompatActivity() {
     }
     private val displayPreferences by lazy { getSharedPreferences(DISPLAY_PREFERENCES, MODE_PRIVATE) }
     private val nativePreferences by lazy { NativePreferences(this) }
+    private val panePins by lazy { NativePanePins(this) }
     private val repository get() = (application as CollieApplication).container.repository
     private lateinit var composerMediaActions: ComposerMediaActions
     private lateinit var composerMediaText: ComposerMediaText
@@ -1879,6 +1880,11 @@ class PaneActivity : AppCompatActivity() {
             }
             paneContentContext = copied
             repository.localDraftCustody(address, copied)?.let { local -> localDraftCustody = local; paneDraftKey = local.key }
+        }
+        if (state.mux?.name == "durable") {
+            startActivity(DurableChatActivity.intent(this@PaneActivity, address, binding.paneTitle.text.toString()))
+            finish()
+            return@with
         }
         currentState = state
         lastRenderedState = state
@@ -3494,6 +3500,10 @@ class PaneActivity : AppCompatActivity() {
             )
             sections.forEach { section ->
                 when (section) {
+                    is PaneSwitcherSection.Pinned -> {
+                        list.addView(switcherSectionLabel(getString(R.string.pane_pinned_title)))
+                        section.rows.forEach { addSwitcherPaneRow(list, dialog, it) }
+                    }
                     is PaneSwitcherSection.Agents -> {
                         val title = switcherBucketLabel(section.bucket)
                         // Recent keeps the plain heading Working has (A.6) but stays foldable: its
@@ -3607,6 +3617,7 @@ class PaneActivity : AppCompatActivity() {
         mux = currentState.mux,
         servers = currentState.servers,
         launching = launching,
+        pinned = currentState.paneReadContext?.let { panePins.matcher(it, repository::isCurrent) } ?: { false },
     )
 
     private fun addSwitcherPaneRow(list: LinearLayout, dialog: CollieBottomSheetDialog, row: SwitcherPaneRow) {
@@ -3662,6 +3673,10 @@ class PaneActivity : AppCompatActivity() {
         removeAllViews()
         paneSwitcherSections().forEach { section ->
             when (section) {
+                is PaneSwitcherSection.Pinned -> {
+                    addView(switcherPreviewSection(getString(R.string.pane_pinned_title), false, true))
+                    section.rows.forEach { addView(switcherPreviewPaneRow(it)) }
+                }
                 is PaneSwitcherSection.Agents -> {
                     val title = switcherBucketLabel(section.bucket)
                     addView(switcherPreviewSection(title, section.bucket == TriageBucket.RECENT, section.open))
@@ -3888,6 +3903,21 @@ class PaneActivity : AppCompatActivity() {
             }
 
             closingRow(getString(R.string.pane_refresh)) { viewModel.refresh() }
+            val pinActor = currentState.paneReadContext
+            if (paneSummary != null && pinActor != null && pinActor.connection.isPaired && currentState.savedCopy == null && repository.isCurrent(pinActor)) {
+                val pinned = panePins.isPinned(paneSummary, pinActor, repository::isCurrent)
+                closingRow(getString(if (pinned) R.string.pane_unpin else R.string.pane_pin)) {
+                    val current = currentPaneSummary() ?: return@closingRow
+                    if (currentState.savedCopy != null || !repository.isCurrent(pinActor) ||
+                        current.paneId != paneSummary.paneId || current.host != paneSummary.host ||
+                        current.session != paneSummary.session || current.workspaceId != paneSummary.workspaceId ||
+                        current.workspaceLabel != paneSummary.workspaceLabel) return@closingRow
+                    if (panePins.setPinned(current, !pinned, currentState.panes, pinActor, repository::isCurrent)) {
+                        populateSwitcherPeek()
+                        showTransientMessage(getString(if (pinned) R.string.pane_unpin_saved else R.string.pane_pin_saved))
+                    }
+                }
+            }
 
             if (currentState.canWrite) {
                 val focus = PaneStructuralGate.action(
@@ -3976,12 +4006,8 @@ class PaneActivity : AppCompatActivity() {
             closingRow(getString(R.string.pane_action_agent_identity)) {
                 startActivity(AgentIdentityActivity.intent(this, address))
             }
-            closingRow(getString(R.string.pane_action_agent_metadata)) {
-                startActivity(AgentMetadataActivity.intent(this, address))
-            }
-            closingRow(getString(R.string.pane_action_agent_view)) {
-                startActivity(AgentViewActivity.intent(this, address))
-            }
+
+
             closingRow(getString(R.string.pane_action_changes)) {
                 startActivity(ChangesActivity.intentForPane(
                     this,
@@ -4170,6 +4196,7 @@ class PaneActivity : AppCompatActivity() {
         val body = bodyOverride ?: decided.body
         showingTranscriptBody = body == PaneBody.TRANSCRIPT
         renderBodyModeRow(decided, body)
+        chatPromptContext.showPrompt(state.lastPrompt.takeIf { showingTranscriptBody && state.transcriptAvailable == true && state.savedCopy == null && state.transcriptReadContext?.let((application as CollieApplication).container.repository::isCurrent) == true })
         transcriptBody.isVisible = showingTranscriptBody
         terminalScroll.isVisible = body == PaneBody.MIRROR
         terminalStatusline.isVisible = body == PaneBody.MIRROR &&
@@ -4740,11 +4767,18 @@ class PaneActivity : AppCompatActivity() {
         {},
     )
 
-    private fun closeCurrentPane() = mutatePane(
-        "closePane",
-        getString(R.string.pane_action_close),
-        { repository.closePane(address) },
-    ) { finish() }
+    private fun closeCurrentPane() {
+        val pane = currentPaneSummary()
+        val actor = currentState.paneReadContext
+        mutatePane(
+            "closePane",
+            getString(R.string.pane_action_close),
+            { repository.closePane(address) },
+        ) {
+            if (pane != null && actor != null) panePins.dropAfterConfirmedClose(pane, actor, repository::isCurrent)
+            finish()
+        }
+    }
 
     /** B.3: the destructive confirm is its own sheet — one message, one red button. */
     private fun showCloseConfirmSheet() {

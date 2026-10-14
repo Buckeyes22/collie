@@ -43,6 +43,9 @@ interactive shell prompts. Never commit their values or pass passwords directly 
 | `COLLIE_ANDROID_STORE_PASSWORD` | Keystore password |
 | `COLLIE_ANDROID_KEY_PASSWORD` | Private-key password |
 | `COLLIE_ANDROID_CERT_SHA256` | Independently checked certificate SHA-256 fingerprint |
+| `COLLIE_ANDROID_METADATA_SIGNING_KEY` | Existing encrypted P-256 metadata signing key outside the worktree |
+| `COLLIE_ANDROID_METADATA_SIGNING_PASSWORD` | Password supplied privately through the environment |
+| `COLLIE_ANDROID_METADATA_KEY_CHAIN` | Optional reviewed JSON key-transition chain; empty for the pinned key |
 | `COLLIE_ANDROID_EXPECTED_TAG` | Optional expected `android-vX.Y.Z` tag |
 | `COLLIE_ANDROID_RELEASE_DIR` | Optional fresh output directory; existing output is refused |
 
@@ -52,9 +55,14 @@ Add `COLLIE_ANDROID_KEYSTORE_BASE64` containing the keystore's base64 encoding. 
 decodes it into runner-temporary storage and removes that file after signing. The fingerprint
 must come from your trusted key record, not an unreviewed candidate APK.
 
-Private vulnerability reporting is currently disabled on this fork. Enable it in repository
-Settings → Security before publishing and confirm the report route in [SECURITY.md](../SECURITY.md)
-works from a contributor account.
+Private vulnerability reporting is enabled on this fork (verified through the repository API on
+2026-10-13). Confirm its state and the report route in [SECURITY.md](../SECURITY.md) before publishing.
+
+The metadata key is separate from the APK signing key. Reuse the public key pinned in
+`android/app/src/main/res/raw/android_release_metadata_public_key.pem`; the helper refuses a
+mismatch. It signs the exact metadata bytes and publishes the detached signature alongside the
+APK. Key transitions require the existing key-chain verifier and a reviewed chain; do not replace
+the trust anchor to make a candidate pass.
 
 ## Prepare a local candidate
 
@@ -108,9 +116,11 @@ modules, including transitive and platform modules. It excludes build and test d
 root component's SHA-256 is the actual signed APK hash, so the inventory is tied to those exact APK
 bytes.
 
-This is a build-input inventory, not an inventory of code retained after R8. It does not claim to
-identify bundled assets or dependency edges, and third-party license data is not inferred from the
-lockfile. Those omissions are marked incomplete in the SBOM; review the packaged notices separately.
+This is a build-input inventory, not an inventory of code retained after R8. It also verifies the
+vendored Google WOFF2/Brotli source inventories, records their pinned commits and archive hashes,
+and includes their MIT licenses and local patch hashes. Other bundled assets and dependency edges
+remain incomplete, and Maven license data is not inferred from the lockfile. Review the packaged
+notices separately; the recorded native archive hashes are provenance, not a fresh upstream fetch.
 Rebuild the APK from the current source and lockfile before signing. The APK hash links the inventory
 to an artifact; it does not prove that an older APK was built with the current lockfile.
 
@@ -202,9 +212,13 @@ and verifies the certificate. It creates a **draft** GitHub Release with signed 
 links. Missing secrets or a signer mismatch fail the job; there is no unsigned fallback.
 
 Review the draft notes, version/code, source commit, checksum, certificate, notices and artifact
-smoke-check result. Record extended validation gaps accurately; completing the entire follow-up
-matrix is not required to publish the initial release. The workflow does not publish
-automatically. GitHub CLI documents the draft behavior in
+smoke-check result. Publish only after the required prepublication checks and approved draft review
+are complete. The Android completion release also requires current Pixel workflows, real background
+notifications, and same-signer upgrade proof before completion can be claimed, as specified in
+[the approved completion goal](acceptance/completion-goal-2026-10-13.txt). The anonymous native update
+channel needs published assets: verify its final upgrade against the unchanged reviewed APK after
+publication. Historical expanded follow-up matrices are superseded by that scope. The workflow does
+not publish automatically. GitHub CLI documents the draft behavior in
 [gh release create](https://cli.github.com/manual/gh_release_create).
 
 The inherited `vX.Y.Z` server workflow is restricted to upstream. Its tarballs and website

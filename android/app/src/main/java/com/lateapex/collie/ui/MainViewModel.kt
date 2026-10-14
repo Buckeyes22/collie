@@ -70,6 +70,7 @@ data class MainUiState(
 class MainViewModel @JvmOverloads constructor(
     application: Application,
     repositoryOverride: CollieRepository? = null,
+    preserveInitialSubject: Boolean = false,
 ) : AndroidViewModel(application) {
     private val repository: CollieRepository = repositoryOverride
         ?: (application as CollieApplication).container.repository
@@ -194,7 +195,7 @@ class MainViewModel @JvmOverloads constructor(
     }
 
     init {
-        repository.selectSubject(nativePreferences.dashboardScope, null)
+        if (!preserveInitialSubject) repository.selectSubject(nativePreferences.dashboardScope, null)
         syncConnection()
         viewModelScope.launch {
             restoreSavedDashboard()
@@ -284,7 +285,7 @@ class MainViewModel @JvmOverloads constructor(
         }
     }
 
-    fun pair(origin: String, label: String, code: String) {
+    fun pair(origin: String, label: String, code: String, admission: (() -> Boolean)? = null) {
         val labelError = validateLabel(label)
         if (labelError != null) {
             mutableState.value = mutableState.value.copy(error = labelError)
@@ -299,7 +300,7 @@ class MainViewModel @JvmOverloads constructor(
         viewModelScope.launch {
             mutableState.value = mutableState.value.copy(loading = true, error = null)
             val result = try {
-                repository.pair(origin, label.trim(), code.trim())
+                repository.pair(origin, label.trim(), code.trim(), admission)
             } catch (error: IllegalArgumentException) {
                 mutableState.value = mutableState.value.copy(loading = false, error = originError(error))
                 return@launch

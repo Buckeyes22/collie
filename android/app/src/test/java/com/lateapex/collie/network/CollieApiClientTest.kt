@@ -30,6 +30,53 @@ import org.junit.Test
 import kotlinx.serialization.json.put
 
 class CollieApiClientTest {
+    @Test fun durableOutcomesKeepScopeAndRequestIdentity(): Unit = runBlocking {
+        val mounted = Connection(CollieOrigin(server.url("/nested/collie/").toString()), "phone", "token")
+        val address = PaneAddress(Scope(host = "peer", session = "work"), "durable:1")
+        val id = "aaeb95d2-4eef-4ee1-af41-50aa1de1f6f2"
+        val intent = DurableControlRequest(id, turnId = "turn:1", text = "Unicode λ 🐕", steer = true)
+        server.enqueue(MockResponse.Builder().code(504).body("""{"ok":false,"outcome":"unknown","detail":"timeout"}""").build())
+        val unknown = api.durableSend(mounted, address, intent) as ApiResult.Success
+        assertEquals("unknown", unknown.value.outcome)
+        val first = server.takeRequest()
+        assertEquals("/nested/collie/api/pane/durable%3A1/send?host=peer&session=work", first.target)
+        assertEquals("Bearer token", first.headers["Authorization"])
+        val firstBody = first.body!!.utf8()
+        assertTrue(firstBody.contains(id))
+        server.enqueue(MockResponse.Builder().body("""{"ok":false,"outcome":"maybe-applied","replayed":true}""").build())
+        val replay = api.durableSend(mounted, address, intent) as ApiResult.Success
+        assertEquals("maybe-applied", replay.value.outcome)
+        assertEquals(firstBody, server.takeRequest().body!!.utf8())
+        server.enqueue(MockResponse.Builder().code(409).body("""{"ok":false,"outcome":"stale","turnId":"turn:2","askIds":[]}""").build())
+        assertEquals("stale", (api.durableAbort(mounted, address, intent.copy(text = null, steer = null)) as ApiResult.Success).value.outcome)
+        assertTrue(server.takeRequest().target!!.contains("/abort?"))
+    }
+
+    @Test fun malformedDurableIntentCannotDispatchAndMalformedAckIsUnknown(): Unit = runBlocking {
+        val connection = Connection(CollieOrigin(server.url("/").toString()), "phone", "token")
+        val address = PaneAddress(Scope(), "pane")
+        val id = "aaeb95d2-4eef-4ee1-af41-50aa1de1f6f2"
+        val before = server.requestCount
+        for (request in listOf(DurableControlRequest(id, text = "hello"), DurableControlRequest(id, turnId = "a", askId = "b", text = "hello"), DurableControlRequest(id, turnId = "a", text = "🐕".repeat(8193)))) {
+            assertTrue(api.durableSend(connection, address, request) is ApiResult.Failure)
+        }
+        assertEquals(before, server.requestCount)
+        server.enqueue(MockResponse.Builder().body("""{"ok":true,"outcome":"unknown"}""").build())
+        val invalid = api.durableSend(connection, address, DurableControlRequest(id, turnId = "a", text = "hello")) as ApiResult.Failure
+        assertTrue(invalid.error is ApiFailure.Protocol)
+        server.takeRequest()
+    }
+
+    @Test fun answerUsesObservedAskRevisionAndPreservesTypedRefusal(): Unit = runBlocking {
+        val connection = Connection(CollieOrigin(server.url("/").toString()), "phone", "token")
+        val id = "aaeb95d2-4eef-4ee1-af41-50aa1de1f6f2"
+        server.enqueue(MockResponse.Builder().code(409).body("""{"ok":false,"outcome":"refused","reason":"unsupported","detail":"No answers"}""").build())
+        val result = api.answerAsk(connection, PaneAddress(Scope(), "pane"), DurableAnswerRequest(id, "ask", 3, "deny")) as ApiResult.Success
+        assertEquals("refused", result.value.outcome)
+        val request = server.takeRequest()
+        assertTrue(request.body!!.utf8().contains("\"revision\":3"))
+    }
+
     @Test fun metadataAndAgentViewUseMountedScopedRoutesAndOneShotReceipts(): Unit = runBlocking {
         val mounted = Connection(CollieOrigin(server.url("/nested/collie/").toString()), "phone", "token")
         server.enqueue(MockResponse.Builder().body("""{"ok":true,"target":"pane-7","contributions":[],"authoritative":false,"reconcileRequired":true}""").build())
@@ -1963,4 +2010,59 @@ class CollieApiClientTest {
         assertTrue(diagnosticApi.paneLayout(mounted, address) is ApiResult.Success)
         server.takeRequest()
     }
+    @Test fun standbyHealthUsesMountedPublicDoorAndPreservesColdStatus(): Unit = runBlocking {
+        val mounted = Connection(CollieOrigin(server.url("/nested/collie/").toString()), "phone", "token")
+        for ((status, body) in listOf(200 to """{"state":"leading"}""", 503 to """{"state":"cold","version":"1.21.0","build":"1.21.0+abcdef1"}""",
+            200 to """{"state":"armed","silentForMs":40000,"version":"1.21.0","build":"1.21.0+abcdef1"}""")) {
+            server.enqueue(MockResponse.Builder().code(status).body(body).build())
+            val result = api.standbyHealth(mounted) as ApiResult.Success
+            assertEquals(status, result.status)
+            val request = server.takeRequest()
+            assertEquals("GET", request.method); assertEquals("/nested/collie/standby/health", request.target)
+            assertNull(request.headers["Authorization"]); assertNull(request.headers["Origin"])
+        }
+    }
+    @Test fun standbyMalformedOversizedAndRedirectAnswersNeverGrantArmedAuthority(): Unit = runBlocking {
+        val connection = Connection(origin, "phone", "token")
+        for ((status, body) in listOf(200 to """{"state":"cold","version":"1.21.0","build":"build"}""",
+            503 to """{"state":"armed","silentForMs":40000,"version":"1.21.0","build":"build"}""",
+            200 to """{"state":"armed","silentForMs":-1,"version":"1.21.0","build":"build"}""",
+            200 to """{"state":"armed","silentForMs":40000}""", 200 to "x".repeat(4097))) {
+            server.enqueue(MockResponse.Builder().code(status).body(body).build())
+            assertTrue(api.standbyHealth(connection) is ApiResult.Failure); server.takeRequest()
+        }
+        server.enqueue(MockResponse.Builder().code(307).addHeader("Location", "https://another.example/standby/health").build())
+        assertTrue((api.standbyHealth(connection) as ApiResult.Failure).error is ApiFailure.Redirect)
+        assertEquals(6, server.requestCount); server.takeRequest()
+    }
+    @Test fun takeoverUsesSameMountedPairingAndTypedRefusalBut401IsAnAccessFailure(): Unit = runBlocking {
+        val mounted = Connection(CollieOrigin(server.url("/nested/collie/").toString()), "phone", "token")
+        for (status in listOf(200, 409, 401)) {
+            server.enqueue(MockResponse.Builder().code(status).body("""{"ok":${status == 200},"message":"${if (status == 401) "Device not paired" else "Checked consensus"}"}""").build())
+            val result = api.takeover(mounted)
+            if (status == 401) assertEquals(401, ((result as ApiResult.Failure).error as ApiFailure.Http).status)
+            else assertEquals(status == 200, (result as ApiResult.Success).value.ok)
+            val request = server.takeRequest()
+            assertEquals("POST", request.method); assertEquals("/nested/collie/standby/takeover", request.target)
+            assertEquals("Bearer token", request.headers["Authorization"]); assertEquals(mounted.origin.headerValue, request.headers["Origin"])
+            assertEquals("{}", request.body!!.utf8())
+        }
+    }
+    @Test fun uncertainTakeoverDeliveryIsOneShotWithoutAutomaticReplay(): Unit = runBlocking {
+        server.enqueue(MockResponse.Builder().onResponseStart(mockwebserver3.SocketEffect.CloseSocket())
+            .body("""{"ok":true,"message":"Taking over"}""").build())
+        val result = api.takeover(Connection(origin, "phone", "token"))
+        assertTrue(result is ApiResult.Failure)
+        assertEquals(1, server.requestCount); assertEquals("POST", server.takeRequest().method)
+    }
+    @Test fun malformedTakeoverStatusBodiesAndOversizedAnswersAreUnknown(): Unit = runBlocking {
+        for ((status, body) in listOf(200 to """{"ok":false,"message":"Refused"}""", 409 to """{"ok":true,"message":"Taken over"}""",
+            200 to """{"ok":true,"message":""}""", 200 to "x".repeat(4097))) {
+            server.enqueue(MockResponse.Builder().code(status).body(body).build())
+            assertTrue((api.takeover(Connection(origin, "phone", "token")) as ApiResult.Failure).error is ApiFailure.Protocol)
+            server.takeRequest()
+        }
+        assertEquals(4, server.requestCount)
+    }
+
 }

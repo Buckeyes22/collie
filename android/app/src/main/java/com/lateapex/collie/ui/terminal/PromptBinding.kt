@@ -1,5 +1,7 @@
 package com.lateapex.collie.ui.terminal
 
+import com.lateapex.collie.network.PromptColumns
+
 /**
  * Produces conservative optimistic-concurrency evidence from the exact pane the operator saw.
  * The bridge re-reads immediately before a write and requires this region to remain near the tail.
@@ -26,6 +28,7 @@ object PromptBinding {
         val key = agent?.trim()?.lowercase().orEmpty()
         return when (key) {
             "codex" -> codexComposerRegion(text)
+            "pi" -> PiComposer.emptyRegion(text)
             "claude" -> claudeComposerRegion(text)
             "grok" -> grokComposerRegion(text)
             "omp" -> ompComposerRegion(text)
@@ -240,8 +243,9 @@ object PromptBinding {
     }
 
     /** Mirrors bridge/prompt-binding.ts and is kept public for contract tests. */
-    fun verifyNearTail(freshText: String, expected: String, tailLines: Int = 6): Boolean {
-        val fresh = normalizedLines(freshText)
+    fun verifyNearTail(freshText: String, expected: String, tailLines: Int = 6, expectedColumns: PromptColumns? = null): Boolean {
+        if (expectedColumns != null && !expectedColumns.valid()) return false
+        val fresh = normalizedLines(if (expectedColumns == null) freshText else PromptColumnText.crop(freshText, expectedColumns))
         val wanted = normalizedLines(expected)
         if (wanted.isEmpty()) return false
         var lastMatch = -1

@@ -37,6 +37,9 @@ import com.lateapex.collie.network.ChatAfter
 import com.lateapex.collie.network.ChatBefore
 import com.lateapex.collie.ui.terminal.AgentSemanticParser
 import com.lateapex.collie.ui.terminal.TerminalDraft
+import com.lateapex.collie.ui.terminal.PiComposer
+import com.lateapex.collie.network.PromptColumns
+import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -808,6 +811,30 @@ class PaneViewModelTest {
         assertNull(fixture.viewModel.loadOlderScrollback())
     }
 
+    @Test fun actualPiStaticActionCarriesColumnsAndRefusesChangedQuestionOrRetiredOwner() = runTest(dispatcher) {
+        val root = generateSequence(java.io.File(requireNotNull(System.getProperty("user.dir"))).absoluteFile) { it.parentFile }
+            .map { java.io.File(it, "web/src/fixtures/panes") }.first { it.isDirectory }
+        val panel = java.io.File(root, "pi--omo-v5130-panel-question.txt").readText()
+        for (mode in listOf("tick", "question", "owner")) {
+            val fixture = fixture(ApiResult.Success(ActionResponse(true), 200), agent = "pi")
+            fixture.api.pane = PaneReadResponse("w1:p1", panel, false, 1)
+            fixture.viewModel.refresh()
+            advanceUntilIdle()
+            val shown = AgentSemanticParser.detect("pi", panel, 1)!!
+            fixture.api.pane = fixture.api.pane.copy(text = if (mode == "question") panel.replace("Pick a color?", "Pick a fruit?") else panel.replace("5 queued", "6 queued"), revision = 2)
+            if (mode == "owner") fixture.api.paneHook = {
+                fixture.store.save(Connection(CollieOrigin("https://collie.example/"), "phone", "replacement"))
+            }
+            fixture.viewModel.sendSemanticIntent(shown, com.lateapex.collie.ui.terminal.SemanticIntent.Static(shown.actions.single { it.label == "Red" }))
+            advanceUntilIdle()
+            if (mode == "tick") {
+                assertEquals(listOf(listOf("1")), fixture.api.keysCalls)
+                assertEquals(com.lateapex.collie.network.PromptColumns(0, 91), fixture.api.lastExpectedColumns)
+                assertEquals(shown.regionSignature, fixture.api.lastExpectedPrompt)
+            } else assertTrue(fixture.api.keysCalls.isEmpty())
+        }
+    }
+
     @Test
     fun semanticActionFreshReadsThenSendsExactlyOnceWithTheLiteralRegion() = runTest(dispatcher) {
         val fixture = fixture(ApiResult.Success(ActionResponse(ok = true), 200), agent = "claude")
@@ -1365,6 +1392,108 @@ class PaneViewModelTest {
     }
 
     @Test
+    fun piPanelSendRetainsOriginalActorAndColumnsThroughReadbackAndSingleSubmission() = runTest(dispatcher) {
+        val f = fixture(ApiResult.Success(ActionResponse(ok = true), 200), agent = "pi")
+        val idle = piFixture("pi--omo-v5130-panel-phantom.txt")
+        val draft = piFixture("pi--omo-v5130-panel-draft.txt")
+        f.api.pane = f.api.pane.copy(text = idle)
+        f.viewModel.refresh(); advanceUntilIdle()
+        val actor = requireNotNull(f.viewModel.state.value.paneReadContext)
+        f.api.paneConnections.clear()
+        f.api.replyHook = { message, submit ->
+            assertTrue("both writes retain the displayed actor", f.repository.isCurrent(actor))
+            assertEquals(if (submit) "" else "hello collie draft", message)
+            f.api.pane = f.api.pane.copy(text = if (submit) idle else draft, revision = f.api.pane.revision + 1)
+        }
+        f.viewModel.sendReply("hello collie draft")
+        advanceUntilIdle()
+
+        assertEquals(listOf("hello collie draft" to false, "" to true), f.api.replyWrites.map { it.text to it.submit })
+        assertEquals(listOf(PromptColumns(0, 91), PromptColumns(0, 91)), f.api.replyWrites.map { it.columns })
+        assertEquals(listOf(PiComposer.locate(idle)!!.region(), PiComposer.locate(draft)!!.region()), f.api.replyWrites.map { it.binding })
+        assertTrue(f.api.replyWrites.all { it.connection === actor.connection })
+        assertTrue(f.api.paneConnections.isNotEmpty())
+        assertTrue(f.api.paneConnections.all { it === actor.connection })
+        assertTrue(f.viewModel.state.value.clearReplyDraft)
+        assertNull(f.viewModel.state.value.mutationError)
+    }
+
+    @Test
+    fun piCredentialReplacementDuringDraftReadbackCannotSubmitFromReplacementActor() = runTest(dispatcher) {
+        piReplacementDuringReadback(replaceCredential = true)
+    }
+
+    @Test
+    fun piNavigationActorReplacementDuringDraftReadbackCannotSubmitFromFreshLiveActor() = runTest(dispatcher) {
+        piReplacementDuringReadback(replaceCredential = false)
+    }
+
+    private suspend fun kotlinx.coroutines.test.TestScope.piReplacementDuringReadback(replaceCredential: Boolean) {
+        val f = fixture(ApiResult.Success(ActionResponse(ok = true), 200), agent = "pi")
+        val idle = piFixture("pi--omo-v5130-panel-phantom.txt")
+        val draft = piFixture("pi--omo-v5130-panel-draft.txt")
+        f.api.pane = f.api.pane.copy(text = idle)
+        f.viewModel.refresh(); advanceUntilIdle()
+        val original = requireNotNull(f.viewModel.state.value.paneReadContext)
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        var holdReadback = false
+        f.api.paneHook = {
+            if (holdReadback) {
+                holdReadback = false
+                entered.complete(Unit)
+                release.await()
+            }
+        }
+        f.api.replyHook = { _, submit ->
+            assertFalse("only the initial text may reach the original pane", submit)
+            f.api.pane = f.api.pane.copy(text = draft, revision = 8)
+            holdReadback = true
+        }
+        f.viewModel.sendReply("hello collie draft")
+        advanceTimeBy(151); runCurrent()
+        assertTrue(entered.isCompleted)
+        assertEquals(1, f.api.replyCalls)
+        if (replaceCredential) f.store.save(Connection(original.connection.origin, "same origin replacement", "replacement-token"))
+        else f.repository.showSavedCopy(123L)
+        runCurrent()
+        assertFalse(f.repository.isCurrent(original))
+        // Restore a valid compatible empty pane for a different actor while the old read is held.
+        f.api.pane = f.api.pane.copy(text = idle, revision = 9)
+        f.viewModel.refresh(); runCurrent()
+        val replacement = requireNotNull(f.viewModel.state.value.paneReadContext)
+        assertTrue(f.repository.isCurrent(replacement))
+        assertTrue(replacement != original)
+        release.complete(Unit)
+        advanceUntilIdle()
+        assertEquals(listOf("hello collie draft" to false), f.api.replyWrites.map { it.text to it.submit })
+        assertTrue(f.api.replyWrites.single().connection === original.connection)
+        assertFalse(f.viewModel.state.value.sending)
+    }
+
+    @Test
+    fun replyContextProjectsAnAcceptedLivePromptAndClearsOnReadActorRetirement() = runTest(dispatcher) {
+        val f = fixture(ApiResult.Success(ActionResponse(ok = true), 200))
+        val prompt = com.lateapex.collie.network.ChatPrompt("latest-user", "2026-10-13T12:00:00Z", "last live prompt")
+        f.api.chatPage = PaneChatResponse("w1:p1", true, page = "live", gen = 2, rev = 4, head = 10, lastPrompt = prompt)
+        f.viewModel.refresh(); advanceUntilIdle()
+        val actor = requireNotNull(f.viewModel.state.value.transcriptReadContext)
+        assertTrue(f.repository.isCurrent(actor))
+        assertEquals(prompt, f.viewModel.state.value.lastPrompt)
+        f.repository.showSavedCopy(124L)
+        runCurrent()
+        assertFalse(f.repository.isCurrent(actor))
+        assertNull(f.viewModel.state.value.transcriptReadContext)
+        assertNull("reply context must not survive retirement of its accepted live transcript actor", f.viewModel.state.value.lastPrompt)
+    }
+
+    private fun piFixture(name: String): String {
+        val root = generateSequence(File(requireNotNull(System.getProperty("user.dir"))).absoluteFile) { it.parentFile }
+            .map { File(it, "web/src/fixtures/panes") }.first { it.isDirectory }
+        return File(root, name).readText()
+    }
+
+    @Test
     fun acceptedCodexInputSurvivesUnrelatedOutputAndIsIsolatedByOriginWithoutReplay() = runTest(dispatcher) {
         val f = fixture(ApiResult.Success(ActionResponse(ok = true), 200))
         val original = f.store.connection.value!!
@@ -1619,6 +1748,9 @@ class PaneViewModelTest {
         var deviceAuthorization: DeviceAuthorization?,
     ) : CollieApi {
         var replyCalls = 0
+        data class ReplyWrite(val connection: Connection, val text: String, val submit: Boolean, val binding: String?, val columns: PromptColumns?)
+        val replyWrites = mutableListOf<ReplyWrite>()
+        val paneConnections = mutableListOf<Connection>()
         var lastKeys: List<String> = emptyList()
         val keysCalls = mutableListOf<List<String>>()
         var snapshotHook: (() -> Unit)? = null
@@ -1637,6 +1769,7 @@ class PaneViewModelTest {
         var lastReplyExpectedPrompt: String? = null
         private val keyResults = ArrayDeque(keyResults)
         var lastExpectedPrompt: String? = null
+        var lastExpectedColumns: com.lateapex.collie.network.PromptColumns? = null
         var queuedSendResult: ApiResult<ActionResponse> = ApiResult.Success(ActionResponse(ok = true), 200)
         val paneLines = mutableListOf<Int>()
         var pane = PaneReadResponse(
@@ -1716,6 +1849,7 @@ class PaneViewModelTest {
             etag: String?,
             markSeen: Boolean,
         ): ApiResult<PaneReadResponse> {
+            paneConnections += connection
             paneLines += lines
             paneEtags += etag
             paneHook?.invoke()
@@ -1731,6 +1865,12 @@ class PaneViewModelTest {
             }
             paneFreshReads++
             return ApiResult.Success(pane, 200, etag = "\"7\"")
+        }
+
+        override suspend fun reply(connection: Connection, address: PaneAddress, text: String, submit: Boolean,
+            expectedPrompt: String?, expectedColumns: PromptColumns?): ApiResult<ActionResponse> {
+            replyWrites += ReplyWrite(connection, text, submit, expectedPrompt, expectedColumns)
+            return reply(connection, address, text, submit, expectedPrompt)
         }
 
         override suspend fun reply(
@@ -1771,6 +1911,11 @@ class PaneViewModelTest {
         override suspend fun refresh(connection: Connection, scope: Scope): ApiResult<ActionResponse> = error("unused")
         override suspend fun pair(origin: CollieOrigin, code: String, label: String): ApiResult<PairResult> = error("unused")
         override suspend fun devices(connection: Connection): ApiResult<DevicesResponse> = error("unused")
+        override suspend fun keys(connection: Connection, address: PaneAddress, keys: List<String>, expectedPrompt: String?, expectedColumns: com.lateapex.collie.network.PromptColumns?): ApiResult<ActionResponse> {
+            lastExpectedColumns = expectedColumns
+            return keys(connection, address, keys, expectedPrompt)
+        }
+
         override suspend fun keys(
             connection: Connection,
             address: PaneAddress,

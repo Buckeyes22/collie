@@ -12,6 +12,7 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.button.MaterialButton
+import com.lateapex.collie.R
 import com.lateapex.collie.CollieApplication
 import com.lateapex.collie.data.ScopedReadContext
 import com.lateapex.collie.domain.Scope
@@ -39,8 +40,8 @@ class PluginConfigActivity : AppCompatActivity() {
         scope = Scope(host = intent.getStringExtra(EXTRA_HOST))
         session = restorePluginActivitySession(lastCustomNonConfigurationInstance, savedInstanceState, repository, scope, PluginReceiptStore(applicationContext))
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.TOP; setPadding(dp(20), dp(12), dp(20), dp(24)) }
-        root.addView(MaterialButton(this).apply { text = "Back"; setOnClickListener { finish() } })
-        root.addView(TextView(this).apply { text = "Plugin configuration · $pluginId"; textSize = 20f; setPadding(0, dp(12), 0, dp(12)) })
+        root.addView(MaterialButton(this).apply { setText(R.string.plugin_back); setOnClickListener { finish() } })
+        root.addView(TextView(this).apply { text = getString(R.string.plugin_config_title, pluginId); textSize = 20f; setPadding(0, dp(12), 0, dp(12)) })
         content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(ScrollView(this).apply { addView(content) }, LinearLayout.LayoutParams(-1, 0, 1f))
         setContentView(root); root.applyAppTypeface(); window.applySafeContentInsets(root)
@@ -53,7 +54,7 @@ class PluginConfigActivity : AppCompatActivity() {
     private fun loadFiles() {
         if (busy) return
         if (!isCurrent()) { stale(); return }
-        busy = true; content.removeAllViews(); message("Reading the owner-scoped config directory…")
+        busy = true; content.removeAllViews(); message(getString(R.string.plugin_config_reading))
         lifecycleScope.launch {
             val actor = session.actor ?: return@launch stale()
             val result = repository.hostPluginConfigFiles(pluginId, scope, actor)
@@ -61,17 +62,17 @@ class PluginConfigActivity : AppCompatActivity() {
             content.removeAllViews()
             when (result) {
                 is ApiResult.Success -> {
-                    message("Only bounded JSON files are shown. Edits keep a private backup and require a current plan.")
+                    message(getString(R.string.plugin_config_files_description))
                     result.value.files.forEach { file -> button("${file.id} · ${file.bytes} bytes") { editFile(file.id) } }
-                    if (result.value.files.isEmpty()) message("No JSON config files exist yet.")
+                    if (result.value.files.isEmpty()) message(getString(R.string.plugin_config_files_empty))
                 }
                 is ApiResult.Failure -> {
                     message(result.error.pluginMessage ?: "Plugin config is not available.")
                     if (result.error.pluginCode == "plugin_config_prepare_required" || result.error.pluginCode == "host.capability_unsupported") {
-                        button("Prepare config and state directories") { planPreparation() }
+                        button(getString(R.string.plugin_config_prepare_dirs)) { planPreparation() }
                     }
                 }
-                is ApiResult.NotModified -> message("Config listing was not modified.")
+                is ApiResult.NotModified -> message(getString(R.string.plugin_config_listing_unchanged))
             }
             renderPendingReceipts()
             busy = false
@@ -88,12 +89,12 @@ class PluginConfigActivity : AppCompatActivity() {
             when (result) {
                 is ApiResult.Success -> {
                     val plan = result.value.plan
-                    AlertDialog.Builder(this@PluginConfigActivity).setTitle("Prepare plugin config")
-                        .setMessage(plan.effect).setNegativeButton("Cancel", null)
-                        .setPositiveButton("Prepare") { _, _ -> if (isCurrent() && repository.isCurrent(actor)) confirmPreparation(plan.token, actor) else stale() }.show()
+                    AlertDialog.Builder(this@PluginConfigActivity).setTitle(R.string.plugin_config_prepare_title)
+                        .setMessage(plan.effect).setNegativeButton(android.R.string.cancel, null)
+                        .setPositiveButton(R.string.plugin_prepare) { _, _ -> if (isCurrent() && repository.isCurrent(actor)) confirmPreparation(plan.token, actor) else stale() }.show()
                 }
-                is ApiResult.Failure -> message(result.error.pluginMessage ?: "Could not prepare a config plan.")
-                is ApiResult.NotModified -> message("Config preparation plan was not modified.")
+                is ApiResult.Failure -> message(result.error.pluginMessage ?: getString(R.string.plugin_config_plan_failed))
+                is ApiResult.NotModified -> message(getString(R.string.plugin_config_prepare_unchanged))
             }
             busy = false
         }
@@ -102,7 +103,7 @@ class PluginConfigActivity : AppCompatActivity() {
     private fun confirmPreparation(token: String, actor: ScopedReadContext) {
         if (!isCurrent()) { stale(); return }
         val requestId = "config-prepare-${UUID.randomUUID()}"
-        if (!session.track(requestId, PluginReceiptKind.CONTROL_OPERATION)) { message("Could not durably retain an operation receipt ID. No preparation was sent."); return }
+        if (!session.track(requestId, PluginReceiptKind.CONTROL_OPERATION)) { message(getString(R.string.plugin_receipt_retain_failed, getString(R.string.plugin_preparation))); return }
         busy = true
         lifecycleScope.launch {
             val result = repository.applyHostPluginConfigPrepare(pluginId, HostPluginConfigPrepareRequest(requestId, token), scope, actor)
@@ -111,13 +112,13 @@ class PluginConfigActivity : AppCompatActivity() {
                 is ApiResult.Success -> {
                     val op = result.value.operation
                     if (op.state == "succeeded") { session.reconcile(requestId); busy = false; loadFiles() }
-                    else offerReceipt(requestId, "Preparation ${op.state}${op.code?.let { ": $it" } ?: ""}.")
+                    else offerReceipt(requestId, getString(R.string.plugin_operation_state, getString(R.string.plugin_preparation), op.state, op.code?.let { getString(R.string.plugin_code_suffix, it) }.orEmpty()))
                 }
-                is ApiResult.Failure -> if (result.error.mutationOutcomeUnknown()) offerReceipt(requestId, "Preparation outcome is uncertain.") else {
+                is ApiResult.Failure -> if (result.error.mutationOutcomeUnknown()) offerReceipt(requestId, getString(R.string.plugin_preparation_uncertain)) else {
                     session.reconcile(requestId)
-                    message(result.error.pluginMessage ?: "Preparation failed.")
+                    message(result.error.pluginMessage ?: getString(R.string.plugin_preparation_failed))
                 }
-                is ApiResult.NotModified -> offerReceipt(requestId, "Preparation result was not returned.")
+                is ApiResult.NotModified -> offerReceipt(requestId, getString(R.string.plugin_preparation_not_returned))
             }
             busy = false
         }
@@ -132,8 +133,8 @@ class PluginConfigActivity : AppCompatActivity() {
             if (!isCurrent()) { busy = false; return@launch stale() }
             when (result) {
                 is ApiResult.Success -> showEditor(fileId, result.value.file.content, actor)
-                is ApiResult.Failure -> message(result.error.pluginMessage ?: "Could not read config file.")
-                is ApiResult.NotModified -> message("Config file was not modified.")
+                is ApiResult.Failure -> message(result.error.pluginMessage ?: getString(R.string.plugin_config_file_read_failed))
+                is ApiResult.NotModified -> message(getString(R.string.plugin_config_file_unchanged))
             }
             busy = false
         }
@@ -145,12 +146,12 @@ class PluginConfigActivity : AppCompatActivity() {
             typeface = android.graphics.Typeface.MONOSPACE; setPadding(dp(12), dp(10), dp(12), dp(10))
         }
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), 0, dp(20), 0); addView(editor) }
-        AlertDialog.Builder(this).setTitle(fileId).setView(box).setNegativeButton("Cancel", null)
-            .setPositiveButton("Review save") { _, _ -> planEdit(fileId, editor.text.toString(), actor) }.show()
+        AlertDialog.Builder(this).setTitle(fileId).setView(box).setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton(R.string.plugin_review_save) { _, _ -> planEdit(fileId, editor.text.toString(), actor) }.show()
     }
 
     private fun planEdit(fileId: String, text: String, actor: ScopedReadContext) {
-        if (text.toByteArray(Charsets.UTF_8).size > 65_536) { message("Config must be no larger than 64 KiB."); return }
+        if (text.toByteArray(Charsets.UTF_8).size > 65_536) { message(getString(R.string.plugin_config_too_large)); return }
         if (!isCurrent()) { stale(); return }
         val requestId = "config-edit-${UUID.randomUUID()}"
         busy = true
@@ -160,12 +161,12 @@ class PluginConfigActivity : AppCompatActivity() {
             when (result) {
                 is ApiResult.Success -> {
                     val plan = result.value.plan
-                    AlertDialog.Builder(this@PluginConfigActivity).setTitle("Apply config edit")
-                        .setMessage("${plan.effect}\n\n${fileId} will be replaced after JSON validation; the current file will be backed up.")
-                        .setNegativeButton("Cancel", null).setPositiveButton("Apply") { _, _ -> if (isCurrent() && repository.isCurrent(actor)) applyEdit(fileId, text, plan.token, actor) else stale() }.show()
+                    AlertDialog.Builder(this@PluginConfigActivity).setTitle(R.string.plugin_config_apply_title)
+                        .setMessage(getString(R.string.plugin_config_apply_message, plan.effect, fileId))
+                        .setNegativeButton(android.R.string.cancel, null).setPositiveButton(R.string.plugin_apply) { _, _ -> if (isCurrent() && repository.isCurrent(actor)) applyEdit(fileId, text, plan.token, actor) else stale() }.show()
                 }
-                is ApiResult.Failure -> message(result.error.pluginMessage ?: "Config edit plan failed. Check that the text is valid JSON.")
-                is ApiResult.NotModified -> message("Config edit plan was not modified.")
+                is ApiResult.Failure -> message(result.error.pluginMessage ?: getString(R.string.plugin_config_edit_plan_failed))
+                is ApiResult.NotModified -> message(getString(R.string.plugin_config_edit_plan_unchanged))
             }
             busy = false
         }
@@ -174,7 +175,7 @@ class PluginConfigActivity : AppCompatActivity() {
     private fun applyEdit(fileId: String, text: String, token: String, actor: ScopedReadContext) {
         if (!isCurrent()) { stale(); return }
         val requestId = "config-edit-${UUID.randomUUID()}"
-        if (!session.track(requestId, PluginReceiptKind.CONTROL_OPERATION)) { message("Could not durably retain an operation receipt ID. No config edit was sent."); return }
+        if (!session.track(requestId, PluginReceiptKind.CONTROL_OPERATION)) { message(getString(R.string.plugin_receipt_retain_failed, getString(R.string.plugin_config_edit))); return }
         busy = true
         lifecycleScope.launch {
             val result = repository.applyHostPluginConfigEdit(pluginId, HostPluginConfigApplyRequest(requestId, token, fileId, text), scope, actor)
@@ -183,13 +184,13 @@ class PluginConfigActivity : AppCompatActivity() {
                 is ApiResult.Success -> {
                     val op = result.value.operation
                     if (op.state == "succeeded") { session.reconcile(requestId); busy = false; loadFiles() }
-                    else offerReceipt(requestId, "Config edit ${op.state}${op.code?.let { ": $it" } ?: ""}.")
+                    else offerReceipt(requestId, getString(R.string.plugin_operation_state, getString(R.string.plugin_config_edit), op.state, op.code?.let { getString(R.string.plugin_code_suffix, it) }.orEmpty()))
                 }
-                is ApiResult.Failure -> if (result.error.mutationOutcomeUnknown()) offerReceipt(requestId, "Config edit outcome is uncertain.") else {
+                is ApiResult.Failure -> if (result.error.mutationOutcomeUnknown()) offerReceipt(requestId, getString(R.string.plugin_config_edit_uncertain)) else {
                     session.reconcile(requestId)
-                    message(result.error.pluginMessage ?: "Config edit failed.")
+                    message(result.error.pluginMessage ?: getString(R.string.plugin_config_edit_failed))
                 }
-                is ApiResult.NotModified -> offerReceipt(requestId, "Config edit result was not returned.")
+                is ApiResult.NotModified -> offerReceipt(requestId, getString(R.string.plugin_config_edit_not_returned))
             }
             busy = false
         }
@@ -198,8 +199,8 @@ class PluginConfigActivity : AppCompatActivity() {
     private fun offerReceipt(requestId: String, label: String) {
         busy = false
         content.removeAllViews()
-        message("$label Do not repeat the operation until its receipt is checked.")
-        button("Check operation receipt $requestId") { checkReceipt(requestId) }
+        message(getString(R.string.plugin_receipt_do_not_repeat, label))
+        button(getString(R.string.plugin_check_operation_receipt, requestId)) { checkReceipt(requestId) }
     }
 
     private fun checkReceipt(requestId: String) {
@@ -214,14 +215,14 @@ class PluginConfigActivity : AppCompatActivity() {
                     val operation = result
                     if (operation.state == "succeeded" || operation.state == "refused") session.reconcile(requestId)
                     content.removeAllViews()
-                    message("Operation receipt: ${operation.state}${operation.code?.let { " · $it" } ?: ""}")
+                    message(if (operation.code == null) getString(R.string.plugin_operation_receipt, operation.state) else getString(R.string.plugin_operation_receipt_code, operation.state, operation.code))
                     if (operation.state == "pending" || operation.state == "running" || operation.state == "unknown") {
-                        button("Check operation receipt $requestId") { checkReceipt(requestId) }
+                        button(getString(R.string.plugin_check_operation_receipt, requestId)) { checkReceipt(requestId) }
                     } else renderPendingReceipts()
-                    if (operation.state == "succeeded") button("Refresh config") { loadFiles() }
+                    if (operation.state == "succeeded") button(getString(R.string.plugin_refresh_config)) { loadFiles() }
                 }
-                is PluginReceiptRead.Failure -> offerReceipt(requestId, result.message ?: "Operation receipt is unavailable; keep the outcome unresolved.")
-                PluginReceiptRead.NotModified -> offerReceipt(requestId, "Operation receipt was not modified; keep the outcome unresolved.")
+                is PluginReceiptRead.Failure -> offerReceipt(requestId, result.message ?: getString(R.string.plugin_operation_receipt_unavailable))
+                PluginReceiptRead.NotModified -> offerReceipt(requestId, getString(R.string.plugin_operation_receipt_unchanged))
             }
             busy = false
         }
@@ -230,15 +231,15 @@ class PluginConfigActivity : AppCompatActivity() {
     private fun isCurrent(): Boolean = session.isWriteCurrent(repository)
     private fun stale() {
         busy = false; content.removeAllViews()
-        message("The original host or paired connection is no longer current. No plugin write was replayed.")
+        message(getString(R.string.plugin_original_connection_stale))
         renderPendingReceipts()
     }
     private fun renderPendingReceipts() {
         if (session.receiptContext(repository) != null) {
-            session.pendingReceipts.keys.forEach { id -> button("Check operation receipt $id") { checkReceipt(id) } }
+            session.pendingReceipts.keys.forEach { id -> button(getString(R.string.plugin_check_operation_receipt, id)) { checkReceipt(id) } }
         } else if (session.pendingReceipts.isNotEmpty()) {
             content.addView(TextView(this).apply {
-                text = "No matching current paired profile is available for receipt reads. Unresolved operation IDs: ${session.pendingReceipts.keys.joinToString()}. No plugin write was replayed."
+                text = getString(R.string.plugin_receipt_profile_unavailable, session.pendingReceipts.keys.joinToString())
                 textSize = 15f; setPadding(0, dp(12), 0, dp(12))
             })
         }

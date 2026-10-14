@@ -293,6 +293,79 @@ class CollieRepositoryTest {
         assertTrue(repository.writesAllowed())
     }
 
+    @Test fun guardedPairRefusesBeforeDispatchWithoutChangingOriginalProfile() = runBlocking {
+        val guardedStore = PairingSnapshotStore(connection)
+        val guardedRepo = CollieRepository(api, guardedStore, OriginValidator())
+        val before = guardedStore.captureCommitted()
+        val result = guardedRepo.pair(connection.origin.value, "fixture", "ABCD-EF23") { false }
+        assertTrue(result is ApiResult.Failure)
+        assertEquals(0, api.pairCalls)
+        assertEquals(before, guardedStore.captureCommitted())
+    }
+
+    @Test fun guardedPairCommitsOnlyTheOriginalSnapshotAndDoesNotRejectItsOwnTransition() = runBlocking {
+        val guardedStore = PairingSnapshotStore(connection)
+        val guardedRepo = CollieRepository(api, guardedStore, OriginValidator())
+        val before = guardedStore.captureCommitted()
+        val actor = requireNotNull(guardedRepo.readContext())
+        api.pairAction = { ApiResult.Success(PairResult.Paired("fresh-fixture-token", "fixture"), 200) }
+        val result = guardedRepo.pair(connection.origin.value, "fixture", "ABCD-EF23") {
+            guardedRepo.isCurrent(actor) && guardedStore.captureCommitted() == before
+        }
+        assertTrue(result is ApiResult.Success)
+        assertEquals(1, api.pairCalls)
+        assertEquals("fresh-fixture-token", guardedStore.connection.value?.token)
+        assertEquals(before.revision + 1, guardedStore.captureCommitted().revision)
+    }
+
+    @Test fun guardedPairAdmissionRetiredDuringHttpCannotPersistOrClaimSuccess() = runBlocking {
+        val guardedStore = PairingSnapshotStore(connection)
+        val guardedRepo = CollieRepository(api, guardedStore, OriginValidator())
+        val before = guardedStore.captureCommitted()
+        var admitted = true
+        api.pairAction = {
+            admitted = false
+            ApiResult.Success(PairResult.Paired("late-fixture-token", "fixture"), 200)
+        }
+        val result = guardedRepo.pair(connection.origin.value, "fixture", "ABCD-EF23") { admitted }
+        assertTrue(result is ApiResult.Failure)
+        assertEquals(1, api.pairCalls)
+        assertEquals(before, guardedStore.captureCommitted())
+        assertSame(connection, guardedStore.connection.value)
+    }
+
+    @Test fun guardedPairLateResponseCannotReplaceSuccessorOrClaimPairingSuccess() = runBlocking {
+        val guardedStore = PairingSnapshotStore(connection)
+        val guardedRepo = CollieRepository(api, guardedStore, OriginValidator())
+        val successor = Connection(connection.origin, "successor", "successor-fixture-token")
+        api.pairAction = {
+            guardedStore.save(successor)
+            ApiResult.Success(PairResult.Paired("late-fixture-token", "fixture"), 200)
+        }
+        // Even an otherwise-admitted callback must still pass the independent durable CAS.
+        val result = guardedRepo.pair(connection.origin.value, "fixture", "ABCD-EF23") { true }
+        assertTrue(result is ApiResult.Failure)
+        assertEquals(1, api.pairCalls)
+        assertSame(successor, guardedStore.connection.value)
+        assertEquals(1L, guardedStore.captureCommitted().revision)
+    }
+
+    private class PairingSnapshotStore(initial: Connection) : ConnectionStore {
+        private var snapshot = CommittedConnectionSnapshot(0, "fixture-0", initial)
+        override val connection = MutableStateFlow<Connection?>(initial)
+        override fun captureCommitted() = snapshot
+        override fun save(connection: Connection) {
+            snapshot = CommittedConnectionSnapshot(snapshot.revision + 1, "fixture-${snapshot.revision + 1}", connection)
+            this.connection.value = connection
+        }
+        override fun clear() { snapshot = CommittedConnectionSnapshot(snapshot.revision + 1, null, null); connection.value = null }
+        override fun compareAndSet(expected: CommittedConnectionSnapshot, replacement: Connection?): Boolean {
+            if (snapshot != expected) return false
+            if (replacement == null) clear() else save(replacement)
+            return true
+        }
+    }
+
     @Test
     fun oversizedDeviceLabelIsRejectedBeforePairing() {
         assertThrows(IllegalArgumentException::class.java) {
@@ -1791,6 +1864,8 @@ class CollieRepositoryTest {
     }
 
     private class FakeApi : CollieApi {
+        var pairCalls = 0
+        var pairAction: suspend () -> ApiResult<PairResult> = { error("unused") }
         var integrationStatusCalls = 0
         var manifestStatusCalls = 0
         var machineHistoryCalls = 0
@@ -2079,7 +2154,7 @@ class CollieRepositoryTest {
             )
         }
         override suspend fun refresh(connection: Connection, scope: Scope): ApiResult<ActionResponse> = error("unused")
-        override suspend fun pair(origin: CollieOrigin, code: String, label: String): ApiResult<PairResult> = error("unused")
+        override suspend fun pair(origin: CollieOrigin, code: String, label: String): ApiResult<PairResult> { pairCalls++; return pairAction() }
         override suspend fun devices(connection: Connection): ApiResult<DevicesResponse> = error("unused")
         override suspend fun revokeDevice(connection: Connection, label: String): ApiResult<DevicesResponse> {
             revokeCalls += 1

@@ -1,0 +1,32 @@
+{
+  "testOnly": true,
+  "installed": false,
+  "certificateSha256": "04cc6cede086ffbfcd6aa50c7a52eb13705bb6fdd08e00b76c785b04bfd6400d",
+  "toolchain": "SDK37.2/build-tools37.0.0",
+  "archives": [
+    {
+      "file": "collie-android-1.5.3.apk",
+      "sha256": "1fc0ea1b2a0e15fa4256362d71a7de3500dff8bf6e213e38f18d59f8720ffba5",
+      "size": 8530,
+      "package": "com.lateapex.collie",
+      "version": 100000,
+      "name": "1.5.3"
+    },
+    {
+      "file": "collie-android-1.5.4.apk",
+      "sha256": "2459be892f62b8c534586b831098d7a9a9fc8a99408c4ef3a07cc5ba413ed1bc",
+      "size": 8530,
+      "package": "com.lateapex.collie",
+      "version": 100001,
+      "name": "1.5.4"
+    },
+    {
+      "file": "collie-wrong-package.apk",
+      "sha256": "bea932875d9d0a4c7fc752698c3aea5ff3df92511c79b38edebe8dae90b0de68",
+      "size": 8530,
+      "package": "com.lateapex.collie.wrongfixture",
+      "version": 100000,
+      "name": "1.5.3"
+    }
+  ]
+}

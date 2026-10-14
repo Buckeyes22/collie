@@ -391,7 +391,7 @@ class LaunchRecipeActivity : AppCompatActivity() {
             val happened = DateFormat.getMediumDateFormat(this).format(Date(item.at)) + " · " + DateFormat.getTimeFormat(this).format(Date(item.at))
             row.addView(label("${item.cwd ?: catalog?.home.orEmpty()} · $happened"), params(2))
             if (item.noPrompts) row.addView(label(getString(R.string.recipes_run_no_prompts_warning)), params(2))
-            val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            val actions = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; isBaselineAligned = false }
             actions.addView(button(R.string.recipes_replay_fill) {
                 runInput.setText(item.line)
                 cwdInput.setText(item.cwd.orEmpty())

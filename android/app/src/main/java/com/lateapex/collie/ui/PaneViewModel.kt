@@ -28,6 +28,8 @@ import com.lateapex.collie.network.TranscriptEntry
 import com.lateapex.collie.network.QueuedSendGuard
 import com.lateapex.collie.ui.terminal.PromptBinding
 import com.lateapex.collie.ui.terminal.CodexReplyGuard
+import com.lateapex.collie.ui.terminal.PiComposer
+import com.lateapex.collie.ui.terminal.PiReplyGuard
 import com.lateapex.collie.ui.terminal.SemanticAction
 import com.lateapex.collie.ui.terminal.SemanticActionGuard
 import com.lateapex.collie.ui.terminal.SemanticInteractionEngine
@@ -84,6 +86,7 @@ data class PaneUiState(
     /** Positive declaration belongs to this captured config actor, never a replacement scope. */
     val filesConfigContext: ScopedReadContext? = null,
     val transcript: List<TranscriptEntry> = emptyList(),
+    val lastPrompt: com.lateapex.collie.network.ChatPrompt? = null,
     val transcriptAvailable: Boolean? = null,
     val transcriptReason: String? = null,
     val transcriptHasMore: Boolean = false,
@@ -168,6 +171,13 @@ class PaneViewModel(
 
     @Volatile internal var originalContext: ScopedReadContext? = null
         private set
+    private suspend fun <T> withCapturedActor(actor: ScopedReadContext, block: suspend () -> ApiResult<T>): ApiResult<T> {
+        if (!repository.isCurrent(actor)) throw DiscardedActor()
+        val result = block()
+        if (!repository.isCurrent(actor)) throw DiscardedActor()
+        return result
+    }
+
     private fun adoptOriginalContext(context: ScopedReadContext) {
         if (originalContext?.custodyOwner?.let { it != context.custodyOwner } == true) {
             mutableState.value = PaneUiState(clearReplyDraft = true)
@@ -217,7 +227,7 @@ class PaneViewModel(
         withRetirementOnMain(event, { originalContext }) {
             chatEtag = null
             transcriptEtag = null
-            mutableState.value = mutableState.value.copy(transcriptReadContext = null, paneReadContext = null)
+            mutableState.value = mutableState.value.copy(transcriptReadContext = null, paneReadContext = null, lastPrompt = null)
         }
     }
 
@@ -279,7 +289,7 @@ class PaneViewModel(
             if (mirrorValid && chatValid || mirrorValid && shown.transcript.isEmpty() || chatValid && shown.pane == null) return
             if (!mirrorValid && !chatValid) {
                 savedSelection = null; savedPaneExpiry = null
-                mutableState.value = shown.copy(pane = null, transcript = emptyList(), transcriptAvailable = false,
+                mutableState.value = shown.copy(pane = null, transcript = emptyList(), lastPrompt = null, transcriptAvailable = false,
                     savedCopy = null, savedCopyVersion = null, lastSuccessAt = null, loading = readInFlight.get(),
                     canWrite = false, composerReady = false)
             } else {
@@ -427,7 +437,7 @@ class PaneViewModel(
                         sending = false,
                         clearReplyDraft = false,
                         composerReady = false,
-                        transcript = emptyList(),
+                        transcript = emptyList(), lastPrompt = null,
                         transcriptQueued = emptyList(),
                         transcriptSendNow = null,
                         transcriptSendPending = false,
@@ -511,13 +521,15 @@ class PaneViewModel(
 
     fun sendReply(text: String, terminalDraftToClear: TerminalDraft? = null) {
         diagnostics.record("action", mapOf("name" to "pane.send_reply"))
-        val clean = text.trimEnd()
+        val clean = if (agent == "pi") text else text.trimEnd()
         if (clean.isBlank() || mutableState.value.sending || refuseTerminalWrite()) return
         val displayed = currentPaneOrRefuse() ?: return
+        val writeActor = mutableState.value.paneReadContext?.takeIf(repository::isCurrent) ?: return
+        val piComposer = if (agent == "pi") PiComposer.locate(displayed.text) else null
         val displayedPrompt = if (terminalDraftToClear == null) {
             PromptBinding.composerRegion(agent, displayed.text)
         } else {
-            PromptBinding.tailRegion(displayed.text).takeIf {
+            (if (agent == "pi") piComposer?.region() else PromptBinding.tailRegion(displayed.text)).takeIf {
                 terminalDraftMatches(displayed.text, terminalDraftToClear)
             }
         } ?: run {
@@ -546,9 +558,11 @@ class PaneViewModel(
                     status = null,
                 )
                 val expectedPrompt = if (terminalDraftToClear == null) {
-                    refreshBinding(displayed, displayedPrompt, { PromptBinding.composerRegion(agent, it) }, wholePane = agent != "codex")
+                    refreshBinding(displayed, displayedPrompt, { PromptBinding.composerRegion(agent, it) },
+                        wholePane = agent !in setOf("codex", "pi"), actor = writeActor,
+                        expectedColumns = piComposer?.columns)
                 } else {
-                    clearTakenOverTerminalDraft(displayed, displayedPrompt, terminalDraftToClear)
+                    clearTakenOverTerminalDraft(displayed, displayedPrompt, terminalDraftToClear, writeActor, piComposer?.columns)
                 } ?: return@launch
                 if (refuseTerminalWrite()) {
                     mutableState.value = mutableState.value.copy(sending = false)
@@ -560,11 +574,10 @@ class PaneViewModel(
                         expectedPrompt,
                         text(R.string.pane_error_codex_unconfirmed),
                         reply = { message, submit, binding ->
-                            if (message.isEmpty()) withCurrentActor { repository.submitReply(address, binding) }
-                            else withCurrentActor { repository.reply(address, message, submit, binding) }
+                            withCapturedActor(writeActor) { repository.reply(address, message, submit, binding, null, writeActor) }
                         },
                         read = {
-                            when (val observed = withCurrentActor { repository.readPane(address, paneRequestedLines, markSeen = true) }) {
+                            when (val observed = withCapturedActor(writeActor) { repository.readPane(address, paneRequestedLines, markSeen = true, expectedContext = writeActor) }) {
                                 is ApiResult.Success -> observed.value.pane.let { pane ->
                                     mutableState.value = mutableState.value.copy(
                                         pane = pane,
@@ -576,7 +589,24 @@ class PaneViewModel(
                             }
                         },
                     )
-                } else withCurrentActor { repository.reply(address, clean, submit = true, expectedPrompt = expectedPrompt) }
+                } else if (agent == "pi") {
+                    val freshComposer = mutableState.value.pane?.text?.let(PiComposer::locate)
+                    if (freshComposer == null || freshComposer.region() != expectedPrompt || freshComposer.columns != piComposer?.columns) return@launch
+                    PiReplyGuard.send(clean, freshComposer, text(R.string.pane_error_text_delivered),
+                        reply = { message, submit, binding, columns ->
+                            withCapturedActor(writeActor) { repository.reply(address, message, submit, binding, columns, writeActor) }
+                        },
+                        read = {
+                            when (val observed = withCapturedActor(writeActor) { repository.readPane(address, paneRequestedLines, markSeen = true, expectedContext = writeActor) }) {
+                                is ApiResult.Success -> observed.value.pane.let { pane ->
+                                    mutableState.value = mutableState.value.copy(pane = pane, composerReady = PromptBinding.composerRegion(agent, pane.text) != null)
+                                    pane.text
+                                }
+                                else -> null
+                            }
+                        },
+                    )
+                } else withCapturedActor(writeActor) { repository.reply(address, clean, true, expectedPrompt, null, writeActor) }
                 when (result) {
                 is ApiResult.Success -> {
                     val response = result.value
@@ -598,7 +628,7 @@ class PaneViewModel(
                     } else if (response.textDelivered) {
                         mutableState.value.copy(
                             sending = false,
-                            mutationError = if (response.code == "codex_unconfirmed") response.error
+                        mutationError = if (response.code in setOf("codex_unconfirmed", "pi_unconfirmed")) response.error
                                 else text(R.string.pane_error_text_delivered),
                         )
                     } else if (response.code == "prompt_changed") {
@@ -612,7 +642,7 @@ class PaneViewModel(
                             mutationError = response.error ?: text(R.string.pane_error_reply_refused),
                         )
                     }
-                    load()
+                    if (repository.isCurrent(writeActor)) load()
                 }
                 is ApiResult.Failure -> {
                     demoteIfRevoked(result.error)
@@ -828,7 +858,7 @@ class PaneViewModel(
                 val persistedAttempt = observeQueuedAction(chatWindow.sendNow)
                 mutableState.value = mutableState.value.copy(
                     transcriptReadContext = verificationContext,
-                    transcript = chatWindow.entries,
+                    transcript = chatWindow.entries, lastPrompt = chatWindow.lastPrompt,
                     transcriptQueued = chatWindow.queued,
                     transcriptSendNow = chatWindow.sendNow,
                     transcriptSendAttempt = persistedAttempt ?: mutableState.value.transcriptSendAttempt
@@ -925,6 +955,7 @@ class PaneViewModel(
      */
     fun sendSemanticAction(displayedSurface: SemanticSurface, displayedAction: SemanticAction) {
         val displayedPane = currentPaneOrRefuse() ?: return
+        val writeActor = mutableState.value.paneReadContext?.takeIf(repository::isCurrent) ?: return
         if (mutableState.value.sending || refuseTerminalWrite() || displayedSurface.interactionLocked ||
             displayedPane.revision != displayedSurface.revision || displayedAction !in displayedSurface.actions ||
             displayedAction.keys.any { !MuxKeyGrammar.isSupported(it, mutableState.value.unsupportedKeys) }
@@ -938,7 +969,7 @@ class PaneViewModel(
                     mutationError = null,
                     status = null,
                 )
-                val fresh = when (val result = withCurrentActor { repository.readPane(address, paneRequestedLines, markSeen = true) }) {
+                val fresh = when (val result = withCapturedActor(writeActor) { repository.readPane(address, paneRequestedLines, markSeen = true, expectedContext = writeActor) }) {
                     is ApiResult.Success -> result.value.pane
                     is ApiResult.Failure -> {
                         mutableState.value = mutableState.value.copy(
@@ -972,7 +1003,7 @@ class PaneViewModel(
                     )
                     return@launch
                 }
-                when (val result = withCurrentActor { repository.keys(address, verified.keys, expectedPrompt = displayedSurface.regionSignature) }) {
+                when (val result = withCapturedActor(writeActor) { repository.keys(address, verified.keys, expectedPrompt = displayedSurface.regionSignature, expectedColumns = displayedSurface.expectedColumns, expectedContext = writeActor) }) {
                     is ApiResult.Success -> mutableState.value = if (result.value.ok) {
                         mutableState.value.copy(
                             sending = false,
@@ -1002,7 +1033,7 @@ class PaneViewModel(
                         mutationError = text(R.string.pane_dialog_empty),
                     )
                 }
-                load()
+                if (repository.isCurrent(writeActor)) load()
             } finally {
                 mutableState.value = mutableState.value.copy(sending = false)
                 writeInFlight.set(false)
@@ -1017,6 +1048,7 @@ class PaneViewModel(
             return
         }
         val displayedPane = currentPaneOrRefuse() ?: return
+        val writeActor = mutableState.value.paneReadContext?.takeIf(repository::isCurrent) ?: return
         if (mutableState.value.sending || refuseTerminalWrite() || displayedSurface.interactionLocked ||
             displayedPane.revision != displayedSurface.revision || displayedSurface.nativeModel == null
         ) return
@@ -1031,15 +1063,36 @@ class PaneViewModel(
                 )
                 val transport = object : SemanticInteractionTransport {
                     override suspend fun read(): SemanticPane? = when (
-                        val result = withCurrentActor { repository.readPane(address, paneRequestedLines, markSeen = true) }
+                        val result = withCapturedActor(writeActor) { repository.readPane(address, paneRequestedLines, markSeen = true, expectedContext = writeActor) }
                     ) {
                         is ApiResult.Success -> SemanticPane(result.value.pane.text, result.value.pane.revision)
                         else -> null
                     }
 
+                    override suspend fun keys(keys: List<String>, expectedPrompt: String?, expectedColumns: com.lateapex.collie.network.PromptColumns?): SemanticWriteOutcome =
+                        if (keys.any { !MuxKeyGrammar.isSupported(it, mutableState.value.unsupportedKeys) }) SemanticWriteOutcome.FAILED
+                        else when (val result = withCapturedActor(writeActor) { repository.keys(address, keys, expectedPrompt, expectedColumns, writeActor) }) {
+                            is ApiResult.Success -> when {
+                                result.value.ok -> SemanticWriteOutcome.OK
+                                result.value.code == "prompt_changed" -> SemanticWriteOutcome.CHANGED
+                                else -> SemanticWriteOutcome.FAILED
+                            }
+                            else -> SemanticWriteOutcome.FAILED
+                        }
+
+                    override suspend fun reply(text: String, submit: Boolean, expectedPrompt: String?, expectedColumns: com.lateapex.collie.network.PromptColumns?): SemanticWriteOutcome =
+                        when (val result = withCapturedActor(writeActor) { repository.reply(address, text, submit, expectedPrompt, expectedColumns, writeActor) }) {
+                            is ApiResult.Success -> when {
+                                result.value.ok -> SemanticWriteOutcome.OK
+                                result.value.code == "prompt_changed" -> SemanticWriteOutcome.CHANGED
+                                else -> SemanticWriteOutcome.FAILED
+                            }
+                            else -> SemanticWriteOutcome.FAILED
+                        }
+
                     override suspend fun keys(keys: List<String>, expectedPrompt: String?): SemanticWriteOutcome =
                         if (keys.any { !MuxKeyGrammar.isSupported(it, mutableState.value.unsupportedKeys) }) SemanticWriteOutcome.FAILED
-                        else when (val result = withCurrentActor { repository.keys(address, keys, expectedPrompt) }) {
+                        else when (val result = withCapturedActor(writeActor) { repository.keys(address, keys, expectedPrompt, null, writeActor) }) {
                             is ApiResult.Success -> when {
                                 result.value.ok -> SemanticWriteOutcome.OK
                                 result.value.code == "prompt_changed" -> SemanticWriteOutcome.CHANGED
@@ -1052,7 +1105,7 @@ class PaneViewModel(
                         text: String,
                         submit: Boolean,
                         expectedPrompt: String?,
-                    ): SemanticWriteOutcome = when (val result = withCurrentActor { repository.reply(address, text, submit, expectedPrompt) }) {
+                    ): SemanticWriteOutcome = when (val result = withCapturedActor(writeActor) { repository.reply(address, text, submit, expectedPrompt, null, writeActor) }) {
                         is ApiResult.Success -> when {
                             result.value.ok -> SemanticWriteOutcome.OK
                             result.value.code == "prompt_changed" -> SemanticWriteOutcome.CHANGED
@@ -1076,7 +1129,7 @@ class PaneViewModel(
                         mutationError = text(R.string.pane_dialog_refused),
                     )
                 }
-                load()
+                if (repository.isCurrent(writeActor)) load()
             } finally {
                 mutableState.value = mutableState.value.copy(sending = false)
                 writeInFlight.set(false)
@@ -1393,7 +1446,7 @@ class PaneViewModel(
             transcriptEtag = null
             transcriptSkipPolls = 0
             mutableState.value = mutableState.value.copy(
-                transcript = emptyList(), transcriptQueued = emptyList(), transcriptHasMore = false,
+                transcript = emptyList(), lastPrompt = null, transcriptQueued = emptyList(), transcriptHasMore = false,
                 transcriptSendNow = null, transcriptSendPending = false, transcriptSendAttempt = null,
                 transcriptAvailable = null, transcriptReadContext = null,
             )
@@ -1419,7 +1472,7 @@ class PaneViewModel(
                         chatEtag = null
                         transcriptSkipPolls = TRANSCRIPT_RETRY_POLLS
                     mutableState.value = mutableState.value.copy(
-                        transcriptAvailable = false, transcriptReason = page.reason, transcript = emptyList(),
+                        transcriptAvailable = false, transcriptReason = page.reason, transcript = emptyList(), lastPrompt = null,
                         transcriptQueued = emptyList(), transcriptSendNow = null, transcriptSendPending = false,
                         transcriptSendAttempt = null, transcriptHasMore = false, transcriptReadContext = transcriptContext,
                     )
@@ -1443,7 +1496,7 @@ class PaneViewModel(
                                 ?.takeIf { prior -> sendNow?.let(prior::sameQueue) == true }
                             mutableState.value = mutableState.value.copy(
                                 transcriptReadContext = transcriptContext,
-                                transcript = chatWindow.entries,
+                                transcript = chatWindow.entries, lastPrompt = chatWindow.lastPrompt,
                                 transcriptQueued = chatWindow.queued,
                                 transcriptSendNow = sendNow,
                                 transcriptSendAttempt = persistedAttempt ?: priorAttempt,
@@ -1489,7 +1542,7 @@ class PaneViewModel(
                     mutableState.value = mutableState.value.copy(
                         transcriptAvailable = false,
                         transcriptReason = page.reason,
-                        transcript = emptyList(),
+                        transcript = emptyList(), lastPrompt = null,
                         transcriptReadContext = transcriptContext,
                     )
                     return
@@ -1534,7 +1587,7 @@ class PaneViewModel(
                     val merged = result.value.available && chatWindow.merge(result.value)
                     if (merged) {
                         mutableState.value = mutableState.value.copy(
-                            transcript = chatWindow.entries, transcriptQueued = chatWindow.queued,
+                            transcript = chatWindow.entries, lastPrompt = chatWindow.lastPrompt, transcriptQueued = chatWindow.queued,
                             transcriptHasMore = chatWindow.hasOlder, transcriptAvailable = true,
                             transcriptReadContext = readContext,
                         )
@@ -1659,8 +1712,12 @@ class PaneViewModel(
         displayed: PaneReadResponse,
         displayedBinding: String,
         expectedDraft: TerminalDraft,
+        actor: ScopedReadContext,
+        expectedColumns: com.lateapex.collie.network.PromptColumns? = null,
     ): String? {
-        val freshBinding = refreshBinding(displayed, displayedBinding, PromptBinding::tailRegion) ?: return null
+        val freshBinding = refreshBinding(displayed, displayedBinding,
+            { if (agent == "pi") PiComposer.locate(it)?.region() else PromptBinding.tailRegion(it) },
+            wholePane = agent != "pi", actor = actor, expectedColumns = expectedColumns) ?: return null
         val freshText = mutableState.value.pane?.text ?: displayed.text
         if (!terminalDraftMatches(freshText, expectedDraft) || terminalWriteBlock() != null) {
             mutableState.value = mutableState.value.copy(
@@ -1674,7 +1731,7 @@ class PaneViewModel(
             add("ctrl+k")
             repeat(clearCount) { add("Backspace") }
         }
-        when (val result = withCurrentActor { repository.keys(address, clearKeys, expectedPrompt = freshBinding) }) {
+        when (val result = withCapturedActor(actor) { repository.keys(address, clearKeys, freshBinding, expectedColumns, actor) }) {
             is ApiResult.Success -> if (!result.value.ok) {
                 mutableState.value = mutableState.value.copy(
                     sending = false,
@@ -1703,7 +1760,7 @@ class PaneViewModel(
             }
         }
         delay(TAKEOVER_SETTLE_MS)
-        val cleared = when (val result = withCurrentActor { repository.readPane(address, paneRequestedLines, markSeen = true) }) {
+        val cleared = when (val result = withCapturedActor(actor) { repository.readPane(address, paneRequestedLines, markSeen = true, expectedContext = actor) }) {
             is ApiResult.Success -> result.value.pane
             else -> {
                 mutableState.value = mutableState.value.copy(
@@ -1719,7 +1776,7 @@ class PaneViewModel(
             composerReady = clearedBinding != null,
             lastSuccessAt = System.currentTimeMillis(),
         )
-        if (clearedBinding == null) {
+        if (clearedBinding == null || agent == "pi" && PiComposer.locate(cleared.text)?.columns != expectedColumns) {
             mutableState.value = mutableState.value.copy(
                 sending = false,
                 mutationError = text(R.string.pane_error_terminal_draft_not_cleared),
@@ -1734,8 +1791,12 @@ class PaneViewModel(
         displayedBinding: String,
         derive: (String) -> String?,
         wholePane: Boolean = true,
+        actor: ScopedReadContext? = null,
+        expectedColumns: com.lateapex.collie.network.PromptColumns? = null,
     ): String? {
-        val fresh = when (val result = withCurrentActor { repository.readPane(address, paneRequestedLines, markSeen = true) }) {
+        val result = if (actor == null) withCurrentActor { repository.readPane(address, paneRequestedLines, markSeen = true) }
+            else withCapturedActor(actor) { repository.readPane(address, paneRequestedLines, markSeen = true, expectedContext = actor) }
+        val fresh = when (result) {
             is ApiResult.Success -> result.value.pane
             is ApiResult.Failure -> {
                 mutableState.value = mutableState.value.copy(
@@ -1755,9 +1816,10 @@ class PaneViewModel(
         val freshBinding = derive(fresh.text)
         val stillDisplayed = mutableState.value.pane?.let {
             if (wholePane) it.revision == displayed.revision && it.text == displayed.text
-            else derive(it.text) == displayedBinding
+            else derive(it.text) == displayedBinding && (agent != "pi" || PiComposer.locate(it.text)?.columns == expectedColumns)
         } == true
-        if (!stillDisplayed || freshBinding == null || freshBinding != displayedBinding) {
+        if (!stillDisplayed || freshBinding == null || freshBinding != displayedBinding ||
+            actor != null && agent == "pi" && PiComposer.locate(fresh.text)?.columns != expectedColumns) {
             mutableState.value = mutableState.value.copy(
                 pane = fresh,
                 sending = false,

@@ -44,6 +44,7 @@ export const JOURNAL_AGENT_NAMES: ReadonlySet<string> = new Set([
   "hermes",
   "muse",
   "omp",
+  "openclaw",
   "opencode",
   "pi",
 ]);

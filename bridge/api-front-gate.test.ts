@@ -150,6 +150,7 @@ describe("the route table read off server.ts", () => {
       "/api/pane/id1/agent/release",
       "/api/pane/id1/agent/authority/clear",
       "/api/workspace/id1/worktrees",
+      "/api/workspace/id1/changes",
       // The Files existence check (ADR 0088): a POST read, refused without a token like every route.
       "/api/pane/id1/files/exist",
       "/api/workspace/id1/files/exist",

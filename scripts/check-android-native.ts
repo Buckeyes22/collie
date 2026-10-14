@@ -235,20 +235,23 @@ function validatePermissions(
         (permission) =>
           permission === "android.permission.INTERNET" ||
           permission === "android.permission.RECORD_AUDIO" ||
-          /^com\.lateapex\.collie(?:\.debug)?\.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION$/.test(
+          permission === "android.permission.POST_NOTIFICATIONS" ||
+          permission === "android.permission.REQUEST_INSTALL_PACKAGES" ||
+          ["android.permission.WAKE_LOCK", "android.permission.ACCESS_NETWORK_STATE", "android.permission.RECEIVE_BOOT_COMPLETED", "android.permission.FOREGROUND_SERVICE"].includes(permission) ||
+          /^com\.lateapex\.collie(?:\.debug|\.completiontest)?\.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION$/.test(
             permission,
           ),
       )
     : unique.filter(
         (permission) =>
-          permission === "android.permission.INTERNET" || permission === "android.permission.RECORD_AUDIO",
+          permission === "android.permission.INTERNET" || permission === "android.permission.RECORD_AUDIO" || permission === "android.permission.POST_NOTIFICATIONS" || permission === "android.permission.REQUEST_INSTALL_PACKAGES",
       );
   if (
     !unique.includes("android.permission.INTERNET") ||
     !unique.includes("android.permission.RECORD_AUDIO") ||
     allowed.length !== unique.length
   ) {
-    errors.push(`${label} may request only android.permission.INTERNET and android.permission.RECORD_AUDIO${merged ? " plus its AndroidX signature receiver permission" : ""}, and must declare both; found ${unique.length === 0 ? "none" : unique.join(", ")}`);
+    errors.push(`${label} may request only android.permission.INTERNET and android.permission.RECORD_AUDIO${merged ? " plus native notification/install and bounded connector/WorkManager permissions and its AndroidX signature receiver permission" : ""}, and approved native notification/install permissions, and must declare both; found ${unique.length === 0 ? "none" : unique.join(", ")}`);
   }
 }
 
@@ -286,8 +289,24 @@ function validateManifest(text: string, label: string, merged: boolean, errors: 
   // ADR 0098: one constrained native OAuth dispatcher may be exported beside the launcher.
   const callbackAliases = new Set([".ui.OpenLinkActivity", "ui.OpenLinkActivity", `${EXPECTED_APPLICATION_ID}.ui.OpenLinkActivity`]);
   const callbackExport = exported.filter((match) => callbackAliases.has(attribute(match[2] ?? "", "android:name") ?? ""));
-  if (exported.some((match) => !mainAliases.has(attribute(match[2] ?? "", "android:name") ?? "") && !callbackAliases.has(attribute(match[2] ?? "", "android:name") ?? "")) || exported.filter((match) => mainAliases.has(attribute(match[2] ?? "", "android:name") ?? "")).length !== 1 || callbackExport.length > 1 || callbackExport.some((match) => match[1] !== "activity")) {
-    errors.push(`${label} must export only ${EXPECTED_ACTIVITY} and the constrained native OpenLinkActivity; found ${exportedNames.length === 0 ? "none" : exportedNames.join(", ")}`);
+  // The pinned connector authenticates distributor identity before private PushService delivery.
+  // WorkManager's only exported service is protected by Android's signature job permission.
+  const allowedLibraryExport = (kind: string, attrs: string): boolean => {
+    if (!merged) return false;
+    const name = attribute(attrs, "android:name");
+    if (name === "androidx.work.impl.background.systemjob.SystemJobService") return kind === "service" && attribute(attrs, "android:permission") === "android.permission.BIND_JOB_SERVICE";
+    const expected = name === "org.unifiedpush.android.connector.internal.RaiseToForegroundService"
+      ? { kind: "service", actions: ["RAISE_TO_FOREGROUND"] }
+      : name === "org.unifiedpush.android.connector.internal.MessagingReceiverImpl"
+        ? { kind: "receiver", actions: ["MESSAGE", "UNREGISTERED", "NEW_ENDPOINT", "REGISTRATION_FAILED", "TEMP_UNAVAILABLE"] } : null;
+    if (expected === null || kind !== expected.kind) return false;
+    const block = Array.from(text.matchAll(new RegExp(`<${kind}\\b(?![^>]*\\/\\>)([^>]*)>([\\s\\S]*?)<\\/${kind}>`, "g")))
+      .find((m) => attribute(m[1] ?? "", "android:name") === name)?.[2] ?? "";
+    const actions = Array.from(block.matchAll(/<action\b([^>]*)\/?>/g), (m) => attribute(m[1] ?? "", "android:name"));
+    return actions.length === expected.actions.length && expected.actions.every((a) => actions.includes(`org.unifiedpush.android.connector.${a}`)) && !/<data\b|<category\b/.test(block);
+  };
+  if (exported.some((match) => !mainAliases.has(attribute(match[2] ?? "", "android:name") ?? "") && !callbackAliases.has(attribute(match[2] ?? "", "android:name") ?? "") && !allowedLibraryExport(match[1] ?? "", match[2] ?? "")) || exported.filter((match) => mainAliases.has(attribute(match[2] ?? "", "android:name") ?? "")).length !== 1 || callbackExport.length > 1 || callbackExport.some((match) => match[1] !== "activity")) {
+    errors.push(`${label} must export only ${EXPECTED_ACTIVITY} and the constrained native OpenLinkActivity plus verified pinned native connector/job entry points; found ${exportedNames.length === 0 ? "none" : exportedNames.join(", ")}`);
   }
 
   const mainBlock = text.match(
@@ -311,10 +330,21 @@ function validateManifest(text: string, label: string, merged: boolean, errors: 
   if (/android\.intent\.action\.VIEW|android\.intent\.category\.BROWSABLE|android:autoVerify/.test(outsideCallback)) errors.push(`${label} must not register browser or verified-link intent filters outside the native callback`);
   if (callbackExport.length === 1) {
     const filters = Array.from(callbackBody.matchAll(/<intent-filter\b[^>]*>([\s\S]*?)<\/intent-filter>/g));
-    const actions = Array.from(callbackBody.matchAll(/<action\b([^>]*)\/?>/g));
-    const categories = Array.from(callbackBody.matchAll(/<category\b([^>]*)\/?>/g));
-    const data = Array.from(callbackBody.matchAll(/<data\b([^>]*)\/?>/g));
-    if (actions.length !== 1 || attribute(actions[0]?.[1] ?? "", "android:name") !== "android.intent.action.VIEW" || categories.length !== 2 || new Set(categories.map((match) => attribute(match[1] ?? "", "android:name"))).size !== 2 || filters.length !== 1 || data.length !== 1 || attribute(data[0]?.[1] ?? "", "android:scheme") !== "com.lateapex.collie" || Array.from((data[0]?.[1] ?? "").matchAll(/([\w:.-]+)\s*=/g)).some((match) => match[1] !== "android:scheme") || /android:(?:host|port|path\w*|mimeType)|android:autoVerify/.test(callbackBody) || !callbackBody.includes("android.intent.action.VIEW") || !callbackBody.includes("android.intent.category.DEFAULT") || !callbackBody.includes("android.intent.category.BROWSABLE")) errors.push(`${label} native callback must accept only com.lateapex.collie:/oauth2redirect`);
+    const callbackFilters = filters.filter((filter) => filter[1]?.includes("android.intent.action.VIEW"));
+    const shareFilters = filters.filter((filter) => filter[1]?.includes("android.intent.action.SEND"));
+    const nativeCallback = callbackFilters[0]?.[1] ?? "";
+    const actions = Array.from(nativeCallback.matchAll(/<action\b([^>]*)\/?>/g));
+    const categories = Array.from(nativeCallback.matchAll(/<category\b([^>]*)\/?>/g));
+    const data = Array.from(nativeCallback.matchAll(/<data\b([^>]*)\/?>/g));
+    const extraOutsideFilters = callbackBody.replace(/<intent-filter\b[^>]*>[\s\S]*?<\/intent-filter>/g, "");
+    if (/android:autoVerify/.test(callbackBody) || callbackFilters.length !== 1 || filters.length !== 1 + shareFilters.length || shareFilters.length > 1 || /<action\b|<category\b|<data\b|android:autoVerify/.test(extraOutsideFilters) || actions.length !== 1 || attribute(actions[0]?.[1] ?? "", "android:name") !== "android.intent.action.VIEW" || categories.length !== 2 || new Set(categories.map((match) => attribute(match[1] ?? "", "android:name"))).size !== 2 || data.length !== 1 || attribute(data[0]?.[1] ?? "", "android:scheme") !== "com.lateapex.collie" || Array.from((data[0]?.[1] ?? "").matchAll(/([\w:.-]+)\s*=/g)).some((match) => match[1] !== "android:scheme") || /android:(?:host|port|path\w*|mimeType)|android:autoVerify/.test(nativeCallback) || !nativeCallback.includes("android.intent.category.DEFAULT") || !nativeCallback.includes("android.intent.category.BROWSABLE")) errors.push(`${label} native callback must accept only com.lateapex.collie:/oauth2redirect`);
+    if (shareFilters.length === 1) {
+      const share = shareFilters[0]![1] ?? "";
+      const shareActions = Array.from(share.matchAll(/<action\b([^>]*)\/?>/g));
+      const shareCategories = Array.from(share.matchAll(/<category\b([^>]*)\/?>/g));
+      const shareData = Array.from(share.matchAll(/<data\b([^>]*)\/?>/g));
+      if (shareActions.length !== 1 || attribute(shareActions[0]?.[1] ?? "", "android:name") !== "android.intent.action.SEND" || shareCategories.length !== 1 || attribute(shareCategories[0]?.[1] ?? "", "android:name") !== "android.intent.category.DEFAULT" || shareData.length !== 1 || attribute(shareData[0]?.[1] ?? "", "android:mimeType") !== "text/plain" || Array.from((shareData[0]?.[1] ?? "").matchAll(/([\w:.-]+)\s*=/g)).some((match) => match[1] !== "android:mimeType") || /android:(?:host|port|path\w*|scheme)|android:autoVerify/.test(share)) errors.push(`${label} native sharing must accept only a separate text/plain SEND filter`);
+    }
   }
   const forbidden = text.match(FORBIDDEN_ANDROID_PATTERN)?.[0];
   if (forbidden !== undefined) {

@@ -38,6 +38,7 @@ import type {
   WireAgentInfo,
   WirePane,
   WirePaneProcessInfo,
+  WireForegroundProcess,
   WireSnapshot,
   WireTab,
   WireWorkspace,
@@ -90,6 +91,8 @@ export class FakeHerdr implements HerdrRpc {
   private panes: WirePane[] = [];
   private readonly zoomedTabs = new Set<string>();
   private readonly screens = new Map<string, FakeScreen>();
+  /** Foreground processes per pane — what `pane.process_info` answers. Empty unless seeded. */
+  private readonly processes = new Map<string, WireForegroundProcess[]>();
   private readonly subscribers = new Set<Subscriber>();
   private readonly recorded: MuxWrite[] = [];
   /** Worktrees per repo root — the bookkeeping herdr keeps and a plain `git worktree add` does not. */
@@ -199,7 +202,13 @@ export class FakeHerdr implements HerdrRpc {
   async endPane(paneId: string): Promise<void> {
     this.panes = this.panes.filter((pane) => pane.pane_id !== paneId);
     this.screens.delete(paneId);
+    this.processes.delete(paneId);
     await Promise.resolve();
+  }
+
+  /** The pane's foreground group becomes these processes. */
+  setProcesses(paneId: string, processes: WireForegroundProcess[]): void {
+    this.processes.set(paneId, processes);
   }
 
   /** The operator renames a tab in Herdr's own TUI, with the event stream saying nothing. */
@@ -289,7 +298,7 @@ export class FakeHerdr implements HerdrRpc {
       pane_id: paneId,
       shell_pid: 100,
       foreground_process_group_id: 100,
-      foreground_processes: [{ pid: 100, name: "zsh", argv: ["zsh"], cwd: pane.foreground_cwd ?? pane.cwd }],
+      foreground_processes: this.processes.get(paneId) ?? [{ pid: 100, name: "zsh", argv: ["zsh"], cwd: pane.foreground_cwd ?? pane.cwd }],
       tty: "/dev/pts/1",
     };
     if (this.metadataCaps.paneOriginalMetadataV1) result.original_binding = "a".repeat(64);
@@ -331,6 +340,7 @@ export class FakeHerdr implements HerdrRpc {
       revision: pane.revision,
     };
   }
+
 
   async sendPaneText(paneId: string, text: string): Promise<void> {
     this.pane("pane.send_text", paneId);

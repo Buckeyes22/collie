@@ -9,6 +9,14 @@ android {
         version = release(37) { minorApiLevel = 2 }
     }
     buildToolsVersion = "37.0.0"
+    ndkVersion = "27.1.12297006"
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
 
     defaultConfig {
         applicationId = "com.lateapex.collie"
@@ -17,14 +25,22 @@ android {
         versionCode = 3
         versionName = "1.5.2"
 
+        ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
+        externalNativeBuild {
+            cmake {
+                arguments += listOf("-DANDROID_PLATFORM=latest", "-DANDROID_STL=c++_static", "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON")
+            }
+        }
+
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Public builds start unconfigured; the operator supplies their own HTTPS server.
         buildConfigField("String", "DEFAULT_ORIGIN", "\"\"")
+        buildConfigField("boolean", "SIDELOAD_INSTALL", "true")
     }
 
     buildTypes {
         debug {
-            applicationIdSuffix = ".debug"
+            applicationIdSuffix = if (providers.gradleProperty("collieCompletionAcceptance").orNull == "true") ".completiontest" else ".debug"
             versionNameSuffix = "-debug"
         }
         release {
@@ -76,6 +92,10 @@ configurations.configureEach {
 }
 
 dependencies {
+    // UnifiedPush connector 3.3.5 released August 22, 2026; enrollment UI is native.
+    implementation("org.unifiedpush.android:connector:3.3.5")
+    implementation("androidx.work:work-runtime-ktx:2.12.0")
+    testImplementation("androidx.work:work-testing:2.12.0")
     // Keep application Kotlin libraries on the same release as the compiler plugins.
     implementation(platform("org.jetbrains.kotlin:kotlin-bom:2.4.20"))
     implementation("androidx.core:core-ktx:1.19.1")
@@ -92,6 +112,7 @@ dependencies {
     implementation("org.jsoup:jsoup:1.23.2")
     // Pinned AndroidSVG 1.4; input is preflighted against active/external constructs before parsing.
     implementation("com.caverock:androidsvg-aar:1.4")
+    implementation("com.google.zxing:core:3.5.4")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")

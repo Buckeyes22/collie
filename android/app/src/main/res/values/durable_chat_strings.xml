@@ -1,0 +1,29 @@
+<resources>
+    <string name="durable_chat_title">Chat</string>
+    <string name="durable_chat_loading">Loading conversation…</string>
+    <string name="durable_chat_unavailable">This conversation is unavailable.</string>
+    <string name="durable_chat_not_durable">This pane does not support screenless Chat.</string>
+    <string name="durable_chat_history_unavailable">Chat history is unavailable: %1$s</string>
+    <string name="durable_chat_empty">No conversation messages yet.</string>
+    <string name="durable_chat_ask">Waiting for your answer</string>
+    <string name="durable_chat_cleaned">Some request text was shortened. Review the visible text before answering.</string>
+    <string name="durable_chat_send_hint">Message</string>
+    <string name="durable_chat_steer">Steer the working turn</string>
+    <string name="durable_chat_send">Send</string>
+    <string name="durable_chat_stop">Stop current work</string>
+    <string name="durable_chat_retry">Retry this exact request</string>
+    <string name="durable_chat_retry_changed">The message or target changed. Reload before retrying.</string>
+    <string name="durable_chat_sent">Message sent.</string>
+    <string name="durable_chat_stopped">Stop request sent.</string>
+    <string name="durable_chat_answered">Answer sent.</string>
+    <string name="durable_chat_moved">The conversation changed. Reloaded the current state; your draft is still here.</string>
+    <string name="durable_chat_older">This server does not support Chat controls.</string>
+    <string name="durable_chat_refused">The request was refused: %1$s</string>
+    <string name="durable_chat_unknown">The result is unknown. Check the conversation before retrying.</string>
+    <string name="durable_chat_maybe">The earlier request may have taken effect. Check the conversation.</string>
+    <string name="durable_chat_too_late">This question is no longer open.</string>
+    <string name="durable_chat_no_target">The server has not reported a turn or open question yet.</string>
+    <string name="durable_chat_not_ready">This conversation cannot be controlled in its current state.</string>
+    <string name="durable_chat_resolve_unknown">I checked Chat; start a new action</string>
+    <string name="durable_chat_resolve_unknown_detail">The earlier action may have arrived. Check Chat before abandoning its retry. A new action can send the same words again.</string>
+</resources>

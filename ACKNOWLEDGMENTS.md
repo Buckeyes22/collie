@@ -15,11 +15,12 @@ under `/licenses/`:
 | [shadcn/ui](https://github.com/shadcn-ui/ui) | `ui/button`, `ui/badge`, `ui/card`, `ui/sheet`, `ui/switch` | [shadcn-ui.txt](web/public/licenses/shadcn-ui.txt) |
 | [shadcn-chat](https://github.com/jakobhoeg/shadcn-chat) | `ui/chat/chat-input`, `ui/chat/chat-message-list`, `hooks/use-auto-scroll` | [shadcn-chat.txt](web/public/licenses/shadcn-chat.txt) |
 
-The native client bundles Aldrich and JetBrains Mono with their font licenses. Agent icons have
+The native client bundles Aldrich, Space Grotesk and JetBrains Mono with their font licenses. Agent icons have
 their own notices and reuse terms. The APK includes these notices as Android resources:
 
 - [Third-party artwork notices](android/app/src/main/res/raw/third_party_notices.txt)
 - [Collie MIT license in the APK](android/app/src/main/res/raw/license_collie.txt)
+- [Space Grotesk license](android/app/src/main/res/raw/license_space_grotesk.txt)
 - [Aldrich license](android/app/src/main/res/raw/license_aldrich.txt)
 - [JetBrains Mono license](android/app/src/main/res/raw/license_jetbrains_mono.txt)
 

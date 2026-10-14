@@ -26,6 +26,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AlertDialog
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
+import androidx.core.widget.doAfterTextChanged
 import androidx.core.view.isVisible
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.ViewModelProvider
@@ -65,6 +66,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private lateinit var viewModel: MainViewModel
     private val nativePreferences by lazy { NativePreferences(this) }
+    private val panePins by lazy { NativePanePins(this) }
+    private var importedPairing: LinkImportHandoff.Prepared? = null
     private var spaceQuery = ""
     private var structuralContext: ScopedReadContext? = null
     private val launchingCommands = mutableMapOf<String, Pair<String, ScopedReadContext>>()
@@ -89,6 +92,7 @@ class MainActivity : AppCompatActivity() {
     private var structuralProgressRes = R.string.space_creating
     private val adapter: DashboardAdapter = DashboardAdapter(
         onPane = ::openPane,
+        onPin = ::showPanePinAction,
         onSpace = ::openSpace,
         onRecentOpen = { open ->
             nativePreferences.dashboardRecentOpen = open
@@ -117,12 +121,36 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (intent.data != null) {
+            val raw = intent.dataString
+            intent.data = null
+            intent.clipData = null
+            intent.replaceExtras(Bundle())
+            val app = application as CollieApplication
+            val owner = LinkImportOwner.capture(app)
+            val candidate = if (raw != null && owner != null) LinkImportCoordinator.parse(raw, owner.connection) else null
+            if (candidate != null && owner != null && owner.current(app)) {
+                val id = LinkImportHandoff.putPreview(LinkImportHandoff.Prepared(candidate, owner))
+                startActivity(LinkImportActivity.intent(this).putExtra(LinkImportHandoff.EXTRA_ID, id))
+            }
+            finish()
+            return
+        }
+        val initialImport = if (savedInstanceState == null)
+            LinkImportHandoff.consumeConfirmed(intent, application as CollieApplication) else null
+        intent.replaceExtras(Bundle())
         window.prepareEdgeToEdgeContent()
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
         binding.root.applyAppTypeface()
         window.applySafeContentInsets(binding.root)
-        viewModel = ViewModelProvider(this)[MainViewModel::class.java]
+        viewModel = if (initialImport != null) {
+            ViewModelProvider(this, object : ViewModelProvider.Factory {
+                @Suppress("UNCHECKED_CAST")
+                override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T =
+                    MainViewModel(application, preserveInitialSubject = true) as T
+            })[MainViewModel::class.java]
+        } else ViewModelProvider(this)[MainViewModel::class.java]
 
         binding.originInput.setText(BuildConfig.DEFAULT_ORIGIN)
         binding.deviceLabelInput.setText(defaultDeviceLabel())
@@ -131,11 +159,25 @@ class MainActivity : AppCompatActivity() {
         binding.connectButton.setOnClickListener {
             viewModel.connectReadOnly(binding.originInput.text.toString(), binding.deviceLabelInput.text.toString())
         }
+        binding.originInput.doAfterTextChanged {
+            val imported = importedPairing
+            val candidate = imported?.candidate as? LinkImportCoordinator.Candidate.Pairing
+            if (candidate != null && it?.toString() != candidate.origin.value) clearImportedPairing()
+        }
+        binding.pairingCodeInput.isSaveEnabled = false
         binding.pairButton.setOnClickListener {
+            val imported = importedPairing
+            val candidate = imported?.candidate as? LinkImportCoordinator.Candidate.Pairing
+            if (imported != null && (candidate == null || !imported.owner.current(application as CollieApplication) ||
+                    binding.originInput.text.toString() != candidate.origin.value)) {
+                clearImportedPairing()
+                return@setOnClickListener
+            }
             viewModel.pair(
                 binding.originInput.text.toString(),
                 binding.deviceLabelInput.text.toString(),
                 binding.pairingCodeInput.text.toString(),
+                admission = imported?.let { original -> { original.owner.current(application as CollieApplication) } },
             )
         }
         binding.swipeRefresh.setOnRefreshListener(viewModel::refresh)
@@ -168,13 +210,17 @@ class MainActivity : AppCompatActivity() {
                 onBackPressedDispatcher.onBackPressed()
             }
         })
-        if (savedInstanceState == null) openDeepLink(intent.data)
+        if (savedInstanceState == null) consumeLinkImport(intent, initialImport)
+        intent.data = null
+        intent.clipData = null
 
         binding.paneList.addOnChildAttachStateChangeListener(object : androidx.recyclerview.widget.RecyclerView.OnChildAttachStateChangeListener {
             override fun onChildViewAttachedToWindow(view: android.view.View) { if (renderedSavedVersion != null) rememberSavedText(view) }
             override fun onChildViewDetachedFromWindow(view: android.view.View) = Unit
         })
         authorityRegistration = repository.onAuthorityRetired { event ->
+            if (importedPairing?.owner?.current(application as CollieApplication) == false)
+                runOnUiThread { clearImportedPairing() }
             withOfflineRetirementOnMain(event, { renderedSavedVersion }) {
                 renderedSavedVersion = null
                 render(MainUiState())
@@ -195,9 +241,82 @@ class MainActivity : AppCompatActivity() {
         }
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
+                launch { panePins.changes.collect { render(viewModel.state.value) } }
                 viewModel.state.collect(::render)
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        consumeLinkImport(intent)
+        intent.data = null
+        intent.clipData = null
+        intent.replaceExtras(Bundle())
+    }
+
+    private fun clearImportedPairing() {
+        importedPairing = null
+        binding.pairingCodeInput.text?.clear()
+    }
+
+    private fun consumeLinkImport(incoming: Intent, admitted: LinkImportHandoff.Prepared? = null) {
+        val app = application as CollieApplication
+        val prepared = admitted ?: LinkImportHandoff.consumeConfirmed(incoming, app)
+        if (prepared != null && prepared.owner.current(app)) {
+            when (val candidate = prepared.candidate) {
+                is LinkImportCoordinator.Candidate.Navigation -> openDeepLink(Uri.parse(candidate.url))
+                is LinkImportCoordinator.Candidate.Pairing -> {
+                    if (prepared.owner.connection == null) {
+                        clearImportedPairing()
+                        binding.originInput.setText(candidate.origin.value)
+                        importedPairing = prepared
+                        binding.pairingCodeInput.isSaveEnabled = false
+                        binding.pairingCodeInput.setText(candidate.code)
+                    } else {
+                        val id = LinkImportHandoff.putConfirmed(prepared)
+                        startActivity(SettingsActivity.intent(this, focusDevices = true)
+                            .putExtra(LinkImportHandoff.EXTRA_ID, id))
+                    }
+                }
+            }
+        } else {
+            val raw = incoming.dataString
+            incoming.data = null
+            val owner = LinkImportOwner.capture(app)
+            val candidate = if (raw != null && owner != null) LinkImportCoordinator.parse(raw, owner.connection) else null
+            if (candidate != null && owner != null && owner.current(app)) {
+                val id = LinkImportHandoff.putPreview(LinkImportHandoff.Prepared(candidate, owner))
+                startActivity(LinkImportActivity.intent(this).putExtra(LinkImportHandoff.EXTRA_ID, id))
+            }
+        }
+    }
+
+    private fun showPanePinAction(pane: PaneSummary) {
+        val state = viewModel.state.value
+        val actor = state.originalReadContext ?: return
+        val herd = state.snapshot?.let { it.agents + it.shellPanes } ?: return
+        if (state.savedCopy != null || !actor.connection.isPaired || !repository.isCurrent(actor)) return
+        val displayed = herd.singleOrNull { it.paneId == pane.paneId && it.host == pane.host &&
+            it.session == pane.session && it.workspaceLabel == pane.workspaceLabel && it.workspaceId == pane.workspaceId } ?: return
+        val pinned = panePins.isPinned(displayed, actor, repository::isCurrent)
+        val dialog = CollieBottomSheetDialog(this, getString(R.string.pane_actions))
+        val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        content.addView(sheetActionButton(getString(if (pinned) R.string.pane_unpin else R.string.pane_pin)) {
+            val fresh = viewModel.state.value
+            val freshHerd = fresh.snapshot?.let { it.agents + it.shellPanes } ?: return@sheetActionButton
+            if (fresh.savedCopy != null || !repository.isCurrent(actor)) return@sheetActionButton
+            val current = freshHerd.singleOrNull { it.paneId == displayed.paneId && it.host == displayed.host &&
+                it.session == displayed.session && it.workspaceLabel == displayed.workspaceLabel &&
+                it.workspaceId == displayed.workspaceId } ?: return@sheetActionButton
+            if (panePins.setPinned(current, !pinned, freshHerd, actor, repository::isCurrent)) {
+                dialog.dismiss()
+                render(viewModel.state.value)
+            }
+        })
+        dialog.setSheetContent(content)
+        dialog.show()
     }
 
     private fun openDeepLink(uri: Uri?) {
@@ -328,6 +447,7 @@ class MainActivity : AppCompatActivity() {
             state.snapshot?.let { snapshot ->
                 DashboardModel.items(
                     snapshot = snapshot,
+                    pinned = state.originalReadContext?.let { panePins.matcher(it, repository::isCurrent) } ?: { false },
                     scope = viewModel.currentScope,
                     stale = state.error != null,
                     build = getString(R.string.build_stamp, BuildConfig.VERSION_NAME),

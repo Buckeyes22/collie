@@ -31,5 +31,19 @@ export function withNativeFinalAdmission(adapter: MuxAdapter, admitted: () => bo
   const applyLayout = adapter.applyLayout?.bind(adapter);
   if (applyLayout) wrapped.applyLayout = (action, finalAdmission) => effect(() => applyLayout(action,
     (prepared, identity, evidence) => admitted() && finalAdmission(prepared, identity, evidence)));
+  if (adapter.foregroundProcesses) wrapped.foregroundProcesses = adapter.foregroundProcesses.bind(adapter);
+  if (adapter.listStarters) wrapped.listStarters = adapter.listStarters.bind(adapter);
+  if (adapter.openAsks) wrapped.openAsks = adapter.openAsks.bind(adapter);
+  if (adapter.paneTurn) wrapped.paneTurn = adapter.paneTurn.bind(adapter);
+  const answerAsk = adapter.answerAsk?.bind(adapter);
+  if (answerAsk) wrapped.answerAsk = (pane, answer, finalAdmission) => effect(() => answerAsk(pane, answer, () => admitted() && (finalAdmission?.() ?? true)));
+  const controlTurn = adapter.controlTurn?.bind(adapter);
+  if (controlTurn) wrapped.controlTurn = (pane, request, finalAdmission) => admitted()
+    ? controlTurn(pane, request, () => admitted() && (finalAdmission?.() ?? true))
+    : Promise.resolve({ kind: "refused", detail: "Native caller authority changed before dispatch" });
+  const startStarter = adapter.startStarter?.bind(adapter);
+  if (startStarter) wrapped.startStarter = (starter, request, finalAdmission) => admitted()
+    ? startStarter(starter, request, () => admitted() && (finalAdmission?.() ?? true))
+    : Promise.resolve({ kind: "refused", detail: "Native caller authority changed before dispatch" });
   return wrapped;
 }

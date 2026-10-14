@@ -16,6 +16,12 @@ class NativePreferences(
         DARK("dark", AppCompatDelegate.MODE_NIGHT_YES),
     }
 
+    enum class UiTypeface(val storedValue: String) {
+        SYSTEM("system"),
+        GROTESK("grotesk"),
+        ALDRICH("aldrich"),
+    }
+
     private val preferences = context.applicationContext.getSharedPreferences(
         PREFERENCES,
         Context.MODE_PRIVATE,
@@ -96,6 +102,36 @@ class NativePreferences(
         set(value) {
             preferences.edit().putInt(DRAFT_FONT_SIZE, value.coerceIn(13, 16)).apply()
         }
+
+    var uiTypeface: UiTypeface
+        get() = UiTypeface.entries.firstOrNull { it.storedValue == preferences.getString(UI_TYPEFACE, null) }
+            ?: UiTypeface.ALDRICH
+        set(value) { preferences.edit().putString(UI_TYPEFACE, value.storedValue).apply() }
+
+    data class OperatorTypefaceSelection(val family: String, val basename: String, val ownerFingerprint: String)
+
+    val operatorTypefaceSelection: OperatorTypefaceSelection?
+        get() {
+            val family = preferences.getString(OPERATOR_TYPEFACE_FAMILY, null) ?: return null
+            val basename = preferences.getString(OPERATOR_TYPEFACE_BASENAME, null) ?: return null
+            val owner = preferences.getString(OPERATOR_TYPEFACE_OWNER, null) ?: return null
+            return OperatorTypefaceSelection(family, basename, owner).takeIf { validOperatorTypefaceSelection(it) }
+        }
+
+    fun selectOperatorTypeface(family: String, basename: String, ownerFingerprint: String): Boolean {
+        val selection = OperatorTypefaceSelection(family, basename, ownerFingerprint)
+        if (!validOperatorTypefaceSelection(selection)) return false
+        return preferences.edit()
+            .putString(OPERATOR_TYPEFACE_FAMILY, family)
+            .putString(OPERATOR_TYPEFACE_BASENAME, basename)
+            .putString(OPERATOR_TYPEFACE_OWNER, ownerFingerprint)
+            .commit()
+    }
+
+    fun clearOperatorTypeface() {
+        preferences.edit().remove(OPERATOR_TYPEFACE_FAMILY).remove(OPERATOR_TYPEFACE_BASENAME)
+            .remove(OPERATOR_TYPEFACE_OWNER).apply()
+    }
 
     var handsFreeEnabled: Boolean
         get() = preferences.getBoolean(HANDS_FREE_ENABLED, false)
@@ -309,6 +345,10 @@ class NativePreferences(
         internal const val DIAGNOSTICS_ENABLED = "diagnostics_enabled"
         internal const val TERMINAL_FONT_SIZE = "terminal_font_size"
         internal const val DRAFT_FONT_SIZE = "draft_font_size"
+        internal const val UI_TYPEFACE = "ui_typeface"
+        internal const val OPERATOR_TYPEFACE_FAMILY = "operator_typeface_family"
+        internal const val OPERATOR_TYPEFACE_BASENAME = "operator_typeface_basename"
+        internal const val OPERATOR_TYPEFACE_OWNER = "operator_typeface_owner"
         internal const val HANDS_FREE_ENABLED = "hands_free_enabled"
         internal const val PANE_DRAFT_PREFIX = "pane_draft:"
         internal const val PANE_DRAFT_SAVED_PREFIX = "pane_draft_saved:"
@@ -368,4 +408,10 @@ class NativePreferences(
             return legacyDeleted
         }
     }
+
+    private fun validOperatorTypefaceSelection(value: OperatorTypefaceSelection): Boolean =
+        value.family.matches(Regex("^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$")) &&
+            value.family.lowercase() !in setOf("serif", "sans-serif", "monospace", "cursive", "fantasy", "system-ui", "math", "inherit", "initial", "unset", "revert", "revert-layer") &&
+            value.basename.length in 1..128 && !value.basename.startsWith(".") && value.basename.endsWith(".woff2") &&
+            value.basename.none { it == '/' || it == '\\' || it == '\u0000' } && value.ownerFingerprint.matches(Regex("[0-9a-f]{64}"))
 }

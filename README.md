@@ -18,12 +18,12 @@ The app follows the agents already running on your server.
 - Browse listed Git changes, inspect bounded file diffs, and read the latest commit from panes or spaces.
 - Answer supported agent prompts, send replies, attach images, and use terminal keys.
 - Pair the phone for read and write access and revoke devices through Settings.
-- Use voice input when your server has speech-to-text configured.
-- Inspect Crew state and manage **server** updates.
+- Read durable-agent Chat, answer asks, send or steer a turn, and stop it through guarded HTTP actions.
+- Inspect Crew state, use a configured deputy ingress, and manage **server** updates.
 - Use New to start a declared worktree-capable agent from the default branch or a chosen ref, with a server-validated parent folder; on supported Herdr runtimes, review and remove an exact linked checkout while preserving its branch.
 
-Background push notifications are not implemented in the native app. Server updates do not
-update the Android APK. Some agent interactions depend on the bridge's journal and multiplexer
+Native notifications use UnifiedPush with an operator-configured self-hosted ntfy server.
+Android app updates are discovered, verified and installed separately from server updates. Some agent interactions depend on the bridge's journal and multiplexer
 capabilities; unfamiliar terminal screens may require raw controls.
 
 ## Requirements
@@ -33,7 +33,7 @@ You need a reachable Collie HTTPS server as well as an Android phone.
 | Requirement | Details |
 | --- | --- |
 | Android | Current Android 17 / API 37 |
-| Server | A self-hosted Collie deployment; the current development baseline is server 1.19.0 |
+| Server | A self-hosted Collie deployment; HTTP contracts reconciled to official Collie v1.21.0 |
 | Network | Usually Tailscale on the host and phone, with access to the same tailnet |
 | Device access | A short-lived pairing code generated on the host with `collie pair` |
 
@@ -71,7 +71,7 @@ Pairing gives the phone control of real terminal sessions with the host user's p
 
 Use a private tailnet or another authenticated ingress. The client requires HTTPS, verifies
 certificates, refuses API redirects, and stores its pairing credential encrypted through Android
-Keystore. The server's access policy remains essential: server 1.19.0 requires pairing for reads and writes. The server's ingress and identity policy
+Keystore. The server's access policy remains essential: Collie requires pairing for reads and writes. The server's ingress and identity policy
 still applies. Mounted HTTPS URLs such as `https://collie.example/tools/collie/` are supported.
 
 Diagnostic capture is off by default for new installs. If enabled, it records terminal content

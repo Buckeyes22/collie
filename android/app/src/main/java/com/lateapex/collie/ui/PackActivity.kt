@@ -1,6 +1,9 @@
 package com.lateapex.collie.ui
 
+import android.app.AlertDialog
 import android.content.Intent
+import android.os.Handler
+import android.os.Looper
 import android.graphics.Typeface
 import android.os.Bundle
 import android.text.format.DateUtils
@@ -16,6 +19,9 @@ import androidx.appcompat.widget.AppCompatImageView
 import androidx.core.content.ContextCompat
 import androidx.core.view.isVisible
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.Lifecycle
+import com.lateapex.collie.data.ScopedReadContext
+import com.lateapex.collie.network.StandbyHealthResponse
 import com.google.android.material.button.MaterialButton
 import com.lateapex.collie.CollieApplication
 import com.lateapex.collie.R
@@ -26,6 +32,7 @@ import com.lateapex.collie.network.ApiResult
 import com.lateapex.collie.network.CrewMember
 import com.lateapex.collie.network.CrewStatusResponse
 import com.lateapex.collie.network.SnapshotResponse
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -33,9 +40,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
-/** Read-only native `/pack`, presented with the same formation and paperwork flow as the PWA. */
+/** Native Crew formation plus the official, user-confirmed same-origin standby recovery. */
 class PackActivity : AppCompatActivity() {
-    private val repository get() = (application as CollieApplication).container.repository
+    @androidx.annotation.VisibleForTesting internal var repositoryForTests: com.lateapex.collie.data.CollieRepository? = null
+    private val repository get() = repositoryForTests ?: (application as CollieApplication).container.repository
     private val nativePreferences by lazy { NativePreferences(this) }
     private lateinit var summary: TextView
     private lateinit var formation: PackFormationView
@@ -47,6 +55,20 @@ class PackActivity : AppCompatActivity() {
     private var selectedMemberId: String? = null
     private var memberDialog: CollieBottomSheetDialog? = null
     private var memberDialogBody: LinearLayout? = null
+    private lateinit var standbyText: TextView
+    private lateinit var takeoverButton: MaterialButton
+    private lateinit var reviewButton: MaterialButton
+    private var loadGeneration = 0L
+    private var screenGeneration = 0L
+    private var liveCrew: CrewStatusResponse? = null
+    private val takeoverGuard by lazy { DeputyTakeoverGuard(this) }
+    private var standby: StandbyHealthResponse? = null
+    private var standbyActor: ScopedReadContext? = null
+    private var knownCrew: CrewStatusResponse? = null
+    private var takeoverBusy = false
+    private var takeoverDialog: AlertDialog? = null
+    private var retirement: AutoCloseable? = null
+
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -85,6 +107,7 @@ class PackActivity : AppCompatActivity() {
         content.addView(formation, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         content.addView(summary, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         content.addView(emptyCard, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
+        content.addView(standbyCard())
         column.addView(
             ScrollView(this).apply {
                 isFillViewport = true
@@ -95,6 +118,18 @@ class PackActivity : AppCompatActivity() {
         setContentView(root)
         window.applySafeContentInsets(root)
         root.applyAppTypeface()
+        retirement = repository.onReadContextRetired { event ->
+            if (event.affects(standbyActor)) clearRetiredCrew {
+                standbyActor = null; standby = null; knownCrew = null; liveCrew = null; status = null
+                loadGeneration++; screenGeneration++
+                takeoverDialog?.dismiss(); takeoverDialog = null
+                memberDialog?.dismiss()
+                formation.isVisible = false
+                takeoverButton.isEnabled = false
+                reviewButton.isEnabled = false
+                standbyText.setText(R.string.pack_takeover_changed)
+            }
+        }
     }
 
     override fun onStart() {
@@ -109,23 +144,162 @@ class PackActivity : AppCompatActivity() {
     }
 
     override fun onStop() {
+        takeoverDialog?.dismiss(); takeoverDialog = null
+        if (::takeoverButton.isInitialized) takeoverButton.isEnabled = false
+        if (::reviewButton.isInitialized) reviewButton.isEnabled = false
+        loadGeneration++; screenGeneration++
         pollJob?.cancel()
         pollJob = null
         super.onStop()
     }
 
+    override fun onDestroy() { retirement?.close(); retirement = null; super.onDestroy() }
+
     private suspend fun load() = coroutineScope {
-        val packRequest = async { repository.crew() }
-        val snapshotRequest = async { repository.snapshot() }
-        when (val result = packRequest.await()) {
-            is ApiResult.Success -> render(result.value, (snapshotRequest.await() as? ApiResult.Success)?.value)
-            is ApiResult.Failure -> {
-                snapshotRequest.cancel()
-                renderEmpty(result.error is ApiFailure.Http && result.error.status == 404)
+        val actor = repository.readContext() ?: return@coroutineScope
+        val generation = ++loadGeneration
+        val packRequest = async { repository.crew(actor) }
+        val snapshotRequest = async { repository.snapshot(actor.key.scope, actor) }
+        val standbyRequest = async { repository.standbyHealth(actor) }
+        val crewResult = packRequest.await()
+        val snapshot = snapshotRequest.await()
+        val health = standbyRequest.await()
+        if (generation != loadGeneration || !repository.isCurrent(actor) || !lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) return@coroutineScope
+        standbyActor = actor
+        liveCrew = (crewResult as? ApiResult.Success)?.value
+        when (crewResult) {
+            is ApiResult.Success -> {
+                knownCrew = crewResult.value
+                takeoverGuard.observeNewLead(actor.connection, crewResult.value)
+                render(crewResult.value, (snapshot as? ApiResult.Success)?.value)
             }
-            is ApiResult.NotModified -> snapshotRequest.cancel()
+            is ApiResult.Failure -> renderEmpty(crewResult.error is ApiFailure.Http && crewResult.error.status == 404)
+            is ApiResult.NotModified -> Unit
         }
+        standby = (health as? ApiResult.Success)?.value
+        if (!takeoverBusy) renderStandby()
     }
+
+    private fun standbyCard(): View = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(16), dp(16), dp(16), dp(16))
+        setBackgroundResource(R.drawable.bg_pane_card)
+        addView(CollieHeadingTextView(this@PackActivity).apply { setText(R.string.pack_takeover_title); textSize = 18f })
+        addView(TextView(this@PackActivity).apply { setText(R.string.pack_takeover_setup); textSize = 14f; setTextIsSelectable(true) })
+        standbyText = TextView(this@PackActivity).apply {
+            id = R.id.pack_takeover_status
+            setText(R.string.pack_loading); textSize = 14f
+            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+            setPadding(0, dp(12), 0, dp(8))
+        }
+        addView(standbyText)
+        takeoverButton = MaterialButton(this@PackActivity).apply {
+            id = R.id.pack_takeover_button
+            setText(R.string.pack_takeover_confirm); isEnabled = false
+            minHeight = dp(48); setOnClickListener { confirmTakeover() }
+        }
+        addView(takeoverButton)
+        reviewButton = MaterialButton(this@PackActivity).apply {
+            id = R.id.pack_takeover_review_button
+            setText(R.string.pack_takeover_review); isEnabled = false; isVisible = false
+            minHeight = dp(48); setOnClickListener { reviewRecoveredLead() }
+        }
+        addView(reviewButton)
+        val refreshButton = MaterialButton(this@PackActivity).apply {
+            setText(R.string.pack_takeover_refresh); minHeight = dp(48)
+            setOnClickListener { lifecycleScope.launch { load() } }
+        }
+        addView(refreshButton)
+    }
+
+    private fun renderStandby() {
+        val actor = standbyActor
+        val pending = actor?.let { takeoverGuard.pending(it.connection) } == true
+        val health = standby
+        standbyText.text = when {
+            pending -> getString(R.string.pack_takeover_pending)
+            health?.state == "armed" -> getString(R.string.pack_takeover_armed, (health.silentForMs ?: 0) / 1000)
+            health?.state == "cold" -> getString(R.string.pack_takeover_cold)
+            health?.state == "leading" -> getString(R.string.pack_takeover_leading)
+            else -> getString(R.string.pack_takeover_unavailable)
+        }
+        reviewButton.isVisible = pending && health?.state == "leading" && liveCrew != null
+        reviewButton.isEnabled = reviewButton.isVisible && !takeoverBusy && actor != null && repository.isCurrent(actor) &&
+            lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+        takeoverButton.isEnabled = !takeoverBusy && !pending && health?.state == "armed" && actor != null &&
+            actor.connection.isPaired && repository.isCurrent(actor) && lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+    }
+
+    private fun reviewRecoveredLead() {
+        val actor = standbyActor?.takeIf(repository::isCurrent) ?: return
+        val crew = liveCrew ?: return
+        val attempt = takeoverGuard.currentAttempt(actor.connection) ?: return
+        val screen = screenGeneration
+        if (takeoverBusy || standby?.state != "leading" || !lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) return
+        takeoverDialog?.dismiss()
+        takeoverDialog = AlertDialog.Builder(this).setTitle(R.string.pack_takeover_review)
+            .setMessage(getString(R.string.pack_takeover_review_detail) + "\n\n" + crew.self.name + " (" + crew.self.id + ")")
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton(R.string.pack_takeover_review) { _, _ ->
+                if (!currentScreen(actor, screen)) return@setPositiveButton
+                lifecycleScope.launch {
+                    val freshHealth = repository.standbyHealth(actor)
+                    val freshCrew = repository.crew(actor)
+                    if (!currentScreen(actor, screen) ||
+                        (freshHealth as? ApiResult.Success)?.value?.state != "leading") return@launch
+                    val checked = (freshCrew as? ApiResult.Success)?.value ?: return@launch
+                    if (checked.self.id == crew.self.id) takeoverGuard.resolveReviewedLead(attempt, actor.connection, checked)
+                    load()
+                }
+            }.create().also { it.show() }
+    }
+
+    private fun confirmTakeover() {
+        val actor = standbyActor?.takeIf(repository::isCurrent) ?: return
+        if (takeoverBusy || standby?.state != "armed" || takeoverGuard.pending(actor.connection) ||
+            !lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) return
+        val screen = screenGeneration
+        var consumed = false
+        takeoverDialog?.dismiss()
+        takeoverDialog = AlertDialog.Builder(this)
+            .setTitle(R.string.pack_takeover_confirm)
+            .setMessage(R.string.pack_takeover_confirm_detail)
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton(R.string.pack_takeover_confirm) { _, _ ->
+                if (consumed || !currentScreen(actor, screen)) return@setPositiveButton
+                consumed = true
+                takeoverBusy = true; takeoverButton.isEnabled = false
+                reviewButton.isEnabled = false
+                standbyText.setText(R.string.pack_takeover_checking)
+                lifecycleScope.launch {
+                    try {
+                        val fresh = repository.standbyHealth(actor)
+                        if (!currentScreen(actor, screen) ||
+                            (fresh as? ApiResult.Success)?.value?.state != "armed") {
+                            if (currentScreen(actor, screen))
+                                standbyText.setText(R.string.pack_takeover_changed)
+                            return@launch
+                        }
+                        val attempt = takeoverGuard.reserve(actor.connection, knownCrew?.deputy?.id)
+                        if (attempt == null) { standbyText.setText(R.string.pack_takeover_storage); return@launch }
+                        when (val result = repository.takeover(actor)) {
+                            is ApiResult.Success -> {
+                                if (!result.value.ok) takeoverGuard.refused(attempt)
+                                if (currentScreen(actor, screen)) standbyText.text = result.value.message
+                            }
+                            else -> if (currentScreen(actor, screen)) standbyText.setText(R.string.pack_takeover_unknown)
+                        }
+                    } catch (cancelled: CancellationException) { throw cancelled }
+                    finally {
+                        takeoverBusy = false
+                        if (currentScreen(actor, screen)) load()
+                    }
+                }
+            }.create().also { it.show() }
+    }
+
+    private fun currentScreen(actor: ScopedReadContext, screen: Long): Boolean = screenGeneration == screen &&
+        repository.isCurrent(actor) && lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
 
     private fun render(value: CrewStatusResponse, snapshot: SnapshotResponse?) {
         status = value
@@ -374,5 +548,13 @@ class PackActivity : AppCompatActivity() {
 
     companion object {
         private const val POLL_MS = 4_000L
+    }
+}
+
+private fun clearRetiredCrew(cleanup: () -> Unit) {
+    if (Looper.myLooper() == Looper.getMainLooper()) cleanup()
+    else {
+        val done = java.util.concurrent.CountDownLatch(1)
+        if (Handler(Looper.getMainLooper()).post { try { cleanup() } finally { done.countDown() } }) done.await()
     }
 }

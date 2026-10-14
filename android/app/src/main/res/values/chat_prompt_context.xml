@@ -1,0 +1,11 @@
+<resources>
+    <color name="chat_prompt_stroke">#607D8B</color>
+    <dimen name="durable_chat_prompt_radius">8dp</dimen>
+    <dimen name="durable_chat_prompt_stroke">1dp</dimen>
+    <dimen name="chat_prompt_padding_horizontal">12dp</dimen>
+    <dimen name="chat_prompt_padding_vertical">8dp</dimen>
+    <string name="chat_prompt_heading">Latest prompt</string>
+    <string name="chat_prompt_expand">Show full prompt</string>
+    <string name="chat_prompt_collapse">Show less</string>
+    <string name="chat_prompt_shortened">The server shortened this prompt. Only the text shown here is available.</string>
+</resources>

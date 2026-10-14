@@ -393,6 +393,41 @@ const postTo = (path: string, body: JsonValue) =>
   new Request(`http://x${path}`, { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" } });
 
 describe("serveAddedLauncherRoute", () => {
+  test("a local operator duplicate marks its zero-effect HTTP refusal without adding a row", async () => {
+    const f = fixture({ operator: [{ command: "claude --continue", label: "Resume" }] });
+    const writes = f.io.writes;
+    const response = await serveAddedLauncherRoute(
+      postTo("/api/launchers/added", recipe("claude", ["continue"])),
+      "/api/launchers/added", caller(), f.sources,
+    );
+    expect(response?.status).toBe(409);
+    expect(response?.headers.get("x-collie-error-source")).toBe("collie");
+    expect(response?.headers.get("x-collie-error-factor")).toBe("operation");
+    expect(response?.headers.get("x-collie-error-code")).toBe("launcher.duplicate");
+    expect(await response?.json()).toMatchObject({ ok: false, code: "launcher.duplicate" });
+    expect(await f.added.list()).toEqual([]);
+    expect(f.io.writes).toBe(writes);
+    expect(f.lines).toEqual([]);
+  });
+
+  test("duplicate metadata does not relabel gate, forwarded, or crew responses", async () => {
+    const f = fixture({ operator: [{ command: "claude --continue", label: "Resume" }] });
+    for (const refusals of ["gate", "forwarded"] as const) {
+      const response = new Response(JSON.stringify({ ok: false, code: "launcher.duplicate" }), { status: 409 });
+      const routeCaller = caller(refusals === "gate" ? { gate: () => response } : { resolve: () => Promise.resolve(response) });
+      const returned = await serveAddedLauncherRoute(postTo("/api/launchers/added", recipe("claude", ["continue"])),
+        "/api/launchers/added", routeCaller, f.sources);
+      expect(returned).toBe(response);
+      expect(returned?.headers.get("x-collie-error-source")).toBeNull();
+    }
+    const crew = await serveAddedLauncherRoute(postTo("/api/launchers/added", recipe("claude", ["continue"])),
+      "/api/launchers/added", caller({ via: "crew" }), f.sources);
+    expect(crew?.status).toBe(409);
+    expect(crew?.headers.get("x-collie-error-source")).toBeNull();
+    expect(f.io.writes).toBe(0);
+    expect(await f.added.list()).toEqual([]);
+  });
+
   test("not one of its paths, or not a POST: null", async () => {
     const f = fixture();
     expect(await serveAddedLauncherRoute(postTo("/api/launchers", {}), "/api/launchers", caller(), f.sources)).toBeNull();
@@ -478,6 +513,7 @@ describe("serveAddedLauncherRoute", () => {
         "/api/launchers/added", routeCaller, f.sources, operations, "host-route-1",
       );
       expect(replay?.status).toBe(503);
+      expect(replay?.headers.get("x-collie-error-source")).toBeNull();
       expect(await replay?.json()).toMatchObject({ ok: false, code: "launch.outcome_unknown" });
       expect(f.io.writes).toBe(writesAfterRemove);
       expect(await f.added.get(ID1)).toBeUndefined();

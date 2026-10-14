@@ -9,6 +9,23 @@ import org.junit.Test
 
 class CacheContextPresentationTest {
     @Test
+    fun fractionalObservationAgeProjectsOnlyAfterSubtractingAndRejectsNonFiniteValues() {
+        assertEquals(0L, CacheContextPresenter.ageSeconds(1_000.1, 2_000))
+        assertEquals(1L, CacheContextPresenter.ageSeconds(1_000.0, 2_000))
+        assertEquals(1L, CacheContextPresenter.ageSeconds(999.9, 2_000))
+        assertEquals(0L, CacheContextPresenter.ageSeconds(2_000.25, 2_000))
+        assertNull(CacheContextPresenter.ageSeconds(3_000.1, 2_000))
+        assertNull(CacheContextPresenter.ageSeconds(Double.NaN, 2_000))
+        assertNull(CacheContextPresenter.ageSeconds(Double.POSITIVE_INFINITY, 2_000))
+        assertNull(CacheContextPresenter.ageSeconds(Double.NEGATIVE_INFINITY, 2_000))
+        assertNull(CacheContextPresenter.ageSeconds(Double.MAX_VALUE, 2_000))
+        assertNull(CacheContextPresenter.ageSeconds(null, 2_000))
+        val oldest = 365L * 24L * 60L * 60L
+        assertEquals(oldest, CacheContextPresenter.ageSeconds(0.0, oldest * 1_000L))
+        assertNull(CacheContextPresenter.ageSeconds(0.0, (oldest + 1) * 1_000L))
+    }
+
+    @Test
     fun countdownUsesBridgeSnapshotTimeAndNeverThePhoneWallClock() {
         val reading = PaneCacheReading(
             state = "warm",

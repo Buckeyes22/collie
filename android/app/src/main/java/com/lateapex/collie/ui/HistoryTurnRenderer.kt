@@ -457,6 +457,7 @@ internal class HistoryTurnRenderer(
         setTextColor(color(R.color.collie_foreground))
         setLineSpacing(0f, 1.3f)
         setTextIsSelectable(true)
+        setTag(R.id.collie_content_typeface, true)
         movementMethod = android.text.method.LinkMovementMethod.getInstance()
     }
 

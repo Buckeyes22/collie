@@ -1,0 +1,4 @@
+{
+  global: Java_com_lateapex_collie_ui_BoundedWoff2Decoder_decodeNative;
+  local: *;
+};

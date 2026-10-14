@@ -90,6 +90,10 @@ class WorktreeUiAuthorityTest {
 
     @Test fun offMainSameObjectRecommitAfterClearAcknowledgesCopiedFormRetirementAndNeverBorrowsFreshOwner(): Unit = runBlocking {
         withMain { fixture ->
+            val originalState = MainActivity::class.java.getDeclaredField("latestShellState").apply { isAccessible = true }
+                .get(fixture.activity) as MainUiState
+            val onePollMs = DashboardHostHealthModel.pollMs(requireNotNull(originalState.snapshot))
+            val snapshotsBeforeReplacement = fixture.counters[3]
             fixture.activity.startWorktreeFlowForTest()
             val old = ShadowDialog.getLatestDialog() as CollieBottomSheetDialog
             val input = old.findViewById<EditText>(R.id.worktree_branch_input)!!
@@ -107,9 +111,12 @@ class WorktreeUiAuthorityTest {
                 shadowOf(Looper.getMainLooper()).idle()
                 assertEquals(0, fixture.plans)
                 assertNotNull(fixture.repository.readContext())
-                // The replacement actor must complete its actual supported refresh/snapshot
-                // before the fresh form may open; retain the existing five-second bound.
-                awaitCurrentRoot(fixture)
+                // The replacement needs its actual next scheduled snapshot. PAUSED Robolectric
+                // does not advance Handler delay when wall time passes: supply one ordinary poll
+                // cadence while retaining the unchanged five-second execution/ACK bound.
+                awaitCurrentRoot(fixture, advanceOnePollMs = onePollMs)
+                assertTrue("The successor form must have a real new snapshot, never just the retired copy",
+                    fixture.counters[3] > snapshotsBeforeReplacement)
                 fixture.activity.startWorktreeFlowForTest()
                 assertTrue((ShadowDialog.getLatestDialog() as CollieBottomSheetDialog).isShowing)
             } finally { pool.shutdownNow() }
@@ -538,10 +545,17 @@ class WorktreeUiAuthorityTest {
         } finally { controller.pause().stop().destroy(); field.set(app.container, original) }
     }
 
-    private fun awaitCurrentRoot(fixture: Fixture) {
+    private fun awaitCurrentRoot(fixture: Fixture, advanceOnePollMs: Long? = null) {
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+        var pollOpportunity = advanceOnePollMs
         do {
             shadowOf(Looper.getMainLooper()).idle()
+            pollOpportunity?.let { milliseconds ->
+                // Execute the production Handler/coroutine tick, rather than refreshing manually
+                // or advancing virtual time repeatedly until some authority happens to appear.
+                pollOpportunity = null
+                shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(milliseconds))
+            }
             val state = MainActivity::class.java.getDeclaredField("latestShellState").apply { isAccessible = true }.get(fixture.activity) as MainUiState
             if (fixture.repository.writesAllowed() && state.writeAuthorized &&
                 state.originalReadContext?.let(fixture.repository::isCurrent) == true &&

@@ -51,6 +51,11 @@ internal enum class TriageBucket(
     RECENT(R.string.triage_recent, R.color.collie_idle, false),
 }
 
+internal val nativePanePlaceOrder = compareBy<PaneSummary>(
+    { it.host.orEmpty() }, { it.session.orEmpty() }, { it.workspaceNumber }, { it.workspaceLabel },
+    { it.tabPosition ?: Int.MAX_VALUE }, { it.tabId }, { it.paneId },
+)
+
 internal data class CompactAge(@StringRes val resource: Int, val value: Long? = null) {
     fun resolve(view: View): String = value?.let { view.resources.getString(resource, it) }
         ?: view.resources.getString(resource)
@@ -97,6 +102,7 @@ internal sealed interface DashboardItem {
         val panes: List<PaneRow>,
         val open: Boolean = true,
         val newest: Boolean = true,
+        val pinned: Boolean = false,
     ) : DashboardItem
     data class Launchers(
         val rows: List<Launcher>,
@@ -142,14 +148,21 @@ internal object DashboardModel {
         launchOpen: Boolean = true,
         launching: Set<String> = emptySet(),
         launcherHome: String = "",
+        pinned: (PaneSummary) -> Boolean = { false },
     ): List<DashboardItem> {
         // Dashboard triage is agents-only, exactly like the web AgentList. Shell panes remain
         // available in Spaces and pane navigation, but presenting them as agents makes an idle
         // terminal look like work that needs triage.
-        val panes = snapshot.agents
+        val (selectedPins, unpinned) = (snapshot.agents + snapshot.shellPanes).partition(pinned)
+        val pinnedPanes = selectedPins.sortedWith(nativePanePlaceOrder)
+        val agentRows = snapshot.agents.toSet()
+        val panes = unpinned.filter { it in agentRows }
         val byBucket = panes.groupBy(::bucketOf)
         return buildList {
-            if (panes.isEmpty()) {
+            if (pinnedPanes.isNotEmpty()) add(DashboardItem.PaneSection(
+                TriageBucket.RECENT, pinnedPanes.map { paneRow(it, bucketOf(it), snapshot) }, pinned = true,
+            ))
+            if (panes.isEmpty() && pinnedPanes.isEmpty()) {
                 add(
                     DashboardItem.EmptyPanes(
                         when {
@@ -160,7 +173,7 @@ internal object DashboardModel {
                     ),
                 )
             } else {
-                if (byBucket[TriageBucket.NEEDS_YOU].isNullOrEmpty()) add(DashboardItem.AllClear)
+                if (snapshot.agents.none { bucketOf(it) == TriageBucket.NEEDS_YOU }) add(DashboardItem.AllClear)
                 TriageBucket.entries.forEach { bucket ->
                     val rows = byBucket[bucket]
                         .orEmpty()
@@ -386,6 +399,7 @@ internal class DashboardAdapter(
     private val onLauncher: (Launcher) -> Unit = {},
     private val onLaunchOpen: (Boolean) -> Unit = {},
     private val onPack: () -> Unit = {},
+    private val onPin: ((PaneSummary) -> Unit)? = null,
 ) : ListAdapter<DashboardItem, RecyclerView.ViewHolder>(Diff) {
     override fun getItemViewType(position: Int): Int = when (getItem(position)) {
         DashboardItem.AllClear -> TYPE_ALL_CLEAR
@@ -434,7 +448,7 @@ internal class DashboardAdapter(
         private val binding: ItemDashboardSectionBinding,
     ) : RecyclerView.ViewHolder(binding.root) {
         fun bind(item: DashboardItem.PaneSection) = with(binding) {
-            sectionTitle.text = root.resources.getString(item.bucket.labelRes).uppercase(Locale.ENGLISH)
+            sectionTitle.text = root.resources.getString(if (item.pinned) R.string.pane_pinned_title else item.bucket.labelRes).uppercase(Locale.ENGLISH)
             sectionCount.text = root.resources.getString(R.string.count_parenthesized, item.panes.size)
             sectionTitle.setTextColor(
                 ContextCompat.getColor(
@@ -443,7 +457,7 @@ internal class DashboardAdapter(
                 ),
             )
             sectionDot.background = dot(root, item.bucket.colour)
-            sectionToggle.visibility = if (item.bucket == TriageBucket.RECENT) View.VISIBLE else View.GONE
+            sectionToggle.visibility = if (!item.pinned && item.bucket == TriageBucket.RECENT) View.VISIBLE else View.GONE
             sectionToggle.setImageResource(
                 if (item.open) R.drawable.ic_history_chevron_down else R.drawable.ic_history_chevron_right,
             )
@@ -452,7 +466,7 @@ internal class DashboardAdapter(
                 if (item.open) R.string.collapse_recent else R.string.expand_recent,
             )
             sectionToggle.setOnClickListener { onRecentOpen(!item.open) }
-            sectionSort.visibility = if (item.bucket == TriageBucket.RECENT && item.open) View.VISIBLE else View.GONE
+            sectionSort.visibility = if (!item.pinned && item.bucket == TriageBucket.RECENT && item.open) View.VISIBLE else View.GONE
             sectionSort.setText(if (item.newest) R.string.recent_newest else R.string.recent_oldest)
             sectionSort.contentDescription = root.resources.getString(
                 if (item.newest) R.string.recent_switch_oldest else R.string.recent_switch_newest,
@@ -551,6 +565,7 @@ internal class DashboardAdapter(
                     0
                 }
             root.setOnClickListener { onPane(row.pane) }
+            root.setOnLongClickListener(onPin?.let { action -> View.OnLongClickListener { action(row.pane); true } })
             root.contentDescription = root.resources.getString(
                 R.string.pane_accessibility,
                 row.title,
@@ -739,11 +754,11 @@ internal class DashboardAdapter(
         }
     }
 
-    private object Diff : DiffUtil.ItemCallback<DashboardItem>() {
+    internal object Diff : DiffUtil.ItemCallback<DashboardItem>() {
         override fun areItemsTheSame(oldItem: DashboardItem, newItem: DashboardItem): Boolean =
             when {
                 oldItem is DashboardItem.PaneSection && newItem is DashboardItem.PaneSection ->
-                    oldItem.bucket == newItem.bucket
+                    oldItem.bucket == newItem.bucket && oldItem.pinned == newItem.pinned
                 else -> oldItem::class == newItem::class
             }
 

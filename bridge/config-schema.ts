@@ -308,7 +308,7 @@ export const CONFIG_SETTINGS: readonly ConfigSetting[] = [
     section: "mux",
     kind: "string",
     default: DEFAULT_MUX,
-    doc: "Which multiplexer this collie mirrors: herdr, tern, tmux, zellij or tuios.",
+    doc: "Which multiplexer this collie mirrors: herdr, tern, tmux, zellij, tuios or durable.",
     configField: "mux",
   },
   {
@@ -383,6 +383,30 @@ export const CONFIG_SETTINGS: readonly ConfigSetting[] = [
     default: "",
     doc: "The tern daemon socket to drive. Empty takes the socket tern itself uses.",
     configField: "muxEndpoint",
+  },
+  {
+    key: "durable_socket",
+    env: "COLLIE_DURABLE_SOCKET",
+    section: "mux",
+    kind: "string",
+    default: "",
+    doc: "The Unix socket a durable agent program listens on, when COLLIE_MUX is durable. Absolute, and private to your user (mode 0600).",
+  },
+  {
+    key: "durable_url",
+    env: "COLLIE_DURABLE_URL",
+    section: "mux",
+    kind: "string",
+    default: "",
+    doc: "The https address of a durable agent program behind TLS, used instead of durable_socket and always with durable_token. Plain http only to 127.0.0.1 or localhost with a port.",
+  },
+  {
+    key: "durable_token",
+    env: "COLLIE_DURABLE_TOKEN",
+    section: "mux",
+    kind: "secret",
+    default: "",
+    doc: "The bearer token sent with every request to durable_url, at least 32 bytes. A file holding it must be mode 600.",
   },
   {
     key: "mux_endpoint_tuios",
@@ -470,6 +494,22 @@ export const CONFIG_SETTINGS: readonly ConfigSetting[] = [
   },
 
   // ── push ───────────────────────────────────────────────────────────────────
+  {
+    key: "native_push_origin",
+    env: "COLLIE_NATIVE_PUSH_ORIGIN",
+    section: "push",
+    kind: "string",
+    default: "",
+    doc: "The exact HTTPS origin of the operator's self-hosted ntfy server. Empty disables native UnifiedPush enrollment and delivery. No public provider or redirect is accepted.",
+  },
+  {
+    key: "native_push_token",
+    env: "COLLIE_NATIVE_PUSH_TOKEN",
+    section: "push",
+    kind: "secret",
+    default: "",
+    doc: "Optional publish-only access token for the operator's self-hosted ntfy server. Never sent to the phone; configure the distributor's subscription access separately.",
+  },
   {
     key: "vapid_public",
     env: "COLLIE_VAPID_PUBLIC",
@@ -602,6 +642,15 @@ export const CONFIG_SETTINGS: readonly ConfigSetting[] = [
     kind: "roots",
     default: [],
     doc: "Where Muse keeps its session logs. Empty takes $XDG_DATA_HOME/muse/sessions.",
+    configField: "journalRoots",
+  },
+  {
+    key: "openclaw_root",
+    env: "COLLIE_OPENCLAW_ROOT",
+    section: "journal",
+    kind: "roots",
+    default: [],
+    doc: "Where OpenClaw keeps its state. Empty follows OPENCLAW_STATE_DIR, else ~/.openclaw.",
     configField: "journalRoots",
   },
 

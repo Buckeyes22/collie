@@ -31,9 +31,11 @@ internal object CacheContextPresenter {
         )
     }
 
-    fun ageSeconds(atMs: Long?, serverNowMs: Long): Long? {
+    fun ageSeconds(atMs: Double?, serverNowMs: Long): Long? {
         atMs ?: return null
-        val seconds = (serverNowMs - atMs) / 1000L
+        val elapsedSeconds = (serverNowMs.toDouble() - atMs) / 1000.0
+        if (!elapsedSeconds.isFinite()) return null
+        val seconds = elapsedSeconds.toLong()
         return seconds.takeIf { it in 0..MAX_AGE_SECONDS }
     }
 

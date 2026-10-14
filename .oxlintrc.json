@@ -31,6 +31,7 @@
     ".tracker/**",
     ".adr/**",
     ".claude/**",
+    "examples/**",
     "assets/**",
     // Generated in collie-brand, installed byte-identical, and guarded by collie-mark-hash.test.ts —
     // a lint fix here cannot be applied in place. The flagged `typeof`s narrow the Web Animations
@@ -76,10 +77,16 @@
   },
   "overrides": [
     {
+      // Fixed upstream durable parser: every runtime type check validates request or disk JSON.
+      "files": ["**/bridge/durable/parse.ts"],
+      "rules": { "anti-slop/no-runtime-typeof": "off" }
+    },
+    {
       // Herdr socket + HTTP wire parsing: these modules ARE the I/O boundary the rule tells you to parse at, so `typeof` here is the parse, not a dodge of one. A schema validator instead of hand-rolled checks is a real future improvement but explicitly out of scope for M8. `mux/zellij/protocol.ts` joined the list in M10/05 for exactly the same role on the other multiplexer: it decodes `zellij action list-panes --json` and the `subscribe` stream — a third-party JSON format that drifts between zellij releases — and every `typeof` in it sits inside that file's own field readers. `mux/herdr/machine-list.ts` joined it in M22/07 for the same role on a third surface: it decodes `herdr machine list --json`, a client-side format Herdr owns and Collie does not, and its `typeof` checks all sit inside `parseHerdrMachines` and the two field readers beside it. `mux/tuios/client.ts` is the same boundary for the tuios daemon's JSON verb socket, and its `typeof` checks sit inside its four field readers. `host-control/plugin-codecs.ts` is the single owner of validated Herdr plugin JSON DTOs for list/action/log/owner/configuration receipts; runtime checks stay in its named parsers and its callers receive typed values.
       "files": [
         "**/bridge/mux/herdr/client.ts",
         "**/bridge/mux/tern/protocol.ts",
+        "**/bridge/mux/durable/protocol.ts",
         "**/bridge/mux/zellij/protocol.ts",
         "**/bridge/mux/herdr/machine-list.ts",
         "**/bridge/mux/tuios/client.ts",
@@ -129,10 +136,13 @@
         "**/bridge/pairing.ts",
         "**/bridge/stt/json.ts",
         "**/bridge/push.ts",
+        "**/bridge/native-push.ts",
+        "**/bridge/native-push-provider.ts",
         "**/bridge/notify-prefs.ts",
         "**/bridge/folders.ts",
         "**/bridge/worktree-receipts.ts",
         "**/bridge/launch-receipts.ts",
+        "**/bridge/starter-launch.ts",
         "**/bridge/launchers-added.ts",
         "**/bridge/launcher-adds.ts",
         "**/bridge/recent-runs.ts",

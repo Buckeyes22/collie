@@ -2,6 +2,8 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { buildBlocks } from "./index";
+import type { ColumnRange } from "../column-range";
 import { parseAnsi } from "../ansi";
 import { splitLines, type StyledLine } from "../blocks";
 import { detectMultiSelect } from "./claude/multi-select";
@@ -40,6 +42,8 @@ interface RegionRow {
   fixture: string;
   detector: string;
   region: string;
+  agent?: string;
+  bindColumns?: ColumnRange;
 }
 
 // SAFETY: `prompt-binding-regions.json` is this repo's own committed golden, and every field the
@@ -84,9 +88,11 @@ describe("client/bridge binding contract", () => {
     ]);
   });
 
-  for (const { fixture, detector, region } of REGIONS) {
+  for (const { fixture, detector, region, agent, bindColumns } of REGIONS) {
     it(`${detector}: ${fixture} still derives byte-identically`, () => {
-      const found = detectRegion(fixtureLines(fixture));
+      const card = agent === undefined ? undefined : buildBlocks(fixtureLines(fixture), { agent }).find((block) => block.kind === "prompt-select");
+      const found = agent === undefined ? detectRegion(fixtureLines(fixture)) : card?.kind === "prompt-select" ? { detector: "prompt-select", region: card.prompt.signature } : null;
+      if (card?.kind === "prompt-select") expect(card.prompt.bindColumns).toEqual(bindColumns);
       expect(found).not.toBeNull();
       expect(found!.detector).toBe(detector);
       expect(found!.region).toBe(region);

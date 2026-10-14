@@ -69,6 +69,13 @@
     <string name="settings_hands_free_description">Send the transcript immediately instead of putting it in the message box. Off by default — you normally read what was heard before it reaches the terminal.</string>
     <string name="settings_terminal_font_title">Text size</string>
     <string name="settings_terminal_font_description">The terminal mirror and the draft field, on this device.</string>
+    <string name="settings_ui_typeface">Interface font</string>
+    <string name="settings_ui_typeface_system">System</string>
+    <string name="settings_ui_typeface_grotesk">Space Grotesk</string>
+    <string name="settings_ui_typeface_aldrich">Aldrich</string>
+    <string name="settings_ui_typeface_loading">Loading %1$s…</string>
+    <string name="settings_ui_typeface_fetching">Loading selected interface font…</string>
+    <string name="settings_ui_typeface_unavailable">Operator fonts could not be verified. Using the shipped interface font.</string>
     <string name="settings_terminal_size">Mirror text</string>
     <string name="settings_draft_size">Draft text</string>
     <string name="settings_decrease">Decrease %1$s</string>

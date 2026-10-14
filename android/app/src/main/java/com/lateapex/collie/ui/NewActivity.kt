@@ -728,9 +728,9 @@ class NewActivity : AppCompatActivity() {
                     return@launch
                 }
                 val enteredPath = cwd.text.toString().trim().takeIf(String::isNotEmpty)
-                val path = selected.cwd?.takeIf(String::isNotBlank) ?: enteredPath
+                val path = if (selected.target.starter != null) null else selected.cwd?.takeIf(String::isNotBlank) ?: enteredPath
                 val launcher = Launcher(
-                    command = selected.command ?: selected.target.command ?: selected.target.harness ?: getString(R.string.launch_target_shell),
+                    command = selected.command ?: selected.target.command ?: selected.target.harness ?: selected.target.starter ?: getString(R.string.launch_target_shell),
                     label = selected.label,
                     cwd = path,
                     harness = selected.target.harness,
@@ -805,7 +805,7 @@ class NewActivity : AppCompatActivity() {
         val base = if (ref == null) WorktreeBase() else WorktreeBase(kind = "ref", ref = ref)
         val folder = if (parent == null) WorktreeFolder() else WorktreeFolder(kind = "parent", parent = parent)
         val launcher = Launcher(
-            command = selected.command ?: selected.target.command ?: selected.target.harness ?: getString(R.string.launch_target_shell),
+            command = selected.command ?: selected.target.command ?: selected.target.harness ?: selected.target.starter ?: getString(R.string.launch_target_shell),
             label = selected.label, cwd = repo, harness = selected.target.harness,
             noPrompts = selected.noPrompts, target = selected.target,
         )

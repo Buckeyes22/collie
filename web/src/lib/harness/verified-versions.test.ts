@@ -20,7 +20,7 @@ const JOURNAL_AGENTS = [...JOURNAL_AGENT_NAMES];
 
 // pi and hermes have no block grammar at all — raw mirror, one-shot send — but the ledger still owes
 // them an entry: pi is installed and its version drifts too, and hermes has a journal reader.
-const UNADAPTED_AGENTS = ["pi", "hermes"];
+const UNADAPTED_AGENTS = ["hermes", "openclaw"];
 
 const ALLOWED_HOW = new Set(["canary", "live sweep", "capture", "unverified"]);
 

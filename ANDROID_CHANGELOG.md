@@ -8,6 +8,18 @@ the first Android release from this fork.
 
 ## Unreleased
 
+- Pin native panes above the dashboard and pane switcher using device-local, pairing-owned places; retain dormant pins and refuse pins inherited by a reused workspace. Keep worktree plan fields on separate lines.
+
+- Import same-server pane and history links through a native review screen, Android sharing or a QR image; preview pairing codes without submitting them or replacing a configured server.
+
+- Add native durable-agent Chat, ask answers, guarded send/steer/stop, program starters and expandable live reply context; keep uncertain requests until explicitly reconciled.
+- Deliver paired native notifications through UnifiedPush and a configured self-hosted ntfy origin, with permission/channel settings, signed encrypted messages, retirement and exact-pane taps.
+- Restore independent signed Android release discovery, verified downloads and Android-confirmed installation with persistent uncertain-session recovery.
+- Add native deputy health, one-shot confirmed takeover and persisted uncertainty recovery through the configured HTTPS ingress.
+- Add System, Space Grotesk, Aldrich and admitted operator font selection; preserve content typography and reload choices under current pairing authority. Keep the reply composer monospace under AppCompat theme font overrides. Let pane title rows grow with large system text.
+- Reconcile official Collie v1.21.0 contracts with stock Herdr v0.9.4; hide unavailable private administrative entries and preserve their source.
+- Bind Pi/OmO replies to the original pane, prompt frame and display columns through draft read-back and single submission.
+
 - Validate plugin receipts against their declared logical targets and capability.
 
 - Send explicit plugin confirmations even when default fields are omitted from other requests.
@@ -153,6 +165,9 @@ the first Android release from this fork.
 - Add a reachable workspace and tab organizer with reviewed rename, close, focus and ordering actions, a complete owner-bound whole-tab transfer with one confirmed pane move per step, linked-worktree process previews, capability-based refusal and unknown-outcome reconciliation.
 
 - Preserve an explicitly captured null or pane subject through configuration and folder reads; never substitute the currently selected pane for an admitted actor.
+- Preserve fractional Codex cache observation timestamps so one real agent cache reading cannot prevent the native dashboard from loading.
+
+- Keep recent Run buttons fully visible when their labels wrap; prevent baseline alignment from clipping the Remove from history action.
 
 ## 1.5.2 - 2026-10-08
 

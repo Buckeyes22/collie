@@ -13,6 +13,41 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PaneSwitcherModelTest {
+    @Test fun changingPinAdmissionIsEvaluatedOnceAndCannotDuplicateSwitcherRows() {
+        var calls = 0
+        val result = PaneSwitcherModel.sections(
+            panes = listOf(pane("owned", AgentStatus.IDLE)), current = PaneAddress(Scope(), "owned"),
+            recentOpen = true, recentNewest = true, shellsPreference = null, launchers = emptyList(),
+            launcherHome = "", launchPreference = null, writesAuthorized = true, mux = null,
+            servers = null, launching = emptySet(), pinned = { ++calls == 1 },
+        )
+        assertEquals(1, calls)
+        assertEquals(1, result.filterIsInstance<PaneSwitcherSection.Pinned>().flatMap { it.rows }.size)
+        assertTrue(result.filterIsInstance<PaneSwitcherSection.Agents>().isEmpty())
+        assertTrue(result.filterIsInstance<PaneSwitcherSection.Shells>().isEmpty())
+    }
+
+    @Test fun pinsLeadTheSwitcherWithoutDuplicatingRowsOrFollowingStatusTimes() {
+        val first = pane("first", AgentStatus.WORKING).copy(workspaceNumber = 1)
+        val second = pane("second", AgentStatus.BLOCKED).copy(workspaceNumber = 2, agent = "shell", kind = "shell")
+        val other = pane("other", AgentStatus.IDLE)
+        fun sections(rows: List<PaneSummary>) = PaneSwitcherModel.sections(
+            panes = rows, current = PaneAddress(Scope(host = "desk", session = "work"), "first"), recentOpen = true, recentNewest = true,
+            shellsPreference = null, launchers = emptyList(), launcherHome = "", launchPreference = null,
+            writesAuthorized = true, mux = null, servers = null, launching = emptySet(),
+            pinned = { it.paneId in setOf("first", "second") },
+        )
+        val original = sections(listOf(second, other, first))
+        val pinned = original.first() as PaneSwitcherSection.Pinned
+        assertEquals(listOf("first", "second"), pinned.rows.map { it.pane.paneId })
+        assertTrue(pinned.rows.first().active)
+        assertEquals(listOf("other"), original.filterIsInstance<PaneSwitcherSection.Agents>().flatMap { it.rows }.map { it.pane.paneId })
+        assertTrue(original.filterIsInstance<PaneSwitcherSection.Shells>().isEmpty())
+        val changed = sections(listOf(first.copy(status = AgentStatus.BLOCKED, lastActiveAt = 999),
+            second.copy(status = AgentStatus.IDLE, lastSeenAt = 999), other))
+        assertEquals(pinned.rows.map { it.pane.paneId }, (changed.first() as PaneSwitcherSection.Pinned).rows.map { it.pane.paneId })
+    }
+
     @Test
     fun switcherMarksTheCurrentPane() {
         val address = PaneAddress(Scope(host = "desk", session = "work"), "b")

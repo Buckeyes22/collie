@@ -136,9 +136,9 @@ export const MUX_CAPABILITY_ROUTES = {
   closeTab: "POST /api/tab/:id/close — a bulk pane-close.",
   createSpace: "POST /api/workspace — a new space, opening a fresh shell.",
   listWorktrees:
-    "GET /api/workspace/:id/worktrees — the worktrees of the repo that space sits in, so the sheet can show them. Absent ⇒ no worktree section at all, which is the honest degrade: without the list there is nothing to open and nothing to remove.",
+    "No route asks it since 1.20.0: the space-scoped list (GET /api/workspace/:id/worktrees) lost its last caller when the New sheet moved to GET /api/worktree/plan (ADR 0093), and was removed. Kept on the port for the conformance set.",
   createWorktree:
-    "POST /api/workspace/:id/worktree — a new branch in a new worktree, opened as its own space.",
+    "POST /api/worktree — a new branch in a new worktree, from the folder the New sheet names, opened as its own space (ADR 0093). Absent ⇒ no branch row on the New page or in the pane sheet.",
   openWorktree:
     "POST /api/workspace/:id/worktree/open — show a worktree that already exists on disk. Idempotent: a worktree already open answers with the space showing it rather than refusing.",
   removeWorktree:

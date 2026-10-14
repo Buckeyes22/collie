@@ -57,6 +57,7 @@ function mintOf(_leadData: TrustStoreData) {
 function marker(over: Partial<CrewRuntimeMarker> = {}): CrewRuntimeMarker {
   return {
     ...NO_RUNTIME_FACTS,
+    build: null,
     bootedAt: T0,
     pid: 1,
     mode: "peer",

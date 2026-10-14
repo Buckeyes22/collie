@@ -94,6 +94,7 @@ internal class SettingsServerControls(
     private val onConnection: (SettingsConnectionPresentation) -> Unit,
     private val onSpeechCapability: (Boolean) -> Unit,
     initialPairCode: String? = null,
+    private var importedPairing: LinkImportHandoff.Prepared? = null,
     focusDevices: Boolean = false,
     private val onRevealDevices: (card: View, focusTarget: View?) -> Unit = { _, _ -> },
 ) : DefaultLifecycleObserver {
@@ -113,6 +114,20 @@ internal class SettingsServerControls(
     private lateinit var status: TextView
     private val mutationGate = SettingsMutationControlGate()
     private var pairCodeDraft = initialPairCode.orEmpty()
+    private var importedRetirement: AutoCloseable? = null
+    private fun importedPairingCurrent(): Boolean {
+        val original = importedPairing ?: return true
+        val candidate = original.candidate as? LinkImportCoordinator.Candidate.Pairing ?: return false
+        return original.owner.current(activity.application as com.lateapex.collie.CollieApplication) &&
+            repository.connection.value?.origin == candidate.origin
+    }
+    private fun clearRetiredImportedPairing() {
+        if (importedPairing != null && !importedPairingCurrent()) {
+            importedPairing = null
+            pairCodeDraft = ""
+            pairFormView?.code?.text?.clear()
+        }
+    }
     private var pairLabelDraft = ""
     // The devices card is rebuilt on every refresh, and the form with it; a refused code's message
     // has to outlive that rebuild or the operator never sees it.
@@ -237,6 +252,10 @@ internal class SettingsServerControls(
     }
 
     override fun onStart(owner: LifecycleOwner) {
+        if (importedRetirement == null) importedRetirement = repository.onAuthorityRetired {
+            activity.runOnUiThread { clearRetiredImportedPairing() }
+        }
+        clearRetiredImportedPairing()
         parent.removeCallbacks(poll)
         refresh()
         schedulePollIfConnected()
@@ -247,6 +266,8 @@ internal class SettingsServerControls(
     }
 
     override fun onDestroy(owner: LifecycleOwner) {
+        importedRetirement?.close()
+        importedRetirement = null
         parent.removeCallbacks(poll)
         owner.lifecycle.removeObserver(this)
     }
@@ -569,11 +590,19 @@ internal class SettingsServerControls(
             showStatus(message, error, target = outcome)
         }
         val submit = actionButton(R.id.settings_pair_button, text(R.string.pair_and_connect), primary = true) {
+            if (!importedPairingCurrent()) {
+                clearRetiredImportedPairing()
+                report(text(R.string.link_import_expired), error = true)
+                return@actionButton
+            }
+            val originalImport = importedPairing
             val origin = repository.connection.value?.origin
             if (origin == null || code.text.isNullOrBlank() || label.text.isNullOrBlank()) {
                 report(text(R.string.settings_pair_fields_required), error = true)
                 return@actionButton
             }
+            val submittedLabel = label.text.toString()
+            val submittedCode = code.text.toString()
             mutate(
                 progress = text(R.string.settings_pairing_phone),
                 target = outcome,
@@ -589,7 +618,11 @@ internal class SettingsServerControls(
                         is PairResult.Refused -> report(text(R.string.pairing_refused, result.reason), error = true)
                     }
                 },
-            ) { repository.pair(origin.value, label.text.toString(), code.text.toString()) }
+            ) {
+                repository.pair(origin.value, submittedLabel, submittedCode,
+                    admission = originalImport?.let { original -> { original.owner.current(activity.application as com.lateapex.collie.CollieApplication) &&
+                        (original.candidate as? LinkImportCoordinator.Candidate.Pairing)?.origin == origin } })
+            }
         }
         form.addView(codeLayout)
         form.addView(labelLayout)
