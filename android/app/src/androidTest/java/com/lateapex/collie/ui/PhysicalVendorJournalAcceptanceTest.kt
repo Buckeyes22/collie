@@ -277,6 +277,7 @@ class PhysicalVendorJournalAcceptanceTest {
                     val actor = state.paneReadContext
                     if (state.pane?.paneId == address.paneId && actor != null && repository.isCurrent(actor) &&
                         actor.connection === connection && actor.committedSnapshot == committed && state.savedCopy == null &&
+                        (repository.readSource.value as? ReadSourceState.Live)?.key == actor.key &&
                         activity.findViewById<View>(R.id.body_mode_row)?.isShown == true) accepted = actor
                     accepted != null
                 }

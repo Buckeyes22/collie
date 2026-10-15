@@ -136,6 +136,259 @@ class PhysicalClaudeJournalImageAcceptanceTest {
         }
     }
 
+    /** Parent holds the genuine HTTPS History response carrying the existing inline Claude image. */
+    @Test
+    fun heldRealClaudeImageHistoryCannotPublishAfterNativeHostSwitchOrPairingRevocation() {
+        val args = InstrumentationRegistry.getArguments()
+        fun required(name: String) = requireNotNull(args.getString(name)?.takeIf(String::isNotBlank)) { "Supply $name" }
+        val suppliedMode = args.getString("nativeImageRetirement")
+        org.junit.Assume.assumeTrue("Explicit nativeImageRetirement opt-in is required", suppliedMode != null)
+        val mode = requireNotNull(suppliedMode)
+        assertTrue("Choose only the approved host or revoke workflow", mode in setOf("host", "revoke"))
+        val run = required("nativeImageRetirementRun")
+        assertTrue("Use a fresh bounded timing token", run.matches(Regex("[A-Za-z0-9_-]{4,32}")))
+        val app = ApplicationProvider.getApplicationContext<Context>().applicationContext as CollieApplication
+        assertTrue("Only the isolated completion app may run this acceptance", app.packageName.endsWith(".completiontest"))
+        val origin = OriginValidator().requireValid(required("liveDurableOrigin"))
+        val expectedOrigin = OriginValidator().requireValid(if (mode == "host") "https://prod.lateapexllc.com/completion-crew/" else STOCK_ORIGIN)
+        assertEquals("Use only the exact existing owned fixture origin", expectedOrigin, origin)
+        val scope = Scope(if (mode == "host") "qa-lead" else null)
+        assertEquals("The source host must be the actual owned peer, or local Stock for revocation", scope.host, args.getString("liveHost"))
+        assertTrue("The original journal remains in the default session", args.getString("liveSession").isNullOrBlank())
+        assertEquals("Reuse only the original real Claude pane", "w9:p1", required("livePaneId"))
+        assertEquals("Reuse only the existing paid-call journal UUID", "33d0ccd1-f054-4f98-84dc-871ec27cf39b", required("liveClaudeSessionId"))
+        assertEquals("Reuse only the genuine original technical-image marker", "COLLIE_CC13_CLAUDE_IMAGE_INPUT", required("liveImagePrompt"))
+        val root = required("liveRepoPath")
+        assertEquals("Reuse only the actual dated fixture root", PhysicalFixturePaths.root, root)
+        val store = app.container.connectionStore
+        val connection = requireNotNull(store.connection.value)
+        assertTrue("The original installed fixture profile must be paired", connection.isPaired)
+        assertEquals("The paired origin must be exact", origin, connection.origin)
+        assertEquals("Only the task-owned native pairing may be revoked", "completion Pixel", connection.label)
+        val committed = requireNotNull(store.captureCommitted())
+        assertTrue("The original committed incarnation is required", committed.connection === connection && committed.incarnationId != null)
+        val repository = app.container.repository
+        if (mode == "host") assertEquals("First select qa-lead through the normal dashboard host menu; never seed preferences", scope,
+            app.container.nativePreferences.dashboardScope)
+        val address = PaneAddress(scope, "w9:p1")
+        val launchIds = app.container.launchIntentStore.all().map { it.intent.requestId }.toSet()
+        val phaseFile = java.io.File(app.cacheDir, "cc13-image-retirement-$run.marker")
+        assertTrue("Never reuse a parent timing marker", !phaseFile.exists())
+        val expectedPathSegments = java.net.URI(origin.value).path.trim('/').split('/') + listOf("api", "pane", "w9:p1", "history")
+        fun historyCalls() = app.container.httpClient.dispatcher.runningCalls().filter { call ->
+            val request = call.request()
+            request.method == "GET" && request.url.scheme == "https" && request.url.host == "prod.lateapexllc.com" &&
+                request.url.port == 443 && request.url.pathSegments == expectedPathSegments &&
+                request.url.queryParameter("host") == scope.host && request.url.queryParameter("session") == null
+        }
+        // Parent writes bounded JSON atomically after independently inspecting the real relay.
+        fun phase(expected: String, guard: () -> Unit = {}): org.json.JSONObject {
+            val deadline = SystemClock.elapsedRealtime() + 30_000
+            while (SystemClock.elapsedRealtime() < deadline) {
+                guard()
+                if (phaseFile.isFile) {
+                    assertTrue("Timing metadata must remain bounded", phaseFile.length() in 1L..2048L)
+                    val value = org.json.JSONObject(phaseFile.readText())
+                    assertEquals("Relay metadata must belong to this exact fresh run", run, value.getString("run"))
+                    if (value.getString("phase") == expected) return value
+                }
+                SystemClock.sleep(25)
+            }
+            throw AssertionError("Parent image response timing phase did not arrive: $expected")
+        }
+        fun emit(phase: String, actor: ScopedReadContext, retirementElapsedMs: Long? = null,
+            retirementAckToken: String? = null) = InstrumentationRegistry.getInstrumentation().sendStatus(2, android.os.Bundle().apply {
+            putString("nativeImagePhase", phase)
+            putString("nativeImageMarkerPath", phaseFile.absolutePath)
+            putString("nativeImageOrigin", origin.value)
+            putString("nativeImageHost", scope.host ?: "local")
+            putString("nativeImagePane", address.paneId)
+            putString("nativeImageIncarnation", committed.incarnationId)
+            putString("nativeImageNavigationGeneration", actor.navigationGeneration.toString())
+            retirementElapsedMs?.let { putString("nativeImageRetirementElapsedMs", it.toString()) }
+            retirementAckToken?.let { putString("nativeImageRetirementAckToken", it) }
+            putString("stream", "Native pending image-bearing History read phase=$phase; this proves pending-read cancellation, not delivery of a late client 200 or decoder/bitmap purge.\n")
+        })
+        val paneIntent = Intent(app, PaneActivity::class.java).apply {
+            putExtra(PaneActivity.EXTRA_PANE_ID, address.paneId)
+            putExtra(PaneActivity.EXTRA_HOST, scope.host)
+            putExtra(PaneActivity.EXTRA_AGENT, "claude")
+            putExtra(PaneActivity.EXTRA_CWD, root)
+            putExtra(PaneActivity.EXTRA_TITLE, "Existing Claude image retirement")
+        }
+        ActivityScenario.launch<PaneActivity>(paneIntent).use { paneScenario ->
+            val actor = awaitOwnedPaneActor(app, paneScenario, connection, committed, scope, address.paneId, root)
+            assertIdentityUnchanged(app, address, actor, required("liveClaudeSessionId"))
+            val chat = awaitActualImageChat(app, address, actor, connection, committed, scope, address.paneId, required("liveImagePrompt"))
+            val part = chat.upserts.single { it.role == "user" && textOf(it) == required("liveImagePrompt") }
+                .parts.single { it.kind == "image" }
+            assertTrue("This is the genuine inline image carried over authenticated HTTPS, not an invented blob fetch", SAFE_IMAGE_DATA.matches(part.url.orEmpty()))
+            val imageBytes = android.util.Base64.decode(requireNotNull(part.url).substringAfter(";base64,"), android.util.Base64.DEFAULT)
+            val imageSha256 = java.security.MessageDigest.getInstance("SHA-256").digest(imageBytes)
+                .joinToString("") { "%02x".format(it.toInt() and 255) }
+            val retiredObservation = java.util.concurrent.atomic.AtomicReference<Pair<Long, com.lateapex.collie.data.AuthorityInvalidation>?>(null)
+            // Observe the shipping retirement event; never synthesize retirement or write state.
+            val retirement = repository.onReadContextRetired { event ->
+                if (event.retiresReadActor && event.affects(actor)) {
+                    retiredObservation.compareAndSet(null, SystemClock.elapsedRealtime() to event.reason)
+                }
+            }
+            var mainScenario: ActivityScenario<MainActivity>? = null
+            try {
+                val historyLaunchedAt = SystemClock.elapsedRealtime()
+                fun retiredBeforeTimeout(reason: com.lateapex.collie.data.AuthorityInvalidation) {
+                    val observation = requireNotNull(retiredObservation.get()) { "The actual original-actor retirement event was not observed" }
+                    val at = observation.first
+                    assertTrue("Actual authority retirement must precede the real 10-second timeout by a conservative margin",
+                        at > 0L && at >= historyLaunchedAt && at - historyLaunchedAt < 9_000L)
+                    assertEquals("The original actor must retire through the expected normal native boundary", reason, observation.second)
+                    assertTrue("The original image-bearing read actor must be retired", !repository.isCurrent(actor))
+                }
+                ActivityScenario.launch<HistoryActivity>(HistoryActivity.intent(app, address, "Existing Claude image retirement", "claude")).use { historyScenario ->
+                    var historyRoot: View? = null
+                    historyScenario.onActivity { historyRoot = it.window.decorView }
+                    var held: okhttp3.Call? = null
+                    val pendingDeadline = SystemClock.uptimeMillis() + 5_000
+                    while (held == null && SystemClock.uptimeMillis() < pendingDeadline) {
+                        assertCurrentOriginal(app, connection, committed, actor, scope, address.paneId)
+                        held = historyCalls().singleOrNull()?.takeIf { it.isExecuted() && !it.isCanceled() }
+                        if (held == null) SystemClock.sleep(25)
+                    }
+                    val originalCall = requireNotNull(held) { "No actual original-origin HTTPS History request was held" }
+                    // These are the normal shipping OkHttp request custody tags, not test hooks.
+                    assertSame("The actual HTTPS request carries the exact original Connection", connection,
+                        originalCall.request().tag(Connection::class.java))
+                    val requestActor = requireNotNull(originalCall.request().tag(ScopedReadContext::class.java))
+                    assertEquals("The actual HTTPS request carries the original host/session/subject actor", actor.key, requestActor.key)
+                    assertEquals("The actual HTTPS request carries the original navigation generation", actor.navigationGeneration, requestActor.navigationGeneration)
+                    assertEquals("The actual HTTPS request carries the original committed pair incarnation", committed, requestActor.committedSnapshot)
+                    fun pending() {
+                        assertCurrentOriginal(app, connection, committed, actor, scope, address.paneId)
+                        assertTrue("No earlier retirement can substitute for the chosen boundary", retiredObservation.get() == null)
+                        assertTrue("There must still be time to retire authority before the actual HTTP timeout",
+                            SystemClock.elapsedRealtime() - historyLaunchedAt < 9_000L)
+                        assertTrue("The same real read must remain in flight; a network timeout is not retirement acceptance",
+                            originalCall in historyCalls() && !originalCall.isCanceled())
+                        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+                            val view = requireNotNull(historyRoot)
+                            assertTrue("The real History screen must still await its held first page", view.findViewById<View>(R.id.history_progress).isShown)
+                            assertEquals("The native History state must remain the shipped loading state, without an error",
+                                app.getString(R.string.history_loading), view.findViewById<TextView>(R.id.history_state).text.toString())
+                            assertTrue("The held original image marker must not have rendered or been retained early",
+                                descendants(view.findViewById<ViewGroup>(R.id.history_entries)).filterIsInstance<TextView>()
+                                    .none { it.text.toString().contains(required("liveImagePrompt")) })
+                            assertTrue("No History image card has been admitted before its held page",
+                                descendants(view).none { it is AuthenticatedImageView })
+                        }
+                    }
+                    emit("PENDING", actor)
+                    // The normal API read timeout is 10 seconds. Parent must inspect its real 200
+                    // body/hash and acknowledge promptly; this helper never extends that timeout.
+                    val upstream = phase("upstream-verified", ::pending)
+                    fun responseEvidence(value: org.json.JSONObject) {
+                        assertEquals("Parent must independently verify the actual upstream success", 200, value.getInt("upstreamStatus"))
+                        assertTrue("Parent relay evidence must name a bounded actual response body", value.getLong("responseBytes") in 1L..8_388_608L)
+                        assertTrue("The actual response hash must be a SHA-256", value.getString("responseSha256").matches(Regex("[a-f0-9]{64}")))
+                        assertEquals("The parent-inspected body must contain the genuine original image", imageSha256, value.getString("imageSha256"))
+                        assertEquals("Relay evidence must name the exact actual HTTPS request path", originalCall.request().url.encodedPath, value.getString("requestPath"))
+                        assertEquals("Relay evidence must name the original host scope", scope.host ?: "local", value.getString("sourceHost"))
+                        // Relay timestamps belong to the host clock, not the phone clock. The
+                        // actual completed-body acknowledgement provides the observation order.
+                        assertTrue("The real upstream completion must have a positive relay timestamp",
+                            value.getLong("upstreamCompletedAtEpochMs") > 0L)
+                    }
+                    responseEvidence(upstream)
+                    pending()
+                    if (mode == "host") {
+                        // Launching the shipped dashboard retires the pane subject before its host
+                        // row is clicked. That launch, not the later row click, is this boundary.
+                        pending()
+                        mainScenario = ActivityScenario.launch(MainActivity::class.java)
+                        retiredBeforeTimeout(com.lateapex.collie.data.AuthorityInvalidation.SCOPE_CHANGED)
+                        var leadName: String? = null
+                        val dashboardDeadline = SystemClock.uptimeMillis() + 5_000
+                        while (leadName == null && SystemClock.uptimeMillis() < dashboardDeadline) {
+                            requireNotNull(mainScenario).onActivity { activity ->
+                                val state = androidx.lifecycle.ViewModelProvider(activity)[MainViewModel::class.java].state.value
+                                val servers = state.snapshot?.servers.orEmpty()
+                                val lead = servers.singleOrNull { it.isLead && it.id == "qa-deputy" }
+                                val fresh = state.originalReadContext
+                                if (repository.selectedScope.value == scope && state.savedCopy == null && state.lastSuccessAt != null &&
+                                    fresh != null && repository.isCurrent(fresh) && fresh.connection === connection &&
+                                    fresh.committedSnapshot == committed && lead != null &&
+                                    activity.findViewById<View>(R.id.host_switcher).isShown) leadName = lead.name.ifBlank { lead.id }
+                            }
+                            if (leadName == null) SystemClock.sleep(50)
+                        }
+                        val title = requireNotNull(leadName) { "Native dashboard did not expose the existing promoted lead" }
+                        androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.host_switcher))
+                            .perform(androidx.test.espresso.action.ViewActions.click())
+                        androidx.test.espresso.Espresso.onView(androidx.test.espresso.matcher.ViewMatchers.withText(title))
+                            .inRoot(androidx.test.espresso.matcher.RootMatchers.isDialog())
+                            .perform(androidx.test.espresso.action.ViewActions.click())
+                        val selectedDeadline = SystemClock.uptimeMillis() + 5_000
+                        while (repository.selectedScope.value != Scope() && SystemClock.uptimeMillis() < selectedDeadline) SystemClock.sleep(25)
+                        assertEquals("The actual native host row must select the promoted lead", Scope(), repository.selectedScope.value)
+                        assertSame("Native host navigation preserves the original paired credential", connection, store.connection.value)
+                        assertEquals("Native host navigation preserves its committed pairing incarnation", committed, store.captureCommitted())
+                    } else {
+                        emit("WAIT_REVOKE", actor)
+                        // Every poll, including the acknowledgement poll, must still observe the
+                        // same live uncanceled request. Timeout/automatic prior retirement fails.
+                        phase("revoked", ::pending)
+                        pending()
+                        val read = runBlocking { repository.snapshot(scope, actor) }
+                        val failure = (read as? ApiResult.Failure)?.error as? com.lateapex.collie.network.ApiFailure.Http
+                        assertEquals("Normal parent CLI revocation must yield a real pairing denial", 403, failure?.status)
+                        retiredBeforeTimeout(com.lateapex.collie.data.AuthorityInvalidation.PAIRING_RETIRED)
+                        val retiredDeadline = SystemClock.uptimeMillis() + 5_000
+                        while (store.connection.value?.isPaired == true && SystemClock.uptimeMillis() < retiredDeadline) SystemClock.sleep(25)
+                        val retiredPair = requireNotNull(store.connection.value)
+                        assertEquals("Retirement preserves the original public origin", connection.origin, retiredPair.origin)
+                        assertEquals("Retirement preserves the original public label", connection.label, retiredPair.label)
+                        assertTrue("Revocation removes native pairing authority", !retiredPair.isPaired)
+                    }
+                    fun erased() {
+                        retiredBeforeTimeout(if (mode == "host") com.lateapex.collie.data.AuthorityInvalidation.SCOPE_CHANGED
+                            else com.lateapex.collie.data.AuthorityInvalidation.PAIRING_RETIRED)
+                        assertTrue("Native retirement must cancel the original pending HTTP read", originalCall.isCanceled())
+                        InstrumentationRegistry.getInstrumentation().runOnMainSync {
+                            val retainedRoot = requireNotNull(historyRoot)
+                            // Inspect retained/stopped views too: isShown would hide late publication.
+                            assertTrue("No retained History text may receive the original held image marker",
+                                descendants(retainedRoot).filterIsInstance<TextView>()
+                                    .none { it.text.toString().contains(required("liveImagePrompt")) })
+                            val cards = descendants(retainedRoot).filterIsInstance<AuthenticatedImageView>().toList()
+                            assertTrue("No thumbnail drawable from the unadmitted page may appear",
+                                cards.all { card -> descendants(card).filterIsInstance<ImageView>().all { it.drawable == null } })
+                            assertTrue("The pending page must not admit any History image card after retirement", cards.isEmpty())
+                        }
+                    }
+                    erased()
+                    // Fresh only after actual native retirement/cancellation is verified. Parent
+                    // echoes this token only after observing RETIRED, releasing, and reading the
+                    // actual relay ended record; do not compare the phone and relay wall clocks.
+                    val retirementAckToken = java.util.UUID.randomUUID().toString()
+                    emit("RETIRED", actor, requireNotNull(retiredObservation.get()).first - historyLaunchedAt, retirementAckToken)
+                    val released = phase("released", ::erased)
+                    responseEvidence(released)
+                    for (key in listOf("responseSha256", "responseBytes", "imageSha256", "requestPath", "sourceHost", "upstreamCompletedAtEpochMs")) {
+                        assertEquals("Release metadata must identify the same independently verified held response", upstream.get(key), released.get(key))
+                    }
+                    assertEquals("Parent must observe the relay hold actually end by release", "released", released.getString("relayHoldEndReason"))
+                    assertEquals("Parent must acknowledge the actual relay end after observing this fresh native retirement",
+                        retirementAckToken, released.getString("retirementAckToken"))
+                    assertTrue("The same relay clock must place the actual release after its completed upstream body",
+                        released.getLong("relayHoldEndedAtEpochMs") >= released.getLong("upstreamCompletedAtEpochMs"))
+                    val lateDeadline = SystemClock.uptimeMillis() + 3_000
+                    while (SystemClock.uptimeMillis() < lateDeadline) { erased(); SystemClock.sleep(50) }
+                    assertTrue("Read/navigation/retirement must not create any new mutation intent", app.container.launchIntentStore.all().all { it.intent.requestId in launchIds })
+                    emit("VERIFIED", actor, requireNotNull(retiredObservation.get()).first - historyLaunchedAt)
+                }
+            } finally { retirement.close(); mainScenario?.close() }
+        }
+    }
+
     private fun readIdentity(app: CollieApplication, address: PaneAddress, actor: ScopedReadContext): AgentIdentityResponse {
         val repo = app.container.repository
         val result = runBlocking { repo.paneAgentIdentity(address, actor) }

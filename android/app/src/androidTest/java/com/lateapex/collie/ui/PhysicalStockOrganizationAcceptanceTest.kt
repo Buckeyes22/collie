@@ -10,21 +10,30 @@ import android.view.ViewGroup
 import android.widget.EditText
 import android.widget.RadioButton
 import android.widget.TextView
+import androidx.lifecycle.ViewModelProvider
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.espresso.Espresso.onView
 import androidx.test.espresso.action.ViewActions.click
 import androidx.test.espresso.action.ViewActions.replaceText
+import androidx.test.espresso.action.ViewActions.scrollTo
+import androidx.test.espresso.assertion.ViewAssertions.matches
 import androidx.test.espresso.matcher.RootMatchers.isDialog
 import androidx.test.espresso.matcher.ViewMatchers.isAssignableFrom
+import androidx.test.espresso.matcher.ViewMatchers.isDisplayed
+import androidx.test.espresso.matcher.ViewMatchers.withContentDescription
+import androidx.test.espresso.matcher.ViewMatchers.withHint
+import androidx.test.espresso.matcher.ViewMatchers.withId
 import androidx.test.espresso.matcher.ViewMatchers.withText
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
 import androidx.test.runner.lifecycle.Stage
+import com.google.android.material.button.MaterialButton
 import com.lateapex.collie.CollieApplication
 import com.lateapex.collie.R
 import com.lateapex.collie.data.CollieRepository
+import com.lateapex.collie.data.CommittedConnectionSnapshot
 import com.lateapex.collie.data.ScopedReadContext
 import com.lateapex.collie.domain.Connection
 import com.lateapex.collie.domain.PaneAddress
@@ -37,10 +46,12 @@ import com.lateapex.collie.network.TabSummary
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.hamcrest.Matchers.containsString
 import java.util.UUID
 
 /** Physical acceptance for ordinary stock UI organization. Every structural target is created by this test. */
@@ -53,9 +64,25 @@ class PhysicalStockOrganizationAcceptanceTest {
         val paneId: String,
         val root: String,
         val connection: Connection,
+        val committed: CommittedConnectionSnapshot,
         val priorScope: Scope,
         val priorSubject: String?,
     )
+
+    private fun crewProfile(): Triple<CollieApplication, CollieRepository, Connection> {
+        val args = InstrumentationRegistry.getArguments()
+        val originInput = args.getString("liveOrigin")
+        assumeTrue("liveOrigin was not supplied; Crew dashboard acceptance is opt-in", originInput != null)
+        val origin = OriginValidator().requireValid(requireNotNull(originInput))
+        assertEquals("Crew dashboard acceptance is pinned to the controlled completion Crew mount",
+            OriginValidator().requireValid(REQUIRED_CREW_ORIGIN), origin)
+        val app = ApplicationProvider.getApplicationContext<Context>().applicationContext as CollieApplication
+        assertTrue("Crew dashboard acceptance requires the isolated completion app", app.packageName.endsWith(".completiontest"))
+        val connection = app.container.connectionStore.connection.value
+        assertTrue("The existing Crew acceptance pairing must remain installed", connection?.isPaired == true)
+        assertEquals("The installed pairing must match the exact completion Crew origin", origin, connection?.origin)
+        return Triple(app, app.container.repository, requireNotNull(connection))
+    }
 
     private fun live(): Live {
         val args = InstrumentationRegistry.getArguments()
@@ -76,6 +103,9 @@ class PhysicalStockOrganizationAcceptanceTest {
         val connection = app.container.connectionStore.connection.value
         assertTrue("The existing stock completion pairing must remain installed", connection?.isPaired == true)
         assertEquals("The installed pairing must match the exact completion origin", origin, connection?.origin)
+        val committed = requireNotNull(app.container.connectionStore.captureCommitted())
+        assertSame("The durable committed pairing must name the exact active connection", connection, committed.connection)
+        assertTrue("The owned fixture requires a durable paired incarnation", committed.incarnationId != null)
         val scope = Scope(
             host = args.getString("liveHost")?.trim()?.takeIf(String::isNotEmpty),
             session = args.getString("liveSession")?.trim()?.takeIf(String::isNotEmpty),
@@ -83,7 +113,7 @@ class PhysicalStockOrganizationAcceptanceTest {
         val priorScope = repository.selectedScope.value
         val priorSubject = repository.readContext()?.key?.subjectIdentity
         assertEquals("The host-owned stock fixture must be selected in the native repository", scope, priorScope)
-        val live = Live(app, repository, scope, requireNotNull(paneId), requireNotNull(root), requireNotNull(connection), priorScope, priorSubject)
+        val live = Live(app, repository, scope, requireNotNull(paneId), requireNotNull(root), requireNotNull(connection), committed, priorScope, priorSubject)
         val actor = requireNotNull(repository.readContext(scope, paneId)) { "Existing fixture pane must have a current actor" }
         val snapshot = snapshot(live, actor)
         val target = exactPane(snapshot, scope, paneId)
@@ -240,6 +270,366 @@ class PhysicalStockOrganizationAcceptanceTest {
                 live.repository.selectSubject(live.priorScope, live.priorSubject)
             }
             assertTrue("Organization test must preserve the exact original pairing", live.app.container.connectionStore.connection.value === live.connection)
+        }
+    }
+
+    /** Create, rename, and close exactly one disposable workspace through stock native controls. */
+    @Test
+    fun nativeDisposableWorkspaceCreateRenameClosePreservesOriginalCensus() {
+        val args = InstrumentationRegistry.getArguments()
+        assumeTrue("Explicit nativeWorkspaceLifecycle=true is required for this workspace edit",
+            args.getString("nativeWorkspaceLifecycle") == "true")
+        val live = live()
+        assertEquals("Workspace edits are confined to the original local stock fixture", Scope(), live.scope)
+        val expectedOriginalTabs = requireNotNull(args.getString("expectedExistingTabCount")?.toIntOrNull()) {
+            "Explicit expectedExistingTabCount is required with nativeWorkspaceLifecycle"
+        }
+        assertTrue("expectedExistingTabCount must be a bounded positive census", expectedOriginalTabs in 1..4096)
+        val actor = requireNotNull(live.repository.readContext(live.scope, live.paneId))
+        val before = snapshot(live, actor)
+        assertEquals("The stock acceptance requires the explicitly supplied original tab count", expectedOriginalTabs, before.tabs.size)
+        val expectedWorkspaces = requireNotNull(args.getString("expectedExistingWorkspaceCount")?.toIntOrNull()) {
+            "Explicit expectedExistingWorkspaceCount is required with nativeWorkspaceLifecycle"
+        }
+        val expectedPanes = requireNotNull(args.getString("expectedExistingPaneCount")?.toIntOrNull()) {
+            "Explicit expectedExistingPaneCount is required with nativeWorkspaceLifecycle"
+        }
+        assertTrue("expectedExistingWorkspaceCount must be a bounded positive census", expectedWorkspaces in 1..256)
+        assertTrue("expectedExistingPaneCount must be a bounded positive census", expectedPanes in 1..4096)
+        assertEquals(expectedWorkspaces, before.workspaces.size)
+        assertEquals(expectedPanes, before.panes().size)
+        val target = exactPane(before, live.scope, live.paneId)
+        data class WorkspaceIdentity(
+            val number: Int, val label: String, val focused: Boolean, val activeTabId: String,
+            val tabCount: Int, val paneCount: Int, val repoRoot: String?, val folder: String?,
+        )
+        data class TabIdentity(val workspaceId: String, val number: Int, val label: String, val focused: Boolean, val paneCount: Int)
+        data class PaneIdentity(val workspaceId: String, val tabId: String, val host: String?, val session: String?, val cwd: String, val agent: String, val label: String?, val focused: Boolean)
+        fun workspaceFacts(value: SnapshotResponse) = value.workspaces.associate { item -> item.workspaceId to WorkspaceIdentity(
+            item.number, item.label, item.focused, item.activeTabId, item.tabCount, item.paneCount, item.repoRoot, item.folder) }
+        fun tabFacts(value: SnapshotResponse) = value.tabs.associate { item -> item.tabId to TabIdentity(
+            item.workspaceId, item.number, item.label, item.focused, item.paneCount) }
+        fun paneIdentities(value: SnapshotResponse) = value.panes().associate { pane ->
+            pane.paneId to PaneIdentity(pane.workspaceId, pane.tabId, pane.host, pane.session, pane.cwd, pane.agent, pane.paneLabel, pane.focused)
+        }
+        val originalWorkspaces = workspaceFacts(before)
+        val originalTabs = tabFacts(before)
+        val originalPanes = paneIdentities(before)
+        fun assertOriginalCensus(value: SnapshotResponse, checkpoint: String) {
+            assertEquals("$checkpoint preserves every original workspace field including focus, active tab, and counts",
+                originalWorkspaces, workspaceFacts(value).filterKeys { it in originalWorkspaces })
+            assertEquals("$checkpoint preserves every original tab field including focus and pane count",
+                originalTabs, tabFacts(value).filterKeys { it in originalTabs })
+            assertEquals("$checkpoint preserves every original pane address and focus fact",
+                originalPanes, paneIdentities(value).filterKeys { it in originalPanes })
+        }
+        fun assertOriginalPair(checkpoint: String) {
+            assertSame("$checkpoint retains the exact original paired connection", live.connection,
+                live.app.container.connectionStore.connection.value)
+            assertEquals("$checkpoint retains the exact original committed pairing incarnation", live.committed,
+                live.app.container.connectionStore.captureCommitted())
+        }
+        fun assertOriginalOwner(actor: ScopedReadContext, checkpoint: String) {
+            assertOriginalPair(checkpoint)
+            assertSame("$checkpoint actor uses the original connection", live.connection, actor.connection)
+            assertEquals("$checkpoint read actor belongs to the original committed pairing", live.committed, actor.committedSnapshot)
+            assertTrue("$checkpoint retains the current native UI/read actor", live.repository.isCurrent(actor))
+        }
+        fun assertSpaceOwner(activity: SpaceActivity, checkpoint: String) {
+            val state = ViewModelProvider(activity)[SpaceViewModel::class.java].state.value
+            val currentActor = requireNotNull(state.originalReadContext) { "$checkpoint requires the current Space screen read actor" }
+            assertEquals("$checkpoint Space actor is scoped to the exact original host/session", live.scope.host to live.scope.session,
+                currentActor.key.host to currentActor.key.session)
+            assertEquals("$checkpoint Space actor is scoped to the displayed original workspace", target.workspaceId,
+                currentActor.key.subjectIdentity)
+            assertTrue("$checkpoint Space screen must show admitted live writable content",
+                state.paired && state.writeAuthorized && state.content?.workspace?.workspaceId == target.workspaceId &&
+                    (state.readSource as? ReadSourceState.Live)?.key == currentActor.key)
+            assertOriginalOwner(currentActor, checkpoint)
+        }
+        fun currentOrganizationActor(checkpoint: String): ScopedReadContext {
+            val currentActor = requireNotNull(live.repository.readContext(live.scope)) {
+                "$checkpoint requires the current native organization read actor"
+            }
+            assertOriginalOwner(currentActor, checkpoint)
+            return currentActor
+        }
+        fun currentSnapshot(checkpoint: String, ready: (SnapshotResponse) -> Boolean): SnapshotResponse {
+            val deadline = SystemClock.uptimeMillis() + WAIT_MS
+            while (SystemClock.uptimeMillis() < deadline) {
+                // Navigation legitimately retires earlier subjects. Retry only this read under the
+                // current subject; never change selection or repeat any native mutation.
+                assertOriginalPair(checkpoint)
+                val currentActor = live.repository.readContext(live.scope)
+                if (currentActor != null && live.repository.isCurrent(currentActor)) {
+                    assertOriginalOwner(currentActor, checkpoint)
+                    val result = runBlocking { live.repository.snapshot(live.scope, currentActor) }
+                    assertOriginalPair(checkpoint)
+                    if (live.repository.isCurrent(currentActor) && result is ApiResult.Success && ready(result.value)) return result.value
+                }
+                SystemClock.sleep(100)
+            }
+            throw AssertionError("Stock organization acceptance timed out: $checkpoint")
+        }
+        val originalFocused = before.panes().filter(PaneSummary::focused).map(PaneSummary::paneId).toSet()
+        assertTrue("The fixture must report one original focused pane", originalFocused.size == 1)
+        val configResult = runBlocking { live.repository.config(live.scope, actor) }
+        assertTrue("Live stock workspace capabilities must be readable", configResult is ApiResult.Success)
+        val mux = requireNotNull((configResult as ApiResult.Success).value.mux)
+        assertTrue("The stock server must positively advertise native createSpace", mux.capabilities["createSpace"] == true)
+        assertTrue("The stock server must positively advertise native workspaceRename", mux.capabilities["workspaceRename"] == true)
+        assertTrue("The stock server must positively advertise native workspaceClose", mux.capabilities["workspaceClose"] == true)
+        assertTrue("The original workspace actor must remain current", live.repository.isCurrent(actor))
+
+        val ownedLabel = "cc13-workspace-${UUID.randomUUID().toString().take(8)}"
+        val renamedLabel = "$ownedLabel-renamed"
+        var ownedWorkspaceId: String? = null
+        var ownedPaneId: String? = null
+        var ownedWorkspaceNumber = -1
+        var ownedWorkspaceTabs = -1
+        var ownedWorkspacePanes = -1
+        try {
+            ActivityScenario.launch<SpaceActivity>(SpaceActivity.intent(live.app, requireNotNull(before.workspaces.singleOrNull { it.workspaceId == target.workspaceId }), live.scope.session)).use { space ->
+                await(space, "existing fixture workspace exposes its enabled native New space control") { activity ->
+                    activity.findViewById<TextView>(R.id.space_subtitle)?.isShown == true &&
+                        descendants(activity.window.decorView).any { it.contentDescription == activity.getString(R.string.new_space) && it.isShown && it.isEnabled }
+                }
+                space.onActivity { activity -> assertSpaceOwner(activity, "Immediately before native New workspace") }
+                onView(withContentDescription(live.app.getString(R.string.new_space))).perform(click())
+                onView(withHint(R.string.space_label_optional)).inRoot(isDialog()).perform(scrollTo(), replaceText(ownedLabel))
+                onView(withHint(R.string.space_directory_optional)).inRoot(isDialog()).perform(scrollTo(), replaceText(live.root))
+                space.onActivity { activity -> assertSpaceOwner(activity, "Immediately before native Create workspace") }
+                onView(withText(R.string.action_create)).inRoot(isDialog()).perform(click())
+                val createdPane = awaitResumedPane("native New space returns one newly created owned shell pane") {
+                    val id = it.intent.getStringExtra(PaneActivity.EXTRA_PANE_ID)?.takeIf(String::isNotBlank)
+                    id != null && id !in originalPanes && live.repository.readContext(live.scope, id)?.let(live.repository::isCurrent) == true
+                }
+                ownedPaneId = requireNotNull(createdPane.intent.getStringExtra(PaneActivity.EXTRA_PANE_ID))
+                val afterCreate = currentSnapshot("native workspace creation is visible in the official census") {
+                    it.workspaces.count { workspace -> workspace.workspaceId !in originalWorkspaces } == 1 &&
+                        it.panes().count { pane -> pane.paneId !in originalPanes } == 1
+                }
+                val newWorkspace = afterCreate.workspaces.single { it.workspaceId !in originalWorkspaces }
+                ownedWorkspaceId = newWorkspace.workspaceId
+                ownedWorkspaceNumber = newWorkspace.number
+                ownedWorkspaceTabs = newWorkspace.tabCount
+                ownedWorkspacePanes = newWorkspace.paneCount
+                assertEquals("The exact requested label must name the only created workspace", ownedLabel, newWorkspace.label)
+                assertEquals("The native create must create one owned tab only", 1, newWorkspace.tabCount)
+                assertEquals("The native create must create one owned pane only", 1, newWorkspace.paneCount)
+                assertEquals("Create adds exactly one owned tab", 1, afterCreate.tabs.count { it.tabId !in originalTabs })
+                assertEquals("Create adds exactly one owned pane", 1, afterCreate.panes().count { it.paneId !in originalPanes })
+                val created = afterCreate.panes().single { it.paneId == ownedPaneId }
+                assertEquals("The new pane must belong to the newly created workspace", ownedWorkspaceId, created.workspaceId)
+                assertEquals("The disposable workspace must use the supplied fixture root", live.root, created.cwd)
+                assertTrue("The sole new pane must be the ordinary workspace shell", created.agent == "shell" || created.kind == "shell")
+                assertOriginalCensus(afterCreate, "Create")
+            }
+
+            val workspaceId = requireNotNull(ownedWorkspaceId)
+            val paneId = requireNotNull(ownedPaneId)
+            ActivityScenario.launch<OrganizeSpacesActivity>(OrganizeSpacesActivity.intent(live.app, live.scope)).use { organize ->
+                fun ownedWorkspaceSummary(activity: OrganizeSpacesActivity, label: String): TextView? =
+                    descendants(activity.window.decorView).filterIsInstance<TextView>().singleOrNull { text ->
+                        text.text.toString() == activity.getString(R.string.organization_workspace_summary,
+                            ownedWorkspaceNumber, label, ownedWorkspaceTabs, ownedWorkspacePanes)
+                    }
+                await(organize, "native organization shows the exact disposable workspace and its sole pane") { activity ->
+                    ownedWorkspaceSummary(activity, ownedLabel) != null
+                }
+                organize.onActivity { activity ->
+                    val summary = requireNotNull(ownedWorkspaceSummary(activity, ownedLabel))
+                    val card = summary.parent as ViewGroup
+                    val rename = descendants(card).filterIsInstance<MaterialButton>().single { it.text.toString() == activity.getString(R.string.organization_rename) }
+                    assertTrue("Rename must target only the census-identified new workspace row", rename.isEnabled && rename.performClick())
+                }
+                onView(isAssignableFrom(EditText::class.java)).inRoot(isDialog()).perform(replaceText(renamedLabel))
+                currentOrganizationActor("Immediately before native workspace rename")
+                onView(withText(R.string.organization_save)).inRoot(isDialog()).perform(click())
+                val afterRename = currentSnapshot("native workspace rename updates the real census") {
+                    it.workspaces.singleOrNull { workspace -> workspace.workspaceId == workspaceId }?.label == renamedLabel
+                }
+                assertEquals("Rename must preserve the exact new workspace ID and sole owned pane", 1,
+                    afterRename.panes().count { it.workspaceId == workspaceId && it.paneId == paneId })
+                assertOriginalCensus(afterRename, "Rename")
+                val beforeClose = currentSnapshot("fresh census confirms the owned workspace is still exactly one tab and one pane") {
+                    it.workspaces.singleOrNull { workspace -> workspace.workspaceId == workspaceId && workspace.label == renamedLabel &&
+                        workspace.tabCount == 1 && workspace.paneCount == 1 } != null &&
+                        it.tabs.count { tab -> tab.workspaceId == workspaceId } == 1 &&
+                        it.panes().count { pane -> pane.workspaceId == workspaceId && pane.paneId == paneId } == 1
+                }
+                assertOriginalCensus(beforeClose, "Immediately before close")
+                assertEquals("The one new workspace remains exactly one tab and one pane immediately before close", 1,
+                    beforeClose.tabs.count { it.workspaceId == workspaceId })
+                assertEquals("The sole disposable pane remains the exact owned pane immediately before close", setOf(paneId),
+                    beforeClose.panes().filter { it.workspaceId == workspaceId }.map { it.paneId }.toSet())
+                await(organize, "native organization renders the acknowledged renamed workspace before Close") { activity ->
+                    ownedWorkspaceSummary(activity, renamedLabel) != null
+                }
+                currentOrganizationActor("Immediately before native workspace close")
+                organize.onActivity { activity ->
+                    val summary = requireNotNull(ownedWorkspaceSummary(activity, renamedLabel))
+                    val card = summary.parent as ViewGroup
+                    val close = descendants(card).filterIsInstance<MaterialButton>().single { it.text.toString() == activity.getString(R.string.organization_close) }
+                    assertTrue("Close must target only the exact renamed disposable workspace", close.isEnabled && close.performClick())
+                }
+                currentOrganizationActor("Immediately before exact owned workspace close confirmation")
+                // A one-tab fresh census must present the exact workspace plan, never group-close review.
+                onView(withText(R.string.organization_close_title)).inRoot(isDialog()).check(matches(isDisplayed()))
+                onView(withText(containsString(renamedLabel))).inRoot(isDialog()).check(matches(isDisplayed()))
+                onView(withText(R.string.organization_close_confirm)).inRoot(isDialog()).perform(click())
+                val afterClose = currentSnapshot("native close removes only the owned disposable workspace and pane") {
+                    it.workspaces.none { workspace -> workspace.workspaceId == workspaceId } &&
+                        it.panes().none { pane -> pane.workspaceId == workspaceId || pane.paneId == paneId }
+                }
+                assertEquals("Close must restore the exact original workspace census", originalWorkspaces, workspaceFacts(afterClose))
+                assertEquals("Close must restore the full original tab census, labels, owners, and focus", originalTabs, tabFacts(afterClose))
+                assertEquals("Close must preserve every original pane identity, address, and focus", originalPanes, paneIdentities(afterClose))
+                assertEquals("Closing the explicitly created workspace must restore original terminal focus", originalFocused,
+                    afterClose.panes().filter(PaneSummary::focused).map(PaneSummary::paneId).toSet())
+            }
+        } finally {
+            InstrumentationRegistry.getInstrumentation().runOnMainSync {
+                ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED).singleOrNull()?.finish()
+                live.repository.selectSubject(live.priorScope, live.priorSubject)
+            }
+            assertTrue("Workspace lifecycle acceptance must preserve the exact original pairing",
+                live.app.container.connectionStore.connection.value === live.connection)
+        }
+    }
+
+    /** Dashboard host/session selectors must persist actual reachable peer scope through recreation/reopen. */
+    @Test
+    fun nativeDashboardSelectsRealCrewHostAndNamedSessionAcrossReopen() {
+        val args = InstrumentationRegistry.getArguments()
+        assumeTrue("Explicit nativeDashboardCrewScope=true is required for this read-only scope selection",
+            args.getString("nativeDashboardCrewScope") == "true")
+        val (app, repository, connection) = crewProfile()
+        val committed = requireNotNull(app.container.connectionStore.captureCommitted())
+        assertSame("The committed Crew pairing names the exact active connection", connection, committed.connection)
+        assertTrue("Crew navigation requires the original durable incarnation", committed.incarnationId != null)
+        val originalDashboardScope = app.container.nativePreferences.dashboardScope
+        val originalScope = repository.selectedScope.value
+        val priorSubject = repository.readContext()?.key?.subjectIdentity
+        val expectedHostId = requireNotNull(args.getString("expectedCrewHostId")?.takeIf(String::isNotBlank)) {
+            "Explicit expectedCrewHostId is required with nativeDashboardCrewScope"
+        }
+        val expectedSession = requireNotNull(args.getString("expectedCrewSessionName")?.takeIf(String::isNotBlank)) {
+            "Explicit expectedCrewSessionName is required with nativeDashboardCrewScope"
+        }
+        assertTrue("Scope selection must begin from the exact original Crew pairing",
+            app.container.connectionStore.connection.value === connection)
+        // Snapshot breadth applies to one host; peers stay narrow when host is absent.
+        val censusScope = Scope(host = expectedHostId, viewAll = true)
+        val globalActor = requireNotNull(repository.readContext(censusScope)) { "The real all-sessions dashboard census actor is required" }
+        val globalResult = runBlocking { repository.snapshot(censusScope, globalActor) }
+        assertTrue("The official all-sessions snapshot must report real peer hosts and sessions", globalResult is ApiResult.Success)
+        assertSame("Crew census keeps the original connection", connection, app.container.connectionStore.connection.value)
+        assertEquals("Crew census keeps the original committed incarnation", committed, app.container.connectionStore.captureCommitted())
+        assertEquals("Crew census actor belongs to the original committed incarnation", committed, globalActor.committedSnapshot)
+        val global = (globalResult as ApiResult.Success).value
+        val peer = requireNotNull(global.servers.orEmpty().singleOrNull { it.id == expectedHostId }) {
+            "The supplied Crew peer host must occur exactly once in the live server census"
+        }
+        assertFalse("The selected Crew peer must be an actual non-lead host", peer.isLead)
+        assertTrue("The selected Crew peer must be reachable for native host selection", peer.reachable)
+        val sessions = global.sessions.filter { it.host == expectedHostId && it.reachable }
+        assertTrue("The actual Crew peer must report at least two reachable sessions", sessions.map { it.name }.distinct().size >= 2)
+        val targetSession = requireNotNull(sessions.singleOrNull { it.name == expectedSession && !it.isPrimary }) {
+            "The expected named session must be an actual reachable non-primary peer session"
+        }
+        assertTrue("The named Crew session must already contain a genuine live pane",
+            (global.agents + global.shellPanes).any { it.host == expectedHostId && it.session == targetSession.name })
+        assertTrue("The original read actor must remain current after checking the official census", repository.isCurrent(globalActor))
+        fun hasCurrentLiveRead(activity: MainActivity, scope: Scope): Boolean {
+            val state = ViewModelProvider(activity)[MainViewModel::class.java].state.value
+            val actor = state.originalReadContext
+            return state.savedCopy == null && state.lastSuccessAt != null && actor != null &&
+                actor.key.host == scope.host && actor.key.session == scope.session && repository.isCurrent(actor) &&
+                app.container.connectionStore.connection.value === connection &&
+                app.container.connectionStore.captureCommitted() == committed && actor.committedSnapshot == committed
+        }
+
+        fun assertPeerScope(activity: MainActivity, scope: Scope) {
+            val model = ViewModelProvider(activity)[MainViewModel::class.java]
+            assertEquals("Normal dashboard selection must update the repository scope exactly", scope, model.currentScope)
+            val host = activity.findViewById<View>(R.id.host_switcher)
+            val session = activity.findViewById<TextView>(R.id.session_switcher)
+            assertTrue("Actual Crew peer must be the visible selected host", host?.isShown == true)
+            assertEquals("Dashboard must display the selected Crew peer's reported server name", peer.name.ifBlank { peer.id }, (host as? TextView)?.text?.toString())
+            assertTrue("The exact named session selector must be visible", session?.isShown == true)
+            assertEquals("Dashboard must display the exact server-reported session name", expectedSession, session.text.toString())
+            val state = model.state.value
+            assertTrue("The dashboard must use a fresh current read for the exact Crew scope", hasCurrentLiveRead(activity, scope))
+            val snapshot = state.snapshot
+            assertTrue("Reopened dashboard must display an actual pane from the selected Crew host/session",
+                snapshot != null && (snapshot.agents + snapshot.shellPanes).any { it.host == expectedHostId && it.session == expectedSession })
+        }
+        fun awaitPeerScope(scenario: ActivityScenario<MainActivity>, scope: Scope, checkpoint: String) =
+            await(scenario, checkpoint) { activity ->
+                val model = ViewModelProvider(activity)[MainViewModel::class.java]
+                model.currentScope == scope && hasCurrentLiveRead(activity, scope) &&
+                    activity.findViewById<View>(R.id.host_switcher)?.isShown == true &&
+                    activity.findViewById<View>(R.id.session_switcher)?.let { it.isShown && (it as? TextView)?.text?.toString() == expectedSession } == true &&
+                    model.state.value.snapshot?.let { snap -> (snap.agents + snap.shellPanes).any { it.host == expectedHostId && it.session == expectedSession } } == true
+            }
+
+        var peerScopeReady = false
+        try {
+            ActivityScenario.launch(MainActivity::class.java).use { dashboard ->
+                try {
+                await(dashboard, "current live stock dashboard is ready in the original supplied scope") { activity ->
+                    val model = ViewModelProvider(activity)[MainViewModel::class.java]
+                    model.currentScope == originalDashboardScope && hasCurrentLiveRead(activity, originalDashboardScope) &&
+                        model.state.value.snapshot?.servers?.any { it.id == expectedHostId } == true
+                }
+                onView(withId(R.id.host_switcher)).perform(click())
+                onView(withText(peer.name.ifBlank { peer.id })).inRoot(isDialog()).perform(click())
+                val hostScope = Scope(host = expectedHostId)
+                await(dashboard, "normal host selector loads the exact peer and its ready real session selector") { activity ->
+                    val model = ViewModelProvider(activity)[MainViewModel::class.java]
+                    val selector = activity.findViewById<View>(R.id.session_switcher)
+                    val sessions = model.state.value.snapshot?.sessions.orEmpty()
+                        .filter { it.host == expectedHostId && it.reachable }
+                    model.currentScope == hostScope && hasCurrentLiveRead(activity, hostScope) &&
+                        selector != null && selector.isShown && selector.isEnabled && selector.isLaidOut &&
+                        !selector.isLayoutRequested && selector.width > 0 && selector.height > 0 &&
+                        sessions.map { it.name }.distinct().size >= 2 &&
+                        sessions.singleOrNull { it.name == expectedSession && !it.isPrimary } != null
+                }
+                onView(withId(R.id.session_switcher)).perform(click())
+                onView(withText(expectedSession)).inRoot(isDialog()).perform(click())
+                val selected = Scope(host = expectedHostId, session = expectedSession)
+                awaitPeerScope(dashboard, selected, "normal session selector selects the exact genuinely reported named peer session")
+                dashboard.recreate()
+                awaitPeerScope(dashboard, selected, "activity recreation restores the exact selected host/session and live pane")
+                peerScopeReady = true
+                } finally {
+                    if (!peerScopeReady) dashboard.onActivity { activity -> ViewModelProvider(activity)[MainViewModel::class.java].selectScope(originalDashboardScope) }
+                }
+            }
+            ActivityScenario.launch(MainActivity::class.java).use { reopened ->
+                try {
+                    awaitPeerScope(reopened, Scope(host = expectedHostId, session = expectedSession),
+                        "fresh dashboard launch restores the actual selected Crew peer and named session")
+                    reopened.onActivity { assertPeerScope(it, Scope(host = expectedHostId, session = expectedSession)) }
+                } finally {
+                    reopened.onActivity { activity -> ViewModelProvider(activity)[MainViewModel::class.java].selectScope(originalDashboardScope) }
+                }
+            }
+        } finally {
+            // A launch/reopen failure must not leave the user's remembered dashboard scope changed.
+            if (app.container.nativePreferences.dashboardScope != originalDashboardScope) {
+                ActivityScenario.launch(MainActivity::class.java).use { restore ->
+                    restore.onActivity { ViewModelProvider(it)[MainViewModel::class.java].selectScope(originalDashboardScope) }
+                }
+            }
+            repository.selectSubject(originalScope, priorSubject)
+            assertEquals("Crew navigation restores the original remembered dashboard scope", originalDashboardScope,
+                app.container.nativePreferences.dashboardScope)
+            assertSame("Dashboard scope selection must preserve the exact original pairing", connection, app.container.connectionStore.connection.value)
+            assertEquals("Crew navigation must preserve the exact original committed incarnation", committed,
+                app.container.connectionStore.captureCommitted())
         }
     }
 
@@ -541,5 +931,6 @@ class PhysicalStockOrganizationAcceptanceTest {
         private const val TAG = "CollieOrganizationAcceptance"
         private const val WAIT_MS = 45_000L
         private const val REQUIRED_ORIGIN = "https://prod.lateapexllc.com/completion/"
+        private const val REQUIRED_CREW_ORIGIN = "https://prod.lateapexllc.com/completion-crew/"
     }
 }

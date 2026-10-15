@@ -15,6 +15,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.EditText
 import android.widget.TextView
 import androidx.test.core.app.ApplicationProvider
+import androidx.test.core.app.ActivityScenario
 import androidx.test.espresso.Espresso.onView
 import androidx.test.espresso.action.ViewActions.click
 import androidx.test.espresso.action.ViewActions.closeSoftKeyboard
@@ -44,13 +45,19 @@ import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Test
+import org.junit.After
 import org.junit.runner.RunWith
 
 /** Real native import surfaces only. Every phase is opt-in and remains read-only until explicit Continue. */
 @RunWith(AndroidJUnit4::class)
 class PhysicalLinkImportAcceptanceTest {
-    private var pickerTileEvidenceRecorded = false
-    private var pickerTileTouchAttempted = false
+    private var settingsScenario: ActivityScenario<SettingsActivity>? = null
+
+    @After fun closeOwnedSettingsScenario() {
+        settingsScenario?.close()
+        settingsScenario = null
+    }
+
     @Test
     fun pasteShareOrQrNavigationRequiresContinueAndReadsTheExactPane() {
         val args = InstrumentationRegistry.getArguments()
@@ -219,6 +226,7 @@ class PhysicalLinkImportAcceptanceTest {
             main, resumedActivity())
 
         if (operatorPair) {
+            onView(withId(R.id.device_label_input)).perform(replaceText("completion Pixel"), closeSoftKeyboard())
             assertTrue("Immediately before Pair, the original pairing owner is still current", owner.current(app))
             assertSame("Immediately before Pair, the empty profile is unchanged", before,
                 app.container.connectionStore.connection.value)
@@ -258,8 +266,7 @@ class PhysicalLinkImportAcceptanceTest {
     }
 
     private fun openNativeSettingsImport() {
-        val app = ApplicationProvider.getApplicationContext<Context>().applicationContext as CollieApplication
-        app.startActivity(Intent(app, SettingsActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        settingsScenario = ActivityScenario.launch(SettingsActivity::class.java)
         awaitResumed<SettingsActivity>("native Settings screen")
         onView(withId(R.id.settings_import_link)).perform(scrollTo(), click())
         awaitResumed<LinkImportActivity>("native Settings import screen")
@@ -273,140 +280,250 @@ class PhysicalLinkImportAcceptanceTest {
     private fun chooseAndReviewQr(fileName: String) {
         boundedQrName(fileName)
         onView(withId(R.id.link_import_qr)).perform(click())
-        check(openTaskDownloadsInSystemPicker()) { "Actual DocumentsUI did not expose the task-owned Downloads location" }
-        check(clickExactTextInSystemPicker(fileName)) {
-            "The exact supplied QR file was not selected through the native Downloads picker"
+        val deadline = SystemClock.uptimeMillis() + 15_000L
+        check(openTaskDownloadsInSystemPicker(deadline)) {
+            "Actual DocumentsUI did not settle in the exact task-owned Downloads directory"
+        }
+        check(selectExactQrFileInSystemPicker(fileName, deadline)) {
+            "The exact supplied QR file was not visible on the first Downloads page or could not be touched safely"
         }
     }
 
-    private fun openTaskDownloadsInSystemPicker(): Boolean {
+    /** Select Downloads only through the actual roots ListView, then await the closed drawer. */
+    private fun openTaskDownloadsInSystemPicker(deadline: Long): Boolean {
         val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
-        val deadline = SystemClock.uptimeMillis() + 15_000L
-        var openedRoots = false
+        var rootsToggleTouched = false
+        var downloadsRootTouched = false
         while (SystemClock.uptimeMillis() < deadline) {
             val root = automation.rootInActiveWindow
-            if (root != null) {
-                try {
-                    if (root.packageName?.toString() !in DOCUMENT_PACKAGES) {
-                        SystemClock.sleep(100)
-                        continue
-                    }
-                    if (openedRoots && clickVisibleDocumentText(root, "Downloads")) return true
-                    if (!openedRoots && clickVisibleDocumentText(root, "Downloads")) return true
-                    if (!openedRoots && clickVisibleDocumentText(root, "Show roots")) openedRoots = true
-                    else if (!openedRoots && clickVisibleDocumentText(root, "Open navigation drawer")) openedRoots = true
-                } finally { root.recycle() }
-            }
+            if (root != null) try {
+                val packageName = root.packageName?.toString()
+                if (packageName !in DOCUMENT_PACKAGES) {
+                    SystemClock.sleep(100)
+                    continue
+                }
+                if (isDownloadsDirectory(root, packageName!!)) return true
+                val roots = root.findAccessibilityNodeInfosByViewId("$packageName:id/roots_list")
+                val drawerOpen = try { roots.any { it.packageName?.toString() == packageName && it.isVisibleToUser && it.isEnabled } }
+                finally { roots.forEach { it.recycle() } }
+                if (drawerOpen) {
+                    if (!downloadsRootTouched && selectDownloadsRoot(root, packageName, deadline)) downloadsRootTouched = true
+                } else if (!rootsToggleTouched) {
+                    val toggle = findVisibleDescription(root, packageName, setOf("Show roots", "Open navigation drawer"))
+                    if (toggle != null) try {
+                        rootsToggleTouched = tapStableDocumentNode(root, toggle, packageName, deadline)
+                    } finally { toggle.recycle() }
+                }
+            } finally { root.recycle() }
             SystemClock.sleep(100)
         }
         return false
     }
 
-    private fun clickVisibleDocumentText(root: AccessibilityNodeInfo, text: String): Boolean =
-        clickVisibleDocumentNode(root, text)
+    private fun selectDownloadsRoot(root: AccessibilityNodeInfo, packageName: String, deadline: Long): Boolean {
+        val lists = root.findAccessibilityNodeInfosByViewId("$packageName:id/roots_list")
+        try {
+            val list = lists.singleOrNull { it.packageName?.toString() == packageName &&
+                it.viewIdResourceName == "$packageName:id/roots_list" &&
+                it.className?.toString() == "android.widget.ListView" && it.isVisibleToUser && it.isEnabled } ?: return false
+            val labels = list.findAccessibilityNodeInfosByText("Downloads")
+            try {
+                val label = labels.singleOrNull { it.packageName?.toString() == packageName &&
+                    it.text?.toString() == "Downloads" && it.isVisibleToUser && it.isEnabled } ?: return false
+                val beforeList = Rect().also(list::getBoundsInScreen)
+                val beforeLabel = Rect().also(label::getBoundsInScreen)
+                if (!awaitDocumentsIdle(deadline) || !list.refresh() || !label.refresh() ||
+                    !list.isVisibleToUser || !list.isEnabled || list.packageName?.toString() != packageName ||
+                    list.viewIdResourceName != "$packageName:id/roots_list" || list.className?.toString() != "android.widget.ListView" ||
+                    !label.isVisibleToUser || !label.isEnabled || label.packageName?.toString() != packageName ||
+                    label.text?.toString() != "Downloads" || beforeList != Rect().also(list::getBoundsInScreen) ||
+                    beforeLabel != Rect().also(label::getBoundsInScreen)) return false
+                val active = InstrumentationRegistry.getInstrumentation().uiAutomation.rootInActiveWindow ?: return false
+                try {
+                    if (active.packageName?.toString() != packageName || active.windowId != label.windowId || list.windowId != label.windowId) return false
+                    val labelBounds = Rect().also(label::getBoundsInScreen)
+                    val listBounds = Rect().also(list::getBoundsInScreen)
+                    val windowBounds = Rect().also(active::getBoundsInScreen)
+                    if (labelBounds.isEmpty || !listBounds.contains(labelBounds) || !windowBounds.contains(labelBounds)) return false
+                    return injectNormalTouch(active, labelBounds.centerX(), labelBounds.centerY())
+                } finally { active.recycle() }
+            } finally { labels.forEach { it.recycle() } }
+        } finally { lists.forEach { it.recycle() } }
+    }
 
-    private fun clickExactTextInSystemPicker(fileName: String): Boolean {
-        val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val automation = instrumentation.uiAutomation
-        val deadline = SystemClock.uptimeMillis() + 20_000L
+    /** A root request is complete only when dir_list is visible and roots_list is gone. */
+    private fun isDownloadsDirectory(root: AccessibilityNodeInfo, packageName: String): Boolean {
+        if (packageName !in DOCUMENT_PACKAGES || root.packageName?.toString() != packageName) return false
+        fun visible(id: String): Boolean {
+            val nodes = root.findAccessibilityNodeInfosByViewId("$packageName:id/$id")
+            return try { nodes.any { it.packageName?.toString() == packageName && it.isVisibleToUser } }
+            finally { nodes.forEach { it.recycle() } }
+        }
+        if (visible("roots_list") || !visible("dir_list")) return false
+        val titles = root.findAccessibilityNodeInfosByText("Downloads")
+        return try { titles.any { it.packageName?.toString() == packageName && it.isVisibleToUser && it.text?.toString() == "Downloads" } }
+        finally { titles.forEach { it.recycle() } }
+    }
+
+    /** Never scroll: select only the exact task-owned image tile on the first Downloads page. */
+    private fun selectExactQrFileInSystemPicker(fileName: String, deadline: Long): Boolean {
+        if (!fileName.startsWith("cc13-")) return false
+        val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
         while (SystemClock.uptimeMillis() < deadline) {
             val root = automation.rootInActiveWindow
-            if (root != null) {
+            if (root != null) try {
+                val packageName = root.packageName?.toString()
+                if (packageName !in DOCUMENT_PACKAGES || !isDownloadsDirectory(root, packageName!!)) {
+                    SystemClock.sleep(100)
+                    continue
+                }
+                val grids = root.findAccessibilityNodeInfosByViewId("$packageName:id/dir_list")
                 try {
-                    if (root.packageName?.toString() in DOCUMENT_PACKAGES && clickVisibleDocumentNode(root, fileName)) return true
-                } finally { root.recycle() }
-            }
-            SystemClock.sleep(150)
+                    val grid = grids.singleOrNull { it.packageName?.toString() == packageName &&
+                        it.viewIdResourceName == "$packageName:id/dir_list" &&
+                        it.className?.toString() in setOf("android.widget.GridView", "androidx.recyclerview.widget.RecyclerView") &&
+                        it.isVisibleToUser && it.isEnabled }
+                    if (grid == null) { SystemClock.sleep(100); continue }
+                    val labels = ownedQrTiles(grid, packageName, fileName)
+                    try {
+                        // DocumentsUI may expose the same physical tile twice during layout. Distinct
+                        // screen bounds still reject separate same-name files as ambiguous targets.
+                        val label = labels.distinctBy { Triple(it.windowId, Rect().also(it::getBoundsInScreen), it.contentDescription?.toString()) }.singleOrNull()
+                        if (label == null) { SystemClock.sleep(100); continue }
+                        val beforeGrid = Rect().also(grid::getBoundsInScreen)
+                        val beforeLabel = Rect().also(label::getBoundsInScreen)
+                        if (!awaitDocumentsIdle(deadline) || !grid.refresh() || !label.refresh() ||
+                            !grid.isVisibleToUser || !grid.isEnabled || grid.packageName?.toString() != packageName ||
+                            grid.viewIdResourceName != "$packageName:id/dir_list" || label.packageName?.toString() != packageName ||
+                            !isOwnedQrTile(label, packageName, fileName) ||
+                            beforeGrid != Rect().also(grid::getBoundsInScreen) || beforeLabel != Rect().also(label::getBoundsInScreen)) return false
+                        val active = automation.rootInActiveWindow ?: return false
+                        try {
+                            if (active.packageName?.toString() != packageName || active.windowId != label.windowId ||
+                                grid.windowId != label.windowId || !isDownloadsDirectory(active, packageName)) return false
+                            val labelBounds = Rect().also(label::getBoundsInScreen)
+                            val gridBounds = Rect().also(grid::getBoundsInScreen)
+                            val windowBounds = Rect().also(active::getBoundsInScreen)
+                            if (labelBounds.isEmpty || !gridBounds.contains(labelBounds) || !windowBounds.contains(labelBounds)) return false
+                            val x = labelBounds.centerX()
+                            val y = labelBounds.centerY()
+                            if (!labelBounds.contains(x, y) || hasInteractivePreviewAt(active, packageName, x, y)) return false
+                            return injectNormalTouch(active, x, y)
+                        } finally { active.recycle() }
+                    } finally { labels.forEach { it.recycle() } }
+                } finally { grids.forEach { it.recycle() } }
+            } finally { root.recycle() }
+            SystemClock.sleep(100)
         }
         return false
     }
 
-    private fun clickVisibleDocumentNode(node: AccessibilityNodeInfo, fileName: String): Boolean {
-        if (node.packageName?.toString() in DOCUMENT_PACKAGES && node.isVisibleToUser && node.isEnabled &&
-            (node.text?.toString() == fileName || node.contentDescription?.toString() == fileName ||
-                node.contentDescription?.toString()?.startsWith("$fileName, ") == true)) {
-            var candidate = AccessibilityNodeInfo.obtain(node)
-            var clickOffered = false
-            try {
-                for (depth in 0 until 8) {
-                    if (candidate.packageName != node.packageName) return false
-                    val advertisedTileClick = depth == 0 && candidate.actionList.any {
-                        it.id == AccessibilityNodeInfo.ACTION_CLICK
-                    }
-                    val canClick = candidate.isClickable || advertisedTileClick
-                    clickOffered = clickOffered || canClick
-                    val clicked = candidate.isVisibleToUser && candidate.isEnabled && canClick &&
-                        candidate.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                    if (depth == 0 && fileName.startsWith("cc13-") && !pickerTileEvidenceRecorded) {
-                        pickerTileEvidenceRecorded = true
-                        InstrumentationRegistry.getInstrumentation().sendStatus(2, Bundle().apply {
-                            putString("stream", "Task picker tile visible=true enabled=true clickable=${candidate.isClickable} " +
-                                "advertisedClick=$advertisedTileClick clickSucceeded=$clicked\n")
-                        })
-                    }
-                    if (clicked) return true
-                    val parent = candidate.parent ?: break
-                    candidate.recycle()
-                    candidate = parent
-                }
-            } finally { candidate.recycle() }
-            // Actual API37 Downloads grid tiles use the RecyclerView touch handler, without a
-            // clickable ancestor. Keep the separate clickable Preview child out of this tap.
-            if (!clickOffered && fileName.startsWith("cc13-") && tapExactTaskTile(node, fileName)) return true
+    private fun isOwnedQrTile(node: AccessibilityNodeInfo, packageName: String, fileName: String): Boolean =
+        node.packageName?.toString() == packageName && node.isVisibleToUser && node.isEnabled &&
+            node.className?.toString() == "android.widget.LinearLayout" &&
+            node.contentDescription?.toString()?.substringBefore(", ") == fileName
+
+    private fun ownedQrTiles(root: AccessibilityNodeInfo, packageName: String, fileName: String): List<AccessibilityNodeInfo> {
+        val result = mutableListOf<AccessibilityNodeInfo>()
+        fun visit(node: AccessibilityNodeInfo) {
+            if (isOwnedQrTile(node, packageName, fileName)) result += AccessibilityNodeInfo.obtain(node)
+            for (index in 0 until node.childCount) {
+                val child = node.getChild(index) ?: continue
+                try { visit(child) } finally { child.recycle() }
+            }
         }
-        for (index in 0 until node.childCount) {
-            val child = node.getChild(index) ?: continue
-            try { if (clickVisibleDocumentNode(child, fileName)) return true }
+        visit(root)
+        return result
+    }
+
+    private fun findVisibleDescription(root: AccessibilityNodeInfo, packageName: String, descriptions: Set<String>): AccessibilityNodeInfo? {
+        val description = root.contentDescription?.toString()
+        if (root.packageName?.toString() == packageName && root.isVisibleToUser && root.isEnabled &&
+            description != null && description in descriptions) return AccessibilityNodeInfo.obtain(root)
+        for (index in 0 until root.childCount) {
+            val child = root.getChild(index) ?: continue
+            try { findVisibleDescription(child, packageName, descriptions)?.let { return it } }
+            finally { child.recycle() }
+        }
+        return null
+    }
+
+    private fun tapStableDocumentNode(root: AccessibilityNodeInfo, node: AccessibilityNodeInfo, packageName: String, deadline: Long): Boolean {
+        if (node.packageName?.toString() != packageName || !node.isVisibleToUser || !node.isEnabled) return false
+        val before = Rect().also(node::getBoundsInScreen)
+        if (!awaitDocumentsIdle(deadline) || !node.refresh() || !node.isVisibleToUser || !node.isEnabled ||
+            node.packageName?.toString() != packageName ||
+            node.contentDescription?.toString()?.let { it in setOf("Show roots", "Open navigation drawer") } != true ||
+            before != Rect().also(node::getBoundsInScreen)) return false
+        val active = InstrumentationRegistry.getInstrumentation().uiAutomation.rootInActiveWindow ?: return false
+        try {
+            if (active.packageName?.toString() != packageName || active.windowId != node.windowId || root.windowId != node.windowId) return false
+            val bounds = Rect().also(node::getBoundsInScreen)
+            val windowBounds = Rect().also(active::getBoundsInScreen)
+            if (bounds.isEmpty || !windowBounds.contains(bounds)) return false
+            return injectNormalTouch(active, bounds.centerX(), bounds.centerY())
+        } finally { active.recycle() }
+    }
+
+    private fun injectNormalTouch(active: AccessibilityNodeInfo, x: Int, y: Int): Boolean {
+        if (!Rect().also(active::getBoundsInScreen).contains(x, y)) return false
+        val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        val downTime = SystemClock.uptimeMillis()
+        // Setting SOURCE_TOUCHSCREEN on the short obtain() overload leaves TOOL_TYPE_UNKNOWN.
+        // Use the same explicit finger pointer shape as the working native Copy helper.
+        val properties = MotionEvent.PointerProperties().apply {
+            id = 0; toolType = MotionEvent.TOOL_TYPE_FINGER
+        }
+        fun event(action: Int): MotionEvent {
+            val coordinates = MotionEvent.PointerCoords().apply {
+                this.x = x.toFloat(); this.y = y.toFloat()
+                pressure = if (action == MotionEvent.ACTION_UP) 0f else 1f; size = 1f
+            }
+            return MotionEvent.obtain(downTime, SystemClock.uptimeMillis(), action, 1,
+                arrayOf(properties), arrayOf(coordinates), 0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0)
+        }
+        val down = event(MotionEvent.ACTION_DOWN)
+        val downAccepted = try {
+            assertEquals("Normal DocumentsUI touch uses a finger tool", MotionEvent.TOOL_TYPE_FINGER, down.getToolType(0))
+            automation.injectInputEvent(down, true)
+        } finally { down.recycle() }
+        SystemClock.sleep(50)
+        val up = event(MotionEvent.ACTION_UP)
+        val upAccepted = try {
+            assertEquals("Normal DocumentsUI release keeps the same finger tool", MotionEvent.TOOL_TYPE_FINGER, up.getToolType(0))
+            automation.injectInputEvent(up, true)
+        } finally { up.recycle() }
+        assertTrue("Exact stable DocumentsUI target receives normal touchscreen down/up", downAccepted && upAccepted)
+        return true
+    }
+
+    private fun hasInteractivePreviewAt(root: AccessibilityNodeInfo, packageName: String, x: Int, y: Int): Boolean {
+        val text = root.text?.toString().orEmpty()
+        val description = root.contentDescription?.toString().orEmpty()
+        val preview = (text + " " + description).contains("preview", ignoreCase = true)
+        val bounds = Rect().also(root::getBoundsInScreen)
+        if (root.packageName?.toString() == packageName && root.isVisibleToUser && root.isEnabled && preview &&
+            bounds.contains(x, y) && (root.isClickable || root.actionList.any { it.id == AccessibilityNodeInfo.ACTION_CLICK })) return true
+        for (index in 0 until root.childCount) {
+            val child = root.getChild(index) ?: continue
+            try { if (hasInteractivePreviewAt(child, packageName, x, y)) return true }
             finally { child.recycle() }
         }
         return false
     }
 
-    private fun tapExactTaskTile(node: AccessibilityNodeInfo, fileName: String): Boolean {
-        if (pickerTileTouchAttempted || !node.refresh()) return false
-        val packageName = node.packageName?.toString()
-        if (packageName !in DOCUMENT_PACKAGES || !node.isVisibleToUser || !node.isEnabled ||
-            !(node.text?.toString() == fileName || node.contentDescription?.toString() == fileName ||
-                node.contentDescription?.toString()?.startsWith("$fileName, ") == true)) return false
+    private fun awaitDocumentsIdle(deadline: Long): Boolean {
         val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
-        val root = automation.rootInActiveWindow ?: return false
-        try {
-            if (root.packageName?.toString() != packageName || root.windowId != node.windowId) return false
-            val locations = root.findAccessibilityNodeInfosByText("Downloads")
-            val downloadsVisible = try {
-                locations.any { it.packageName?.toString() == packageName && it.isVisibleToUser && it.text?.toString() == "Downloads" }
-            } finally { locations.forEach { it.recycle() } }
-            if (!downloadsVisible) return false
-            val tile = Rect().also(node::getBoundsInScreen)
-            val window = Rect().also(root::getBoundsInScreen)
-            if (tile.isEmpty || !window.contains(tile)) return false
-            val x = tile.centerX()
-            val y = tile.top + tile.height() * 3 / 4
-            fun coversInteractiveChild(parent: AccessibilityNodeInfo): Boolean {
-                for (index in 0 until parent.childCount) {
-                    val child = parent.getChild(index) ?: continue
-                    try {
-                        val bounds = Rect().also(child::getBoundsInScreen)
-                        if (child.isVisibleToUser && child.isEnabled && bounds.contains(x, y) &&
-                            (child.isClickable || child.actionList.any { it.id == AccessibilityNodeInfo.ACTION_CLICK })) return true
-                        if (coversInteractiveChild(child)) return true
-                    } finally { child.recycle() }
-                }
-                return false
+        while (SystemClock.uptimeMillis() < deadline) {
+            val remaining = deadline - SystemClock.uptimeMillis()
+            try {
+                automation.waitForIdle(minOf(150L, remaining).coerceAtLeast(1L), minOf(1_000L, remaining).coerceAtLeast(1L))
+                return true
+            } catch (_: java.util.concurrent.TimeoutException) {
+                // Keep retrying within the original chooser deadline only.
             }
-            if (!tile.contains(x, y) || coversInteractiveChild(node)) return false
-            pickerTileTouchAttempted = true
-            val downTime = SystemClock.uptimeMillis()
-            val down = MotionEvent.obtain(downTime, downTime, MotionEvent.ACTION_DOWN, x.toFloat(), y.toFloat(), 0)
-                .apply { source = InputDevice.SOURCE_TOUCHSCREEN }
-            val downAccepted = try { automation.injectInputEvent(down, true) } finally { down.recycle() }
-            SystemClock.sleep(50)
-            val up = MotionEvent.obtain(downTime, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, x.toFloat(), y.toFloat(), 0)
-                .apply { source = InputDevice.SOURCE_TOUCHSCREEN }
-            val upAccepted = try { automation.injectInputEvent(up, true) } finally { up.recycle() }
-            assertTrue("The one exact visible task tile receives normal touchscreen down/up", downAccepted && upAccepted)
-            return true
-        } finally { root.recycle() }
+        }
+        return false
     }
 
     private fun awaitImportedPaneRendered(

@@ -8,6 +8,7 @@ import android.graphics.Rect
 import android.os.SystemClock
 import android.text.Spanned
 import android.text.style.ClickableSpan
+import android.view.InputDevice
 import android.view.MotionEvent
 import android.view.ViewConfiguration
 import android.view.View
@@ -23,6 +24,7 @@ import androidx.test.espresso.Espresso.onView
 import androidx.test.espresso.UiController
 import androidx.test.espresso.ViewAction
 import androidx.test.espresso.action.ViewActions.click
+import androidx.test.espresso.action.ViewActions.closeSoftKeyboard
 import androidx.test.espresso.action.ViewActions.replaceText
 import androidx.test.espresso.matcher.ViewMatchers.withId
 import androidx.test.espresso.matcher.ViewMatchers.withText
@@ -218,9 +220,63 @@ class PhysicalStockWorkflowsAcceptanceTest {
         } finally { instrumentation.runOnMainSync { sourceActivity?.finish() } }
     }
 
+    @Test fun liveMirrorMasksHarmlessSyntheticPasswordWithoutChangingItsOwner() = withLive { live ->
+        val committed = requireNotNull(live.app.container.connectionStore.captureCommitted())
+        assertEquals("Masking uses the original admitted committed owner", committed, live.actor.committedSnapshot)
+        assertNotNull("Masking requires the actual paired incarnation", committed.incarnationId)
+        val journal = live.app.container.launchIntentStore.all()
+        val marker = "COLLIE_MASK_${UUID.randomUUID().toString().take(8)}"
+        val dummy = "COMPLETION_DUMMY_${UUID.randomUUID().toString().replace("-", "")}"
+        val command = "printf '%s\\n' '$marker password=$dummy'"
+        val maskedOutput = "$marker password=${"•".repeat(dummy.length)}"
+        val target = ChangesTarget.Pane(live.address.paneId)
+        val before = runBlocking { live.repository.changes(target, live.address.scope, ChangesLookup(), live.actor) }
+        assertTrue("The owned fixture Git state must be readable", before is ApiResult.Success)
+        fun owner() {
+            assertTrue("The original exact shell actor must remain current", live.repository.isCurrent(live.actor))
+            assertEquals("The original pairing incarnation must remain committed", committed,
+                live.app.container.connectionStore.captureCommitted())
+        }
+        ActivityScenario.launch<PaneActivity>(paneIntent(live)).use { scenario ->
+            await(scenario, "actual owned shell mirror and native reply admission") { activity ->
+                val state = androidx.lifecycle.ViewModelProvider(activity)[PaneViewModel::class.java].state.value
+                state.panes.singleOrNull { it.paneId == live.address.paneId && it.host == live.address.scope.host &&
+                    it.session == live.address.scope.session }?.agent == "shell" && state.paneReadContext?.key == live.actor.key &&
+                    state.savedCopy == null && activity.findViewById<View>(R.id.send_button).isEnabled &&
+                    activity.findViewById<TextView>(R.id.terminal_text).isShown
+            }
+            owner()
+            onView(withId(R.id.reply_input)).perform(replaceText(command))
+            owner()
+            onView(withId(R.id.send_button)).perform(click())
+            await(scenario, "real synthetic password is masked in the native mirror") { activity ->
+                owner()
+                val text = activity.findViewById<TextView>(R.id.terminal_text).text.toString()
+                val normalized = text.replace("\r", "").replace("\n", "")
+                maskedOutput in normalized && dummy !in normalized
+            }
+            owner()
+            val response = runBlocking {
+                live.repository.readPane(live.address, conditional = false, markSeen = false, expectedContext = live.actor)
+            }
+            assertTrue("The real original-actor HTTPS response must succeed", response is ApiResult.Success)
+            val text = (response as ApiResult.Success).value.pane.text
+            val normalized = text.replace("\r", "").replace("\n", "")
+            assertTrue("The actual server response preserves the marker and masks the complete dummy value",
+                maskedOutput in normalized && dummy !in normalized)
+        }
+        owner()
+        val after = runBlocking { live.repository.changes(target, live.address.scope, ChangesLookup(), live.actor) }
+        assertTrue("Masking acceptance must leave the owned Git state readable", after is ApiResult.Success)
+        assertEquals("One harmless printf and masked reads must not alter repository contents",
+            (before as ApiResult.Success).value.state, (after as ApiResult.Success).value.state)
+        assertEquals("Masking must not add or change a launch intent", journal, live.app.container.launchIntentStore.all())
+    }
+
     @Test fun liveChangesLastCommitReadsOwnedHeadAndItsCommittedFileDiff() = withLive { live ->
         val target = ChangesTarget.Pane(live.address.paneId)
         val lookup = ChangesLookup()
+        val committedHeadSource = HEAD_SOURCE
         val listed = runBlocking { live.repository.changes(target, live.address.scope, lookup, live.actor) }
         assertTrue("Owned fixture Changes listing must succeed under its original actor", listed is ApiResult.Success)
         val before = (listed as ApiResult.Success).value
@@ -260,14 +316,18 @@ class PhysicalStockWorkflowsAcceptanceTest {
                         head.subject in it && head.shortHash in it
                     }
                 }
+                awaitChanges("native HEAD detail lists its exact committed fixture source") { activity ->
+                    changeButton(activity, committedHeadSource) != null
+                }
                 instrumentation.runOnMainSync {
-                    val file = changeButton(requireNotNull(changesActivity))
+                    val file = changeButton(requireNotNull(changesActivity), committedHeadSource)
                     assertNotNull("The actual HEAD detail must list its committed fixture source", file)
                     assertTrue(requireNotNull(file).performClick())
                 }
-                awaitChanges("native read-only diff for the committed fixture source") { activity ->
+                awaitChanges("native read-only diff for the exact actual HEAD source") { activity ->
                     val body = visibleText(activity.findViewById(R.id.changes_content)).joinToString("\n")
-                    "+$BASE" in body && "+$CHANGE" !in body
+                    "+printf '%s\\n' 'COLLIE_NATIVE_LAUNCH_ACCEPTANCE'" in body &&
+                        "+exec bash --noprofile --norc" in body && "+$CHANGE" !in body
                 }
             }
         } finally { instrumentation.runOnMainSync { changesActivity?.finish() } }
@@ -280,7 +340,8 @@ class PhysicalStockWorkflowsAcceptanceTest {
     }
 
     @Test fun liveMirrorCopiesSelectedTextAndOpensOnlyConfirmedFileReadOnly() = withLive { live ->
-        val marker = "COLLIE_COPY_${UUID.randomUUID().toString().take(8)}"
+        // One alphanumeric word lets Android's native long-press select the exact full marker.
+        val marker = "COLLIECOPY${UUID.randomUUID().toString().take(8)}"
         val printedPath = "${live.root}/$TEXT"
         val command = "printf '%s\\n' '$marker' 'Open $printedPath'; pwd"
         val target = ChangesTarget.Pane(live.address.paneId)
@@ -311,12 +372,23 @@ class PhysicalStockWorkflowsAcceptanceTest {
                 readOnlyBaseline = (beforeReadOnlyActions as ApiResult.Success).value.pane
 
                 onView(withId(R.id.terminal_text)).perform(longPressText(marker))
-                onView(withText(android.R.string.copy)).perform(click())
+                scenario.onActivity { activity ->
+                    val mirror = activity.findViewById<TextView>(R.id.terminal_text)
+                    val start = minOf(mirror.selectionStart, mirror.selectionEnd)
+                    val end = maxOf(mirror.selectionStart, mirror.selectionEnd)
+                    assertTrue("Native long-press selects the exact live output marker", start >= 0 && end > start)
+                    assertEquals(marker, mirror.text.subSequence(start, end).toString())
+                    assertTrue("Native Copy retains the exact original live pane actor", live.repository.isCurrent(live.actor))
+                }
+                copyExactSelectedMirrorThroughVisibleToolbar(scenario, live, marker)
                 val clipboard = live.app.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                 assertTrue("Native selectable mirror text must copy the selected live output",
                     clipboard.primaryClip?.getItemAt(0)?.coerceToText(live.app)?.toString()?.contains(marker) == true)
 
-                onView(withId(R.id.reply_input)).perform(click())
+                // Close the existing IME without refocusing the composer; wait for native Copy's
+                // selection dismissal and the original mirror layout before the actual link tap.
+                onView(withId(R.id.terminal_text)).perform(closeSoftKeyboard())
+                awaitVisibleConfirmedPrintedPath(scenario, live, printedPath)
                 onView(withId(R.id.terminal_text)).perform(tapPrintedPath(printedPath))
                 filesActivity = awaitFiles("confirmed printed path opens the native Files reader") { activity ->
                     activity.findViewById<TextView>(R.id.files_title).text.toString() == TEXT &&
@@ -347,12 +419,153 @@ class PhysicalStockWorkflowsAcceptanceTest {
         assertTrue("The exact native shell's actual output must retain the printed file reference", printedPath in mirror)
     }
 
+    /** Separate opt-in proof of the retained URLSpan path; confirmed Files links use another path. */
+    @Test fun liveMirrorOpensActualHttpsUrlThroughTheNormalExternalBrowser() {
+        val args = InstrumentationRegistry.getArguments()
+        val optedIn = args.getString("liveExternalUrl")
+        assumeTrue("Explicit liveExternalUrl=true is required for the normal external-browser handoff", optedIn != null)
+        assertEquals("External URL acceptance opt-in must be exactly true", "true", optedIn)
+        val browserPackage = requireNotNull(args.getString("liveBrowserPackage")) { "Supply the actual existing default browser package" }
+        assertTrue("Pin one bounded existing browser package", browserPackage.matches(Regex("[A-Za-z][A-Za-z0-9_]*(?:\\.[A-Za-z][A-Za-z0-9_]*)+")))
+        withLive { live ->
+            val url = "https://example.com/"
+            val marker = "COLLIEURL${UUID.randomUUID().toString().take(8)}"
+            val connection = requireNotNull(live.app.container.connectionStore.connection.value)
+            val committed = requireNotNull(live.app.container.connectionStore.captureCommitted())
+            val launchIds = live.app.container.launchIntentStore.all().map { it.intent.requestId }.toSet()
+            val target = ChangesTarget.Pane(live.address.paneId)
+            val beforeChanges = runBlocking { live.repository.changes(target, live.address.scope, ChangesLookup(), live.actor) }
+            assertTrue("The owned repository is readable before this normal link exercise", beforeChanges is ApiResult.Success)
+            assertFalse("External web-link acceptance must leave Collie's package", browserPackage == live.app.packageName)
+            ActivityScenario.launch<PaneActivity>(paneIntent(live)).use { scenario ->
+                await(scenario, "native admission for one harmless URL printf") { activity ->
+                    activity.findViewById<View>(R.id.send_button).isEnabled && activity.findViewById<EditText>(R.id.reply_input).isEnabled
+                }
+                onView(withId(R.id.reply_input)).perform(replaceText("printf '%s\\n' '$marker' '$url'"))
+                onView(withId(R.id.send_button)).perform(click())
+                await(scenario, "the actual fresh shell output contains a rendered exact HTTPS URLSpan") { activity ->
+                    val mirror = activity.findViewById<TextView>(R.id.terminal_text)
+                    val text = mirror.text as? Spanned
+                    text != null && text.toString().contains(marker) && text.getSpans(0, text.length, android.text.style.URLSpan::class.java)
+                        .any { it.url == url && text.subSequence(text.getSpanStart(it), text.getSpanEnd(it)).toString() == url }
+                }
+                onView(withId(R.id.terminal_text)).perform(closeSoftKeyboard())
+                awaitVisibleConfirmedPrintedPath(scenario, live, url)
+                val beforeRead = runBlocking {
+                    live.repository.readPane(live.address, conditional = false, markSeen = false, expectedContext = live.actor)
+                }
+                assertTrue("Capture the actual completed shell output before the read-only handoff", beforeRead is ApiResult.Success)
+                val observed = java.util.concurrent.atomic.AtomicReference<Intent?>(null)
+                val sends = java.util.concurrent.atomic.AtomicInteger()
+                val callback = androidx.test.runner.intent.IntentCallback { sent ->
+                    // Standard read-only AndroidX instrumentation observer. Never stub or block.
+                    if (sent.action == Intent.ACTION_VIEW && sent.dataString == url) {
+                        sends.incrementAndGet(); observed.compareAndSet(null, Intent(sent))
+                    }
+                }
+                val monitor = androidx.test.runner.intent.IntentMonitorRegistry.getInstance()
+                monitor.addIntentCallback(callback)
+                try {
+                    var x = -1
+                    var y = -1
+                    scenario.onActivity { activity ->
+                        assertTrue("The original native Pane owns the actual URL tap", activity.hasWindowFocus() &&
+                            ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED).contains(activity) &&
+                            live.repository.isCurrent(live.actor))
+                        val mirror = activity.findViewById<TextView>(R.id.terminal_text)
+                        val text = mirror.text as Spanned
+                        val span = text.getSpans(0, text.length, android.text.style.URLSpan::class.java)
+                            .filter { it.url == url }.maxByOrNull { text.getSpanStart(it) }
+                        val actual = requireNotNull(span)
+                        assertEquals(url, text.subSequence(text.getSpanStart(actual), text.getSpanEnd(actual)).toString())
+                        val layout = requireNotNull(mirror.layout)
+                        assertTrue("The actual URL layout must remain settled", !mirror.isLayoutRequested && layout.text.toString() == text.toString())
+                        val offset = text.getSpanStart(actual) + url.length / 2
+                        val line = layout.getLineForOffset(offset)
+                        val position = IntArray(2).also(mirror::getLocationOnScreen)
+                        x = (position[0] + mirror.compoundPaddingLeft + layout.getPrimaryHorizontal(offset) - mirror.scrollX).toInt()
+                        y = (position[1] + mirror.compoundPaddingTop + (layout.getLineTop(line) + layout.getLineBottom(line)) / 2f - mirror.scrollY).toInt()
+                        val visible = Rect()
+                        assertTrue("Only the actual visible URLSpan receives the normal touch", mirror.getGlobalVisibleRect(visible) && visible.contains(x, y))
+                        val insets = requireNotNull(ViewCompat.getRootWindowInsets(activity.window.decorView))
+                        assertFalse("No IME may cover the actual URL tap", insets.isVisible(WindowInsetsCompat.Type.ime()))
+                        assertFalse("Native selection must have ended before the link tap", mirror.hasSelection())
+                    }
+                    // Worker-thread injection lets the normal external activity open without an
+                    // Espresso in-process RESUMED-root wait after the actual ACTION_UP.
+                    val automation = instrumentation.uiAutomation
+                    val downTime = SystemClock.uptimeMillis()
+                    val properties = MotionEvent.PointerProperties().apply { id = 0; toolType = MotionEvent.TOOL_TYPE_FINGER }
+                    fun touch(action: Int) {
+                        val coordinates = MotionEvent.PointerCoords().apply {
+                            this.x = x.toFloat(); this.y = y.toFloat(); pressure = if (action == MotionEvent.ACTION_UP) 0f else 1f; size = 1f
+                        }
+                        val event = MotionEvent.obtain(downTime, SystemClock.uptimeMillis(), action, 1,
+                            arrayOf(properties), arrayOf(coordinates), 0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0)
+                        try { assertTrue("Android accepts the actual native URL touch", automation.injectInputEvent(event, true)) }
+                        finally { event.recycle() }
+                    }
+                    touch(MotionEvent.ACTION_DOWN); SystemClock.sleep(50); touch(MotionEvent.ACTION_UP)
+                    val deadline = SystemClock.uptimeMillis() + 5_000L
+                    var actualBrowser = false
+                    while (!actualBrowser && SystemClock.uptimeMillis() < deadline) {
+                        val root = automation.rootInActiveWindow
+                        try { actualBrowser = root?.isVisibleToUser == true && root.packageName?.toString() == browserPackage }
+                        finally { root?.recycle() }
+                        if (!actualBrowser) SystemClock.sleep(50)
+                    }
+                    assertTrue("The actual existing external browser must become foreground", actualBrowser)
+                    val sent = requireNotNull(observed.get()) { "No actual HTTPS ACTION_VIEW was observed from the native link touch" }
+                    assertEquals("One actual native link tap sends exactly one browser intent", 1, sends.get())
+                    assertEquals(url, sent.dataString)
+                    assertNull("The external handoff contains no Collie data attachment", sent.clipData)
+                    assertTrue("The normal URLSpan handoff must carry no headers or private Collie extras",
+                        sent.extras?.keySet().orEmpty().all { it == "com.android.browser.application_id" })
+                    sent.getStringExtra("com.android.browser.application_id")?.let { assertEquals(live.app.packageName, it) }
+                    assertSame("External navigation preserves the original paired credential", connection, live.app.container.connectionStore.connection.value)
+                    assertEquals("External navigation preserves the original committed pairing", committed, live.app.container.connectionStore.captureCommitted())
+                    assertTrue("External navigation retains the original pane actor", live.repository.isCurrent(live.actor))
+                    instrumentation.sendStatus(2, android.os.Bundle().apply {
+                        putString("nativeExternalLink", "ACTUAL_HTTPS_ACTION_VIEW_AND_BROWSER_FOREGROUND")
+                        putString("nativeExternalLinkPackage", browserPackage)
+                        putString("nativeExternalLinkUrl", url)
+                    })
+                    // One ordinary Android Back, not an intent/relaunch shortcut back to the pane.
+                    val backAt = SystemClock.uptimeMillis()
+                    for (action in intArrayOf(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.ACTION_UP)) {
+                        assertTrue("Normal Back returns from the browser", automation.injectInputEvent(
+                            android.view.KeyEvent(backAt, SystemClock.uptimeMillis(), action, android.view.KeyEvent.KEYCODE_BACK, 0), true))
+                    }
+                    await(scenario, "normal Back resumes the original Pane after the browser handoff") { activity ->
+                        activity.hasWindowFocus() && ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED).contains(activity) &&
+                            live.repository.isCurrent(live.actor) && activity.findViewById<TextView>(R.id.terminal_text).text.toString().contains(marker)
+                    }
+                } finally { monitor.removeIntentCallback(callback) }
+                val afterRead = runBlocking {
+                    live.repository.readPane(live.address, conditional = false, markSeen = false, expectedContext = live.actor)
+                }
+                assertTrue("The exact shell remains readable after the browser handoff", afterRead is ApiResult.Success)
+                assertEquals("Opening the HTTPS URL must preserve real terminal output and revision",
+                    (beforeRead as ApiResult.Success).value.pane, (afterRead as ApiResult.Success).value.pane)
+                val afterChanges = runBlocking { live.repository.changes(target, live.address.scope, ChangesLookup(), live.actor) }
+                assertTrue("The owned repository remains readable", afterChanges is ApiResult.Success)
+                assertEquals("External URL navigation must not change the owned repository", (beforeChanges as ApiResult.Success).value.state,
+                    (afterChanges as ApiResult.Success).value.state)
+                assertTrue("External navigation creates no additional launch intent",
+                    live.app.container.launchIntentStore.all().all { it.intent.requestId in launchIds })
+            }
+        }
+    }
+
     @Test fun liveLoadOlderScrollbackPreservesTheVisibleMirrorLine() = withLive { live ->
         // A bounded harmless printf creates enough real terminal scrollback to expose the
         // production Load older action. It writes no files and uses no fixture/test API.
+        val rowPrefix = "SCROLL_${UUID.randomUUID().toString().take(8)}_"
+        val rowPattern = Regex("${Regex.escape(rowPrefix)}[0-9]{4}")
+        val lastRow = rowPrefix + "0649"
         val command = buildString {
             append("printf '%s\\n'")
-            repeat(650) { index -> append(" 'SCROLL_").append(index.toString().padStart(4, '0')).append("'") }
+            repeat(650) { index -> append(" '").append(rowPrefix).append(index.toString().padStart(4, '0')).append("'") }
         }
         val target = ChangesTarget.Pane(live.address.paneId)
         val beforeChanges = runBlocking { live.repository.changes(target, live.address.scope, ChangesLookup(), live.actor) }
@@ -366,7 +579,42 @@ class PhysicalStockWorkflowsAcceptanceTest {
             onView(withId(R.id.send_button)).perform(click())
             await(scenario, "actual terminal output reaches the bounded initial window") { activity ->
                 val state = androidx.lifecycle.ViewModelProvider(activity)[PaneViewModel::class.java].state.value
-                state.pane?.text?.contains("SCROLL_0649") == true && state.loadedLines >= 600
+                val summary = state.panes.singleOrNull {
+                    it.paneId == live.address.paneId && it.host == live.address.scope.host && it.session == live.address.scope.session
+                }
+                val reportedDepth = listOfNotNull(summary?.readableLines, state.pane?.readableLines).maxOrNull() ?: 0
+                state.pane?.text?.contains(lastRow) == true && state.loadedLines >= 600 &&
+                    state.mux != null && reportedDepth > state.requestedLines
+            }
+            // ViewModel acceptance precedes background text preparation, TextView layout and
+            // the posted ScrollView restore. Observe actual geometry, not ViewModel readiness alone.
+            fun settledGeometry(activity: PaneActivity): List<Int>? {
+                assertTrue("Every geometry observation retains the original live pane actor", live.repository.isCurrent(live.actor))
+                val state = androidx.lifecycle.ViewModelProvider(activity)[PaneViewModel::class.java].state.value
+                val actor = state.paneReadContext ?: return null
+                if (state.savedCopy != null || actor.key != live.actor.key ||
+                    actor.navigationGeneration != live.actor.navigationGeneration ||
+                    actor.connection !== live.actor.connection || !live.repository.isCurrent(actor)) return null
+                val mirror = activity.findViewById<TextView>(R.id.terminal_text)
+                val scroll = activity.findViewById<android.widget.ScrollView>(R.id.terminal_scroll)
+                val child = scroll.getChildAt(0) ?: return null
+                val layout = mirror.layout ?: return null
+                val text = mirror.text.toString()
+                if (!mirror.isShown || !scroll.isShown || mirror.isLayoutRequested || scroll.isLayoutRequested ||
+                    child.isLayoutRequested || mirror.width <= 0 || mirror.height <= 0 || scroll.height <= 0 ||
+                    layout.text.toString() != text || text.lineSequence().none { it.trim() == lastRow }) return null
+                val location = IntArray(2).also(mirror::getLocationOnScreen)
+                val scrollLocation = IntArray(2).also(scroll::getLocationOnScreen)
+                return listOf(child.height, scroll.scrollY, mirror.height, mirror.width, layout.lineCount,
+                    location[1], scrollLocation[1], scroll.height, mirror.lineHeight, mirror.scrollY)
+            }
+            var priorGeometry: List<Int>? = null
+            var stableSamples = 0
+            await(scenario, "the initial 600-line mirror has completed its actual layout") { activity ->
+                val geometry = settledGeometry(activity)
+                stableSamples = if (geometry != null && geometry == priorGeometry) stableSamples + 1 else 0
+                priorGeometry = geometry
+                geometry != null && stableSamples >= 2
             }
             val beforeReadOnlyGrowth = runBlocking {
                 live.repository.readPane(live.address, conditional = false, markSeen = false, expectedContext = live.actor)
@@ -375,6 +623,7 @@ class PhysicalStockWorkflowsAcceptanceTest {
 
             var anchor = ""
             var anchorY = 0
+            var initialPrintedRows = 0
             scenario.onActivity { activity ->
                 val viewModel = androidx.lifecycle.ViewModelProvider(activity)[PaneViewModel::class.java]
                 val state = viewModel.state.value
@@ -395,13 +644,14 @@ class PhysicalStockWorkflowsAcceptanceTest {
                 scroll.scrollTo(0, 0)
                 val layout = requireNotNull(mirror.layout)
                 val text = mirror.text.toString()
+                initialPrintedRows = text.lineSequence().count { it.trim().matches(rowPattern) }
                 val location = IntArray(2).also(mirror::getLocationOnScreen)
                 val scrollLocation = IntArray(2).also(scroll::getLocationOnScreen)
                 for (line in 0 until layout.lineCount) {
                     val start = layout.getLineStart(line)
                     val end = layout.getLineEnd(line).coerceAtMost(text.length)
                     val candidate = text.substring(start, end).trim()
-                    if (candidate.matches(Regex("SCROLL_[0-9]{4}"))) {
+                    if (candidate.matches(rowPattern)) {
                         val top = location[1] + mirror.paddingTop + layout.getLineTop(line) - mirror.scrollY
                         val bottom = location[1] + mirror.paddingTop + layout.getLineBottom(line) - mirror.scrollY
                         if (bottom > scrollLocation[1] && top < scrollLocation[1] + scroll.height) {
@@ -414,9 +664,30 @@ class PhysicalStockWorkflowsAcceptanceTest {
                 assertTrue("Initial 600-line mirror window must contain a visible unique scrollback row", anchor.isNotEmpty())
                 assertTrue("The native Load older control must be available for this readable pane", button.performClick())
             }
-            await(scenario, "the native read window grows while the mirror viewport remains anchored") { activity ->
+            priorGeometry = null
+            stableSamples = 0
+            await(scenario, "the expanded mirror layout and restored anchor settle within one line-height") { activity ->
                 val state = androidx.lifecycle.ViewModelProvider(activity)[PaneViewModel::class.java].state.value
-                state.loadedLines > 600 && !state.loadingOlder && state.pane?.text?.contains(anchor) == true
+                val geometry = settledGeometry(activity)
+                val mirror = activity.findViewById<TextView>(R.id.terminal_text)
+                val lines = mirror.text.toString().lineSequence().toList()
+                val matches = lines.withIndex().filter { it.value.trim() == anchor }
+                // The old 600-line TextView can remain settled while the new state prepares.
+                // More actual owned rows proves this is the expanded render, not that old layout.
+                val expanded = state.loadedLines > 600 && !state.loadingOlder && state.pane?.text?.contains(anchor) == true &&
+                    lines.count { it.trim().matches(rowPattern) } > initialPrintedRows
+                var restoredY: Int? = null
+                if (expanded && geometry != null && matches.size == 1) {
+                    val offset = lines.take(matches.single().index).sumOf { it.length + 1 }
+                    val layout = requireNotNull(mirror.layout)
+                    val lineIndex = layout.getLineForOffset(offset.coerceAtMost(mirror.text.length))
+                    val location = IntArray(2).also(mirror::getLocationOnScreen)
+                    restoredY = location[1] + mirror.paddingTop + layout.getLineTop(lineIndex) - mirror.scrollY
+                }
+                val anchored = restoredY != null && kotlin.math.abs(restoredY - anchorY) <= mirror.lineHeight
+                stableSamples = if (anchored && geometry == priorGeometry) stableSamples + 1 else 0
+                priorGeometry = geometry.takeIf { anchored }
+                anchored && stableSamples >= 2
             }
             scenario.onActivity { activity ->
                 val mirror = activity.findViewById<TextView>(R.id.terminal_text)
@@ -446,6 +717,227 @@ class PhysicalStockWorkflowsAcceptanceTest {
                 (beforeChanges as ApiResult.Success).value.state, (repoAfter as ApiResult.Success).value.state)
             assertTrue("Scrollback reads must retain the exact live pane actor", live.repository.isCurrent(live.actor))
         }
+    }
+
+    /** Public cross-window accessibility only; remote toolbar surfaces need not be Espresso views. */
+    private fun copyExactSelectedMirrorThroughVisibleToolbar(
+        scenario: ActivityScenario<PaneActivity>, live: Live, marker: String,
+    ) {
+        val automation = instrumentation.uiAutomation
+        val info = automation.serviceInfo
+        val priorFlags = info.flags
+        info.flags = priorFlags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
+            android.accessibilityservice.AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
+        automation.serviceInfo = info
+        val copyLabel = live.app.getString(android.R.string.copy)
+        fun originalPane(selectionRequired: Boolean = true): Rect {
+            var bounds = Rect()
+            scenario.onActivity { activity ->
+                assertTrue("Copy requires the original resumed native Pane", activity.hasWindowFocus() &&
+                    ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED).contains(activity))
+                assertTrue("Copy requires the original current pane actor", live.repository.isCurrent(live.actor))
+                val state = androidx.lifecycle.ViewModelProvider(activity)[PaneViewModel::class.java].state.value
+                val actor = requireNotNull(state.paneReadContext)
+                assertTrue("Copy must retain original live custody without a saved copy", state.savedCopy == null &&
+                    actor.key == live.actor.key && actor.navigationGeneration == live.actor.navigationGeneration &&
+                    actor.connection === live.actor.connection && live.repository.isCurrent(actor))
+                if (selectionRequired) {
+                    val mirror = activity.findViewById<TextView>(R.id.terminal_text)
+                    val start = minOf(mirror.selectionStart, mirror.selectionEnd)
+                    val end = maxOf(mirror.selectionStart, mirror.selectionEnd)
+                    assertTrue("The actual native selection must remain available before Copy", start >= 0 && end > start)
+                    assertEquals("Only the exact fresh marker may be copied", marker, mirror.text.subSequence(start, end).toString())
+                }
+                assertTrue("The original native Pane window must remain visible", activity.window.decorView.getGlobalVisibleRect(bounds))
+            }
+            return bounds
+        }
+        fun copyNode(node: android.view.accessibility.AccessibilityNodeInfo): Boolean =
+            node.isVisibleToUser && node.isEnabled && (node.text?.toString() == copyLabel || node.contentDescription?.toString() == copyLabel)
+        fun clickable(node: android.view.accessibility.AccessibilityNodeInfo): Boolean = node.isClickable ||
+            node.actionList.any { it.id == android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK }
+        fun trustedPackage(name: String): Boolean = name == live.app.packageName || name == "android" || try {
+            val flags = live.app.packageManager.getApplicationInfo(name, 0).flags
+            flags and (android.content.pm.ApplicationInfo.FLAG_SYSTEM or android.content.pm.ApplicationInfo.FLAG_UPDATED_SYSTEM_APP) != 0
+        } catch (_: android.content.pm.PackageManager.NameNotFoundException) { false }
+        data class Target(val label: android.view.accessibility.AccessibilityNodeInfo,
+            val touch: android.view.accessibility.AccessibilityNodeInfo, val bounds: Rect, val window: Int,
+            val rootWindow: Int, val pkg: String) {
+            fun key() = "$window/$rootWindow/$pkg/$bounds"
+            fun close() { label.recycle(); touch.recycle() }
+        }
+        var lastWindows = ""
+        var priorTarget: String? = null
+        try {
+            val deadline = SystemClock.uptimeMillis() + 5_000L
+            while (SystemClock.uptimeMillis() < deadline) {
+                val paneBounds = originalPane()
+                val targets = mutableListOf<Target>()
+                val windows = automation.windows
+                val metadata = mutableListOf<String>()
+                try {
+                    for (window in windows.take(24)) {
+                        val windowBounds = Rect().also(window::getBoundsInScreen)
+                        val root = window.root
+                        metadata += "id=${window.id},type=${window.type},layer=${window.layer},pkg=${root?.packageName},class=${root?.className},bounds=$windowBounds"
+                        if (root == null) continue
+                        try {
+                            if (window.type !in setOf(android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION,
+                                    android.view.accessibility.AccessibilityWindowInfo.TYPE_SYSTEM) ||
+                                !Rect.intersects(paneBounds, windowBounds)) continue
+                            var visited = 0
+                            fun visit(node: android.view.accessibility.AccessibilityNodeInfo, depth: Int) {
+                                if (++visited > 2_000 || depth > 32) return
+                                if (copyNode(node)) {
+                                    var touch = android.view.accessibility.AccessibilityNodeInfo.obtain(node)
+                                    try {
+                                        var ancestors = 0
+                                        while (!clickable(touch) && ancestors++ < 3) {
+                                            val parent = touch.parent ?: break
+                                            touch.recycle(); touch = parent
+                                        }
+                                        val bounds = Rect().also(touch::getBoundsInScreen)
+                                        val pkg = touch.packageName?.toString().orEmpty()
+                                        val labelPkg = node.packageName?.toString().orEmpty()
+                                        val trusted = trustedPackage(pkg) && trustedPackage(labelPkg)
+                                        if (targets.size < 8) metadata += "copyPackage=$labelPkg,touchPackage=$pkg,class=${node.className},nodeWindow=${node.windowId},touchWindow=${touch.windowId},bounds=$bounds,clickable=${clickable(touch)},trusted=$trusted"
+                                        if (touch.isVisibleToUser && touch.isEnabled && clickable(touch) && !bounds.isEmpty &&
+                                            paneBounds.contains(bounds) && windowBounds.contains(bounds) && trusted) {
+                                            targets += Target(android.view.accessibility.AccessibilityNodeInfo.obtain(node),
+                                                android.view.accessibility.AccessibilityNodeInfo.obtain(touch), bounds, touch.windowId, window.id, pkg)
+                                        }
+                                    } finally { touch.recycle() }
+                                }
+                                for (index in 0 until node.childCount) {
+                                    if (visited >= 2_000) break
+                                    val child = node.getChild(index) ?: continue
+                                    try { visit(child, depth + 1) } finally { child.recycle() }
+                                }
+                            }
+                            visit(root, 0)
+                        } finally { root.recycle() }
+                    }
+                    lastWindows = metadata.joinToString("; ")
+                    val target = targets.distinctBy { it.key() }.singleOrNull()
+                    if (target != null && priorTarget == target.key()) {
+                        val before = Rect(target.bounds)
+                        if (!target.label.refresh() || !target.touch.refresh() || !copyNode(target.label) ||
+                            !target.touch.isVisibleToUser || !target.touch.isEnabled || !clickable(target.touch) ||
+                            target.touch.packageName?.toString() != target.pkg || target.touch.windowId != target.window ||
+                            Rect().also(target.touch::getBoundsInScreen) != before) continue
+                        assertTrue("The exact Copy action remains inside the original visible Pane", originalPane().contains(before))
+                        instrumentation.sendStatus(2, android.os.Bundle().apply {
+                            putString("nativeCopyToolbar", "VISIBLE_COPY")
+                            putString("nativeCopyPackage", target.pkg)
+                            putString("nativeCopyWindow", target.window.toString())
+                            putString("nativeCopyRootWindow", target.rootWindow.toString())
+                            putString("nativeCopyBounds", before.toString())
+                            putString("nativeCopyWindows", lastWindows)
+                        })
+                        val downTime = SystemClock.uptimeMillis()
+                        val properties = android.view.MotionEvent.PointerProperties().apply {
+                            id = 0; toolType = MotionEvent.TOOL_TYPE_FINGER
+                        }
+                        fun touch(action: Int) {
+                            val coordinates = android.view.MotionEvent.PointerCoords().apply {
+                                x = before.centerX().toFloat(); y = before.centerY().toFloat()
+                                pressure = if (action == MotionEvent.ACTION_UP) 0f else 1f; size = 1f
+                            }
+                            val event = MotionEvent.obtain(downTime, SystemClock.uptimeMillis(), action, 1,
+                                arrayOf(properties), arrayOf(coordinates), 0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_TOUCHSCREEN, 0)
+                            try { assertTrue("Android accepts the normal touch on its actual visible Copy control", automation.injectInputEvent(event, true)) }
+                            finally { event.recycle() }
+                        }
+                        touch(MotionEvent.ACTION_DOWN)
+                        SystemClock.sleep(50)
+                        touch(MotionEvent.ACTION_UP)
+                        val clipboard = live.app.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                        val copiedDeadline = SystemClock.uptimeMillis() + 2_000L
+                        while (SystemClock.uptimeMillis() < copiedDeadline) {
+                            originalPane(selectionRequired = false)
+                            if (clipboard.primaryClip?.getItemAt(0)?.coerceToText(live.app)?.toString() == marker) return
+                            SystemClock.sleep(25)
+                        }
+                        fail("Actual visible native Copy did not place the exact fresh selection on the clipboard")
+                    }
+                    priorTarget = target?.key()
+                } finally { targets.forEach { it.close() }; windows.forEach { it.recycle() } }
+                SystemClock.sleep(100)
+            }
+            instrumentation.sendStatus(2, android.os.Bundle().apply {
+                putString("nativeCopyToolbar", "NO_UNIQUE_VISIBLE_COPY_WITHIN_5S")
+                putString("nativeCopyWindows", lastWindows)
+            })
+            fail("No unique visible native Copy control was exposed within five seconds; window metadata emitted without UI text")
+        } finally {
+            info.flags = priorFlags
+            automation.serviceInfo = info
+        }
+    }
+
+    /** Wait for the real post-Copy viewport before touching the confirmed native link. */
+    private fun awaitVisibleConfirmedPrintedPath(scenario: ActivityScenario<PaneActivity>, live: Live, path: String) {
+        val deadline = SystemClock.uptimeMillis() + 5_000L
+        var previous: List<Int>? = null
+        var stable = 0
+        var diagnostic = "not-observed"
+        while (SystemClock.uptimeMillis() < deadline) {
+            var geometry: List<Int>? = null
+            scenario.onActivity { activity ->
+                assertTrue("Printed-path readiness retains the original pane actor", live.repository.isCurrent(live.actor))
+                val resumed = ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED)
+                val state = androidx.lifecycle.ViewModelProvider(activity)[PaneViewModel::class.java].state.value
+                val actor = state.paneReadContext
+                val mirror = activity.findViewById<TextView>(R.id.terminal_text)
+                val scroll = activity.findViewById<android.widget.ScrollView>(R.id.terminal_scroll)
+                val insets = ViewCompat.getRootWindowInsets(activity.window.decorView)
+                val imeHidden = insets != null && !insets.isVisible(WindowInsetsCompat.Type.ime())
+                val selectionEnded = !mirror.hasSelection()
+                val layout = mirror.layout
+                val laidOut = layout != null && layout.text.toString() == mirror.text.toString() &&
+                    !mirror.isLayoutRequested && !scroll.isLayoutRequested && mirror.isShown && mirror.width > 0 && mirror.height > 0
+                val original = resumed.contains(activity) && activity.hasWindowFocus() && state.savedCopy == null &&
+                    actor != null && actor.key == live.actor.key && actor.navigationGeneration == live.actor.navigationGeneration &&
+                    actor.connection === live.actor.connection && live.repository.isCurrent(actor)
+                diagnostic = "resumed=${resumed.map { it.javaClass.simpleName }},paneFocused=${activity.hasWindowFocus()},original=$original,imeHidden=$imeHidden,selectionEnded=$selectionEnded,laidOut=$laidOut"
+                val occurrence = clickableSpanOccurrence(mirror, path)
+                if (original && imeHidden && selectionEnded && laidOut && occurrence != null) {
+                    val actualLayout = requireNotNull(layout)
+                    val offset = occurrence.first + path.length / 2
+                    val line = actualLayout.getLineForOffset(offset)
+                    val localX = mirror.compoundPaddingLeft + actualLayout.getPrimaryHorizontal(offset) - mirror.scrollX
+                    val localY = mirror.compoundPaddingTop + (actualLayout.getLineTop(line) + actualLayout.getLineBottom(line)) / 2f - mirror.scrollY
+                    val position = IntArray(2).also(mirror::getLocationOnScreen)
+                    val x = (position[0] + localX).toInt()
+                    val y = (position[1] + localY).toInt()
+                    val visible = Rect()
+                    val decor = activity.window.decorView
+                    val decorPosition = IntArray(2).also(decor::getLocationOnScreen)
+                    val system = requireNotNull(insets).getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+                    val safe = Rect(decorPosition[0] + system.left, decorPosition[1] + system.top,
+                        decorPosition[0] + decor.width - system.right, decorPosition[1] + decor.height - system.bottom)
+                    val pointVisible = localX >= 0f && localX < mirror.width && localY >= 0f && localY < mirror.height &&
+                        mirror.getGlobalVisibleRect(visible) && visible.contains(x, y) && safe.contains(x, y)
+                    diagnostic += ",confirmed=true,pointVisible=$pointVisible"
+                    if (pointVisible) geometry = listOf(x, y, mirror.width, mirror.height, actualLayout.lineCount,
+                        scroll.scrollY, scroll.height, visible.top, visible.bottom)
+                }
+            }
+            stable = if (geometry != null && geometry == previous) stable + 1 else 0
+            previous = geometry
+            if (geometry != null && stable >= 2) return
+            SystemClock.sleep(100)
+        }
+        val root = instrumentation.uiAutomation.rootInActiveWindow
+        try {
+            instrumentation.sendStatus(2, android.os.Bundle().apply {
+                putString("nativePrintedPathReadiness", diagnostic)
+                putString("nativePrintedPathActivePackage", root?.packageName?.toString())
+                putString("nativePrintedPathActiveClass", root?.className?.toString())
+                putString("nativePrintedPathActiveWindow", root?.windowId?.toString())
+            })
+        } finally { root?.recycle() }
+        fail("Original resumed Pane and visible confirmed path did not settle after native Copy/IME close within five seconds")
     }
 
     private fun paneIntent(live: Live) = Intent(live.app, PaneActivity::class.java)
@@ -500,16 +992,25 @@ class PhysicalStockWorkflowsAcceptanceTest {
     private fun visibleText(root: View) = descendants(root).filterIsInstance<TextView>().filter { it.isShown }.map { it.text.toString() }
     private fun fileRow(activity: FilesActivity, name: String): TextView? = descendants(activity.findViewById(R.id.files_list))
         .filterIsInstance<TextView>().singleOrNull { it.isShown && it.isClickable && it.contentDescription?.toString() == activity.getString(R.string.files_open_file, name) }
-    private fun changeButton(activity: ChangesActivity): TextView? = descendants(activity.findViewById(R.id.changes_content))
-        .filterIsInstance<TextView>().singleOrNull { it.isShown && it.isClickable && it.text.toString().contains("  $TEXT  ") }
+    private fun changeButton(activity: ChangesActivity, path: String = TEXT): TextView? = descendants(activity.findViewById(R.id.changes_content))
+        .filterIsInstance<TextView>().singleOrNull { it.isShown && it.isClickable && it.text.toString().contains("  $path  ") }
     private fun changeAction(activity: ChangesActivity, label: String): TextView? = descendants(activity.findViewById(R.id.changes_content))
         .filterIsInstance<TextView>().singleOrNull { it.isShown && it.isClickable && it.text.toString() == label }
-    private fun clickableSpan(view: TextView, value: String): ClickableSpan? {
-        val start = view.text.toString().indexOf(value)
-        if (start < 0) return null
+    private fun clickableSpan(view: TextView, value: String): ClickableSpan? = clickableSpanOccurrence(view, value)?.second
+
+    private fun clickableSpanOccurrence(view: TextView, value: String): Pair<Int, ClickableSpan>? {
+        val text = view.text.toString()
         val spanned = view.text as? Spanned ?: return null
-        return spanned.getSpans(start, start + value.length, ClickableSpan::class.java)
-            ?.firstOrNull { spanned.getSpanStart(it) <= start && spanned.getSpanEnd(it) >= start + value.length }
+        // The latest printed occurrence follows this run's fresh copy marker; older echoed
+        // commands can carry the same confirmed path outside the current viewport.
+        var start = text.lastIndexOf(value)
+        while (start >= 0) {
+            val span = spanned.getSpans(start, start + value.length, ClickableSpan::class.java)
+                ?.firstOrNull { spanned.getSpanStart(it) <= start && spanned.getSpanEnd(it) >= start + value.length }
+            if (span != null) return start to span
+            start = if (start == 0) -1 else text.lastIndexOf(value, start - 1)
+        }
+        return null
     }
 
     private fun longPressText(token: String): ViewAction = textGesture(token, longPress = true)
@@ -522,11 +1023,11 @@ class PhysicalStockWorkflowsAcceptanceTest {
         override fun perform(uiController: UiController, view: View) {
             val textView = view as? TextView ?: throw AssertionError("Mirror gesture target must be a native TextView")
             val text = textView.text
-            val start = text.toString().indexOf(token)
-            if (start < 0) throw AssertionError("Requested text is absent from the native mirror: $token")
-            if (!longPress && clickableSpan(textView, token) == null) {
-                throw AssertionError("Only a currently confirmed Files reference may be opened: $token")
-            }
+            val occurrence = if (longPress) null else clickableSpanOccurrence(textView, token)
+            // The terminal transcript may echo both an input command and its printed output.
+            // Select the final marker occurrence, and tap only the occurrence actually spanned as a link.
+            val start = if (longPress) text.toString().lastIndexOf(token) else occurrence?.first ?: -1
+            if (start < 0) throw AssertionError("Requested native output text is absent or has no confirmed link span: $token")
             val layout = requireNotNull(textView.layout) { "Native mirror text must be laid out before the touch" }
             val offset = start + token.length / 2
             val line = layout.getLineForOffset(offset)
@@ -545,6 +1046,10 @@ class PhysicalStockWorkflowsAcceptanceTest {
             val decor = textView.rootView
             val insets = ViewCompat.getRootWindowInsets(decor)
                 ?: throw AssertionError("Native mirror gesture needs the live window's actual system insets")
+            if (!longPress && (insets.isVisible(WindowInsetsCompat.Type.ime()) || textView.isLayoutRequested ||
+                    layout.text.toString() != text.toString() || textView.hasSelection())) {
+                throw AssertionError("Confirmed printed path must remain laid out with IME hidden and native selection ended immediately before touch")
+            }
             val safeInsets = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
             val decorPosition = IntArray(2).also(decor::getLocationOnScreen)
             val safe = Rect(decorPosition[0] + safeInsets.left, decorPosition[1] + safeInsets.top,
@@ -552,15 +1057,19 @@ class PhysicalStockWorkflowsAcceptanceTest {
             if (!safe.contains(screenX, screenY)) {
                 throw AssertionError("Requested native text point is outside the real system-safe content area: $token")
             }
+            val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
             val downTime = SystemClock.uptimeMillis()
-            val down = MotionEvent.obtain(downTime, downTime, MotionEvent.ACTION_DOWN, x, y, 0)
-            try {
-                textView.dispatchTouchEvent(down)
-                if (longPress) uiController.loopMainThreadForAtLeast(ViewConfiguration.getLongPressTimeout().toLong() + 100L)
-                val upTime = SystemClock.uptimeMillis()
-                val up = MotionEvent.obtain(downTime, upTime, MotionEvent.ACTION_UP, x, y, 0)
-                try { textView.dispatchTouchEvent(up) } finally { up.recycle() }
-            } finally { down.recycle() }
+            val down = MotionEvent.obtain(downTime, downTime, MotionEvent.ACTION_DOWN, screenX.toFloat(), screenY.toFloat(), 0)
+                .apply { source = InputDevice.SOURCE_TOUCHSCREEN }
+            val downAccepted = try { automation.injectInputEvent(down, false) } finally { down.recycle() }
+            if (!downAccepted) throw AssertionError("Android rejected the exact native text-touch down: $token")
+            uiController.loopMainThreadForAtLeast(
+                if (longPress) ViewConfiguration.getLongPressTimeout().toLong() + 100L else 50L,
+            )
+            val up = MotionEvent.obtain(downTime, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, screenX.toFloat(), screenY.toFloat(), 0)
+                .apply { source = InputDevice.SOURCE_TOUCHSCREEN }
+            val upAccepted = try { automation.injectInputEvent(up, false) } finally { up.recycle() }
+            if (!upAccepted) throw AssertionError("Android rejected the exact native text-touch up: $token")
         }
     }
 
@@ -585,6 +1094,7 @@ class PhysicalStockWorkflowsAcceptanceTest {
     private companion object {
         const val TIMEOUT = 30_000L
         const val TEXT = "acceptance.txt"
+        const val HEAD_SOURCE = "completion-shell.sh"
         const val IMAGE = "acceptance.png"
         const val BASE = "COLLIE_FIXTURE_BASE 漢字 e\u0301 👨‍💻"
         const val CHANGE = "COLLIE_FIXTURE_CHANGE λ"
