@@ -101,6 +101,120 @@ class AndroidAppUpdatesActivityTest {
     }
 
     @Test
+    fun actualCanceledWorkInfoCannotPublishOverHeldExplicitCheck() {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+        com.lateapex.collie.data.SignedUpdateUiFixture(context, originalWorkerFactory).use { fixture ->
+            val controller = Robolectric.buildActivity(AndroidAppUpdatesActivity::class.java)
+            val activity = controller.get()
+            activity.originalRepositoryForTests = fixture.repository
+            controller.create().start().resume()
+            val entered = CompletableDeferred<Unit>()
+            val release = CompletableDeferred<Unit>()
+            var lookups = 0
+            activity.latestLookupForTests = {
+                lookups++; entered.complete(Unit); release.await(); AndroidReleaseLookup.UpToDate
+            }
+            val manager = androidx.work.WorkManager.getInstance(context)
+            val witness = kotlinx.coroutines.runBlocking { fixture.reserveDownload() }
+            try {
+                // Production enqueue and actual WorkManager rows. Do not deliver CONNECTED:
+                // there is no download/network worker running, and no WorkInfo is injected.
+                com.lateapex.collie.data.ApkDownloadWorker.enqueue(context, witness.operationId)
+                awaitMain {
+                    manager.getWorkInfosByTag(witness.operationId).get(5, java.util.concurrent.TimeUnit.SECONDS)
+                        .any { it.state == androidx.work.WorkInfo.State.ENQUEUED }
+                }
+                val check = activity.findViewById<android.widget.Button>(R.id.android_updates_check_button)
+                val status = activity.findViewById<android.widget.TextView>(R.id.android_updates_status_view)
+                check.performClick(); awaitMain { entered.isCompleted }
+                assertFalse(release.isCompleted)
+                manager.cancelUniqueWork(com.lateapex.collie.data.ApkDownloadWorker.uniqueWorkName(witness.operationId))
+                    .result.get(5, java.util.concurrent.TimeUnit.SECONDS)
+                // With no worker execution, only the Activity's real WorkInfo observer can
+                // acknowledge this cancellation in its original repository. That proves the
+                // competing producer was delivered before asserting current lookup controls.
+                awaitMain { fixture.repository.currentOperation()?.lifecycleState == "canceled" }
+                assertEquals(0, originalWorkerFactory.matchedOriginals.get())
+                assertFalse("Actual canceled WorkInfo must not enable Check while the explicit lookup is held", check.isEnabled)
+                assertEquals(activity.getString(R.string.android_updates_checking), status.text)
+                assertFalse(activity.findViewById<android.widget.Button>(R.id.android_updates_download_button).isEnabled)
+                assertFalse(activity.findViewById<android.widget.Button>(R.id.android_updates_install_button).isEnabled)
+                assertEquals(1, lookups)
+                release.complete(Unit)
+                awaitMain { check.isEnabled }
+                assertEquals(activity.getString(R.string.android_updates_current), status.text)
+                assertEquals(1, lookups)
+            } finally {
+                release.complete(Unit)
+                controller.pause().stop().destroy()
+                manager.cancelUniqueWork(com.lateapex.collie.data.ApkDownloadWorker.uniqueWorkName(witness.operationId))
+                    .result.get(5, java.util.concurrent.TimeUnit.SECONDS)
+            }
+        }
+    }
+
+    @Test
+    fun oldStoppedLookupCompletionCannotUnlockANewerHeldExplicitCheck() {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+        com.lateapex.collie.data.SignedUpdateUiFixture(context, originalWorkerFactory).use { fixture ->
+            val controller = Robolectric.buildActivity(AndroidAppUpdatesActivity::class.java)
+            val activity = controller.get()
+            activity.originalRepositoryForTests = fixture.repository
+            controller.create().start().resume()
+            val oldEntered = CompletableDeferred<Unit>()
+            val oldRelease = CompletableDeferred<Unit>()
+            val oldReturned = CompletableDeferred<Unit>()
+            val newEntered = CompletableDeferred<Unit>()
+            val newRelease = CompletableDeferred<Unit>()
+            var lookups = 0
+            activity.latestLookupForTests = {
+                lookups++; oldEntered.complete(Unit); oldRelease.await()
+                oldReturned.complete(Unit); AndroidReleaseLookup.UpToDate
+            }
+            val manager = androidx.work.WorkManager.getInstance(context)
+            val witness = kotlinx.coroutines.runBlocking { fixture.reserveDownload() }
+            val check = activity.findViewById<android.widget.Button>(R.id.android_updates_check_button)
+            val status = activity.findViewById<android.widget.TextView>(R.id.android_updates_status_view)
+            try {
+                com.lateapex.collie.data.ApkDownloadWorker.enqueue(context, witness.operationId)
+                awaitMain {
+                    manager.getWorkInfosByTag(witness.operationId).get(5, java.util.concurrent.TimeUnit.SECONDS)
+                        .any { it.state == androidx.work.WorkInfo.State.ENQUEUED }
+                }
+                check.performClick(); awaitMain { oldEntered.isCompleted }
+                controller.pause().stop().start().resume()
+                assertTrue("Restart exposes an explicit fresh Check without replay", check.isEnabled)
+                assertEquals(1, lookups)
+                activity.latestLookupForTests = {
+                    lookups++; newEntered.complete(Unit); newRelease.await(); AndroidReleaseLookup.UpToDate
+                }
+                check.performClick(); awaitMain { newEntered.isCompleted }
+                oldRelease.complete(Unit); awaitMain { oldReturned.isCompleted }
+                Shadows.shadowOf(Looper.getMainLooper()).idle()
+                // Deliver the actual competing publisher AFTER the old completion. A plain
+                // boolean cleared by that old completion would now let this WorkInfo unlock
+                // the new Check, even though isCurrentAction blocked a direct old UI write.
+                manager.cancelUniqueWork(com.lateapex.collie.data.ApkDownloadWorker.uniqueWorkName(witness.operationId))
+                    .result.get(5, java.util.concurrent.TimeUnit.SECONDS)
+                awaitMain { fixture.repository.currentOperation()?.lifecycleState == "canceled" }
+                assertEquals(0, originalWorkerFactory.matchedOriginals.get())
+                assertFalse(newRelease.isCompleted)
+                assertFalse("Old completion cannot clear the new Check's admission against actual WorkInfo", check.isEnabled)
+                assertEquals(activity.getString(R.string.android_updates_checking), status.text)
+                assertEquals(2, lookups)
+                newRelease.complete(Unit); awaitMain { check.isEnabled }
+                assertEquals(activity.getString(R.string.android_updates_current), status.text)
+                assertEquals(2, lookups)
+            } finally {
+                oldRelease.complete(Unit); newRelease.complete(Unit)
+                controller.pause().stop().destroy()
+                manager.cancelUniqueWork(com.lateapex.collie.data.ApkDownloadWorker.uniqueWorkName(witness.operationId))
+                    .result.get(5, java.util.concurrent.TimeUnit.SECONDS)
+            }
+        }
+    }
+
+    @Test
     fun restrictedDistributionHidesInstallerAndRetainsExplicitCheckAndDownloadReview() {
         val controller = Robolectric.buildActivity(AndroidAppUpdatesActivity::class.java).create()
         val activity = controller.get()

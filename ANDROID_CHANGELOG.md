@@ -5,6 +5,8 @@ Android app releases use `android-vX.Y.Z` tags. The inherited server/PWA history
 
 ## Unreleased
 
+- Keep explicit Android update checks in control while download state arrives. Screen restart permits a fresh check without retrying automatically, and retired lookups cannot unlock a newer check.
+
 ## 1.6.0 - 2026-10-14
 
 - Reconcile the native client with official Collie v1.21.0 and unmodified Herdr v0.9.4. Required workflows use Collie HTTP without private Herdr protocol extensions.

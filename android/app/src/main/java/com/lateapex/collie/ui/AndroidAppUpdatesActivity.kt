@@ -57,6 +57,8 @@ class AndroidAppUpdatesActivity : AppCompatActivity() {
     private var started = false
     private var screenGeneration = 0L
     private var userActionGeneration = 0L
+    private class CheckLookup(val screen: Long, val action: Long)
+    private var pendingCheck: CheckLookup? = null
     internal var latestLookupForTests: (suspend (Long) -> AndroidReleaseLookup)? = null
     private val installListener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key == "install_attempt" && started) publishCurrentInstall()
@@ -185,6 +187,7 @@ class AndroidAppUpdatesActivity : AppCompatActivity() {
         started = false
         repository.removeInstallListener(installListener)
         screenGeneration++
+        pendingCheck = null
         retireInstallReview()
         super.onStop()
     }
@@ -198,6 +201,7 @@ class AndroidAppUpdatesActivity : AppCompatActivity() {
         retireInstallReview()
         val action = ++userActionGeneration
         val generation = screenGeneration
+        val originalCheck = CheckLookup(generation, action).also { pendingCheck = it }
         checkButton.isEnabled = false
         downloadButton.isEnabled = false
         installButton.isEnabled = false
@@ -236,6 +240,8 @@ class AndroidAppUpdatesActivity : AppCompatActivity() {
                     },
                 )
             }
+            // A retired lookup cannot clear a replacement screen/action's admission.
+            if (pendingCheck === originalCheck) pendingCheck = null
             if (isCurrentAction(generation, action)) checkButton.isEnabled = true
         }
     }
@@ -290,6 +296,10 @@ class AndroidAppUpdatesActivity : AppCompatActivity() {
                     if (!sameInstallOperation(original, currentOperation, phases)) retireInstallReview()
                 }
                 operationId = currentOperation?.operationId
+                // Cancellation bookkeeping above remains live, but a delayed download-table
+                // emission cannot replace a newer explicit Check's controls or offer status.
+                val checking = pendingCheck
+                if (checking != null && isCurrentAction(checking.screen, checking.action)) return@observe
                 val active = currentOperation?.let { current ->
                     infos?.firstOrNull { !it.state.isFinished && current.operationId in it.tags }
                 }
