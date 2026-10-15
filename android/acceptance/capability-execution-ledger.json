@@ -16590,7 +16590,7 @@
       "scope": "26 reviewed paths guard integrated; real index unchanged; all422 native hashes match passing preview"
     }
   ],
-  "updated_at": "2026-10-15T01:20:00.994858+00:00",
+  "updated_at": "2026-10-15T01:44:57.374442+00:00",
   "current_evidence": {
     "root_20261011_1429": {
       "B10": "joined20 source WHOLE approved; allfive1111/0, bridge5680/Crew68; integrated24/privatebasis106c7c2; device/fullacceptance OPEN",
@@ -17372,7 +17372,7 @@
     "note": "Active completion goal; historical expanded scope and acceptance claims are superseded."
   },
   "completion_execution_20261013": {
-    "status": "active",
+    "status": "retained_workflows_accepted_with_explicit_conditional_limits_final_signed_release_pending",
     "source_committed": true,
     "released": false,
     "bridge_tests": {
@@ -17453,14 +17453,16 @@
       "pending_image_host_navigation": "436 PASS genuine Crew qa-lead image read held, normal Dashboard subject retirement1425ms and actual hostrow→promotedlead, actual call cancellation/downstream disconnected/no publication after release. Caddy80348 restored; exactrelay stopped.",
       "crew_files": "437 PASS native qa-lead Files Unicode source and real PNG, source433. Initial432 correctly403 because peer allowlist lacked validated paired label; only exact owned label explicitly appended, header enforcement preserved.",
       "crew_host_session": "441 PASS exact normal qa-lead/cc13-crew-extra selection, recreate/reopen, current live actor/unchangedpair, originalscope restored. Original431 preflightwronghost and435 premature hiddenselector retained as honest failedtest evidence.",
-      "external_https_url": "442 PASS actual rendered native HTTPS link→one actual ACTION_VIEW→existing default app.vanadium.browser foreground→normalBack, same actor/pair/terminal/Git. No browser pagebody/history read or delivery claim."
+      "external_https_url": "442 PASS actual rendered native HTTPS link→one actual ACTION_VIEW→existing default app.vanadium.browser foreground→normalBack, same actor/pair/terminal/Git. No browser pagebody/history read or delivery claim.",
+      "latest_retained_workflow_source": "Parent committed reviewed physical acceptance helpers/results d431397f; application203 remains APK SHA256 b21065429ab6196bd805e101ea20c3f0deb9fb55d401f264702146d8f6a40abb, Pixel9Pro caiman API37 through dell-7680. git diff2cbdeb9c..d431397f -- android/app/src/main android/app/build.gradle.kts android/gradle.lockfile is empty: latest changes are test helpers and evidence, not new application behavior. Final signed1.6/code4 artifact smoke and upgrade remain separate required checks.",
+      "gone_session_attempt446": "446 failed stale test assumption that evicted Pane persists;448 failed invented sticky missing-dashboard scope. Both actualbackend404 and normalclosedPane recovery occurred; no product pass claimed for these attempts.",
+      "gone_session_safe_recovery": "450 PASS24.288s exact owned officialsessionstop afterrealnativeREADY, actualsession.unknown404, oldPane destroyed/oldactor retired/no fallbackPane, fresh declared dashboard read actor, primaryoutput/revision unchanged, samepair/incarnation; onlyread navigation restored. Extra daemon remains stopped."
     },
     "remaining": [
-      "finite retained workflow gaps identified in corrected_crosswalk_dispositions; no expanded historical counts",
-      "remaining retained crosswalk acceptance/dispositions",
-      "final integrated gates/CI/security scan",
-      "reviewed signed release",
-      "same-signer upgrade"
+      "final clean1.6.0/code4 release commit and required gates/CI/security scan",
+      "review signed exact artifact and draft; fresh production-package Pixel smoke",
+      "publish unchanged reviewed Android assets and verify anonymous native same-signer3-to4 upgrade preserving pairing/preferences",
+      "final evidence and owned fixture cleanup"
     ],
     "cli_tests": {
       "pass": 1957,
@@ -18546,7 +18548,7 @@
       "B36": {
         "scope_decision": "retain_subset",
         "retained_requirement": "Require documented multi-session selection/state. Herdr backup/restore/handoff administration is outside native parity; display upstream restore failures honestly.",
-        "disposition": "actual_named_session_selection_reopen_passed_gone_negative_pending",
+        "disposition": "retained_named_session_select_reopen_and_gone_refusal_actual_pixel_passed",
         "actual_evidence": [
           {
             "artifact": "/tmp/collie-completion-pixel170.log",
@@ -18565,11 +18567,16 @@
             "method": "nativeDashboardSelectsRealCrewHostAndNamedSessionAcrossReopen",
             "result": "actual Pixel PASS1test7.784s, instrumentation440",
             "proves": "Actual host-specific all-sessions HTTPS census reports reachable nonprimary cc13-crew-extra pane; normal native host selector→qa-lead/session selector→cc13-crew-extra, Activity recreate and fresh reopen preserve exact host/session/current pane actor and original committed pair; original dashboard scope restored."
+          },
+          {
+            "artifact": "/var/tmp/collie-completion-20261013/pixel-crew-gone450.log",
+            "method": "nativeCrewGoneSessionRefusesRetainedPaneWithoutPrimaryRedirect",
+            "result": "actual Pixel PASS1test24.288s, instrumentation449",
+            "proves": "Actual live named qa-lead/cc13-crew-extra/w1:p1 actor admitted, same local pane id also exists in primary. Only after native READY parent official CLI stops exact owned extra daemon. Real404 session.unknown, original Pane destroyed/actor retired/no live fallback Pane, fresh current dashboard actor in shipping validated read scope with no subject and changed navigation generation. Primary terminal text/revision unchanged, original pairing/incarnation unchanged; normal host menu returns to lead.",
+            "limits": "Normal dashboard read restoration can select a valid primary scope. No stale write dispatched; inactive cached ViewModel state is not treated as authority. Earlier446/448 false test assumptions preserved as failed attempts, not product defects."
           }
         ],
-        "remaining_required_workflow": [
-          "Verify genuine owned session disappearance refuses/stays scoped without redirecting write; normal selection/reopen441 passed."
-        ],
+        "remaining_required_workflow": [],
         "coverage_limits": [
           "Full backup/restore/handoff administration is excluded; no requirement to create new host services."
         ]
@@ -18577,11 +18584,12 @@
       "B37": {
         "scope_decision": "retain_subset",
         "retained_requirement": "Consume the documented Windows Collie contract and capability limits; do not develop new Windows Herdr/Crew/build/service features. Retain applicable existing private-state protections.",
-        "disposition": "explicit_accepted_environment_limit",
+        "disposition": "documented_contract_with_failed_optional_ci_and_no_live_windows_phone_acceptance",
         "actual_evidence": [],
         "remaining_required_workflow": [],
         "coverage_limits": [
-          "No available live Windows environment is established. This is an explicit honest environment limitation accepted for the corrected scope, not a live Windows pass or a new Windows development prerequisite. Existing applicable source protections remain supporting evidence."
+          "No live Windows Collie host connected to the Pixel is established. Actual Windows CI is available and failed as recorded below; neither a fixture nor that failed run certifies live Windows behavior. Existing applicable private-state source protections remain in place.",
+          "Actual optional Windows backend workflow38663872452 retains141fail (mostly null runtime named-pipe witness/old host control test grid),62existing skips, deadline before fullCLI/scripts. This is failed Windows CI evidence, not an unavailable environment or successful live Windows acceptance. Windows workflow declares itself non-required; Android RELEASING/build/signing workflow requires native gates, not inherited server Windows rehearsal. No new Windows service or host feature developed to close B37."
         ]
       },
       "B38": {
@@ -18728,11 +18736,12 @@
     },
     "ci_status": {
       "pr": "https://github.com/Buckeyes22/collie/pull/5",
-      "source_commit": "0c5da99d3dd63ca7a8a009162cae3e3f9828fb20",
-      "run": 38663872412,
+      "source_commit": "9225ad62d7d4a4d3dd831cbeb938a484f0507ffc",
+      "run": 38665327106,
       "windows_run": 38663872452,
-      "status": "Browser and Crew pass; root scripts fails solely stale skip-budget assertion; native Android and Windows still live at 2026-10-15T01:21Z. No release cut.",
-      "details": "9225ad62 commits independently reviewed test-only exact documented62/1/23 skip census correction; focused7PASS60assert. Normal pre-push421 backend and web pass; exact git push held before remote update to preserve current Windows failure evidence. Windows ACL/path/real named-pipe and different-PID replacement fixtures committed0c5da99; no new skips, protection changes or feature scope expansion."
+      "status": "9225 root/typecheck+tests and Crew pass; browser/native still running at01:31UTC. Later Pixel acceptance d431397f committed locally; final release commit gates pending.",
+      "details": "9225ad62 commits independently reviewed test-only exact documented62/1/23 skip census correction; focused7PASS60assert. Normal pre-push421 backend and web pass; exact git push held before remote update to preserve current Windows failure evidence. Windows ACL/path/real named-pipe and different-PID replacement fixtures committed0c5da99; no new skips, protection changes or feature scope expansion.",
+      "windows_result": "actual6488pass/141fail/62skip, bridge872.24s; job deadline interruptsCLI, scripts not run; artifact11940856341 preserved /var/tmp/collie-completion-20261013/windows-38663872452. Optional Windows workflow explicitly not required by Android release workflow; no pass claimed."
     }
   }
 }

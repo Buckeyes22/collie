@@ -633,6 +633,187 @@ class PhysicalStockOrganizationAcceptanceTest {
         }
     }
 
+    /** A real removed peer session never redirects its retained pane actor to the primary. */
+    @Test
+    fun nativeCrewGoneSessionRefusesRetainedPaneWithoutPrimaryRedirect() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val args = InstrumentationRegistry.getArguments()
+        assumeTrue("Explicit nativeCrewGoneSession=true is required", args.getString("nativeCrewGoneSession") == "true")
+        val (app, repository, connection) = crewProfile()
+        val committed = requireNotNull(app.container.connectionStore.captureCommitted())
+        val savedDashboardScope = app.container.nativePreferences.dashboardScope
+        assertSame(connection, committed.connection)
+        assertTrue("The original Crew pairing must have durable custody", committed.incarnationId != null)
+        val host = requireNotNull(args.getString("expectedCrewHostId"))
+        val session = requireNotNull(args.getString("expectedCrewSessionName"))
+        assertEquals("Only the owned acceptance peer may be retired", "qa-lead", host)
+        assertEquals("Only the owned extra acceptance session may disappear", "cc13-crew-extra", session)
+        val paneId = "w1:p1"
+        val scope = Scope(host = host, session = session)
+        val address = PaneAddress(scope, paneId)
+        val primary = PaneAddress(Scope(host = host), paneId)
+        fun samePair() {
+            assertSame("The same paired connection must remain installed", connection, app.container.connectionStore.connection.value)
+            assertEquals("The original committed incarnation must remain unchanged", committed, app.container.connectionStore.captureCommitted())
+        }
+        val censusScope = Scope(host = host, viewAll = true)
+        val censusActor = requireNotNull(repository.readContext(censusScope))
+        val censusResult = runBlocking { repository.snapshot(censusScope, censusActor) }
+        assertTrue("The actual peer census must be live", censusResult is ApiResult.Success)
+        assertTrue(repository.isCurrent(censusActor))
+        samePair()
+        val census = (censusResult as ApiResult.Success).value
+        val lead = requireNotNull(census.servers.orEmpty().singleOrNull { it.isLead && it.reachable })
+        assertEquals("The other owned Crew member remains lead", "qa-deputy", lead.id)
+        assertTrue(census.servers.orEmpty().single { it.id == host }.reachable)
+        assertTrue(census.sessions.any { it.host == host && it.name == session && !it.isPrimary && it.reachable })
+        val primarySession = census.sessions.single { it.host == host && it.isPrimary && it.reachable }.name
+        val target = requireNotNull(census.panes().singleOrNull { it.host == host && it.session == session && it.paneId == paneId })
+        assertTrue("The primary has the same local pane id, making redirection observable",
+            census.panes().any { it.host == host && it.session == primarySession && it.paneId == paneId })
+        val intent = Intent(app, PaneActivity::class.java)
+            .putExtra(PaneActivity.EXTRA_PANE_ID, paneId)
+            .putExtra(PaneActivity.EXTRA_HOST, host)
+            .putExtra(PaneActivity.EXTRA_SESSION, session)
+            .putExtra(PaneActivity.EXTRA_AGENT, target.agent)
+            .putExtra(PaneActivity.EXTRA_TITLE, "Owned Crew session disappearance")
+            .putExtra(PaneActivity.EXTRA_CWD, target.cwd)
+        try {
+            ActivityScenario.launch<PaneActivity>(intent).use { pane ->
+                await(pane, "exact named peer pane has a fresh live read and admitted composer") { activity ->
+                    val state = ViewModelProvider(activity)[PaneViewModel::class.java].state.value
+                    val actor = state.paneReadContext
+                    actor != null && repository.isCurrent(actor) && actor.committedSnapshot == committed &&
+                        actor.requestScope == scope && actor.key.subjectIdentity == paneId && state.savedCopy == null &&
+                        state.lastSuccessAt != null && state.pane?.paneId == paneId &&
+                        PaneWriteGate.block(address, state) == null && activity.findViewById<View>(R.id.reply_input).isEnabled
+                }
+                lateinit var retained: ScopedReadContext
+                lateinit var retainedModel: PaneViewModel
+                lateinit var retainedActivity: PaneActivity
+                pane.onActivity { activity ->
+                    retainedActivity = activity
+                    retainedModel = ViewModelProvider(activity)[PaneViewModel::class.java]
+                    retained = requireNotNull(retainedModel.state.value.paneReadContext)
+                }
+                fun primaryRead(): com.lateapex.collie.network.PaneReadResponse {
+                    val actor = requireNotNull(repository.readContext(primary.scope, paneId))
+                    val result = runBlocking { repository.readPane(primary, markSeen = false, conditional = false, expectedContext = actor) }
+                    assertTrue("The actual primary pane remains readable without writing", result is ApiResult.Success)
+                    assertTrue(repository.isCurrent(actor))
+                    samePair()
+                    return (result as ApiResult.Success).value.pane
+                }
+                val primaryBefore = primaryRead()
+                assertTrue("The exact named actor remains current before external retirement", repository.isCurrent(retained))
+                instrumentation.sendStatus(2, android.os.Bundle().apply {
+                    putString("nativeCrewGoneSession", "READY_REAL_NAMED_PANE")
+                    putString("nativeCrewGoneHost", host)
+                    putString("nativeCrewGoneSessionName", session)
+                    putString("nativeCrewGonePane", paneId)
+                })
+                var gone: com.lateapex.collie.network.ApiFailure.Http? = null
+                val deadline = SystemClock.uptimeMillis() + WAIT_MS
+                while (gone == null && SystemClock.uptimeMillis() < deadline) {
+                    samePair()
+                    // Ordinary recovery may already have retired the pane actor. A new READ actor
+                    // still names only the exact missing session; it never substitutes the primary.
+                    val readActor = retained.takeIf(repository::isCurrent) ?: requireNotNull(repository.readContext(scope, paneId))
+                    assertEquals(scope, readActor.requestScope)
+                    assertEquals(committed, readActor.committedSnapshot)
+                    val read = runBlocking { repository.readPane(address, markSeen = false, conditional = false, expectedContext = readActor) }
+                    val failure = (read as? ApiResult.Failure)?.error as? com.lateapex.collie.network.ApiFailure.Http
+                    if (failure?.status == 404 && failure.code == "session.unknown") gone = failure
+                    else SystemClock.sleep(250)
+                }
+                val refusal = requireNotNull(gone) { "The parent must stop only the owned extra daemon after READY; its actual read must become session.unknown/404" }
+                var recovered = false
+                var recoveryDiagnostic = "No recovered dashboard observed"
+                val recoveryDeadline = SystemClock.uptimeMillis() + WAIT_MS
+                while (!recovered && SystemClock.uptimeMillis() < recoveryDeadline) {
+                    instrumentation.runOnMainSync {
+                        val lifecycle = ActivityLifecycleMonitorRegistry.getInstance()
+                        val main = lifecycle.getActivitiesInStage(Stage.RESUMED).filterIsInstance<MainActivity>().singleOrNull()
+                        val livePane = listOf(Stage.CREATED, Stage.STARTED, Stage.RESUMED, Stage.PAUSED, Stage.STOPPED)
+                            .flatMap { lifecycle.getActivitiesInStage(it) }.filterIsInstance<PaneActivity>()
+                            .any { !it.isDestroyed && !it.isFinishing }
+                        val model = main?.let { ViewModelProvider(it)[MainViewModel::class.java] }
+                        val state = model?.state?.value
+                        val actor = model?.originalContext
+                        val snapshot = state?.snapshot
+                        val error = main?.findViewById<TextView>(R.id.error_text)
+                        val visibleFailure = state != null && state.snapshotFailed && !state.error.isNullOrBlank() &&
+                            error?.isShown == true && error.text.toString() == state.error
+                        // A named peer snapshot can be a live scoped-empty200 after its session
+                        // disappears. That is unavailable, not a fabricated dashboard HTTP error.
+                        val scopedEmpty = state != null && state.savedCopy == null && state.lastSuccessAt != null &&
+                            state.originalReadContext?.let { it.requestScope == scope && repository.isCurrent(it) } == true &&
+                            snapshot != null && snapshot.sessions.none { it.host == host && it.name == session && it.reachable } &&
+                            snapshot.panes().none { it.host == host && it.session == session }
+                        val dashboardScope = model?.currentScope
+                        // A new Main restores its saved dashboard scope; a validating retained Main
+                        // may resolve the now-missing session to that host's primary. Both are READ
+                        // navigation. Neither may reopen a pane or reuse its retired subject actor.
+                        // The fresh snapshot's server/session roster is global even when its panes
+                        // are scoped, so it supplies the same fields the shipping resolver reads.
+                        val restoredScope = snapshot?.let { DashboardScopePersistence.validate(savedDashboardScope, it) }
+                        val resolvedGoneScope = snapshot?.let { DashboardScopePersistence.validate(scope, it) }
+                        val freshDashboard = dashboardScope != null && state != null && state.savedCopy == null &&
+                            state.lastSuccessAt != null && state.originalReadContext?.let {
+                                it.requestScope == dashboardScope && repository.isCurrent(it)
+                            } == true
+                        val supportedReadNavigation = dashboardScope == scope && (visibleFailure || scopedEmpty) ||
+                            freshDashboard && (dashboardScope == restoredScope || dashboardScope == resolvedGoneScope)
+                        val currentDashboardActor = dashboardScope != null && state != null && state.savedCopy == null && actor != null &&
+                            actor.requestScope == dashboardScope && actor.key.host == dashboardScope.host &&
+                            actor.key.session == dashboardScope.session && actor.key.subjectIdentity == null &&
+                            actor.committedSnapshot == committed && actor.navigationGeneration != retained.navigationGeneration &&
+                            repository.isCurrent(actor)
+                        val retired = repository.isActorRetired(retained)
+                        // This inactive model can retain an old immutable UI state after onCleared;
+                        // its gate label is diagnostic only. Retirement and lifecycle own admission.
+                        val oldGate = PaneWriteGate.block(address, retainedModel.state.value)?.javaClass?.simpleName ?: "none"
+                        recoveryDiagnostic = "mainScope=${dashboardScope?.host ?: "lead"}/${dashboardScope?.session ?: "primary"}" +
+                            " currentActor=$currentDashboardActor freshDashboard=$freshDashboard" +
+                            " destroyed=${retainedActivity.isDestroyed} noLivePane=${!livePane} retired=$retired" +
+                            " oldGate=$oldGate supportedReadNavigation=$supportedReadNavigation"
+                        recovered = retainedActivity.isDestroyed && !livePane && currentDashboardActor && retired && supportedReadNavigation
+                    }
+                    if (!recovered) SystemClock.sleep(100)
+                }
+                if (!recovered) Log.i(TAG, "Crew gone-session recovery: $recoveryDiagnostic")
+                assertTrue("Normal closed-pane recovery must retire the pane and use a fresh declared dashboard read scope without a fallback pane: $recoveryDiagnostic", recovered)
+                assertEquals("The real missing-session read is independently refused", 404, refusal.status)
+                val primaryAfter = primaryRead()
+                assertEquals("A gone named session must not alter the colliding primary pane", primaryBefore.text, primaryAfter.text)
+                assertEquals("No terminal bytes may advance the primary pane revision", primaryBefore.revision, primaryAfter.revision)
+                assertTrue("The retired actor remains bound to the original named scope", retained.requestScope == scope && repository.isActorRetired(retained))
+                samePair()
+                instrumentation.sendStatus(2, android.os.Bundle().apply {
+                    putString("nativeCrewGoneSession", "ACTUAL_SESSION_UNKNOWN_SAFE_PANE_EVICTION_PRIMARY_UNCHANGED")
+                })
+            }
+        } finally {
+            // Leave through the ordinary dashboard host selector after the negative assertions.
+            ActivityScenario.launch(MainActivity::class.java).use { dashboard ->
+                await(dashboard, "the normal dashboard offers the actual Crew lead") { activity ->
+                    activity.findViewById<View>(R.id.host_switcher)?.isShown == true &&
+                        ViewModelProvider(activity)[MainViewModel::class.java].state.value.snapshot?.servers?.any { it.id == lead.id } == true
+                }
+                onView(withId(R.id.host_switcher)).perform(click())
+                onView(withText(lead.name.ifBlank { lead.id })).inRoot(isDialog()).perform(click())
+                await(dashboard, "ordinary host selection returns to the current lead primary session") { activity ->
+                    val model = ViewModelProvider(activity)[MainViewModel::class.java]
+                    val actor = model.state.value.originalReadContext
+                    model.currentScope == Scope() && model.state.value.savedCopy == null &&
+                        model.state.value.lastSuccessAt != null && actor != null && repository.isCurrent(actor) &&
+                        actor.committedSnapshot == committed
+                }
+            }
+            samePair()
+        }
+    }
+
     /** Native New exposes host-owned Recent and Favourites rows; only a fixture path is starred, then restored. */
     @Test
     fun nativeFolderPickerSelectsRecentAndRestoresFixtureFavouriteState() {
