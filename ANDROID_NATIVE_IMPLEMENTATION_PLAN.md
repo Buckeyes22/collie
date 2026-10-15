@@ -91,7 +91,8 @@ Do not copy StormLens's Capacitor/WebView foundation. Collie's Android client is
 
 Current support includes Android 16 / API 36 and newer, following the user's October 15, 2026
 compatibility request. Stable compile SDK 37.2 and target API 37 remain pinned; the minimum is API 36.
-Physical acceptance covers the authorized Samsung/API-36 device and prior Pixel/API-37 evidence.
+Runtime acceptance covers a separate local API-36 emulator and the authorized Samsung/API-37
+phone after its OS update, alongside prior Pixel/API-37 evidence.
 Current build pins and validation are recorded in [android/TOOLCHAIN.md](android/TOOLCHAIN.md). The dated results and
 initial pins below are historical, not older-platform requirements or current acceptance.
 

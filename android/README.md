@@ -345,8 +345,8 @@ later records a 193-step physical-device walk and additional checks. The emulato
 script is historical tooling; it is not part of the current acceptance policy.
 
 Compilation is not acceptance. Supported-device coverage includes the Samsung SM-S938U1 running
-Android 16 / API 36 over wireless ADB and the prior physical Pixel Android 17 / API 37 acceptance
-through dell-7680. Select the authorized serial explicitly. Instrumentation must use the isolated
+Android 17 / API 37 over wireless ADB after its OS update, API 36 in a separate local emulator,
+and prior physical Pixel Android 17 / API 37 acceptance through dell-7680. Select the authorized serial explicitly. Instrumentation must use the isolated
 completion namespace; do not reinstall or clear a personal app namespace:
 
 ```bash
@@ -547,8 +547,8 @@ through dial readiness and every managed write/drain continuation. Before any by
 retirement is a refusal; an accepted prefix or lost reply remains uncertain. There is no automatic
 second request. A full Node transport queue has already accepted its one payload and cannot be
 recalled as a proven zero-effect refusal. This local fence does not provide a vendor filesystem
-or occupant CAS. Current Android support includes API 36 and newer, with authorized Samsung API 36 checks and
-prior Pixel API 37 evidence; older dated matrices remain historical and do not expand current scope.
+or occupant CAS. Current Android support includes API 36 and newer, with API 36 local emulator checks and
+authorized Samsung / prior Pixel API 37 evidence; older dated matrices remain historical and do not expand current scope.
 
 ## Named agents and waits
 

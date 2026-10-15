@@ -162,8 +162,9 @@ Smoke-test the signed artifact and complete the current physical-device checks b
 
 Android compatibility acceptance covers Android 16 / API 36 and Android 17 / API 37.
 Use the authorized physical device over its existing USB or wireless ADB connection and synthetic
-terminal content. The Samsung SM-S938U1 provides API 36 coverage; prior API 37 acceptance used
-the owned Pixel through dell-7680. Do not run uninstalling instrumentation against another
+terminal content. The Samsung SM-S938U1 updated to API 37 during the compatibility work; API 36
+runtime coverage uses a separate local test emulator, while API 37 physical coverage includes
+the Samsung and prior Pixel evidence through dell-7680. Do not run uninstalling instrumentation against another
 personal app namespace: the runner may reinstall the app and erase its local connection.
 Pre-API-36 and emulator results are historical evidence, not current release acceptance.
 The [toolchain record](TOOLCHAIN.md) describes the stable SDK and build pins.
