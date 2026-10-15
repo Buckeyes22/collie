@@ -5,6 +5,8 @@ Android app releases use `android-vX.Y.Z` tags. The inherited server/PWA history
 
 ## Unreleased
 
+- Support Android 16 / API 36 alongside Android 17, retaining the current target SDK and build toolchain. Verify native setup, settings, fonts, licenses and system-bar insets on both supported APIs.
+
 ## 1.6.0 - 2026-10-14
 
 - Reconcile the native client with official Collie v1.21.0 and unmodified Herdr v0.9.4. Required workflows use Collie HTTP without private Herdr protocol extensions.

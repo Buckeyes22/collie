@@ -160,10 +160,12 @@ database, or the scan step failed.
 
 Smoke-test the signed artifact and complete the current physical-device checks before publication.
 
-Current Android acceptance uses the owned physical Pixel running Android 17 / API 37 on
-dell-7680 and synthetic terminal content. Do not run uninstalling instrumentation against another
+Android compatibility acceptance covers Android 16 / API 36 and Android 17 / API 37.
+Use the authorized physical device over its existing USB or wireless ADB connection and synthetic
+terminal content. The Samsung SM-S938U1 provides API 36 coverage; prior API 37 acceptance used
+the owned Pixel through dell-7680. Do not run uninstalling instrumentation against another
 personal app namespace: the runner may reinstall the app and erase its local connection.
-Older API/emulator results are historical evidence, not current release acceptance.
+Pre-API-36 and emulator results are historical evidence, not current release acceptance.
 The [toolchain record](TOOLCHAIN.md) describes the stable SDK and build pins.
 
 Initial artifact smoke check:

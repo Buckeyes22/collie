@@ -4,7 +4,7 @@ Connect the native app to your own Collie server and pair your phone for termina
 
 ## Before you start
 
-You need the current Android 17 release (API 37) and a reachable Collie HTTPS server.
+You need Android 16 (API 36) or newer and a reachable Collie HTTPS server.
 
 The app is a client of the bridge API. Install the server using the upstream
 [installation guide](https://github.com/AltanS/collie/blob/main/docs/install.md) if needed.

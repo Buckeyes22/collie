@@ -20,7 +20,7 @@ android {
 
     defaultConfig {
         applicationId = "com.lateapex.collie"
-        minSdk = 37
+        minSdk = 36
         targetSdk = 37
         versionCode = 4
         versionName = "1.6.0"

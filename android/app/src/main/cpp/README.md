@@ -41,7 +41,7 @@ The installed NDK 27.1.12297006 provides native headers/stubs through API 35 and
 rejects `ANDROID_PLATFORM=android-37`. Configure this library with native-only
 `ANDROID_PLATFORM=latest`, `ANDROID_STL=c++_static`, and
 `ANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON`; the installed CMake is 3.22.1. The app
-keeps compile SDK 37.2, min/target 37 and its existing JDK/AGP/Gradle/Kotlin pins.
+keeps compile SDK 37.2, minimum API 36 / target API 37 and its existing JDK/AGP/Gradle/Kotlin pins.
 This library calls no API newer than the available native stubs. Link options
 set 16 KiB page alignment and export only the named JNI entry point.
 

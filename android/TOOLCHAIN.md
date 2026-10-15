@@ -1,6 +1,6 @@
 # Current Android toolchain
 
-Collie for Android supports the current Android 17 release (API 37) under the user's latest-only policy.
+Collie for Android supports Android 16 / API 36 and newer. Android 16 support was added at the user's request on October 15, 2026; the current compile SDK, target SDK and toolchain remain pinned.
 
 ## Stable pins
 
@@ -9,7 +9,7 @@ The candidate build uses the latest stable versions eligible under the repositor
 | Component | Pin | Primary release evidence |
 | --- | --- | --- |
 | Compile SDK | 37.2 | [Android 17 SDK setup](https://developer.android.com/about/versions/17/setup-sdk); official stable repository platform 37.2 |
-| Minimum / target API | 37 | Android 17 only; no older-platform acceptance matrix |
+| Minimum / target API | 36 / 37 | Android 16 and newer; compile SDK remains 37.2 |
 | SDK Build Tools | 37.0.0 | Official Android SDK repository stable channel |
 | Android Gradle Plugin | 9.4.1 | [AGP 9.4 compatibility](https://developer.android.com/build/releases/agp-9-4-0-release-notes); Google artifact published September 18 |
 | Gradle wrapper | 9.8.0 | [Gradle release](https://github.com/gradle/gradle/releases/tag/v9.8.0), September 24; verified distribution and wrapper JAR checksums |
@@ -36,7 +36,7 @@ ROOT's current Gradle configuration check passed. A separate dependency-graph-on
 
 Generated dependency notices describe the 81 resolved release-runtime modules. An artifact-bound SBOM still requires a real release APK. The subsequent MockWebServer 3 artifact change requires another coordinated lock update; lock enforcement remains enabled. Fresh lint, APK builds, complete native regressions and independent review remain pending.
 
-All behavioral assertions, deadlines, two-gigabyte test heaps, class isolation and security checks are retained. Robolectric uses SDK 37; its documented JDK access flags apply only to test workers. Older test SDK selectors change platform selection, without deleting test methods or assertions. Actual Android acceptance uses the physical Pixel on dell-7680; JVM results do not establish device behavior, font/TalkBack usability, lifecycle or signed-upgrade success.
+All behavioral assertions, deadlines, two-gigabyte test heaps, class isolation and security checks are retained. The main Robolectric suite uses SDK 37; setup/settings, typography, licenses and inset regressions also run on SDK 36; its documented JDK access flags apply only to test workers. Older test SDK selectors change platform selection, without deleting test methods or assertions. Actual Android acceptance includes the authorized Samsung SM-S938U1 on API 36 over wireless ADB and prior Pixel API 37 evidence through dell-7680; JVM results do not establish device behavior, font/TalkBack usability, lifecycle or signed-upgrade success.
 
 ## Remaining cleanup and evidence
 

@@ -168,7 +168,7 @@ jobs:
           SOURCE_COMMIT: ${{ github.sha }}
         run: |
           cat > "$RUNNER_TEMP/android-notes.md" <<EOF
-          Native Android client for a self-hosted Collie server. Requires Android 17 / API 37 (current release).
+          Native Android client for a self-hosted Collie server. Requires Android 16 / API 36 or newer.
 
           This is a draft: complete the artifact smoke check in android/RELEASING.md before publishing, and list what it covered here.
 

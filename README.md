@@ -32,7 +32,7 @@ You need a reachable Collie HTTPS server as well as an Android phone.
 
 | Requirement | Details |
 | --- | --- |
-| Android | Current Android 17 / API 37 |
+| Android | Android 16 / API 36 or newer |
 | Server | A self-hosted Collie deployment; HTTP contracts reconciled to official Collie v1.21.0 |
 | Network | Usually Tailscale on the host and phone, with access to the same tailnet |
 | Device access | A short-lived pairing code generated on the host with `collie pair` |

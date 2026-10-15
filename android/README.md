@@ -167,14 +167,14 @@ physical Pixel lifecycle/large-font/TalkBack acceptance and the signed-provider 
 | JDK toolchain | 21 |
 | Java/Kotlin bytecode | 17 |
 | Compile SDK | Stable 37.2 |
-| Minimum and target SDK | 37 |
+| Minimum and target SDK | 36 / 37 |
 | Gradle wrapper | 9.8.0 |
 | Android Gradle Plugin | 9.4.1, built-in Kotlin |
 | Kotlin compiler, serialization plugin and runtime BOM | 2.4.20 |
 | SDK Build Tools | 37.0.0 |
 | Robolectric | 4.17, SDK 37 |
 
-The current policy supports Android 17 / API 37 only. Stable tooling and dependencies must be
+The app supports Android 16 / API 36 and newer, while retaining target API 37. Stable tooling and dependencies must be
 at least seven days old before adoption. See [the toolchain migration record](TOOLCHAIN.md)
 for pinned versions, pending lock resolution and validation limits.
 
@@ -344,17 +344,20 @@ unavailable describes that day's ADB state; the [2026-09-11 UX walk](acceptance/
 later records a 193-step physical-device walk and additional checks. The emulator interaction
 script is historical tooling; it is not part of the current acceptance policy.
 
-Compilation is not acceptance. Current acceptance uses the owned physical Pixel running Android 17
-on dell-7680. Run against its explicitly selected serial; do not reinstall another app namespace:
+Compilation is not acceptance. Supported-device coverage includes the Samsung SM-S938U1 running
+Android 16 / API 36 over wireless ADB and the prior physical Pixel Android 17 / API 37 acceptance
+through dell-7680. Select the authorized serial explicitly. Instrumentation must use the isolated
+completion namespace; do not reinstall or clear a personal app namespace:
 
 ```bash
-adb install -r app/build/outputs/apk/debug/app-debug.apk
-adb shell am start -n com.lateapex.collie.debug/com.lateapex.collie.ui.MainActivity
+./gradlew -PcollieCompletionAcceptance=true assembleDebug assembleDebugAndroidTest
+adb -s "$COLLIE_DEVICE_SERIAL" install --user 0 -r app/build/outputs/apk/debug/app-debug.apk
+adb -s "$COLLIE_DEVICE_SERIAL" shell am start -n com.lateapex.collie.completiontest/com.lateapex.collie.ui.MainActivity
 ```
 
 The following dated device and emulator results are historical. They do not establish current
-Android 17 acceptance or require an older-platform matrix. Current functional, security,
-lifecycle, large-font and TalkBack checks remain required on the physical Pixel.
+fresh Android 16 or Android 17 acceptance or require support below API 36. Current functional,
+security, lifecycle, large-font and TalkBack evidence remains recorded with its actual device/API.
 
 A partial physical-device pass was recorded on 2026-09-04 against an upgrade-installed debug APK on
 the paired Samsung Galaxy S25 Ultra (`SM-S938U1`, Android/API 36). Native launch/live reads, one
@@ -434,7 +437,7 @@ must be configured before that workflow can complete. The signing helper also su
 preparation. See [Releasing](RELEASING.md) for versioning, signing, acceptance and publication.
 
 Unsigned and debug APKs are development artifacts. A public APK needs release signing, passing build checks and a basic artifact smoke check.
-Current physical Pixel security, lifecycle, large-font and TalkBack acceptance remains required; disclose untested scope accurately.
+Retain physical-device security, lifecycle, large-font and TalkBack evidence with its actual device/API; disclose untested scope accurately.
 
 The current package is `versionName=1.6.0`, `versionCode=4`. Android `versionCode` is monotonic and
 independent of the Collie server release mechanism; every APK distributed as an update must use a
@@ -544,8 +547,8 @@ through dial readiness and every managed write/drain continuation. Before any by
 retirement is a refusal; an accepted prefix or lost reply remains uncertain. There is no automatic
 second request. A full Node transport queue has already accepted its one payload and cannot be
 recalled as a proven zero-effect refusal. This local fence does not provide a vendor filesystem
-or occupant CAS. Current user acceptance targets latest versions and the physical Pixel; old
-version/device matrices remain historical evidence and are not current acceptance requirements.
+or occupant CAS. Current Android support includes API 36 and newer, with authorized Samsung API 36 checks and
+prior Pixel API 37 evidence; older dated matrices remain historical and do not expand current scope.
 
 ## Named agents and waits
 
