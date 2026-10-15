@@ -16590,7 +16590,7 @@
       "scope": "26 reviewed paths guard integrated; real index unchanged; all422 native hashes match passing preview"
     }
   ],
-  "updated_at": "2026-10-14T23:55:11.304850+00:00",
+  "updated_at": "2026-10-15T00:18:32.121050+00:00",
   "current_evidence": {
     "root_20261011_1429": {
       "B10": "joined20 source WHOLE approved; allfive1111/0, bridge5680/Crew68; integrated24/privatebasis106c7c2; device/fullacceptance OPEN",
@@ -17385,7 +17385,7 @@
       "todo": 44
     },
     "last_full_native": "Fresh209 integratedall1501unitPASS0fail/errors/skips10m32s, afterreviewedRecentbaselinefix and reviewedRobolectricpausedpoll correction. Earlier190/200 failed one test finalpoll; corrected208focusedPASS12s and209fullPASS. lintDebug/lintRelease/assembleRelease204PASS1m39s; debug/testbuild203PASS6s. APKsigning/CI/finalreleaseartifactgates stillpending.",
-    "current_apk_and_lint": "Installed production-code app203 SHA256 b21065429ab6196bd805e101ea20c3f0deb9fb55d401f264702146d8f6a40abb; installed instrumentation227 SHA256 780cad97c6ebbe7e447db6caf4a75e1cc5d00143cb0b03b07fd25cb303a14130. Test228 built but not installed. Debug/test203 PASS; lintDebug/lintRelease/assembleRelease204 PASS. Full native209: 1501 tests, zero failures/errors/skips after independently reviewed Robolectric poll-clock correction; final CI/signing remain pending. Latest test241 built PASS7s and installed: SHA256 6b07680d1bc493a57304ede37020d92b8540b30077c2bdb02d85cb8744d75b17. Production-code app203 unchanged. Test252 built PASS6s and installed SHA256 68e9f6abdae5f32e20f0534110a1b124bab54f6ecd82db4ab2563516da20ca48. Latest installed instrumentation261 builtPASS1s SHA256 f724f3d9bf3e7eccb9ac0e9db664414ceb770bcc1d036e39da9a9aed7d3060cc. Includes independently reviewed durable turn-boundary helper; no production change after app203. Latestinstalledtest271builtPASS2s SHA256 aec35be742edb7be9be046bb65ee2188f26e0de30469eb037a1ddc2247865db2. Currenttest290correctcompletionidentity buildPASS27s/installed; SHA25611d334c981e9553b6553867d4f8727faec8b926bea81ba31839764e00b2a3cfd. HOMEtestcompile288failedwrongReadSourceStatepackage thenexacttwoidentifiercorrection; no productioncodechanged. App203 remainsinstalledunchanged.",
+    "current_apk_and_lint": "Installed production-code app203 SHA256 b21065429ab6196bd805e101ea20c3f0deb9fb55d401f264702146d8f6a40abb; installed instrumentation227 SHA256 780cad97c6ebbe7e447db6caf4a75e1cc5d00143cb0b03b07fd25cb303a14130. Test228 built but not installed. Debug/test203 PASS; lintDebug/lintRelease/assembleRelease204 PASS. Full native209: 1501 tests, zero failures/errors/skips after independently reviewed Robolectric poll-clock correction; final CI/signing remain pending. Latest test241 built PASS7s and installed: SHA256 6b07680d1bc493a57304ede37020d92b8540b30077c2bdb02d85cb8744d75b17. Production-code app203 unchanged. Test252 built PASS6s and installed SHA256 68e9f6abdae5f32e20f0534110a1b124bab54f6ecd82db4ab2563516da20ca48. Latest installed instrumentation261 builtPASS1s SHA256 f724f3d9bf3e7eccb9ac0e9db664414ceb770bcc1d036e39da9a9aed7d3060cc. Includes independently reviewed durable turn-boundary helper; no production change after app203. Latestinstalledtest271builtPASS2s SHA256 aec35be742edb7be9be046bb65ee2188f26e0de30469eb037a1ddc2247865db2. Currenttest290correctcompletionidentity buildPASS27s/installed; SHA25611d334c981e9553b6553867d4f8727faec8b926bea81ba31839764e00b2a3cfd. HOMEtestcompile288failedwrongReadSourceStatepackage thenexacttwoidentifiercorrection; no productioncodechanged. App203 remainsinstalledunchanged. Fulltreelint300PASS; B21andupdatehelper312testAPKbuildPASS16s/installed. Later323newStockhelperscompilefailedsinglemissinggenericView; correctedfor325build, notyetaccepted.",
     "physical": {
       "device": "Pixel9 Pro caiman API37 through dell-7680",
       "namespace": "com.lateapex.collie.completiontest",
@@ -17418,7 +17418,7 @@
       "crew_takeover": "cold111 PASS3.508s; realownlead stopped, actualstandby armed after56935ms; nativearmed112 PASS4.999s; single confirmedtakeover113 PASS7.488s persistedexactpendingattempt, realdeputyrestartednewlead; recovery116 PASS6.737s realCrew formation/selfqa-deputy/leading/authenticatedsnapshot+nativeReviewRecoveredLead resolvespending/Takeoverdisabled, originalpair preserved. Prior114 loading-placeholder testpredicate corrected; no takeoverreplay/formerleadrejoin/witnessquorum claim.",
       "machine_rules": "Actual native Create120 PASS7.966s CPU99%/120min revision0→1; Change123 PASS8.164s CPU98%/120min revision1→2; Remove124 PASS7.333s restores original empty rules revision2→3 on only owned qa-deputy. Prior121 modal test readiness failure corrected without production change. Persistence only; no machine event emission claimed.\nB26 retained-history test correction independently reviewed and integrated; fixed official docs retain lastsample/time for unreachable machines, no newminute values. Native helper now compares actual API history and naturally completed missingminute gaps. Included in test241 compile/install; actual Crew run pending. Actual289 nativeCreate50%/5minmemoryrule PASSrevision3→4 onoriginalqa-deputyincarnation. NativeCrewEnroll283 precededrule. ParentHOME/amkill thenPIDabsent+ownOSalerts0at1792021961575; actualordinaryepisode mem opened1792021980363, nativeproviderseq1/pending0/retiredfalse andownOSalert1at1792021999792 BEFOREtapinstrumentation. ActualHOMEprivatecustody/tap checkpending; no manipulatedtelemetry/clock. Actual292 HOMEdelivery/custody/normalsystemUItap PASS: realglobalMainActivity dashboard/currentoriginalcredentialincarnation+freshactor/authenticatedCrewDaMBiPa97dJy0W9W1aGAcg+soleleadqa-deputy, noPane/Updates/Machinesroute, unchangedwatermarks/enrollment/launchjournal. Actual293 normalnativeRemove PASSrevision4→5 restoresoriginalemptyrule; actual294 nativeSettingsdisconnect PASS. AllretainedB27nativeeditorandactualeventdelivery nowaccepted.",
       "durable_controls": "Controls132 failed before any action on incorrect DONE fixture precondition (actualIDLE);138 failed before firstperformClick because helper setText and tested enabled in same UIcallback before asynchronous rendering. Solreadinessfix independently reviewed, oneclick+synchronouspending capture preserved; actual rerun required. Official example restored using saved /var/tmp/cc13-durable-state with default descendant gate and scripted model only, DM_SLOW_MS30000; no inputs sent. Public health200. Independent review approved test correction for actual Pi Durable semantics: queued Steer appears at finalboundary and starts a NEW turn; Stop must target newly observed WORKING turn, while Steer request retains exactoriginalturn. Correction integrated and compiled in test257; actual control run remains pending. Actual270 overallFAIL33.615s: nativeSend e7576c61-7860-4dc5-a184-9878ad657f27 andSteer8f0ec128-79b0-4a01-b2b6-d4fe85cd31b3 accepted; oneactualoriginaluser/e104 andsteeruser/e109. Stop2c3ec323-9517-4ae6-b7b7-817ed8ef9648 capturedoldUIturn9b8fd38b28d351c9398249f2c243514a whilefreshHTTPalreadynew663c0a8c1281c04ae326e5d78e146cad. Realbackendguard settledSTALE/currentnewturn, NOStopapplied. Steeredgenerationnaturallyended23:32:48.169Z; cannotresumeonlyStoponendedturn. Independentreviewedtest-native-readinessfix integrated: normalActivityrecreate afterobservedplacedSteer/newturn thenvisibleSteertext+Working+freshactor/nativeadmission; no guessedtargetsubstitution/reflection/testAPI. Oneactualencryptedlocalintentfilepersists; exact270pendingcustodymustberead/reconciled beforemorecontrols. PositiveStopandactualdurableprocessdeathreconciliationremainpending. Actual272read-onlypreparation verifiedEXACT270Abortpending/owner/body/ciphertext/userUUIDcensus, parentverifiedserverSTALE/zerocontrolPOST+unchangedreceiptfile thenexternallykilledonlyappPID31186. HeldrunnerintentionallykillednotPASS. Actual273 PASS3.071s innewPID31272: SAMEencryptedrecord/cipher/body/owner, nonemptyunsentdraftstillSendblocked/Stopblocked/NORetry, actualliveChatUUIDcensusunchanged, normalCheckChat+confirmclearedonlyexactownedjournal. Independentservercheckfrombefore272through273: zero newcontrolPOSTs andbyte-identicalcontrol-receipts.json. Genuineprocessdeathreconciliation accepted; positiveStopstillpending. Actual274 PASS40.191s oncurrenttest271: normalnativeidleSend, realworkingturn/recreate/noReplay, nativeSteerboundoldworkingturn, actualplacedSteeruserUUID/newturnhandoff, normalrecreatefreshnativepaneadmission, nativeStopboundNEWobservedturn, successfulserverStoppednote andfinalIDLE; exactlyoneactualuserUUIDeach/currenttest andthreedistinctnativeRequestIDs, journalEmpty. Independentactualserverlast3controlreceipts are sendok/sendSteerok/abortok; SteertargetdifferscorrectlyfromStopnewtarget. Earlier270STALErefusal preserved, neverclaimedStopaccepted. With131starter/Chat/History/ask and272/273realprocessdeath/noReplay, retaineddurableworkflows accepted.",
-      "link_import": "Actual native paste147 PASS2.875s and ACTION_SEND share148 PASS1.835s: explicit preview/Continue followed by exact admitted native pane read. Earlier140 QR filename-selector and144 finally-thread fixture failures retained; corrected QR rerun remains required. No OS share-sheet claim. Actual159 ownpaneQR image visible in Downloads but helperfailed selecting exactfile beforeimport; accessibilityaction semantics under Sol review, noQRacceptanceclaim. ActualQRpane177PASS4.87s using ownDownloadsPNG actualaccessibilityACTION_CLICK, decoderPreview/Continue/exactpane; all3nativeimportmethods147/148/177 proven.",
+      "link_import": "Actual native paste147 PASS2.875s and ACTION_SEND share148 PASS1.835s: explicit preview/Continue followed by exact admitted native pane read. Earlier140 QR filename-selector and144 finally-thread fixture failures retained; corrected QR rerun remains required. No OS share-sheet claim. Actual159 ownpaneQR image visible in Downloads but helperfailed selecting exactfile beforeimport; accessibilityaction semantics under Sol review, noQRacceptanceclaim. ActualQRpane177PASS4.87s using ownDownloadsPNG actualaccessibilityACTION_CLICK, decoderPreview/Continue/exactpane; all3nativeimportmethods147/148/177 proven. Actual329 pairingQRfailedBEFOREsafeQRpreview/Pair. ActualPNG492px/5643B independentlyjsQRdecodesexactnormal/settings?pairURL; normalCLIcodeprivate andownregistryonlyprobe confirmsnopair. Read-onlyOSdiagnosticprovesDocumentsUIrootsdrawerOPEN despiteDownloadsbehind. Reusealready-reviewedmediachooserrootroutingfixrequested; no QRsuccessclaim. NormalnativeSettingsdisconnect328PASS beforeattempt. PublicCaddytemporaryupdatesroute fullyrestoredto80348; stoppedonlyownthirdbridge after321/326, statesretained.",
       "worktree_recipe": "143 duplicate Add refused with no row; native Abandon154 PASS removes exact priorunknown only. Actual156 Add/Use created exactly w5:p1 with launchUUID9202f893-5a99-4b43-898a-cf9359eeab55, then Rename/Remove restored launcher inventory. Subsequent Run stopped before positiveconfirm on unavailable currentwriteadmission (under review), no Runwrite claimed. Actual157 realPlan/Cancel passed readonly inventory checks; secondPlan defaultShell selector ambiguous beforeCreate, semanticcheckedfirstRadioGroup correction reviewed; rerun required. Actual176 RunACK exactw8:p1 UUID97bea5b5-a996-48ad-bb3e-1505a12882ba bodySHA8f4e48719a9288e705d3b4b75263966e8b51628ba5854c498358ac720ed27874; failedONLYpostrunRemove fullyvisibleconstraint. Cleanup-only181/182/183 failedbeforeclick; no repeatRun/removalmutation. Privateboundedread-onlygeometrypatch186 reviewed/compiled, actualgeometry187 pending. RecentRemove205actualnormalUIfullyvisible/dialog/oneexplicitconfirmPASS5.188s, exactownedhistorylineremoved/allothercatalog/panes/journals unchanged. Provenproductionclippingfixedonlyhorizontalbaselinealignment; no Runresend. Worktree201 secondPlan/defaultShellready but Create90%constraintfailedBEFOREclick; noCreatewrite. SamecollapsedcanonicalBottomSheet exposure issue asZen underSolfixturefix, notacceptedpositiveCreate.\nPhysical223 PASS normal Open and exact clean removal of prepared owned linked checkout. Physical229 PASS native Plan/Cancel/Create and exact clean removal; no created checkout remains. Interrupted Create233 failed before snapshot/UI/POST because temporary forwarding was unavailable; no request UUID or interrupted checkout exists. Recovery acceptance remains pending. Genuine interrupted239 created request099201be-8a4c-43bb-af82-859d830270c7, owner-bound realHTTP200, exactlyone worktree /home/chris/cc13-native-interrupted and one pane wA:p1. Parent independently checked normal registry-derived server identity and actual inventory, killed verified ownappPID28252 before heldresponse delivery, then released relay. Original held runner intentionally killed and not counted PASS. Recovery240 failed beforeRetry only because helper required expanded state for shortsheet. Independently reviewed removal of only that helpercall retained all currentactor/fullvisibility/frozenbody guards. Recovery242 PASS7.178s: newPID, actualUnknown, no automaticreplay, explicitRetry sameUUID/body/owner, Successoriginalpane, no duplicate. Cleanup243 PASS8.756s: normal native cleanRemove closed only acknowledged wA:p1 and removed only interrupted checkout; original Create receipt preserved. Public Caddy restored original SHA80348e47ebcd432fd2a25009315604159571dc678fb9f8eb2ec031c8dfc872e7 after guarded own-SHA verification. No interrupted checkout remains.",
       "launcher_duplicate_recovery": "Actual143 Add HTTP409 duplicated existing operator command; no saved row. Narrow local launcher.duplicate Collie provenance fix deployed, route34 and native HTTPS metadata1 tests PASS. Historical UNKNOWN remains untouched by metadata fix. Actual native Abandon154 PASS5.345s explicitly removes only exact own unknown request fdd40fe3-d967-4715-bcd8-6a47ee56cd07; all other local journal rows, operator catalog and real pane inventory unchanged. No HTTP resend or receipt/tombstone claim.",
       "pane_pins": "Fresh171 PASS8.824s withapp169/test169: nativeMore Unpin/Pin, pinnedDashboard/switcher exacthome-abbreviatedcurrentrow, freshPane+Activityrecreation persist, terminalrevision unchanged andoriginalpair/incarnation preserved, successrestorespretestpinstate. Earlier149/155 fixturefailures and167 actualwholeSnapshot cachedecodebug retained honestly; lastfixedsource60focusedPASS146.",
@@ -17435,10 +17435,13 @@
       "cache_watch_lifecycle": "Fresh172realcachemodel/source/countdownPASS5.109s,173perpaneWatchONPASS2.702s,175globalcacheONPASS1.997s,179actualnewwarmcycle+193realwarningtapPASS1.157s;194globalcacheOFFPASS2.367s then195perpaneWatchOFFPASS2.367s restoresinitialwatch/cachepreference. Officialdefaultwarn300s notamber120s; no fakeclock/TTL.",
       "server_update_check": "Actual210 realnativeUpdates Check now PASS1.851s, genuineofficialGitHub1.21.0 newerthan stockdevserver1.19.0; completedfreshcheckedAtadvance/offerretained/currentversionunchanged/no installation/run. IndependentAndroidreleaseupdate stillpendingfinalsignedartifact.",
       "acceptance_runtime_recovery": "\n2026-10-14 22:58 UTC: prior process handles absent, owned backend and Herdr socket absent; saved namespace/receipts/session files remain. Restarted only isolated stock Herdr/bridge; actual snapshot restored 8 workspaces and 8 panes. Current Caddy SHA80348e47ebcd432fd2a25009315604159571dc678fb9f8eb2ec031c8dfc872e7 unchanged. SSH reverse-forward fails because prod AllowTcpForwarding local; restored normal prod→ed8 local forwarding and real health200. Owned probe and Pixel credentials had genuinely expired (12h); renewed only probe via normal CLI set-expiry2d, revoked only expired completion Pixel before fresh native pairing. Pair234 failed before input because origin field had zero geometry during initial layout; bounded layout wait added to test and independently approved. No pairing success claimed. Native pairing236 PASS after bounded form-layout wait. Both new owned credentials have normal explicit2d lifetime. No token, application data or personal package was copied/cleared. Restarted only ownntfy2.12 savedconfiguration/database and normalprod→ed8 localforward28797→8797; realpublicGET/v1/health healthytrue. No personalntfyconfiguration changed.",
-      "machine_charts": "Actual287 nativeCrewresourcecharts/history PASS: stoppedonlyverifiedownformerpeer2411713SIGTERM285, naturallywaitedcompletedmissingminute fromlastreal1792021740000, realAPIretainedsamples+nativechartaccessibility/table/trailingnullgaps andunchangedallrules/incarnations. Restartedonlysameownpeer37610 afterward."
+      "machine_charts": "Actual287 nativeCrewresourcecharts/history PASS: stoppedonlyverifiedownformerpeer2411713SIGTERM285, naturallywaitedcompletedmissingminute fromlastreal1792021740000, realAPIretainedsamples+nativechartaccessibility/table/trailingnullgaps andunchangedallrules/incarnations. Restartedonlysameownpeer37610 afterward.",
+      "update_delivery": "Actual freshnamespace295/pair296/enroll297/backgroundPIDabsent12.6s→genuineOSalert1/providerseq1;302failedaftertap staleexpected1.21.0(actual1.21.3). Secondfresh305/306/307/backgroundPIDabsent12.9s→OS1seq1;309failedaftertap hardcodedtestexpectation1.21.0. Noappdefect/releasefeedresetclaimed. Independentlyreviewedcanonicalexpectedgenuineversionguardintegrated;test312buildPASS16s/installed. Thirdfresh317/pair318/enroll319/backgroundPIDabsent15.0s→normal90stick actualGitHub1.21.3/seq1/pending0/OS1 BEFOREinstrumentation320. Actual321 fullPASS normalSystemUItap/privateimmutabletapcustody/exactownedUpdatesActivity/current1.19.0+visiblegenuine1.21.3offer/noInstall/originalactor+committedpairincarnation/replaywatermark/journalunchanged. TZPacific/Auckland onlyactualprocesslocalhour; UTCclock unchanged; fixedfeaturetargetremains1.21.0. Earlierfixtures preservedunchanged.",
+      "notification_os_refusal": "Actual310 nativefreshUI/status realPOST_NOTIFICATIONSdenied PASS underexactexistingcurrentenrollment/watermark/pairinc; normalAndroidpermissionprompt viaEnable311 restoredpermissionPASS. ActualAndroidSettingsownchannelcollie-native-v1ShowNotificationsOFF usingexactSwitch;313nativefreshUI/statuschannelrefusalPASSunderalreadygrantedpermission/currentenrollment/owner. SameOSSettingsswitchrestoredONverifiedcheckedtrue; removedonlyownedtemporaryUIxml. No personalapp/settings changed.",
+      "server_update_dismissal": "Actual326 currentgenuine1.21.3offer normalnativeoneDismissversionclick PASS, realserverdismissedVersionack, unchangeddismissedCrewVersion/current1.19.0/noInstallrun, exactoriginalactor/scope/committedpairincarnation+revision; persistsActivityrecreationandfreshUpdatesreopen. Test325buildPASS22s/installed. Genuinelyfuture/neweroffer notavailable; existingnewer-version unitlogic remains separateevidence."
     },
     "remaining": [
-      "genuine update background notification delivery",
+      "finite retained workflow gaps identified in corrected_crosswalk_dispositions; no expanded historical counts",
       "remaining retained crosswalk acceptance/dispositions",
       "final integrated gates/CI/security scan",
       "reviewed signed release",
@@ -17472,6 +17475,1152 @@
       "checks": "checkAndroid275 PASS; assembleRelease276 PASS; cleanbuildinputs277; normalsigning279 PASS; independentSolreview actualsingletrustedV3signer/packageAPI37/nondebug/P256signature/buildinputs102SBOM/all860unsignedpayloadentries/all16checksums/eightnotices/privatepermissions PASS",
       "installed": false
     },
-    "backend_gate_recovery": "Normalpush284 aborted fourbackendfailures6677pass11skip4fail. Threeunchangeddiscoverytests encounterunrelated/tmp/.git ancestor; TMPDIR=/var/tmp restoresisolation. Fourthactualcanonicalnativeinventory-ID guardclassification fixedexactcount2withreason; independentlyreviewed/intgrated; actual291focused76PASS0fail498assertions. Fullnormalprepushremainsrequired; no skips."
+    "backend_gate_recovery": "Normalpush284 aborted fourbackendfailures6677pass11skip4fail. Threeunchangeddiscoverytests encounterunrelated/tmp/.git ancestor; TMPDIR=/var/tmp restoresisolation. Fourthactualcanonicalnativeinventory-ID guardclassification fixedexactcount2withreason; independentlyreviewed/intgrated; actual291focused76PASS0fail498assertions. Fullnormalprepushremainsrequired; no skips.",
+    "corrected_crosswalk_dispositions": {
+      "B01": {
+        "scope_decision": "required",
+        "retained_requirement": "Keep paired read/write gates, origin/mount and host/session targeting. Reconcile upstream v1.21 contracts without adding stronger vendor guarantees that stock Herdr does not offer.",
+        "disposition": "accepted_retained_admission_workflows",
+        "actual_evidence": [
+          {
+            "artifact": "/var/tmp/collie-completion-20261013/pixel-admission259.log",
+            "method": "holdForNormalParentRevocationThenNativeReadRefusalRetiresOnlyOwnedCredential",
+            "result": "actual Pixel pass",
+            "proves": "Genuine normal-CLI revoke then native403 freezes and retires only original write authority, no new mutation UUID."
+          },
+          {
+            "artifact": "/var/tmp/collie-completion-20261013/pixel-admission-restart260.log",
+            "method": "actualProcessRestartKeepsRetiredProfileAndRequiresNativePairingRepair",
+            "result": "actual Pixel pass",
+            "proves": "Real PID absence/new process preserves revoked unpaired profile; normal form repair262 follows."
+          },
+          {
+            "artifact": "/tmp/collie-completion-pixel191.log",
+            "method": "actualNativeLinksRejectForeignMalformedAndOutsideMountTargetsWithoutChangingOwner",
+            "result": "actual Pixel pass",
+            "proves": "Five genuine ACTION_VIEW refusal cases preserve pair/incarnation/scope/panes and journals."
+          },
+          {
+            "artifact": "/var/tmp/collie-completion-20261013/pixel-media-switch267.log",
+            "method": "liveDocumentsUiPendingUploadCannotCrossNativePaneSwitch",
+            "result": "actual Pixel pass",
+            "proves": "Actual native w1-to-w2 switch before held real200 response release; old actor stale, new actor clear, both terminal text/revisions unchanged. Parent independent one-upload200/63B evidence required and recorded."
+          }
+        ],
+        "remaining_required_workflow": [],
+        "coverage_limits": [
+          "Current integrated unit/HTTPS negatives remain supporting evidence, not fresh Pixel wrong-host-response injection."
+        ]
+      },
+      "B02": {
+        "scope_decision": "required",
+        "retained_requirement": "Reconcile existing launch receipts against upstream requestId semantics. Resolve uncertainty without duplicate launches; prove process-death behavior.",
+        "disposition": "accepted_actual_process_death",
+        "actual_evidence": [
+          {
+            "artifact": "/tmp/collie-completion-pixel-native-launch48.log",
+            "method": "nativeConfiguredLaunchCreatesExactlyOnePaneAcrossActivityRecreation",
+            "result": "actual Pixel pass",
+            "proves": "One actual configured launch across Activity recreation."
+          },
+          {
+            "artifact": "/tmp/collie-completion-pixel-native-launch-recovery51.log",
+            "method": "recoverSavedLaunchAfterActualProcessDeath",
+            "result": "actual Pixel pass",
+            "proves": "New process, unknown custody, explicit original UUID/body retry, same result pane, no duplicate creation."
+          },
+          {
+            "artifact": "/var/tmp/collie-completion-20261013/pixel-worktree-recover242.log",
+            "method": "recoverSavedWorktreeCreateAfterActualProcessDeath",
+            "result": "actual Pixel pass",
+            "proves": "Actual upstream200 then process death; new-process unknown, no automatic replay, explicit same UUID/body/owner retry returns original result."
+          },
+          {
+            "artifact": "/var/tmp/collie-completion-20261013/pixel-durable-resolve273.log",
+            "method": "resolveExistingAbortAfterActualProcessDeathWithoutReplay",
+            "result": "actual Pixel pass",
+            "proves": "Actual process death preserves exact genuine encrypted unresolved Abort; native Check Chat resolves it without replay. Run270 stale Abort was never a successful Stop."
+          }
+        ],
+        "remaining_required_workflow": [],
+        "coverage_limits": []
+      },
+      "B03": {
+        "scope_decision": "required",
+        "retained_requirement": "Check truthful refresh and read-depth limits against stock backends; preserve viewport during reads and show stale/unavailable state.",
+        "disposition": "partial_actual_pixel",
+        "actual_evidence": [
+          {
+            "artifact": "/tmp/collie-completion-pixel-stock-workflows32.log",
+            "method": "PhysicalStockWorkflowsAcceptanceTest (all three methods)",
+            "result": "actual Pixel pass",
+            "proves": "Current stock shell Unicode reply/Refresh/Find, solo Files Unicode source and authenticated PNG, Git diff and source handoff."
+          },
+          {
+            "artifact": "/tmp/collie-completion-pixel225.log",
+            "method": "nativeCreateBesideKeepsFocusUntilShowInTerminalAndClosesOnlyItsOwnTab",
+            "result": "actual Pixel pass",
+            "proves": "Normal create-beside, passive host-focus preservation, explicit Show Terminal, native rename/close of owned tab."
+          }
+        ],
+        "remaining_required_workflow": [
+          "Native deeper/read-window paging with stable viewport while refreshing has no named current physical proof."
+        ],
+        "coverage_limits": []
+      },
+      "B04": {
+        "scope_decision": "required",
+        "retained_requirement": "Validate current authenticated image projection, decode bounds and original host/session after integration.",
+        "disposition": "partial_actual_pixel",
+        "actual_evidence": [
+          {
+            "artifact": "/tmp/collie-completion-pixel212.log",
+            "method": "actualClaudeInputImageProjectsAndRendersThroughScopedNativeHistory",
+            "result": "actual Pixel pass",
+            "proves": "Genuine Claude journal image projects and decodes in native History under original pane/session actor."
+          }
+        ],
+        "remaining_required_workflow": [
+          "Original image read retirement on actual pane/host switch and actual pairing revoke while image load is pending is not demonstrated by212."
+        ],
+        "coverage_limits": []
+      },
+      "B05": {
+        "scope_decision": "required",
+        "retained_requirement": "Bring tool, question and denial cards to v1.21 behavior, including answered question context and new data-based asks.",
+        "disposition": "accepted_actual_durable_ask_tool_workflow",
+        "actual_evidence": [
+          {
+            "artifact": "/tmp/collie-completion-durable-full131.log",
+            "method": "configuredDurableOriginAnswersSendsReadsContextAndHistoryWithoutReplayingAfterRecreation",
+            "result": "actual Pixel pass",
+            "proves": "Actual write_note ask with Allow/Deny controls, native Allow, Unicode Send/prompt context, recreation and actual History, stable user UUID."
+          }
+        ],
+        "remaining_required_workflow": [],
+        "coverage_limits": [
+          "131 proves real Allow and visible Deny option/write_note details; it does not prove every vendor-specific denied-result card. Existing renderer/negative tests remain source/JVM evidence."
+        ]
+      },
+      "B06": {
+        "scope_decision": "required",
+        "retained_requirement": "Use an actual owner-declared supported Send queued now action when offered; do not invent it for an adapter without a queue. The corrected crosswalk names Codex, but current authoritative registry declares a recipe only for Claude.",
+        "disposition": "conditional_actual_queue_acceptance_not_yet_proved",
+        "actual_evidence": [],
+        "remaining_required_workflow": [
+          "If the owned shipped Claude workflow presents a genuine queue and server-declared current Send now recipe, prove one native Send now with exact queue/occupant/current actor and no guessed replay. No current named Pixel proof exists."
+        ],
+        "coverage_limits": [
+          "Current bridge/journal/codex.ts:518-519 returns noQueue and does not declare sendQueuedNow. bridge/journal/registry.test.ts:51-59 explicitly restricts the recipe to Claude; bridge/journal/claude.ts:1358-1364 declares ctrl+Enter only where mux preserves it. This is source contract evidence, not a real queued-send Pixel pass.",
+          "No fake queue/journal, invented key recipe, private producer flag or new vendor capability is permitted. If actual current queue cannot be offered, record the concrete capability limitation instead of calling refusal positive acceptance."
+        ]
+      },
+      "B07": {
+        "scope_decision": "required",
+        "retained_requirement": "Verify version-specific offer/crew dismissal, snooze and restart persistence with current official update responses.",
+        "disposition": "accepted_actual_current_version_dismissal_newer_offer_live_unavailable",
+        "actual_evidence": [
+          {
+            "artifact": "/tmp/collie-completion-pixel210.log",
+            "method": "liveServerUpdatesNativeCheckShowsGenuineReleaseWithoutInstalling",
+            "result": "actual Pixel pass",
+            "proves": "Actual native Check now reads genuine official1.21.0 offer for owned1.19.0 server, timestamp advances, no installation."
+          },
+          {
+            "artifact": "/var/tmp/collie-completion-20261013/pixel-update-dismissal326.log",
+            "method": "liveServerUpdateDismissalPersistsExactOfferAcrossReopen",
+            "result": "actual Pixel pass",
+            "proves": "One actual 1.21.3 dismissal and server acknowledgement persists native recreation/reopen with original owner, no update run or Crew dismissal changes."
+          }
+        ],
+        "remaining_required_workflow": [
+          "A genuine offer newer than the dismissed 1.21.3 is not yet available; do not fabricate it. Newer-version separation remains component-test evidence."
+        ],
+        "coverage_limits": [
+          "Actual current public offer may be1.21.3; fixed feature target remains1.21.0.210 proved an earlier genuine1.21.0 offer, not dismissal. Parent302 expected-old-version mismatch is not accepted update-delivery completion.",
+          "Dismiss the actual current offer and reopen normally. A genuinely newer future offer is not presently controllable; do not fake a release, reset lastNotified or move fixed target. Keep existing newer-version unit/component proof separate from live evidence."
+        ]
+      },
+      "B08": {
+        "scope_decision": "retain_subset",
+        "retained_requirement": "Keep documented pane cwd/agent/session/restore information. Do not require a comprehensive Herdr process-inspection product for parity.",
+        "disposition": "accepted_retained_metadata_subset",
+        "actual_evidence": [
+          {
+            "artifact": "/tmp/collie-completion-pixel-stock-workflows32.log",
+            "method": "PhysicalStockWorkflowsAcceptanceTest (all three methods)",
+            "result": "actual Pixel pass",
+            "proves": "Current stock shell Unicode reply/Refresh/Find, solo Files Unicode source and authenticated PNG, Git diff and source handoff."
+          },
+          {
+            "artifact": "/tmp/collie-completion-pixel170.log",
+            "method": "readsActualVendorSessionChatAndHistoryWithoutSending",
+            "result": "actual Pixel pass",
+            "proves": "Actual Codex session UUID, native Chat/Transcript/History, no Send."
+          },
+          {
+            "artifact": "/tmp/collie-completion-pixel212.log",
+            "method": "actualClaudeInputImageProjectsAndRendersThroughScopedNativeHistory",
+            "result": "actual Pixel pass",
+            "proves": "Genuine Claude journal image projects and decodes in native History under original pane/session actor."
+          }
+        ],
+        "remaining_required_workflow": [],
+        "coverage_limits": [
+          "No comprehensive host process/restore administration requirement; unsupported producer data is an explicit upstream limit."
+        ]
+      },
+      "B09": {
+        "scope_decision": "retain_subset",
+        "retained_requirement": "Match the v1.21 shipped harness and journal support, including OpenClaw journal changes. Remove the requirement to invent journals/actions/media for every Herdr-detected kind. Preserve truthful raw fallback.",
+        "disposition": "accepted_available_vendor_subset",
+        "actual_evidence": [
+          {
+            "artifact": "/tmp/collie-completion-pixel-stock-workflows32.log",
+            "method": "PhysicalStockWorkflowsAcceptanceTest (all three methods)",
+            "result": "actual Pixel pass",
+            "proves": "Current stock shell Unicode reply/Refresh/Find, solo Files Unicode source and authenticated PNG, Git diff and source handoff."
+          },
+          {
+            "artifact": "/tmp/collie-completion-pixel170.log",
+            "method": "readsActualVendorSessionChatAndHistoryWithoutSending",
+            "result": "actual Pixel pass",
+            "proves": "Actual Codex session UUID, native Chat/Transcript/History, no Send."
+          },
+          {
+            "artifact": "/tmp/collie-completion-pixel179.log",
+            "method": "nativeHarmlessFollowupRefreshesActualVendorCacheWithoutReplaying",
+            "result": "actual Pixel pass",
+            "proves": "One genuine Codex followup, exact one new user/assistant, same vendor UUID and natural cache timestamp advancement."
+          },
+          {
+            "artifact": "/tmp/collie-completion-pixel212.log",
+            "method": "actualClaudeInputImageProjectsAndRendersThroughScopedNativeHistory",
+            "result": "actual Pixel pass",
+            "proves": "Genuine Claude journal image projects and decodes in native History under original pane/session actor."
+          },
+          {
+            "artifact": "/tmp/collie-completion-durable-full131.log",
+            "method": "configuredDurableOriginAnswersSendsReadsContextAndHistoryWithoutReplayingAfterRecreation",
+            "result": "actual Pixel pass",
+            "proves": "Actual write_note ask with Allow/Deny controls, native Allow, Unicode Send/prompt context, recreation and actual History, stable user UUID."
+          },
+          {
+            "artifact": "/var/tmp/collie-completion-20261013/pixel-durable-controls274.log",
+            "method": "nativeIdleSendSteersWorkingTurnThenStopsWithoutReplayAfterRecreation",
+            "result": "actual Pixel pass",
+            "proves": "One native Send/Steer/Stop each, distinct request IDs, correct old/new turn targets, real stopped note, final idle and stable user UUIDs."
+          }
+        ],
+        "remaining_required_workflow": [],
+        "coverage_limits": [
+          "Actual shell, Codex, Claude and durable paths are proven; source/JVM supports other shipped adapters. No every-vendor journal/media/administration matrix is reinstated."
+        ]
+      },
+      "B10": {
+        "scope_decision": "required",
+        "retained_requirement": "Verify Files tree, previews/images, nested roots and source navigation; reuse integrated code.",
+        "disposition": "partial_actual_solo_files",
+        "actual_evidence": [
+          {
+            "artifact": "/tmp/collie-completion-pixel-stock-workflows32.log",
+            "method": "PhysicalStockWorkflowsAcceptanceTest (all three methods)",
+            "result": "actual Pixel pass",
+            "proves": "Current stock shell Unicode reply/Refresh/Find, solo Files Unicode source and authenticated PNG, Git diff and source handoff."
+          }
+        ],
+        "remaining_required_workflow": [
+          "Current named physical proof covers solo source/raster; repeat existing read-only Files method for an actual Crew peer and verify original host retention."
+        ],
+        "coverage_limits": [
+          "Traversal/inert-format/nested-root negative coverage remains integrated source/HTTP/JVM evidence; no current physical assertion proves every inert format."
+        ]
+      },
+      "B11": {
+        "scope_decision": "required",
+        "retained_requirement": "Verify diff, changed/untracked files and last-commit behavior against the official Files/Changes page.",
+        "disposition": "partial_actual_diff_source",
+        "actual_evidence": [
+          {
+            "artifact": "/tmp/collie-completion-pixel-stock-workflows32.log",
+            "method": "PhysicalStockWorkflowsAcceptanceTest (all three methods)",
+            "result": "actual Pixel pass",
+            "proves": "Current stock shell Unicode reply/Refresh/Find, solo Files Unicode source and authenticated PNG, Git diff and source handoff."
+          }
+        ],
+        "remaining_required_workflow": [
+          "Native Last commit inspection on the genuine owned Git fixture has no current physical method/log."
+        ],
+        "coverage_limits": []
+      },
+      "B12": {
+        "scope_decision": "retain_subset",
+        "retained_requirement": "Retain documented create-beside and explicit Show in terminal behavior. Extra splits/resize/zoom/movement are not release requirements solely because Herdr has them; keep stock-compatible existing extras only after bounded review.",
+        "disposition": "accepted_retained_create_beside_and_focus",
+        "actual_evidence": [
+          {
+            "artifact": "/tmp/collie-completion-pixel225.log",
+            "method": "nativeCreateBesideKeepsFocusUntilShowInTerminalAndClosesOnlyItsOwnTab",
+            "result": "actual Pixel pass",
+            "proves": "Normal create-beside, passive host-focus preservation, explicit Show Terminal, native rename/close of owned tab."
+          }
+        ],
+        "remaining_required_workflow": [],
+        "coverage_limits": [
+          "Extra resize/zoom/move/private host structure controls are outside corrected requirement."
+        ]
+      },
+      "B13": {
+        "scope_decision": "retain_subset",
+        "retained_requirement": "Require the official create/rename/close spaces/tabs flows. Reordering/moving extra host structures does not become mandatory by inclusion in this backlog.",
+        "disposition": "partial_actual_tabs",
+        "actual_evidence": [
+          {
+            "artifact": "/tmp/collie-completion-pixel-native-launch48.log",
+            "method": "nativeConfiguredLaunchCreatesExactlyOnePaneAcrossActivityRecreation",
+            "result": "actual Pixel pass",
+            "proves": "One actual configured launch across Activity recreation."
+          },
+          {
+            "artifact": "/tmp/collie-completion-pixel225.log",
+            "method": "nativeCreateBesideKeepsFocusUntilShowInTerminalAndClosesOnlyItsOwnTab",
+            "result": "actual Pixel pass",
+            "proves": "Normal create-beside, passive host-focus preservation, explicit Show Terminal, native rename/close of owned tab."
+          }
+        ],
+        "remaining_required_workflow": [
+          "Actual create/rename/close workspace/space lifecycle is not fully established by the tab225 and launch48 methods."
+        ],
+        "coverage_limits": [
+          "No extra reordering/transfers/host hierarchy administration required."
+        ]
+      },
+      "B14": {
+        "scope_decision": "required",
+        "retained_requirement": "Verify launcher rows, agent choices, favorite/recent folders and folder previews. Add v1.21 program starter rows with the upstream restrictions.",
+        "disposition": "accepted_actual_new_folders_starters",
+        "actual_evidence": [
+          {
+            "artifact": "/tmp/collie-completion-pixel-native-launch48.log",
+            "method": "nativeConfiguredLaunchCreatesExactlyOnePaneAcrossActivityRecreation",
+            "result": "actual Pixel pass",
+            "proves": "One actual configured launch across Activity recreation."
+          },
+          {
+            "artifact": "/tmp/collie-completion-durable-starter130.log",
+            "method": "nativeNewTriageStarterCreatesOneActualDurablePane",
+            "result": "actual Pixel pass",
+            "proves": "Normal New/starter selection creates one genuine waiting durable conversation."
+          },
+          {
+            "artifact": "/tmp/collie-completion-pixel231.log",
+            "method": "nativeFolderPickerSelectsRecentAndRestoresFixtureFavouriteState",
+            "result": "actual Pixel pass",
+            "proves": "Actual Recent folder selection and Favourite add/remove with initial state restored."
+          }
+        ],
+        "remaining_required_workflow": [],
+        "coverage_limits": []
+      },
+      "B15": {
+        "scope_decision": "required",
+        "retained_requirement": "Verify official worktree plan/create/open/remove workflow. Keep path containment, current target checks and uncertainty; do not claim stock vendor compare-and-set.",
+        "disposition": "accepted_actual_worktree_lifecycle",
+        "actual_evidence": [
+          {
+            "artifact": "/tmp/collie-completion-pixel229.log",
+            "method": "nativeWorktreePlanCancelThenCreateAndRemoveExactCleanCheckout",
+            "result": "actual Pixel pass",
+            "proves": "Native Plan/Cancel/Create and clean removal; no owned checkout left."
+          },
+          {
+            "artifact": "/tmp/collie-completion-pixel223.log",
+            "method": "nativeOpensAndRemovesOnlyThePreparedUnopenedCheckout",
+            "result": "actual Pixel pass",
+            "proves": "Normal Open and precise clean Remove of genuine prepared linked checkout."
+          },
+          {
+            "artifact": "/var/tmp/collie-completion-20261013/pixel-worktree-recover242.log",
+            "method": "recoverSavedWorktreeCreateAfterActualProcessDeath",
+            "result": "actual Pixel pass",
+            "proves": "Actual upstream200 then process death; new-process unknown, no automatic replay, explicit same UUID/body/owner retry returns original result."
+          },
+          {
+            "artifact": "/var/tmp/collie-completion-20261013/pixel-worktree-clean243.log",
+            "method": "removeOnlyAcknowledgedInterruptedWorktreeThroughNativeUi",
+            "result": "actual Pixel pass",
+            "proves": "Native cleanup removes only acknowledged interrupted checkout/pane."
+          }
+        ],
+        "remaining_required_workflow": [],
+        "coverage_limits": []
+      },
+      "B16": {
+        "scope_decision": "required",
+        "retained_requirement": "Verify added recipes and rename/remove, allowed one-off runs, preflight, recent run removal and clear.",
+        "disposition": "accepted_actual_split_workflow_evidence",
+        "actual_evidence": [
+          {
+            "artifact": "/tmp/collie-completion-pixel156.log",
+            "method": "nativeSavedPlainLauncherUseRenameRemoveAndHarmlessRunPreserveExactInventories",
+            "result": "verified prefix of failed run156; no Run accepted there",
+            "proves": "Add/Use/Rename/Remove prefix completed and restored catalog before later Run admission failure; NOT an overall passing run."
+          },
+          {
+            "artifact": "/tmp/collie-completion-pixel176.log",
+            "method": "nativeHarmlessRunReviewThenConfirmOnceAndRemoveOnlyItsRecentLine",
+            "result": "verified Run acknowledgement before later cleanup failure",
+            "proves": "Real native Run acknowledged exactly one w8:p1/UUID97bea5b5; later recent-row removal visibility failed. NOT overall pass."
+          },
+          {
+            "artifact": "/tmp/collie-completion-pixel205.log",
+            "method": "nativeRecentRunCleanupRemovesOnlyTheExplicitlyOwnedCompletedLine",
+            "result": "actual Pixel pass",
+            "proves": "Native cleanup of original completed Run row, no repeated Run and all other inventories unchanged."
+          }
+        ],
+        "remaining_required_workflow": [],
+        "coverage_limits": [
+          "156 and176 remain overall failures; only their already-acknowledged phases are credited.205 completes original Run cleanup without another Run."
+        ]
+      },
+      "B17": {
+        "scope_decision": "required",
+        "retained_requirement": "Verify supported image/document/text attachment MIME, size, authorization and cancellation. Preserve terminal semantics rather than exposing a raw local source path. Speech/audio transcription is excluded.",
+        "disposition": "accepted_actual_media_lifecycle",
+        "actual_evidence": [
+          {
+            "artifact": "/var/tmp/collie-completion-20261013/pixel-media263.log",
+            "method": "liveDocumentsUiUploadAcknowledgesExactFixtureWithoutTerminalSubmission",
+            "result": "actual Pixel pass",
+            "proves": "Real SAF63B TXT, one upstream200/native chip acknowledgement then removal, no terminal submission or draft path."
+          },
+          {
+            "artifact": "/tmp/collie-completion-pixel189.log",
+            "method": "liveDocumentsUiUploadAcknowledgesExactFixtureWithoutTerminalSubmission",
+            "result": "actual Pixel pass",
+            "proves": "Real SAF70B PNG, one upload200/native chip then normal removal, no terminal submission."
+          },
+          {
+            "artifact": "/tmp/collie-completion-pixel184.log",
+            "method": "liveDocumentsUiCancelPreservesUnsentDraftAndMakesNoUploadOrTerminalSubmission",
+            "result": "actual Pixel pass",
+            "proves": "Normal DocumentsUI Back preserves harmless draft with no upload/terminal POST."
+          },
+          {
+            "artifact": "/var/tmp/collie-completion-20261013/pixel-media-switch267.log",
+            "method": "liveDocumentsUiPendingUploadCannotCrossNativePaneSwitch",
+            "result": "actual Pixel pass",
+            "proves": "Actual native w1-to-w2 switch before held real200 response release; old actor stale, new actor clear, both terminal text/revisions unchanged. Parent independent one-upload200/63B evidence required and recorded."
+          }
+        ],
+        "remaining_required_workflow": [],
+        "coverage_limits": []
+      },
+      "B18": {
+        "scope_decision": "retain_subset",
+        "retained_requirement": "Require official pane identity, session selection and available history. Stop requiring stronger original-terminal identity/CAS proofs beyond upstream guarantees as a new runtime dependency.",
+        "disposition": "accepted_retained_identity_history_subset",
+        "actual_evidence": [
+          {
+            "artifact": "/tmp/collie-completion-pixel170.log",
+            "method": "readsActualVendorSessionChatAndHistoryWithoutSending",
+            "result": "actual Pixel pass",
+            "proves": "Actual Codex session UUID, native Chat/Transcript/History, no Send."
+          },
+          {
+            "artifact": "/tmp/collie-completion-pixel212.log",
+            "method": "actualClaudeInputImageProjectsAndRendersThroughScopedNativeHistory",
+            "result": "actual Pixel pass",
+            "proves": "Genuine Claude journal image projects and decodes in native History under original pane/session actor."
+          },
+          {
+            "artifact": "/var/tmp/collie-completion-20261013/pixel-media-switch267.log",
+            "method": "liveDocumentsUiPendingUploadCannotCrossNativePaneSwitch",
+            "result": "actual Pixel pass",
+            "proves": "Actual native w1-to-w2 switch before held real200 response release; old actor stale, new actor clear, both terminal text/revisions unchanged. Parent independent one-upload200/63B evidence required and recorded."
+          }
+        ],
+        "remaining_required_workflow": [],
+        "coverage_limits": [
+          "No private original-terminal CAS/metadata producer requirement. Multiple named-session selector navigation is accounted underB36."
+        ]
+      },
+      "B19": {
+        "scope_decision": "retain_subset",
+        "retained_requirement": "Remove private agent_original_input_v1 and agent_observation_cursor_v1 requirements from mandatory app flows. Use existing official Collie reply/keys and v1.21 durable send/abort/answer; retire unavailable automation entry points without deleting preserved source.",
+        "disposition": "accepted_stock_http_actions_subset",
+        "actual_evidence": [
+          {
+            "artifact": "/tmp/collie-completion-pixel-stock-workflows32.log",
+            "method": "PhysicalStockWorkflowsAcceptanceTest (all three methods)",
+            "result": "actual Pixel pass",
+            "proves": "Current stock shell Unicode reply/Refresh/Find, solo Files Unicode source and authenticated PNG, Git diff and source handoff."
+          },
+          {
+            "artifact": "/tmp/collie-completion-pixel185.log",
+            "method": "nativeQuickReplyAndSingleKeyPresetStayOnTheOwnedShellAndKeepComposerLocal",
+            "result": "individual method pass in mixed failed run185",
+            "proves": "This method status0 in mixed run185: actual Quick reply once, oneLeft, local draft. Separate Zen method failed and was superseded220."
+          },
+          {
+            "artifact": "/tmp/collie-completion-durable-full131.log",
+            "method": "configuredDurableOriginAnswersSendsReadsContextAndHistoryWithoutReplayingAfterRecreation",
+            "result": "actual Pixel pass",
+            "proves": "Actual write_note ask with Allow/Deny controls, native Allow, Unicode Send/prompt context, recreation and actual History, stable user UUID."
+          },
+          {
+            "artifact": "/var/tmp/collie-completion-20261013/pixel-durable-controls274.log",
+            "method": "nativeIdleSendSteersWorkingTurnThenStopsWithoutReplayAfterRecreation",
+            "result": "actual Pixel pass",
+            "proves": "One native Send/Steer/Stop each, distinct request IDs, correct old/new turn targets, real stopped note, final idle and stable user UUIDs."
+          },
+          {
+            "artifact": "/var/tmp/collie-completion-20261013/pixel-durable-resolve273.log",
+            "method": "resolveExistingAbortAfterActualProcessDeathWithoutReplay",
+            "result": "actual Pixel pass",
+            "proves": "Actual process death preserves exact genuine encrypted unresolved Abort; native Check Chat resolves it without replay. Run270 stale Abort was never a successful Stop."
+          }
+        ],
+        "remaining_required_workflow": [],
+        "coverage_limits": [
+          "Private original-input/observation APIs and full named-agent administration remain excluded and source-preserved."
+        ]
+      },
+      "B20": {
+        "scope_decision": "required",
+        "retained_requirement": "Verify cache/model/git context, watch registration/removal and user-visible cache countdown against current docs.",
+        "disposition": "accepted_actual_context_watch_and_warning",
+        "actual_evidence": [
+          {
+            "artifact": "/tmp/collie-completion-pixel172.log",
+            "method": "liveCacheContextShowsRealSourceModelAndDecreasingCountdown",
+            "result": "actual Pixel pass",
+            "proves": "Actual source/model/Git telemetry and naturally decreasing cache countdown."
+          },
+          {
+            "artifact": "/tmp/collie-completion-pixel173.log",
+            "method": "liveCacheWatchPersistsRequestedNativeToggle",
+            "result": "actual Pixel pass",
+            "proves": "Normal pane cache watch enabled;195 disables/restores it."
+          },
+          {
+            "artifact": "/tmp/collie-completion-pixel195.log",
+            "method": "liveCacheWatchPersistsRequestedNativeToggle",
+            "result": "actual Pixel pass",
+            "proves": "Normal pane watch disable acknowledged."
+          },
+          {
+            "artifact": "/tmp/collie-completion-pixel179.log",
+            "method": "nativeHarmlessFollowupRefreshesActualVendorCacheWithoutReplaying",
+            "result": "actual Pixel pass",
+            "proves": "One genuine Codex followup, exact one new user/assistant, same vendor UUID and natural cache timestamp advancement."
+          },
+          {
+            "artifact": "/tmp/collie-completion-pixel193.log",
+            "method": "liveDeliveredNotificationHasPrivateCustodyAndNormalTapOpensExactPane",
+            "result": "actual Pixel pass",
+            "proves": "Natural warning notification, normal SystemUI tap to exact Codex pane; no synthetic clock/TTL."
+          }
+        ],
+        "remaining_required_workflow": [],
+        "coverage_limits": []
+      },
+      "B21": {
+        "scope_decision": "retain_subset",
+        "retained_requirement": "Match official bounded Chat/History search and navigation. Whole-session indexing outside upstream capabilities is not a prerequisite. Verify local search/copy behavior without server-side text mutation.",
+        "disposition": "partial_native_find_and_history_read",
+        "actual_evidence": [
+          {
+            "artifact": "/tmp/collie-completion-pixel-stock-workflows32.log",
+            "method": "PhysicalStockWorkflowsAcceptanceTest (all three methods)",
+            "result": "actual Pixel pass",
+            "proves": "Current stock shell Unicode reply/Refresh/Find, solo Files Unicode source and authenticated PNG, Git diff and source handoff."
+          },
+          {
+            "artifact": "/tmp/collie-completion-pixel170.log",
+            "method": "readsActualVendorSessionChatAndHistoryWithoutSending",
+            "result": "actual Pixel pass",
+            "proves": "Actual Codex session UUID, native Chat/Transcript/History, no Send."
+          },
+          {
+            "artifact": "/tmp/collie-completion-durable-full131.log",
+            "method": "configuredDurableOriginAnswersSendsReadsContextAndHistoryWithoutReplayingAfterRecreation",
+            "result": "actual Pixel pass",
+            "proves": "Actual write_note ask with Allow/Deny controls, native Allow, Unicode Send/prompt context, recreation and actual History, stable user UUID."
+          }
+        ],
+        "remaining_required_workflow": [
+          "Native bounded History search/copy and Load older/owning-session pagination are not proved by mirror Find32 or simply opening History170/131."
+        ],
+        "coverage_limits": []
+      },
+      "B22": {
+        "scope_decision": "required",
+        "retained_requirement": "Implement real native delivery using the already specified UnifiedPush/self-hosted ntfy baseline. Add Collie registration/delivery and Android connector/receiver/channel/permission lifecycle. Use documented Web Push encryption/connector contracts; reuse prepared payload models where compatible. No FCM/provider expansion.",
+        "disposition": "accepted_actual_background_and_os_lifecycle",
+        "actual_evidence": [
+          {
+            "artifact": "/tmp/collie-completion-pixel-push-background45.log",
+            "method": "liveDeliveredNotificationHasPrivateCustodyAndNormalTapOpensExactPane",
+            "result": "actual Pixel pass",
+            "proves": "Actual closed-app blocked notification; OS alert exists before instrumentation and native SystemUI exact-pane tap."
+          },
+          {
+            "artifact": "/tmp/collie-completion-pixel-done-delivery87.log",
+            "method": "liveDeliveredNotificationHasPrivateCustodyAndNormalTapOpensExactPane",
+            "result": "actual Pixel pass",
+            "proves": "Actual Done event with preference enabled; OS alert then exact-pane tap."
+          },
+          {
+            "artifact": "/tmp/collie-completion-pixel-doze-delivery54.log",
+            "method": "liveDeliveredNotificationHasPrivateCustodyAndNormalTapOpensExactPane",
+            "result": "actual Pixel pass",
+            "proves": "Actual deep IDLE defers alert; normal wake delivers before instrumentation. No immediate-doze claim."
+          },
+          {
+            "artifact": "/tmp/collie-completion-pixel-reboot-delivery57.log",
+            "method": "liveDeliveredNotificationHasPrivateCustodyAndNormalTapOpensExactPane",
+            "result": "actual Pixel pass",
+            "proves": "Actual boot-count28-to29, distributor reconnect and real new OS notification exact-pane tap."
+          },
+          {
+            "artifact": "/tmp/collie-completion-pixel-push-replay71.log",
+            "method": "liveRealPipelineReplaysPreserveWatermarkAndLeaveNoNativeAlert",
+            "result": "actual Pixel pass",
+            "proves": "Real old/original ciphertext republished via provider; watermarks unchanged and no alert."
+          },
+          {
+            "artifact": "/tmp/collie-completion-pixel-notification-snooze73.log",
+            "method": "liveNativeNotificationSnoozePersistsRequestedAction",
+            "result": "actual Pixel pass",
+            "proves": "Normal30min snooze; parent real blocked event suppressed, normal Resume76 restores."
+          },
+          {
+            "artifact": "/tmp/collie-completion-pixel193.log",
+            "method": "liveDeliveredNotificationHasPrivateCustodyAndNormalTapOpensExactPane",
+            "result": "actual Pixel pass",
+            "proves": "Natural warning notification, normal SystemUI tap to exact Codex pane; no synthetic clock/TTL."
+          },
+          {
+            "artifact": "/var/tmp/collie-completion-20261013/pixel-machine-delivery292.log",
+            "method": "liveDeliveredNotificationHasPrivateCustodyAndNormalTapOpensExactPane",
+            "result": "actual Pixel pass",
+            "proves": "Real ordinary memory episode, closed-app OS alert before instrumentation, private custody and normal SystemUI HOME tap to original fresh Crew dashboard; no pane/control mutation."
+          },
+          {
+            "artifact": "/var/tmp/collie-completion-20261013/pixel-update-delivery321.log",
+            "method": "liveDeliveredNotificationHasPrivateCustodyAndNormalTapOpensExactPane",
+            "result": "actual Pixel pass",
+            "proves": "Genuine current public update notification after closed PID, normal OS tap and exact Updates destination with original owner."
+          },
+          {
+            "artifact": "/var/tmp/collie-completion-20261013/pixel-notification-permission310.log",
+            "method": "liveFreshNativeNotificationUiReportsActualAndroidRefusal",
+            "result": "actual Pixel pass",
+            "proves": "Actual denied permission refusal; native restoration311 passes."
+          },
+          {
+            "artifact": "/var/tmp/collie-completion-20261013/pixel-notification-channel313.log",
+            "method": "liveFreshNativeNotificationUiReportsActualAndroidRefusal",
+            "result": "actual Pixel pass",
+            "proves": "Actual disabled channel refusal, same paired enrollment; normal OS setting restored."
+          }
+        ],
+        "remaining_required_workflow": [],
+        "coverage_limits": [
+          "All five native preferences have real62/67/175/194/214-219 evidence; earlier default-false Done80 and unfresh Resume77 are not failed product delivery. No immediate-doze guarantee."
+        ]
+      },
+      "B23": {
+        "scope_decision": "required",
+        "retained_requirement": "Verify pane/history links, sharing/import and pairing QR as native equivalents. App Links only for operator-controlled configured hosts with verified associations.",
+        "disposition": "partial_actual_link_import",
+        "actual_evidence": [
+          {
+            "artifact": "/tmp/collie-completion-import-paste147.log",
+            "method": "pasteShareOrQrNavigationRequiresContinueAndReadsTheExactPane",
+            "result": "actual Pixel pass",
+            "proves": "Actual native paste preview/Continue/exact admitted pane."
+          },
+          {
+            "artifact": "/tmp/collie-completion-import-share148.log",
+            "method": "pasteShareOrQrNavigationRequiresContinueAndReadsTheExactPane",
+            "result": "actual Pixel pass",
+            "proves": "Actual ACTION_SEND preview/Continue/exact admitted pane; not OS share-sheet proof."
+          },
+          {
+            "artifact": "/tmp/collie-completion-pixel177.log",
+            "method": "pasteShareOrQrNavigationRequiresContinueAndReadsTheExactPane",
+            "result": "actual Pixel pass",
+            "proves": "Actual DocumentsUI pane-QR image, decoder preview/Continue/exact pane; NOT pairing QR."
+          },
+          {
+            "artifact": "/tmp/collie-completion-pixel191.log",
+            "method": "actualNativeLinksRejectForeignMalformedAndOutsideMountTargetsWithoutChangingOwner",
+            "result": "actual Pixel pass",
+            "proves": "Five genuine ACTION_VIEW refusal cases preserve pair/incarnation/scope/panes and journals."
+          }
+        ],
+        "remaining_required_workflow": [
+          "Pairing QR safe preview/Continue/native-prefill/no-auto-pair method has not passed;140 failed before file selection and177 only proves a pane QR."
+        ],
+        "coverage_limits": [
+          "Verified operator-host Android App Links association is conditional on an existing configured host; no universal association service is required."
+        ]
+      },
+      "B24": {
+        "scope_decision": "retain_subset",
+        "retained_requirement": "Support documented operator-configured front doors using the existing native authentication work where applicable. Do not make a new universal issuer/DPoP gateway deployment a prerequisite for ordinary paired HTTPS users. Preserve credentials and refusal boundaries.",
+        "disposition": "accepted_actual_configured_https_subset",
+        "actual_evidence": [
+          {
+            "artifact": "/var/tmp/collie-completion-20261013/pixel-admission259.log",
+            "method": "holdForNormalParentRevocationThenNativeReadRefusalRetiresOnlyOwnedCredential",
+            "result": "actual Pixel pass",
+            "proves": "Genuine normal-CLI revoke then native403 freezes and retires only original write authority, no new mutation UUID."
+          },
+          {
+            "artifact": "/var/tmp/collie-completion-20261013/pixel-admission-restart260.log",
+            "method": "actualProcessRestartKeepsRetiredProfileAndRequiresNativePairingRepair",
+            "result": "actual Pixel pass",
+            "proves": "Real PID absence/new process preserves revoked unpaired profile; normal form repair262 follows."
+          },
+          {
+            "artifact": "/tmp/collie-completion-pixel191.log",
+            "method": "actualNativeLinksRejectForeignMalformedAndOutsideMountTargetsWithoutChangingOwner",
+            "result": "actual Pixel pass",
+            "proves": "Five genuine ACTION_VIEW refusal cases preserve pair/incarnation/scope/panes and journals."
+          },
+          {
+            "artifact": "/tmp/collie-completion-import-paste147.log",
+            "method": "pasteShareOrQrNavigationRequiresContinueAndReadsTheExactPane",
+            "result": "actual Pixel pass",
+            "proves": "Actual native paste preview/Continue/exact admitted pane."
+          },
+          {
+            "artifact": "/tmp/collie-completion-pixel-push-background45.log",
+            "method": "liveDeliveredNotificationHasPrivateCustodyAndNormalTapOpensExactPane",
+            "result": "actual Pixel pass",
+            "proves": "Actual closed-app blocked notification; OS alert exists before instrumentation and native SystemUI exact-pane tap."
+          }
+        ],
+        "remaining_required_workflow": [],
+        "coverage_limits": [
+          "Ordinary paired valid-public-TLS ingress works. No fresh native OIDC issuer/browser flow is claimed and no universal issuer/DPoP deployment is a prerequisite; existing strict native identity source/tests are preserved."
+        ]
+      },
+      "B25": {
+        "scope_decision": "required",
+        "retained_requirement": "Verify opt-in encrypted saved dashboard/pane/Chat reads and lifecycle. Recheck the historical retained-screen failure against the current consolidated source; old failure/review labels are not current test results.",
+        "disposition": "partial_actual_offline_chat_only",
+        "actual_evidence": [
+          {
+            "artifact": "/tmp/collie-completion-pixel196.log",
+            "method": "selectedOfflineChatPhaseUsesRealNativeUiAndCurrentPair",
+            "result": "actual Pixel pass",
+            "proves": "Actual retained Codex Chat prepare phase with genuine encrypted content/current exact owner; no seeding."
+          },
+          {
+            "artifact": "/tmp/collie-completion-pixel197.log",
+            "method": "selectedOfflineChatPhaseUsesRealNativeUiAndCurrentPair",
+            "result": "actual Pixel pass",
+            "proves": "Actual retained Codex Chat offline cold-process phase with genuine encrypted content/current exact owner; no seeding."
+          },
+          {
+            "artifact": "/tmp/collie-completion-pixel198.log",
+            "method": "selectedOfflineChatPhaseUsesRealNativeUiAndCurrentPair",
+            "result": "actual Pixel pass",
+            "proves": "Actual retained Codex Chat reconnect phase with genuine encrypted content/current exact owner; no seeding."
+          },
+          {
+            "artifact": "/tmp/collie-completion-pixel199.log",
+            "method": "selectedOfflineChatPhaseUsesRealNativeUiAndCurrentPair",
+            "result": "actual Pixel pass",
+            "proves": "Actual retained Codex Chat opt-out phase with genuine encrypted content/current exact owner; no seeding."
+          }
+        ],
+        "remaining_required_workflow": [
+          "Execute existing selectedOfflinePhaseUsesRealNativeUiAndCurrentPair prepare/offline/reconnect/optout for real Dashboard and pane; no named current run exists."
+        ],
+        "coverage_limits": [
+          "196-199 cover only Chat. Later full1501 JVM pass is not physical Dashboard/pane cold restart acceptance."
+        ]
+      },
+      "B26": {
+        "scope_decision": "required",
+        "retained_requirement": "Verify current machine cards and historical resources, metrics availability and Crew scope.",
+        "disposition": "accepted_actual_crew_resource_history",
+        "actual_evidence": [
+          {
+            "artifact": "/var/tmp/collie-completion-20261013/pixel-crew-charts287.log",
+            "method": "liveMachineChartUsesRealSamplesAndUnavailableMemberShowsHonestGaps",
+            "result": "actual Pixel pass",
+            "proves": "Real Crew reachable sample+retained historical samples; owned peer stopped, full missing minute naturally elapses, native null gaps/table/accessibility, rules/incarnations unchanged."
+          },
+          {
+            "artifact": "/var/tmp/collie-completion-20261013/pixel-crew-return282.log",
+            "method": "verifyServingNewLeadAfterParentRestartThroughNormalRefresh",
+            "result": "actual Pixel pass",
+            "proves": "Authentic former-lead return after takeover; native Pack refresh verifies two-member roster, one new lead, authenticated snapshot, takeover disabled."
+          }
+        ],
+        "remaining_required_workflow": [],
+        "coverage_limits": [
+          "Real retained last readings/time and naturally completed null minutes replace invalid all-null-history assumption."
+        ]
+      },
+      "B27": {
+        "scope_decision": "retain_subset",
+        "retained_requirement": "Retain official machine alert settings and event delivery. New durable monitoring/checkpoint guarantees beyond official functionality are not independent release gates. Join required notification events with B22.",
+        "disposition": "accepted_actual_rule_and_background_event",
+        "actual_evidence": [
+          {
+            "artifact": "/tmp/collie-completion-pixel-machine-create120.log",
+            "method": "liveMachineAlertRulePersistsRequestedNativeAction",
+            "result": "actual Pixel pass",
+            "proves": "Actual native CPU rule create, exact server revision advancement, no other rule edits."
+          },
+          {
+            "artifact": "/tmp/collie-completion-pixel-machine-change123.log",
+            "method": "liveMachineAlertRulePersistsRequestedNativeAction",
+            "result": "actual Pixel pass",
+            "proves": "Actual native CPU rule change, exact server revision advancement, no other rule edits."
+          },
+          {
+            "artifact": "/tmp/collie-completion-pixel-machine-remove124.log",
+            "method": "liveMachineAlertRulePersistsRequestedNativeAction",
+            "result": "actual Pixel pass",
+            "proves": "Actual native CPU rule remove, exact server revision advancement, no other rule edits."
+          },
+          {
+            "artifact": "/var/tmp/collie-completion-20261013/pixel-machine-delivery292.log",
+            "method": "liveDeliveredNotificationHasPrivateCustodyAndNormalTapOpensExactPane",
+            "result": "actual Pixel pass",
+            "proves": "Real ordinary memory episode, closed-app OS alert before instrumentation, private custody and normal SystemUI HOME tap to original fresh Crew dashboard; no pane/control mutation."
+          },
+          {
+            "artifact": "/var/tmp/collie-completion-20261013/pixel-machine-rule-remove293.log",
+            "method": "liveCrewMemoryAlertRuleRemoveThroughNativeUi",
+            "result": "actual Pixel pass",
+            "proves": "Normal native removal restores original empty rule at revision5."
+          }
+        ],
+        "remaining_required_workflow": [],
+        "coverage_limits": [
+          "292 and293 supersede stale machine_rules pending wording; no synthetic load/sample/time or new checkpoint platform requirement."
+        ]
+      },
+      "B28": {
+        "scope_decision": "required",
+        "retained_requirement": "Finish the native app update equivalent: independent Android release discovery/link, download checks and Android-confirmed install with matching package/signer and increasing versionCode. Keep server/Crew updates separate. No new generic distribution/signing service.",
+        "disposition": "pending_final_signed_upgrade_release",
+        "actual_evidence": [],
+        "remaining_required_workflow": [
+          "Build/review final1.6.0/code4 signed artifact, required CI/security scan, fresh artifact smoke, publish unchanged reviewed assets and complete native same-signer3-to4 upgrade preserving pairing/preferences."
+        ],
+        "coverage_limits": [
+          "Private production3 SHA50fc34d58cb570c8785a94644384ff5f356e5b37647e4af51e4a7fc45691315d is independently verified but uninstalled/unpublished and not built from existing1.5.2 tag; it is not final release acceptance."
+        ]
+      },
+      "B29": {
+        "scope_decision": "exclude_expansion",
+        "retained_requirement": "Portable Herdr layout administration is outside native Collie parity. Preserve reviewed source and any safe working extra; do not require new runtime protocols or host layout import/export for release.",
+        "disposition": "excluded_expansion_source_preserved",
+        "actual_evidence": [],
+        "remaining_required_workflow": [],
+        "coverage_limits": [
+          "Preserve existing implementation/branch/history and historical ledger facts; do not call the excluded host-admin feature complete or reintroduce its private runtime contract as a release prerequisite. Retained stock launch/conversation/update routes have their own rows."
+        ]
+      },
+      "B30": {
+        "scope_decision": "exclude_expansion",
+        "retained_requirement": "Full Herdr integration/manifest administration is outside the app completion goal. Keep ordinary Collie backend/harness capability reporting; hide unsupported optional administrative entry points.",
+        "disposition": "excluded_expansion_source_preserved",
+        "actual_evidence": [],
+        "remaining_required_workflow": [],
+        "coverage_limits": [
+          "Preserve existing implementation/branch/history and historical ledger facts; do not call the excluded host-admin feature complete or reintroduce its private runtime contract as a release prerequisite. Retained stock launch/conversation/update routes have their own rows."
+        ]
+      },
+      "B31": {
+        "scope_decision": "exclude_expansion",
+        "retained_requirement": "Remove pane_original_metadata_v1 and agent_view_read_v1 as app prerequisites. Keep documented display metadata; preserve custom authoring source as history and remove/hide unavailable custom editor entry points.",
+        "disposition": "excluded_expansion_source_preserved",
+        "actual_evidence": [],
+        "remaining_required_workflow": [],
+        "coverage_limits": [
+          "Preserve existing implementation/branch/history and historical ledger facts; do not call the excluded host-admin feature complete or reintroduce its private runtime contract as a release prerequisite. Retained stock launch/conversation/update routes have their own rows."
+        ]
+      },
+      "B32": {
+        "scope_decision": "exclude_expansion",
+        "retained_requirement": "Remove plugin_user_dirs_v1 and plugin_owner_operations_v1 dependencies from required app paths. Keep documented Collie update/restart actions; full plugin marketplace/config editing is outside parity.",
+        "disposition": "excluded_expansion_source_preserved",
+        "actual_evidence": [],
+        "remaining_required_workflow": [],
+        "coverage_limits": [
+          "Preserve existing implementation/branch/history and historical ledger facts; do not call the excluded host-admin feature complete or reintroduce its private runtime contract as a release prerequisite. Retained stock launch/conversation/update routes have their own rows."
+        ]
+      },
+      "B33": {
+        "scope_decision": "retain_subset",
+        "retained_requirement": "Select native copy/find/link/scroll UX pieces from work/b33-operator-controls only where needed. Use admitted Collie content and Android selection/scroll/link handling; do not merge pane.*.original_v1 or private popup/action protocols. Host terminal scroll/edit/UI controls are outside parity.",
+        "disposition": "partial_retained_native_interaction_subset",
+        "actual_evidence": [
+          {
+            "artifact": "/tmp/collie-completion-pixel-stock-workflows32.log",
+            "method": "PhysicalStockWorkflowsAcceptanceTest (all three methods)",
+            "result": "actual Pixel pass",
+            "proves": "Current stock shell Unicode reply/Refresh/Find, solo Files Unicode source and authenticated PNG, Git diff and source handoff."
+          },
+          {
+            "artifact": "/tmp/collie-completion-pixel225.log",
+            "method": "nativeCreateBesideKeepsFocusUntilShowInTerminalAndClosesOnlyItsOwnTab",
+            "result": "actual Pixel pass",
+            "proves": "Normal create-beside, passive host-focus preservation, explicit Show Terminal, native rename/close of owned tab."
+          }
+        ],
+        "remaining_required_workflow": [
+          "Actual native copy and safe linked-file/URL opening have no focused current physical proof; shell Find32/Changes-to-Files handoff is not clipboard/external-link proof."
+        ],
+        "coverage_limits": [
+          "Native scroll/find/link source already exists; full private host scroll/edit/popup/terminal-focus controls are excluded. Preserve unfinishedB33 source."
+        ]
+      },
+      "B34": {
+        "scope_decision": "retain_subset",
+        "retained_requirement": "Select stock-compatible fixes for official Chat/History/media only. A new persistent recorder, observer product, custom media producer and invented journals for all detected agents are outside parity. Preserve the branch until safe extraction is committed.",
+        "disposition": "accepted_actual_chat_history_media_subset",
+        "actual_evidence": [
+          {
+            "artifact": "/tmp/collie-completion-pixel170.log",
+            "method": "readsActualVendorSessionChatAndHistoryWithoutSending",
+            "result": "actual Pixel pass",
+            "proves": "Actual Codex session UUID, native Chat/Transcript/History, no Send."
+          },
+          {
+            "artifact": "/tmp/collie-completion-pixel212.log",
+            "method": "actualClaudeInputImageProjectsAndRendersThroughScopedNativeHistory",
+            "result": "actual Pixel pass",
+            "proves": "Genuine Claude journal image projects and decodes in native History under original pane/session actor."
+          },
+          {
+            "artifact": "/tmp/collie-completion-durable-full131.log",
+            "method": "configuredDurableOriginAnswersSendsReadsContextAndHistoryWithoutReplayingAfterRecreation",
+            "result": "actual Pixel pass",
+            "proves": "Actual write_note ask with Allow/Deny controls, native Allow, Unicode Send/prompt context, recreation and actual History, stable user UUID."
+          }
+        ],
+        "remaining_required_workflow": [],
+        "coverage_limits": [
+          "New persistent recorder/observer/custom producer/every-harness journal requirements are excluded. Preserve unfinishedB34 source; pending image-retirement schedule is tracked only underB04."
+        ]
+      },
+      "B35": {
+        "scope_decision": "retain_subset",
+        "retained_requirement": "Require official Crew membership/status and host navigation. Full Herdr saved-machine administration is outside parity; do not build it to close an old ledger row.",
+        "disposition": "partial_actual_crew_roster",
+        "actual_evidence": [
+          {
+            "artifact": "/var/tmp/collie-completion-20261013/pixel-crew-return282.log",
+            "method": "verifyServingNewLeadAfterParentRestartThroughNormalRefresh",
+            "result": "actual Pixel pass",
+            "proves": "Authentic former-lead return after takeover; native Pack refresh verifies two-member roster, one new lead, authenticated snapshot, takeover disabled."
+          },
+          {
+            "artifact": "/var/tmp/collie-completion-20261013/pixel-crew-charts287.log",
+            "method": "liveMachineChartUsesRealSamplesAndUnavailableMemberShowsHonestGaps",
+            "result": "actual Pixel pass",
+            "proves": "Real Crew reachable sample+retained historical samples; owned peer stopped, full missing minute naturally elapses, native null gaps/table/accessibility, rules/incarnations unchanged."
+          }
+        ],
+        "remaining_required_workflow": [
+          "Normal native selection of a real Crew peer host and return/unavailable-host navigation is not exercised by Pack roster/formation282."
+        ],
+        "coverage_limits": [
+          "Full Herdr saved-machine administration is excluded."
+        ]
+      },
+      "B36": {
+        "scope_decision": "retain_subset",
+        "retained_requirement": "Require documented multi-session selection/state. Herdr backup/restore/handoff administration is outside native parity; display upstream restore failures honestly.",
+        "disposition": "partial_identity_without_session_selector",
+        "actual_evidence": [
+          {
+            "artifact": "/tmp/collie-completion-pixel170.log",
+            "method": "readsActualVendorSessionChatAndHistoryWithoutSending",
+            "result": "actual Pixel pass",
+            "proves": "Actual Codex session UUID, native Chat/Transcript/History, no Send."
+          },
+          {
+            "artifact": "/tmp/collie-completion-pixel212.log",
+            "method": "actualClaudeInputImageProjectsAndRendersThroughScopedNativeHistory",
+            "result": "actual Pixel pass",
+            "proves": "Genuine Claude journal image projects and decodes in native History under original pane/session actor."
+          }
+        ],
+        "remaining_required_workflow": [
+          "Current physical evidence lacks normal selection and reopening of a distinct genuine owning named session with stale/gone session refusal."
+        ],
+        "coverage_limits": [
+          "Full backup/restore/handoff administration is excluded; no requirement to create new host services."
+        ]
+      },
+      "B37": {
+        "scope_decision": "retain_subset",
+        "retained_requirement": "Consume the documented Windows Collie contract and capability limits; do not develop new Windows Herdr/Crew/build/service features. Retain applicable existing private-state protections.",
+        "disposition": "explicit_accepted_environment_limit",
+        "actual_evidence": [],
+        "remaining_required_workflow": [],
+        "coverage_limits": [
+          "No available live Windows environment is established. This is an explicit honest environment limitation accepted for the corrected scope, not a live Windows pass or a new Windows development prerequisite. Existing applicable source protections remain supporting evidence."
+        ]
+      },
+      "B38": {
+        "scope_decision": "required",
+        "retained_requirement": "Implement/verify the official deputy/standby takeover user workflow through trusted configured HTTPS. No new Herdr takeover APIs or general HA platform.",
+        "disposition": "accepted_actual_takeover_and_lead_return",
+        "actual_evidence": [
+          {
+            "artifact": "/tmp/collie-completion-pixel-crew-takeover113.log",
+            "method": "nativeConfirmedTakeoverRecordsCustodyWithoutAssumingRestart",
+            "result": "actual Pixel pass",
+            "proves": "One confirmed native takeover with genuine persisted uncertainty; parent performs actual normal restart."
+          },
+          {
+            "artifact": "/tmp/collie-completion-pixel-crew-restarted116.log",
+            "method": "verifyServingNewLeadAfterParentRestartThroughNormalRefresh",
+            "result": "actual Pixel pass",
+            "proves": "Actual new lead/leading state and exact original pending takeover resolved by native review, no second takeover."
+          },
+          {
+            "artifact": "/var/tmp/collie-completion-20261013/pixel-crew-return282.log",
+            "method": "verifyServingNewLeadAfterParentRestartThroughNormalRefresh",
+            "result": "actual Pixel pass",
+            "proves": "Authentic former-lead return after takeover; native Pack refresh verifies two-member roster, one new lead, authenticated snapshot, takeover disabled."
+          }
+        ],
+        "remaining_required_workflow": [],
+        "coverage_limits": [
+          "Two-member ordinary takeover/return is proven; witness quorum and new HA/Herdr protocols are not claimed or required."
+        ]
+      },
+      "B39": {
+        "scope_decision": "required",
+        "retained_requirement": "Verify themes, Zen, fonts/operator fonts, pins, quick replies, commands/keypad, draft preferences and masks as native workflows. Keep explicit English-only decision.",
+        "disposition": "accepted_actual_primary_preferences",
+        "actual_evidence": [
+          {
+            "artifact": "/tmp/collie-completion-pixel-font-final81.log",
+            "method": "actualSettingsSelectionLoadsPersistsAndRestoresTheAdmittedOperatorFont",
+            "result": "actual Pixel pass",
+            "proves": "Normal picker/actual HTTPS WOFF2/JNI render/persistence/reopen; protected reply typography."
+          },
+          {
+            "artifact": "/tmp/collie-completion-pixel-usability-font2-ready84.log",
+            "method": "nativeThemeChoicesAndLargeTextKeepComposerUsableAboveThePhysicalIme",
+            "result": "actual Pixel pass",
+            "proves": "Actual2xfont Light/Dark, complete title glyphs, real IME/insets/48dpSend; settings restored."
+          },
+          {
+            "artifact": "/tmp/collie-completion-pixel-talkback95.log",
+            "method": "enabledTalkBackCanOpenSettingsAndReturnFromTheLivePane",
+            "result": "actual Pixel pass",
+            "proves": "Actual GoogleTalkBack17.1 touch exploration: Settings/Back and pane/Back to dashboard; original settings restored."
+          },
+          {
+            "artifact": "/tmp/collie-completion-pixel171.log",
+            "method": "nativePinUnpinPersistsThroughDashboardSwitcherAndActivityRecreation",
+            "result": "actual Pixel pass",
+            "proves": "Native Pin/Unpin/dashboard/switcher/recreation and original pair/incarnation preserved."
+          },
+          {
+            "artifact": "/tmp/collie-completion-pixel220.log",
+            "method": "zenIsAnExplicitTransientPaneActionAndComposerDrawerCanCloseWithoutSending",
+            "result": "actual Pixel pass",
+            "proves": "Normal native sheet drag/Zen enter-exit/keys drawer closure, no Send."
+          },
+          {
+            "artifact": "/tmp/collie-completion-pixel185.log",
+            "method": "nativeQuickReplyAndSingleKeyPresetStayOnTheOwnedShellAndKeepComposerLocal",
+            "result": "individual method pass in mixed failed run185",
+            "proves": "This method status0 in mixed run185: actual Quick reply once, oneLeft, local draft. Separate Zen method failed and was superseded220."
+          },
+          {
+            "artifact": "/tmp/collie-completion-pixel158.log",
+            "method": "nativeSettingsSizesSurviveActivityRecreationAndReopenedSettings",
+            "result": "individual method pass in mixed failed run158",
+            "proves": "This method status0 in mixed run158: terminal/draft sizes survive Settings recreation/reopen and restore baseline."
+          }
+        ],
+        "remaining_required_workflow": [],
+        "coverage_limits": [
+          "Local_preferences old Zen pending wording is superseded by220.158/185 are mixed run outcomes; only named passing methods are credited. No exhaustive every-custom-keypad-row editing claim."
+        ]
+      },
+      "B40": {
+        "scope_decision": "required",
+        "retained_requirement": "Verify config-driven controls, secret masking, upload limits and authorization/refusal diagnostics against official Collie behavior. Speech-to-text, voice input, speech model/engine setup and their acceptance checks are explicitly excluded; preserve existing speech source.",
+        "disposition": "partial_actual_upload_refusal_diagnostics",
+        "actual_evidence": [
+          {
+            "artifact": "/var/tmp/collie-completion-20261013/pixel-media263.log",
+            "method": "liveDocumentsUiUploadAcknowledgesExactFixtureWithoutTerminalSubmission",
+            "result": "actual Pixel pass",
+            "proves": "Real SAF63B TXT, one upstream200/native chip acknowledgement then removal, no terminal submission or draft path."
+          },
+          {
+            "artifact": "/tmp/collie-completion-pixel189.log",
+            "method": "liveDocumentsUiUploadAcknowledgesExactFixtureWithoutTerminalSubmission",
+            "result": "actual Pixel pass",
+            "proves": "Real SAF70B PNG, one upload200/native chip then normal removal, no terminal submission."
+          },
+          {
+            "artifact": "/tmp/collie-completion-pixel184.log",
+            "method": "liveDocumentsUiCancelPreservesUnsentDraftAndMakesNoUploadOrTerminalSubmission",
+            "result": "actual Pixel pass",
+            "proves": "Normal DocumentsUI Back preserves harmless draft with no upload/terminal POST."
+          },
+          {
+            "artifact": "/var/tmp/collie-completion-20261013/pixel-media-switch267.log",
+            "method": "liveDocumentsUiPendingUploadCannotCrossNativePaneSwitch",
+            "result": "actual Pixel pass",
+            "proves": "Actual native w1-to-w2 switch before held real200 response release; old actor stale, new actor clear, both terminal text/revisions unchanged. Parent independent one-upload200/63B evidence required and recorded."
+          },
+          {
+            "artifact": "/var/tmp/collie-completion-20261013/pixel-admission259.log",
+            "method": "holdForNormalParentRevocationThenNativeReadRefusalRetiresOnlyOwnedCredential",
+            "result": "actual Pixel pass",
+            "proves": "Genuine normal-CLI revoke then native403 freezes and retires only original write authority, no new mutation UUID."
+          }
+        ],
+        "remaining_required_workflow": [
+          "No named current physical workflow demonstrates native output secret masking using harmless synthetic masked content."
+        ],
+        "coverage_limits": [
+          "Real63B/70B supported MIME uploads and metadata-only multipart diagnostics are demonstrated. Over-limit/refused MIME edge cases remain integrated source/JVM evidence. Speech/transcription stays excluded."
+        ]
+      },
+      "B41": {
+        "scope_decision": "required",
+        "retained_requirement": "Use this corrected scope, not all41/75/132/102 as immutable acceptance counts. Update existing docs/evidence to current integrated source and run release checks; no new evidence framework.",
+        "disposition": "pending_exact_release_and_crosswalk_closure",
+        "actual_evidence": [],
+        "remaining_required_workflow": [
+          "Parent must integrate these finite honest dispositions into existing ledger, resolve actual required gaps, and finish exact final commit gates/scan/signed-artifact/upgrade/publication evidence."
+        ],
+        "coverage_limits": [
+          "Markdown ledger corrected-completion narrative remains stale; old counts/statuses and uncommitted wording must not override current8e5f52fa/2cbdeb9c evidence."
+        ]
+      }
+    },
+    "ci_status": {
+      "pr": "https://github.com/Buckeyes22/collie/pull/5",
+      "source_commit": "2c453cb4",
+      "run": 38657581703,
+      "status": "failed; fixes being integrated, no release gate bypass",
+      "details": "Fullnormalprepush299 and304passed6681backend/20741web+33expectedfail44todo; directmainpushprotectedchecks expected, normalreviewbranch304/PR5created. CIrootnoticesguardfixturepathsfailed; privateexplicitfixturehomefixindependentlyapproved/integrated324notices+docTests9PASS. CIdocs2757failuresportablecurrentrootfixed/7citedarchivespreserved:322normal287markdownPASS+7testsPASS. CIcrew54pass1enrolEXIT2; exact--inviteprefixmode reproduced, documentedstdinroutefixturefixindependentlyreviewed/integrated; privatefull68PASS. CurrentCIre-runstillrequired. Actual325buildPASS22s; normal332 redaction/notices/doclinktests12PASS afteraccount-neutral boundedhistoricalpathparserfix; fulltree330lintPASS. Docrootmapping validatescurrentclone and rejectsneighbour/traversal/missingoriginal; privatearchives7exactbyteidenticalpreserved."
+    }
   }
 }

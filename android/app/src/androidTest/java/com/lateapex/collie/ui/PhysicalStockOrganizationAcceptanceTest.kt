@@ -68,7 +68,7 @@ class PhysicalStockOrganizationAcceptanceTest {
         assertTrue("Supply the existing disposable fixture pane", !paneId.isNullOrEmpty())
         assertTrue("Pane id must be bounded", requireNotNull(paneId).matches(Regex("[A-Za-z0-9:._-]{1,128}")))
         val root = args.getString("liveRepoPath")?.trim()
-        assertTrue("Supply the owned dated Git fixture root", root?.matches(Regex("/home/chris/collie-completion-[0-9]{8}")) == true)
+        assertTrue("Supply the owned dated Git fixture root", root?.matches(PhysicalFixturePaths.datedRootPattern) == true)
 
         val app = ApplicationProvider.getApplicationContext<Context>().applicationContext as CollieApplication
         assertTrue("Stock organization acceptance requires the isolated completion app", app.packageName.endsWith(".completiontest"))
@@ -432,7 +432,7 @@ class PhysicalStockOrganizationAcceptanceTest {
 
     private fun uiPathMatches(root: String, visible: String?): Boolean {
         val value = visible?.trim()?.trimEnd('/') ?: return false
-        return value == root || value == "~" + root.removePrefix("/home/chris")
+        return value == root || value == "~" + root.removePrefix(PhysicalFixturePaths.home)
     }
 
     private fun starButton(activity: NewActivity, path: String, description: String? = null): View? {

@@ -272,8 +272,8 @@ class PhysicalLaunchAcceptanceTest {
     }
 
     companion object {
-        const val ROOT = "/home/chris/collie-completion-20261013"
+        val ROOT get() = PhysicalFixturePaths.root
         const val LABEL = "Completion harmless shell"
-        const val COMMAND = "bash --noprofile --norc /home/chris/collie-completion-20261013/completion-shell.sh"
+        val COMMAND get() = "bash --noprofile --norc ${PhysicalFixturePaths.root}/completion-shell.sh"
     }
 }

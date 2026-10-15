@@ -519,7 +519,7 @@ class PhysicalNativePushAcceptanceTest {
         } finally { instrumentation.runOnMainSync { opened?.finish() } }
     }
 
-    /** Read-only proof for the fresh owned 1.19.0 -> 1.21.0 update offer; no update or dismiss action is clicked. */
+    /** Read-only proof for the genuine current public update offer; no update or dismiss action is clicked. */
     private fun assertUpdatesNotificationDestination(
         app: CollieApplication,
         paired: com.lateapex.collie.domain.Connection,
@@ -532,7 +532,12 @@ class PhysicalNativePushAcceptanceTest {
         val expectedCurrent = requireNotNull(args.getString("expectedUpdateCurrent")?.takeIf(String::isNotBlank))
         val expectedLatest = requireNotNull(args.getString("expectedUpdateLatest")?.takeIf(String::isNotBlank))
         assertEquals("This controlled notification acceptance is the fixed source package version", "1.19.0", expectedCurrent)
-        assertEquals("This controlled notification acceptance is the fixed offered package version", "1.21.0", expectedLatest)
+        assertTrue("The explicit public offer must be bounded canonical stable SemVer",
+            expectedLatest.matches(Regex("(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})")))
+        val firstChanged = expectedLatest.split('.').map(String::toInt)
+            .zip(expectedCurrent.split('.').map(String::toInt)).firstOrNull { it.first != it.second }
+        assertTrue("The actual expected public offer must be newer than the fixed installed server",
+            firstChanged?.let { it.first > it.second } == true)
         fun assertOriginalOwner() {
             assertTrue("Updates destination must retain the exact installed pairing", app.container.connectionStore.connection.value === paired)
             assertTrue("Updates destination must retain the original current actor", app.container.repository.isCurrent(actor))

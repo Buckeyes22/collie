@@ -40,7 +40,7 @@ import org.junit.runner.RunWith
  * At the READY marker the parent uses the NORMAL CLI against ONLY the completion stock state:
  * COLLIE_STATE_DIR=<actual stock state> HERDR_PLUGIN_CONFIG_DIR=<actual stock config>
  * HERDR_SOCKET_PATH=/var/tmp/cc13-h/herdr/sessions/cc13/herdr.sock
- * bun /home/chris/git/collie/cli/main.ts devices revoke 'completion Pixel'
+ * bun cli/main.ts devices revoke 'completion Pixel'
  * Never guess the state/config directories or edit/copy the registry. The marker has only the
  * public owned label, committed incarnation and process ID. Reads use the retained original
  * connection while this test is alive; it never restores a token after native retirement.

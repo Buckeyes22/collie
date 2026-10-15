@@ -299,7 +299,7 @@ class PhysicalPanePinsAcceptanceTest {
             OriginValidator().requireValid(REQUIRED_ORIGIN), origin)
         assertTrue("The explicitly owned w1:p1 shell is required", args.getString("livePaneId") == CONTROLLED_PANE)
         val root = args.getString("liveRepoPath")?.trim()
-        assertTrue("The dated owned repository root is required", root?.matches(Regex("/home/chris/collie-completion-[0-9]{8}")) == true)
+        assertTrue("The dated owned repository root is required", root?.matches(PhysicalFixturePaths.datedRootPattern) == true)
         val app = ApplicationProvider.getApplicationContext<Context>().applicationContext as CollieApplication
         assertTrue("Pin acceptance requires the isolated completion app", BuildConfig.APPLICATION_ID.endsWith(".completiontest"))
         val connection = app.container.connectionStore.connection.value

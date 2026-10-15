@@ -99,7 +99,7 @@ class PhysicalOfflineAcceptanceTest {
         val sessionId = java.util.UUID.fromString(requireNotNull(sessionText)).toString()
         assertEquals("The session UUID must be canonical", sessionId, sessionText)
         val root = args.getString("liveRepoPath")?.trim()
-        assertTrue("Use the owned dated completion Git fixture root", root?.matches(Regex("/home/chris/collie-completion-[0-9]{8}")) == true)
+        assertTrue("Use the owned dated completion Git fixture root", root?.matches(PhysicalFixturePaths.datedRootPattern) == true)
 
         val app = ApplicationProvider.getApplicationContext<Context>().applicationContext as CollieApplication
         assertTrue("Offline Chat acceptance is confined to the isolated completion app", BuildConfig.APPLICATION_ID.endsWith(".completiontest"))

@@ -53,7 +53,7 @@ COLLIE_DURABLE_SOCKET=/run/user/1000/durable-member/app.sock
 Then run `COLLIE_INSTANCE=durable collie start`. `COLLIE_INSTANCE=durable collie doctor` checks the
 socket and says what is wrong when the peer cannot reach the app. The full steps are in
 [Multiple Collie instances on one host](../../docs/deployment.md#multiple-collie-instances-on-one-host),
-and what the `durable` backend can do is in [durable notes](../../docs/multiplexers.md#durable-notes).
+and what the `durable` backend can do is in [durable backend contract](../../bridge/mux/durable/WIRE.md).
 
 Run the peer as the same user as the app. Keep the socket under `$XDG_RUNTIME_DIR`: the Collie service
 runs with a private `/tmp`, so it cannot see a socket in `/tmp`.
@@ -170,9 +170,8 @@ The SDK has two parts. `sdk/core/` is the layout and the wire as one function, `
 `Request` in, a `Response` out. It cleans every string and cuts it to its byte cap, and keeps the request ids
 so a repeat runs once, in a `ReceiptStore` you can swap for one that outlives the process. The store keeps
 the newest 1000 per pane; a repeat of an older id gets a 500, an unknown outcome, and runs nothing. It imports no
-runtime module, so the same core serves the
-[Cloudflare example](../durable-member-cloudflare/README.md) from a Durable Object. `sdk/server.ts` is the
-transport for Bun: the private socket and the descendant check. It accepts connections with `Bun.listen`
+runtime module, so another transport can reuse the same web `Request` and `Response` interface.
+`sdk/server.ts` is the transport for Bun: the private socket and the descendant check. It accepts connections with `Bun.listen`
 and parses them with `node:http`, because only a `Bun.listen` socket gives the file descriptor that
 `SO_PEERCRED` needs. `Bun.serve({ unix })` shows no peer.
 

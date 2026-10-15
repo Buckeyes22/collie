@@ -48,7 +48,7 @@ class PhysicalClaudeJournalImageAcceptanceTest {
             OriginValidator().requireValid(STOCK_ORIGIN), origin)
         assertTrue("This acceptance must use the isolated completion package", app.packageName.endsWith(".completiontest"))
         val root = requireNotNull(args.getString("liveRepoPath"))
-        assertTrue("Use only the owned dated Git fixture root", root.matches(Regex("/home/chris/collie-completion-[0-9]{8}")))
+        assertTrue("Use only the owned dated Git fixture root", root.matches(PhysicalFixturePaths.datedRootPattern))
         val scope = Scope(args.getString("liveHost")?.trim()?.takeIf(String::isNotEmpty),
             args.getString("liveSession")?.trim()?.takeIf(String::isNotEmpty))
         val paneId = requireNotNull(args.getString("livePaneId"))

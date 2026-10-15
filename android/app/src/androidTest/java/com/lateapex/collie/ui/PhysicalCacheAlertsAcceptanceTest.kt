@@ -546,6 +546,112 @@ class PhysicalCacheAlertsAcceptanceTest {
         }
     }
 
+    /** Dismiss the genuine currently offered server release once and prove exact-version persistence. */
+    @Test fun liveServerUpdateDismissalPersistsExactOfferAcrossReopen() {
+        assumeTrue("Explicit nativeUpdateDismissal=true is required for this actual offer dismissal",
+            args.getString("nativeUpdateDismissal") == "true")
+        withLive { live ->
+            assertEquals("Only the enrolled completion-updates origin is permitted",
+                OriginValidator().requireValid("https://prod.lateapexllc.com/completion-updates/"), live.paired.origin)
+            val expectedCurrent = required("expectedUpdateCurrent")
+            val expectedLatest = required("expectedUpdateLatest")
+            assertEquals("This acceptance is bounded to the supplied live server version", "1.19.0", expectedCurrent)
+            assertTrue("The expected genuine offer must be bounded canonical stable SemVer",
+                expectedLatest.matches(Regex("(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})\\.(0|[1-9][0-9]{0,8})")))
+            val repository = live.app.container.repository
+            val store = live.app.container.connectionStore
+            val actor = requireNotNull(repository.readContext()) { "The current installed actor is required" }
+            val priorScope = repository.selectedScope.value
+            val priorSubject = actor.key.subjectIdentity
+            val committed = requireNotNull(store.captureCommitted())
+            assertTrue("The original paired incarnation must be committed", committed.connection === live.paired && committed.incarnationId != null)
+            fun owner() {
+                current(live, actor)
+                assertEquals("Update dismissal must preserve the selected native scope", priorScope, repository.selectedScope.value)
+                assertEquals("Update dismissal must preserve the original actor identity", priorSubject,
+                    repository.readContext()?.key?.subjectIdentity)
+                val now = store.captureCommitted()
+                assertTrue("Update dismissal must preserve the exact committed pairing incarnation and revision",
+                    now != null && now.connection === live.paired && now.revision == committed.revision &&
+                        now.incarnationId == committed.incarnationId)
+            }
+            owner()
+            val before = updates(live, actor)
+            assertEquals("Actual installed server version must match the explicit live precondition", expectedCurrent, before.current)
+            assertEquals("Actual GitHub release must be the genuine currently offered version", expectedLatest, before.latest)
+            assertTrue("The current release must be a real available offer", before.releaseAvailable)
+            assertNull("An active update run is outside this read-only dismissal workflow", before.run)
+            assumeTrue("The genuine offer is already dismissed; do not reset server state", before.dismissedVersion != expectedLatest)
+            assertNotNull("A genuine release-offer button must be available for this exact version",
+                UpdateNativePresentation.dismissibleOfferVersion(before))
+            assertEquals(expectedLatest, UpdateNativePresentation.dismissibleOfferVersion(before))
+            val expectedSummary = live.app.getString(R.string.updates_native_running, expectedCurrent) +
+                live.app.getString(R.string.updates_native_newest_suffix, expectedLatest)
+            val expectedButton = live.app.getString(R.string.updates_native_dismiss_offer, expectedLatest)
+
+            fun dismissedUi(activity: UpdatesActivity): Boolean {
+                val button = activity.findViewById<View>(R.id.updates_native_offer_dismiss_button)
+                return activity.findViewById<TextView>(R.id.updates_native_summary)?.let {
+                    it.isShown && it.text.toString().contains(expectedSummary)
+                } == true && button?.visibility == View.GONE &&
+                    texts(activity).contains(activity.getString(R.string.updates_native_dismissed_offer, expectedLatest))
+            }
+            fun awaitDismissal(scenario: ActivityScenario<UpdatesActivity>, checkpoint: String) {
+                val deadline = SystemClock.uptimeMillis() + 25_000
+                while (SystemClock.uptimeMillis() < deadline) {
+                    owner()
+                    val state = updates(live, actor)
+                    assertEquals("Dismissal must preserve the actual installed version", expectedCurrent, state.current)
+                    assertEquals("Dismissal must preserve the genuine latest release", expectedLatest, state.latest)
+                    assertNull("Dismissal must never start an installation or update run", state.run)
+                    assertEquals("Offer dismissal must not alter a different Crew dismissal", before.dismissedCrewVersion,
+                        state.dismissedCrewVersion)
+                    var ready = false
+                    scenario.onActivity { activity -> ready = dismissedUi(activity) }
+                    if (state.dismissedVersion == expectedLatest && ready) return
+                    SystemClock.sleep(200)
+                }
+                throw AssertionError("Physical native update dismissal checkpoint timed out: $checkpoint")
+            }
+
+            ActivityScenario.launch(UpdatesActivity::class.java).use { scenario ->
+                await(scenario, "actual genuine undismissed release offer") { activity ->
+                    val button = activity.findViewById<View>(R.id.updates_native_offer_dismiss_button)
+                    activity.findViewById<TextView>(R.id.updates_native_summary)?.let {
+                        it.isShown && it.text.toString().contains(expectedSummary)
+                    } == true && button?.isShown == true && (button as? TextView)?.text?.toString() == expectedButton &&
+                        button.isEnabled
+                }
+                onView(withId(R.id.updates_native_offer_dismiss_button)).perform(scrollTo())
+                var fullyVisible = false
+                scenario.onActivity { activity ->
+                    val button = activity.findViewById<View>(R.id.updates_native_offer_dismiss_button)
+                    val rect = Rect()
+                    fullyVisible = button?.isShown == true && button.getGlobalVisibleRect(rect) &&
+                        rect.width() >= button.width && rect.height() >= button.height &&
+                        (button as? TextView)?.text?.toString() == expectedButton
+                }
+                assertTrue("The exact genuine Dismiss version control must be fully visible before its one click", fullyVisible)
+                owner()
+                onView(withId(R.id.updates_native_offer_dismiss_button)).perform(click())
+                awaitDismissal(scenario, "server acknowledgement of the exact offer dismissal")
+                owner()
+                scenario.recreate()
+                awaitDismissal(scenario, "activity recreation keeps the exact offer dismissed")
+            }
+
+            ActivityScenario.launch(UpdatesActivity::class.java).use { reopened ->
+                awaitDismissal(reopened, "fresh Updates Activity keeps the exact offer dismissed")
+            }
+            owner()
+            val after = updates(live, actor)
+            assertEquals("The exact version must remain dismissed after closing and reopening Updates", expectedLatest, after.dismissedVersion)
+            assertEquals("A different Crew dismissal must remain unchanged", before.dismissedCrewVersion, after.dismissedCrewVersion)
+            assertEquals("Only the installed server version must remain current", expectedCurrent, after.current)
+            assertNull("No update run may be started by dismissing or reopening the offer", after.run)
+        }
+    }
+
     /** Real official-release check only. Parent measures any eligible digest notification separately. */
     @Test fun liveServerUpdatesNativeCheckShowsGenuineReleaseWithoutInstalling() = withLive { live ->
         val expected = required("expectedServerRelease")

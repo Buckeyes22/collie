@@ -590,10 +590,10 @@ describe("invite → join, end to end", () => {
       // `--insecure` because this harness enrolls over loopback `http://`: `join` now refuses a
       // plaintext hop unless the operator explicitly owns that assumption. A loopback join is exactly
       // the "genuinely trusted hop" the flag exists for.
-      cmdJoin(d, [`http://127.0.0.1:${lead.port}`, token, "--insecure", "--address", `127.0.0.1:${peer.port}`]),
+      cmdJoin({ ...d, readStdin: () => Promise.resolve(token) }, [`http://127.0.0.1:${lead.port}`, "-", "--insecure", "--address", `127.0.0.1:${peer.port}`]),
     );
     expect(joined.err).not.toContain("certificate minting is not wired");
-    expect(joined.code).toBe(EXIT.OK);
+    expect(joined.code, joined.err.replaceAll(token, "<invite>")).toBe(EXIT.OK);
 
     const peerData = peer.store();
     const leadData = lead.store();
@@ -1780,22 +1780,33 @@ describe("the standby door and the takeover (RFC §6/§7/§9)", () => {
 
   /** Enrol `peer` into `lead`'s crew through the real invite/join exchange. */
   async function enrol(leadInstance: Instance, peerInstance: Instance): Promise<void> {
-    const invited = await verb(leadInstance, (d) => cmdCrewInvite(d, ["--label", peerInstance.name]));
+    // A valid base64url invite may start with `--`. Exercise that edge every run,
+    // preserving the random token's entropy and carrying it through the shipped stdin route.
+    let firstToken = true;
+    const invited = await verb(leadInstance, (d) => cmdCrewInvite({
+      ...d,
+      random: (bytes) => {
+        const value = d.random(bytes);
+        if (firstToken && bytes === 32) { firstToken = false; return `--${value}`; }
+        return value;
+      },
+    }, ["--label", peerInstance.name]));
     expect(invited.code).toBe(EXIT.OK);
     const token = invited.out.split("\n")[0]!.trim();
+    expect(token.startsWith("--")).toBe(true);
     // `--insecure` for the reason the first enrollment above gives: this harness enrolls over
     // loopback `http://`, which is exactly the "genuinely trusted hop" that flag exists for.
     const joined = await verb(peerInstance, (d) =>
-      cmdJoin(d, [
+      cmdJoin({ ...d, readStdin: () => Promise.resolve(token) }, [
         `http://127.0.0.1:${leadInstance.port}`,
-        token,
+        "-",
         "--insecure",
         "--address",
         `127.0.0.1:${peerInstance.port}`,
       ]),
     );
     expect(joined.err).not.toContain("certificate minting is not wired");
-    expect(joined.code).toBe(EXIT.OK);
+    expect(joined.code, joined.err.replaceAll(token, "<invite>")).toBe(EXIT.OK);
     // Nothing restarts the LEAD after an enrollment lands (§8.2's note) — that restart is the
     // operator's, and here it is the harness's.
     await leadInstance.restart();

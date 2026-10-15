@@ -281,7 +281,7 @@ class PhysicalLocalPreferencesAcceptanceTest {
         val paneId = args.getString("livePaneId")?.trim()
         assertEquals("This acceptance is limited to the explicitly owned w1:p1 stock shell", CONTROLLED_PANE_ID, paneId)
         val root = args.getString("liveRepoPath")?.trim()
-        assertTrue("The exact dated disposable Git root is required", root?.matches(Regex("/home/chris/collie-completion-[0-9]{8}")) == true)
+        assertTrue("The exact dated disposable Git root is required", root?.matches(PhysicalFixturePaths.datedRootPattern) == true)
         val app = ApplicationProvider.getApplicationContext<Context>().applicationContext as CollieApplication
         assertTrue("Physical local preference acceptance requires the isolated completion app", BuildConfig.APPLICATION_ID.endsWith(".completiontest"))
         val connection = app.container.connectionStore.connection.value

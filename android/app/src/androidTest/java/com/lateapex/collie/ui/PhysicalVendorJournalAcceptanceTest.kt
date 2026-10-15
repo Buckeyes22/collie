@@ -241,6 +241,173 @@ class PhysicalVendorJournalAcceptanceTest {
         assertTrue("Read-only vendor journal acceptance preserves the exact installed pairing", app.container.connectionStore.connection.value === connection)
     }
 
+    /** Read-only native Find and genuine older-range navigation on the existing owned Codex journal. */
+    @Test fun nativeHistoryFindNavigatesActualVendorJournalWithoutSending() {
+        val args = InstrumentationRegistry.getArguments()
+        assumeTrue("Explicit nativeVendorHistoryFind=true is required", args.getString("nativeVendorHistoryFind") == "true")
+        val app = appForCompletion()
+        val connection = requireExistingPair(app)
+        val repository = app.container.repository
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val scope = scopeFromArgs()
+        assertEquals("Only the owned stock scope may supply this journal", Scope(), scope)
+        assertEquals("Only the existing owned vendor pane is accepted", FOLLOWUP_PANE, args.getString("livePaneId"))
+        assertEquals("Only its genuine existing Codex session is accepted", FOLLOWUP_SESSION, args.getString("liveCodexSessionId"))
+        assertEquals("Only the existing disposable Git root is accepted", FOLLOWUP_ROOT, requireFixtureRoot())
+        val query = args.getString("liveHistoryFindTerm") ?: "COLLIE_CC13_VENDOR_"
+        assertTrue("Search only known genuine fixture source text", query in setOf("COLLIE_CC13_VENDOR_", DEFAULT_EXPECTED_REPLY, FOLLOWUP_REPLY))
+        val address = PaneAddress(scope, FOLLOWUP_PANE)
+        val committed = requireNotNull(app.container.connectionStore.captureCommitted())
+        assertSame("The installed committed pair owns the journal", connection, committed.connection)
+        assertNotNull("The real committed pairing incarnation is required", committed.incarnationId)
+        val priorScope = repository.selectedScope.value
+        val priorSubject = repository.readContext()?.key?.subjectIdentity
+        var history: HistoryActivity? = null
+        val intent = Intent(app, PaneActivity::class.java).apply {
+            putExtra(PaneActivity.EXTRA_PANE_ID, address.paneId)
+            putExtra(PaneActivity.EXTRA_AGENT, "codex")
+            putExtra(PaneActivity.EXTRA_TITLE, "Vendor History Find acceptance")
+            putExtra(PaneActivity.EXTRA_CWD, FOLLOWUP_ROOT)
+        }
+        try {
+            ActivityScenario.launch<PaneActivity>(intent).use { scenario ->
+                var accepted: ScopedReadContext? = null
+                awaitPane(scenario, "the actual original Codex pane actor and native History entry point") { activity ->
+                    val state = androidx.lifecycle.ViewModelProvider(activity)[PaneViewModel::class.java].state.value
+                    val actor = state.paneReadContext
+                    if (state.pane?.paneId == address.paneId && actor != null && repository.isCurrent(actor) &&
+                        actor.connection === connection && actor.committedSnapshot == committed && state.savedCopy == null &&
+                        activity.findViewById<View>(R.id.body_mode_row)?.isShown == true) accepted = actor
+                    accepted != null
+                }
+                val actor = requireNotNull(accepted)
+                fun current() {
+                    assertSame("Read-only History preserves the original credential instance", connection, app.container.connectionStore.connection.value)
+                    assertEquals("Read-only History preserves the original committed incarnation", committed, app.container.connectionStore.captureCommitted())
+                    assertTrue("The original exact pane actor remains current", repository.isCurrent(actor) && actor.key.subjectIdentity == address.paneId &&
+                        actor.key.host == null && actor.key.session == null && actor.connectionIncarnation == committed.incarnationId)
+                    assertEquals("The original local scope remains selected", scope, repository.selectedScope.value)
+                    assertTrue("History uses the original live source rather than a saved copy", (repository.readSource.value as? ReadSourceState.Live)?.key == actor.key)
+                }
+                current()
+                val pane = exactPane(snapshot(app, scope, actor), scope, address.paneId)
+                assertEquals("The owned pane remains a genuine Codex pane", "codex", pane.agent.lowercase())
+                assertEquals("The owned pane remains in its original root", FOLLOWUP_ROOT, pane.cwd)
+                assertIdentitySession(app, address, actor, FOLLOWUP_SESSION, "before native History Find")
+                fun page(before: String? = null): com.lateapex.collie.network.PaneHistoryResponse {
+                    current()
+                    val result = runBlocking { repository.history(address, limit = HistoryActivity.HISTORY_PAGE_SIZE, before = before, expectedContext = actor) }
+                    current()
+                    assertTrue("Actual original-actor journal history must be readable", result is ApiResult.Success)
+                    val value = (result as ApiResult.Success).value
+                    assertTrue("Only actual available history for this pane is accepted", value.available && value.paneId == address.paneId && value.entries.isNotEmpty())
+                    return value
+                }
+                fun terminal(): Pair<String, Long> {
+                    current()
+                    val result = runBlocking { repository.readPane(address, markSeen = false, conditional = false, expectedContext = actor) }
+                    current()
+                    assertTrue("Actual terminal readback must succeed", result is ApiResult.Success)
+                    return (result as ApiResult.Success).value.pane.let { it.text to it.revision }
+                }
+                val before = page()
+                assertTrue("The actual vendor journal must contain its known genuine reply", before.entries.any { textOf(it) == DEFAULT_EXPECTED_REPLY })
+                val terminalBefore = terminal()
+                val launchJournalBefore = app.container.launchIntentStore.all()
+                scenario.onActivity { activity ->
+                    val mode = activity.findViewById<MaterialButton>(R.id.body_mode_switch)
+                    if (mode.isShown && mode.text.toString() == activity.getString(R.string.pane_body_switch_to_transcript)) {
+                        assertTrue("Open the real native transcript body", mode.performClick())
+                    }
+                }
+                awaitPane(scenario, "actual transcript displays the genuine vendor reply") { activity ->
+                    visibleText(activity.findViewById(R.id.transcript_body)).any { it == DEFAULT_EXPECTED_REPLY }
+                }
+                current()
+                onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.body_mode_label)).perform(click())
+                val opened = awaitResumedHistory().also { history = it }
+                fun shownCount(): Int = opened.findViewById<TextView>(R.id.history_count).text.toString().substringBefore('/').toIntOrNull() ?: 0
+                awaitHistory(opened, "normal History has loaded real source turns") {
+                    current()
+                    it.intent.getStringExtra("pane_id") == address.paneId && it.intent.getStringExtra("host") == null && it.intent.getStringExtra("session") == null &&
+                        shownCount() > 0 && visibleText(it.findViewById(R.id.history_entries)).any { text -> text == DEFAULT_EXPECTED_REPLY }
+                }
+                var initialShown = 0
+                instrumentation.runOnMainSync { initialShown = shownCount() }
+                val hasOlderRange = initialShown < before.entries.size || before.hasMore
+                var olderPage: com.lateapex.collie.network.PaneHistoryResponse? = null
+                var olderExercised = false
+                if (hasOlderRange) {
+                    if (initialShown >= before.entries.size && before.hasMore) olderPage = page(before.entries.first().uuid)
+                    current()
+                    // Normal scrolling can itself grow History; click only if that read has not already grown it.
+                    onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.history_load_older))
+                        .perform(androidx.test.espresso.action.ViewActions.scrollTo())
+                    var grew = false
+                    instrumentation.runOnMainSync { grew = shownCount() > initialShown }
+                    if (!grew) onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.history_load_older)).perform(click())
+                    awaitHistory(opened, "native older navigation reveals additional genuine source turns") { current(); shownCount() > initialShown }
+                    olderExercised = true
+                } else instrumentation.runOnMainSync {
+                    assertTrue("The real journal has no older native range", !opened.findViewById<View>(R.id.history_load_older).isShown)
+                    val expected = opened.getString(if (before.fileTruncated) R.string.history_start_clipped else R.string.history_start)
+                    assertTrue("Native History must honestly label its actual journal boundary", visibleText(opened.window.decorView).contains(expected))
+                }
+                val loaded = (olderPage?.entries.orEmpty() + before.entries).distinctBy { it.uuid }
+                val stops = HistoryPresentation.search(loaded, query, resources = app.resources).map { it.key.entryUuid }.distinct()
+                assertTrue("The genuine source term must match at least two turns for real result navigation", stops.size >= 2)
+                current()
+                onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.history_find_open)).perform(click())
+                onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.history_find_query))
+                    .perform(androidx.test.espresso.action.ViewActions.replaceText(query))
+                awaitHistory(opened, "native Find reports real loaded-source matches") { activity ->
+                    current()
+                    activity.findViewById<TextView>(R.id.history_find_count).text.toString() == "0/${stops.size}" &&
+                        activity.findViewById<EditText>(R.id.history_find_query).contentDescription == activity.getString(R.string.history_find_coverage)
+                }
+                fun findCount(expected: String) = awaitHistory(opened, "native Find reaches $expected and a visible highlighted source match") { activity ->
+                    current()
+                    activity.findViewById<TextView>(R.id.history_find_count).text.toString() == expected &&
+                        descendants(activity.findViewById(R.id.history_entries)).filterIsInstance<TextView>().any { view ->
+                            val bounds = android.graphics.Rect()
+                            val text = view.text
+                            view.isShown && view.getGlobalVisibleRect(bounds) && !bounds.isEmpty && text.toString().contains(query, ignoreCase = true) &&
+                                text is android.text.Spanned && text.getSpans(0, text.length, android.text.style.BackgroundColorSpan::class.java).isNotEmpty()
+                        }
+                }
+                onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.history_find_next)).perform(click())
+                findCount("1/${stops.size}")
+                onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.history_find_previous)).perform(click())
+                findCount("${stops.size}/${stops.size}")
+                onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.history_find_next)).perform(click())
+                findCount("1/${stops.size}")
+                onView(androidx.test.espresso.matcher.ViewMatchers.withId(R.id.history_find_close)).perform(click())
+                awaitHistory(opened, "closing native Find clears only its local search query") {
+                    current(); it.findViewById<EditText>(R.id.history_find_query).text.isNullOrEmpty() && it.findViewById<View>(R.id.history_find_open).isShown
+                }
+                assertIdentitySession(app, address, actor, FOLLOWUP_SESSION, "after native History Find and older navigation")
+                assertEquals("Native History and Find cannot mutate the genuine journal", before, page())
+                olderPage?.let { assertEquals("Older navigation cannot mutate its actual source page", it, page(before.entries.first().uuid)) }
+                assertEquals("Native History and Find cannot mutate terminal text or revision", terminalBefore, terminal())
+                assertEquals("Read-only History navigation preserves the launch journal", launchJournalBefore, app.container.launchIntentStore.all())
+                instrumentation.sendStatus(2, android.os.Bundle().apply {
+                    putBoolean("nativeHistoryFindPassed", true)
+                    putBoolean("nativeHistoryOlderAvailable", hasOlderRange)
+                    putBoolean("nativeHistoryOlderExercised", olderExercised)
+                    putBoolean("nativeHistorySourceHasMore", before.hasMore)
+                    putBoolean("nativeHistorySourceClipped", before.fileTruncated)
+                    putString("stream", "Real native History Find/Next/Previous passed; olderAvailable=$hasOlderRange olderExercised=$olderExercised sourceHasMore=${before.hasMore}. No journal or terminal mutation. An absent older range is not live pagination acceptance.\n")
+                })
+            }
+        } finally {
+            instrumentation.runOnMainSync {
+                history?.finish()
+                ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED).filterIsInstance<PaneActivity>().singleOrNull()?.finish()
+                repository.selectSubject(priorScope, priorSubject)
+            }
+        }
+    }
+
     /** One real follow-up, never a resend: the existing vendor process supplies every journal/cache fact. */
     @Test
     fun nativeHarmlessFollowupRefreshesActualVendorCacheWithoutReplaying() {
@@ -436,7 +603,7 @@ class PhysicalVendorJournalAcceptanceTest {
 
     private fun requireFixtureRoot(): String {
         val root = InstrumentationRegistry.getArguments().getString("liveRepoPath")?.trim()
-        assertTrue("Use the owned dated Git completion fixture root", root?.matches(Regex("/home/chris/collie-completion-[0-9]{8}")) == true)
+        assertTrue("Use the owned dated Git completion fixture root", root?.matches(PhysicalFixturePaths.datedRootPattern) == true)
         return requireNotNull(root)
     }
 
@@ -701,7 +868,7 @@ class PhysicalVendorJournalAcceptanceTest {
         private const val DEFAULT_EXPECTED_REPLY = "COLLIE_CC13_VENDOR_SOL_JOURNAL_OK"
         private const val FOLLOWUP_PANE = "w7:p1"
         private const val FOLLOWUP_SESSION = "01a13895-0983-7f41-8dd0-363486e18e4d"
-        private const val FOLLOWUP_ROOT = "/home/chris/collie-completion-20261013"
+        private val FOLLOWUP_ROOT get() = PhysicalFixturePaths.root
         private const val FOLLOWUP_REPLY = "COLLIE_CC13_VENDOR_CACHE_OK"
         private const val FOLLOWUP_PROMPT = "Reply with exactly COLLIE_CC13_VENDOR_CACHE_OK. Do not use tools or inspect files."
         private const val TAG = "VendorJournalAccept"

@@ -113,6 +113,8 @@ Running a crew? Update the lead first; members follow on their own. Details:
 - **Local duplicate launcher refusals carry verified Collie error provenance.** Native clients can retain the known initial refusal while unmarked intermediaries and earlier uncertain requests remain unknown.
 - **Fractional Codex cache timestamps no longer hide native panes.** Android preserves the upstream numeric observation time and calculates its displayed age without rejecting the full live snapshot.
 
+- **Documentation links resolve from the current checkout.** Validate canonical repository paths against the current Git root, including CI clones, while preserving missing-file and missing-anchor failures.
+
 ### Packaging
 
 - **Pin current Android tooling without weakening native checks.** Align the SDK, built-in Kotlin, wrapper checksum and release SDK references with the latest-only Android policy.

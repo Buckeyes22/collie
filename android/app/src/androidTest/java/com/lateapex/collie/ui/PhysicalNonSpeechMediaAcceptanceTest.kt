@@ -69,7 +69,7 @@ class PhysicalNonSpeechMediaAcceptanceTest {
         assertNull("This selector belongs to the stock lead's local pane", args.getString("liveHost"))
         assertNull("This selector belongs to the stock lead's local pane", args.getString("liveSession"))
         val root = required("liveRepoPath")
-        assertTrue("Only the disposable acceptance Git root is permitted", root.matches(Regex("/home/chris/collie-completion-[0-9]{8}")))
+        assertTrue("Only the disposable acceptance Git root is permitted", root.matches(PhysicalFixturePaths.datedRootPattern))
         val repository = app.container.repository
         val priorScope = repository.selectedScope.value
         val priorSubject = repository.readContext()?.key?.subjectIdentity

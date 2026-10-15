@@ -67,7 +67,7 @@ import java.util.UUID
  * liveWorkspaceId naming its existing main checkout. Only the isolated completiontest package
  * is accepted. Run the three selectors separately. Parent prepares a CLEAN, UNOPENED linked
  * checkout OPEN_PATH on branch OPEN_BRANCH using normal git worktree add before the open test.
- * The create test uses parent /home/chris and CREATE_BRANCH; no force-removal is permitted.
+ * The create test uses the explicitly supplied fixture home and CREATE_BRANCH; no force-removal is permitted.
  * Recipes require the operator's [phone] adds=true, free_text=true, run=true. The saved plain
  * command uses the existing harmless shell fixture, never an autonomous vendor-agent recipe.
  * This proves ordinary acknowledged mutations, not an interrupted/ambiguous-create outcome.
@@ -1207,20 +1207,20 @@ class PhysicalWorktreeRecipeAcceptanceTest {
     })
     companion object {
         const val ORIGIN = "https://prod.lateapexllc.com/completion"
-        const val ROOT = "/home/chris/collie-completion-20261013"
-        const val PARENT = "/home/chris"
+        val ROOT get() = PhysicalFixturePaths.root
+        val PARENT get() = PhysicalFixturePaths.home
         const val INTERRUPTED_BRANCH = "cc13-native-interrupted"
-        const val INTERRUPTED_PATH = "/home/chris/cc13-native-interrupted"
+        val INTERRUPTED_PATH get() = "${PhysicalFixturePaths.home}/cc13-native-interrupted"
         const val CREATE_BRANCH = "cc13-native-create"
-        const val CREATE_PATH = "/home/chris/cc13-native-create"
+        val CREATE_PATH get() = "${PhysicalFixturePaths.home}/cc13-native-create"
         const val OPEN_BRANCH = "cc13-native-open"
-        const val OPEN_PATH = "/home/chris/collie-completion-20261013-cc13-native-open"
+        val OPEN_PATH get() = "${PhysicalFixturePaths.root}-cc13-native-open"
         const val LABEL = "Completion saved harmless shell"
         const val DUPLICATE_LABEL = "Completion saved harmless shell"
         const val OPERATOR_LABEL = "Completion harmless shell"
         const val RENAMED = "Completion renamed harmless shell"
-        const val COMMAND = "bash --noprofile --norc /home/chris/collie-completion-20261013/completion-shell.sh cc13-native-saved"
-        const val DUPLICATE_COMMAND = "bash --noprofile --norc /home/chris/collie-completion-20261013/completion-shell.sh"
+        val COMMAND get() = "bash --noprofile --norc ${PhysicalFixturePaths.root}/completion-shell.sh cc13-native-saved"
+        val DUPLICATE_COMMAND get() = "bash --noprofile --norc ${PhysicalFixturePaths.root}/completion-shell.sh"
         const val MARKER = "COLLIE_CC13_NATIVE_RUN"
         const val RUN = "printf COLLIE_CC13_NATIVE_RUN"
     }
