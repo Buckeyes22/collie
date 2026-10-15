@@ -245,12 +245,19 @@ let dbPath = "";
 
 function writeAgentDb(path: string, fx: Fixture, schemaVersion = fx.schemaVersion): void {
   const db = new Database(path, { create: true });
-  db.exec(SCHEMA);
-  db.query("insert into schema_meta values ('primary', 'agent', ?, 'main', ?, 0, 0)").run(schemaVersion, fx.openclawVersion);
-  db.query("insert into session_nodes values (?, ?, '{}', 0)").run(fx.sessionKey, fx.sessionId);
-  for (const r of fx.rows) insertRow(db, fx.sessionId, r);
-  db.query("insert into session_transcript_index_state values (?, 0, null, 0, 0, 0, 0)").run(fx.sessionId);
-  db.close();
+  try {
+    // Build the same real on-disk fixture in one commit. Per-row fsyncs can exhaust the
+    // setup hook on Windows before the test begins and race its temporary-root cleanup.
+    db.transaction(() => {
+      db.exec(SCHEMA);
+      db.query("insert into schema_meta values ('primary', 'agent', ?, 'main', ?, 0, 0)").run(schemaVersion, fx.openclawVersion);
+      db.query("insert into session_nodes values (?, ?, '{}', 0)").run(fx.sessionKey, fx.sessionId);
+      for (const r of fx.rows) insertRow(db, fx.sessionId, r);
+      db.query("insert into session_transcript_index_state values (?, 0, null, 0, 0, 0, 0)").run(fx.sessionId);
+    })();
+  } finally {
+    db.close();
+  }
 }
 
 function insertRow(db: Database, sessionId: string, r: FixtureRow): void {

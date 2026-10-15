@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import net from "node:net";
-import { mkdtempSync, rmSync, unlinkSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
+import { startWorktreeTestPeer } from "./worktree-test-peer.ts";
 import { dialHerdr } from "../../dial.ts";
 import { HerdrClient } from "./client.ts";
 import { HerdrMux } from "./adapter.ts";
@@ -16,7 +17,6 @@ import { typeIntoFreshShell } from "../../server.ts";
 const deferred = () => { let resolve!: () => void; const promise = new Promise<void>((done) => { resolve = done; }); return { promise, resolve }; };
 const bounded = <T>(promise: Promise<T>) => Promise.race([promise, new Promise<never>((_, reject) => { const timer = setTimeout(() => reject(new Error("owned fixture continuation did not enter")), 4_000); promise.finally(() => clearTimeout(timer)).catch(() => {}); })]);
 
-interface CapturedRequest { bytes: Buffer; method?: string }
 /** Metadata-only fixture; every protected method, readiness and socket remains real Herdr. */
 class IdentitylessHerdrFixture extends HerdrMux {
   override get capabilities() {
@@ -25,39 +25,12 @@ class IdentitylessHerdrFixture extends HerdrMux {
   }
 }
 
-async function fixture(beacons: boolean, mode: "bun" | "net" = "bun") {
+async function fixture(beacons: boolean, mode: "auto" | "net" = "auto") {
   const dir = mkdtempSync(join(tmpdir(), "collie-worktree-transport-"));
-  const path = join(dir, "herdr.sock");
-  const sockets = new Set<net.Socket>();
-  const captures: CapturedRequest[] = [];
-  const servers: net.Server[] = [];
-  let dropMutationReply = false;
-  const listen = async () => {
-    const server = net.createServer((socket) => {
-      sockets.add(socket); socket.on("error", () => {}); socket.on("close", () => sockets.delete(socket));
-      const capture: CapturedRequest = { bytes: Buffer.alloc(0) }; captures.push(capture);
-      socket.on("data", (chunk: Buffer) => {
-        capture.bytes = Buffer.concat([capture.bytes, chunk]);
-        const text = capture.bytes.toString(); if (!text.includes("\n") || capture.method) return;
-        // SAFETY: this fixture-owned socket receives only the actual HerdrClient's request bytes;
-        // id/method select a controlled response, never product admission or caller authority.
-        const request = JSON.parse(text.slice(0, text.indexOf("\n"))) as { id: string; method: string };
-        capture.method = request.method;
-        if (dropMutationReply && request.method.startsWith("worktree.")) { socket.destroy(); return; }
-        const created = { workspace: { label: "topic" }, root_pane: { pane_id: "p", workspace_id: "w", tab_id: "t", cwd: "/repo-topic" } };
-        const result = request.method === "ping" ? { type: "pong", version: "0.9.3", protocol: 22 }
-          : request.method === "session.snapshot" ? { snapshot: { version: "0.9.3", protocol: 22, workspaces: [], tabs: [], panes: [] } }
-          : request.method === "worktree.create" || request.method === "worktree.open" ? { ...created, already_open: false }
-          : request.method === "worktree.remove" ? { type: "worktree_removed", workspace_id: "w", path: "/repo-topic", forced: false }
-          : request.method === "pane.read" ? { read: { pane_id: "p", text: "$ ", truncated: false, revision: 1 } }
-          : { type: "ok" };
-        socket.end(`${JSON.stringify({ id: request.id, result })}\n`);
-      });
-    });
-    servers.push(server);
-    await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(path, resolve); });
-  };
-  await listen();
+  const path = process.platform === "win32" ? `\\\\.\\pipe\\collie-worktree-test-${randomUUID()}` : join(dir, "herdr.sock");
+  let peer = await startWorktreeTestPeer(path, dir);
+  const peers = [peer];
+  const captures = () => peers.flatMap((owned) => owned.captures());
   let nth: number | null = null; let dials = 0;
   let entered = deferred(); let release = deferred();
   const client = new HerdrClient(path, 1_000, mode, async (endpoint, handlers, dialMode) => {
@@ -82,11 +55,11 @@ async function fixture(beacons: boolean, mode: "bun" | "net" = "bun") {
     mux, client, original, captures,
     arm: (number: number) => { nth = number; dials = 0; entered = deferred(); release = deferred(); },
     entered: () => bounded(entered.promise), release: () => release.resolve(),
-    retire: async (cause: string) => { if (cause === "pairing") paired = false; else if (cause === "write-factor") writable = false; else if (cause === "expiry") expired = true; else if (cause === "runtime") { unlinkSync(path); await listen(); } },
-    dropReply: () => { dropMutationReply = true; },
-    mutationBytes: () => captures.filter((c) => c.method !== "ping" && c.method !== "session.snapshot" && c.method !== "pane.read").reduce((n, c) => n + c.bytes.byteLength, 0),
-    methods: () => captures.flatMap((c) => c.method && c.method !== "ping" && c.method !== "session.snapshot" && c.method !== "pane.read" ? [c.method] : []),
-    close: async () => { release.resolve(); sockets.forEach((s) => s.destroy()); await Promise.all(servers.map((s) => new Promise<void>((done) => s.close(() => done())))); rmSync(dir, { recursive: true, force: true }); },
+    retire: async (cause: string) => { if (cause === "pairing") paired = false; else if (cause === "write-factor") writable = false; else if (cause === "expiry") expired = true; else if (cause === "runtime") { const oldPid = peer.pid; await peer.retireListener(); peer = await startWorktreeTestPeer(path, dir); peers.push(peer); expect(peer.pid).not.toBe(oldPid); } },
+    dropReply: () => peer.dropReply(),
+    mutationBytes: () => captures().filter((c) => c.method !== "ping" && c.method !== "session.snapshot" && c.method !== "pane.read").reduce((n, c) => n + c.bytes.byteLength, 0),
+    methods: () => captures().flatMap((c) => c.method && c.method !== "ping" && c.method !== "session.snapshot" && c.method !== "pane.read" ? [c.method] : []),
+    close: async () => { release.resolve(); await Promise.all(peers.map((owned) => owned.close())); rmSync(dir, { recursive: true, force: true }); },
   };
 }
 

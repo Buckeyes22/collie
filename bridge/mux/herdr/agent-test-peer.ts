@@ -1,3 +1,4 @@
+import { HOST } from "../../host.ts";
 // Test-only current protocol peer. Production never imports or discovers this owned socket.
 import net from "node:net";
 import { createHash, randomUUID } from "node:crypto";
@@ -9,7 +10,7 @@ export class AgentTestPeer {
   readonly directory = mkdtempSync(join(tmpdir(), "collie-b19-peer-"));
   // Match the shipping dialer's endpoint on each host. Windows runtime custody requires
   // the actual named-pipe server PID/creation time, never a filesystem socket alias.
-  readonly path = process.platform === "win32"
+  readonly path = HOST.platform === "win32"
     ? `\\\\.\\pipe\\collie-agent-test-${randomUUID()}`
     : join(this.directory, "herdr.sock");
   readonly requests: { readonly id: string; readonly method: string; readonly params: JsonObject }[] = [];

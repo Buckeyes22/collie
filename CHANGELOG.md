@@ -118,6 +118,10 @@ Running a crew? Update the lead first; members follow on their own. Details:
 - **Windows skip accounting names existing platform-only durable tests.** Include the already conditional Unix-socket, POSIX-mode and optional example cases in the runner census while keeping every failure and portable conformance test enforced.
 - **Windows checkpoint writes use verified access lists for privacy.** Keep POSIX mode checks on POSIX and require an explicit private ACL verdict for monitoring and native gateway custody; an unchecked, previously warned path never authorizes a later read.
 
+- **Windows ownership tests retain real process and endpoint identities.** Use genuine named-pipe peers with separate per-process captures, and build unchanged OpenClaw SQLite fixtures in one transaction to avoid setup-time cleanup races.
+
+- **Test peers select transports through the shared host abstraction.** Keep platform selection in the existing host boundary while exercising real Unix sockets or Windows named pipes.
+
 ### Packaging
 
 - **Pin current Android tooling without weakening native checks.** Align the SDK, built-in Kotlin, wrapper checksum and release SDK references with the latest-only Android policy.

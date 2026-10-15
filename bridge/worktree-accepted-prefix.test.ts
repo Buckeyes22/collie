@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import net from "node:net";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AuditLog } from "./audit.ts";
@@ -28,14 +29,15 @@ async function git(cwd: string, ...args: string[]) {
 }
 
 async function fixture(outcome: Outcome) {
-  const root = await mkdtemp(join(tmpdir(), "collie-worktree-prefix-"));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "collie-worktree-prefix-")));
   const repo = join(root, "repo"); const checkout = join(root, "linked"); await mkdir(repo);
   await git(repo, "init", "-q", "-b", "main");
   await git(repo, "-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "commit", "-q", "--allow-empty", "-m", "base");
   await git(repo, "worktree", "add", "-q", "-b", "topic", checkout);
-  // Actual endpoint inode pins the production client's original runtime. The controlled raw
-  // acceptance below drives the same Bun writer factory, not a replacement client or adapter.
-  const endpoint = join(root, "herdr.sock"); const server = net.createServer();
+  // The real OS endpoint witness pins this fixture runtime: socket inode on POSIX and actual
+  // named-pipe server process on Windows. The raw acceptance still uses the production writer.
+  const endpoint = process.platform === "win32" ? `\\\\.\\pipe\\collie-worktree-prefix-${randomUUID()}` : join(root, "herdr.sock");
+  const server = net.createServer((socket) => socket.on("error", () => {}));
   await new Promise<void>((resolve, reject) => { server.once("error", reject); server.listen(endpoint, resolve); });
   let signal!: () => void; const entered = new Promise<void>((resolve) => { signal = resolve; });
   let drain: (() => void) | undefined; let allowed = true; let now = Date.now();
