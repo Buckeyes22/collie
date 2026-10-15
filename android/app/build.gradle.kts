@@ -92,6 +92,8 @@ configurations.configureEach {
 }
 
 dependencies {
+    // Already present transitively; declare the portable external-key verifier explicitly.
+    implementation("com.google.crypto.tink:tink:1.23.0")
     // UnifiedPush connector 3.3.5 released August 22, 2026; enrollment UI is native.
     implementation("org.unifiedpush.android:connector:3.3.5")
     implementation("androidx.work:work-runtime-ktx:2.12.0")

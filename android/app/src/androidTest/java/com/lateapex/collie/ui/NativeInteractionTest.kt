@@ -284,7 +284,9 @@ class NativeInteractionTest {
     }
 
     @Test fun dashboardSettingsAndBackNavigateThroughVisibleButtons() {
-        ActivityScenario.launch(MainActivity::class.java).use {
+        // Match the explicit return intent; a launcher MAIN/category intent stops matching
+        // ActivityScenario after MainActivity.onNewIntent replaces the activity's intent.
+        ActivityScenario.launch<MainActivity>(Intent(app, MainActivity::class.java)).use {
             onView(withId(R.id.dashboard_panel)).check(matches(isDisplayed()))
             onView(withId(R.id.settings_button)).perform(click())
             onView(withId(R.id.settings_header_title)).check(matches(isDisplayed()))

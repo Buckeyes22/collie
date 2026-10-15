@@ -166,7 +166,7 @@ terminal content. The Samsung SM-S938U1 updated to API 37 during the compatibili
 runtime coverage uses a separate local test emulator, while API 37 physical coverage includes
 the Samsung and prior Pixel evidence through dell-7680. Do not run uninstalling instrumentation against another
 personal app namespace: the runner may reinstall the app and erase its local connection.
-Pre-API-36 and emulator results are historical evidence, not current release acceptance.
+Pre-API-36 and earlier dated emulator results are historical evidence, not current release acceptance.
 The [toolchain record](TOOLCHAIN.md) describes the stable SDK and build pins.
 
 Initial artifact smoke check:

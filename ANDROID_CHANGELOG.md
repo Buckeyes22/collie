@@ -8,6 +8,7 @@ Android app releases use `android-vX.Y.Z` tags. The inherited server/PWA history
 ## 1.6.1 - 2026-10-15
 
 - Support Android 16 / API 36 alongside Android 17, retaining the current target SDK and build toolchain. Verify native setup, settings, fonts, licenses and system-bar insets on both supported APIs.
+- Verify signed notifications with the bundled portable Ed25519 implementation on devices whose platform provider cannot import external keys. Preserve the enrolled server key and reject malformed keys or tampered payloads.
 
 ## 1.6.0 - 2026-10-14
 
