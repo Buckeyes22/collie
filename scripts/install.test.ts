@@ -8,6 +8,7 @@ import {
   readFileSync,
   readlinkSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -42,6 +43,11 @@ interface Run {
    *  reason as `installed`. It is how "a pinned run never asks GitHub anything" is an assertion
    *  about traffic rather than about output. */
   curl: string;
+  /** Every header the fake `curl` was handed, one per line. It is how "the token goes with the
+   *  tags call and with no download" is an assertion about traffic (#254). */
+  headers: string;
+  /** The octal mode of the curl config file the token travelled in, when there was one. */
+  curlrcMode: string;
   /** Whether a payload landed — read BEFORE the scratch tree is thrown away, so "nothing was
    *  installed" is an assertion about the run rather than about the cleanup. */
   installed: boolean;
@@ -76,6 +82,14 @@ const SYS_TOOLS = [
 function linkSystemTools(dir: string, without: readonly string[]): void {
   for (const tool of SYS_TOOLS) {
     if (without.includes(tool)) continue;
+    const resolved = Bun.which(tool);
+    if (resolved) {
+      symlinkSync(resolved, join(dir, tool));
+      continue;
+    }
+    // FHS fallback for hosts where the process PATH doesn't cover it (shouldn't normally
+    // trigger, since Bun.which() already walks $PATH — this is a last resort for a tool that
+    // is genuinely only ever found at a fixed FHS path).
     for (const base of ["/usr/bin", "/bin"]) {
       if (existsSync(`${base}/${tool}`)) {
         symlinkSync(`${base}/${tool}`, join(dir, tool));
@@ -106,7 +120,9 @@ out=""; url=""; w=""
 while [ $# -gt 0 ]; do
   case "$1" in
     -o) out="$2"; shift 2 ;;
-    -H) shift 2 ;;
+    -H) if [ -n "\${COLLIE_TEST_HEADER_LOG:-}" ]; then echo "$2" >> "$COLLIE_TEST_HEADER_LOG"; fi; shift 2 ;;
+    -K) if [ -n "\${COLLIE_TEST_HEADER_LOG:-}" ]; then sed -n 's/^header = "\\(.*\\)"$/\\1/p' "$2" >> "$COLLIE_TEST_HEADER_LOG"; fi
+        if [ -n "\${COLLIE_TEST_CURLRC_COPY:-}" ]; then cp -p "$2" "$COLLIE_TEST_CURLRC_COPY"; fi; shift 2 ;;
     -w) w="$2"; shift 2 ;;
     -*) shift ;;
     *) url="$1"; shift ;;
@@ -136,7 +152,7 @@ const sha256 = (path: string): string =>
  *  digest agrees with both. */
 function stageRelease(
   dir: string,
-  opts: { version: string; platform?: string; corrupt?: boolean; schemaVersion?: number },
+  opts: { version: string; platform?: string; corrupt?: boolean; schemaVersion?: number; windows?: boolean },
 ): void {
   const platform = opts.platform ?? PLATFORM;
   const root = `collie-${opts.version}-${platform}`;
@@ -172,7 +188,23 @@ function stageRelease(
         repo: "AltanS/collie",
         tag: `v${opts.version}`,
         version: opts.version,
-        artifacts: [{ name, platform, sha256: digest, size: 1, payloadRoot: root }],
+        artifacts: [
+          // The Windows entry a release carries from M43 spec 06 on, listed FIRST so a reader that
+          // took the first entry, or any unknown one, would be caught here.
+          ...(opts.windows === true
+            ? [
+                {
+                  name: `collie-${opts.version}-windows-x64.zip`,
+                  platform: "windows-x64",
+                  sha256: "f".repeat(64),
+                  size: 1,
+                  payloadRoot: `collie-${opts.version}-windows-x64`,
+                  signed: false,
+                },
+              ]
+            : []),
+          { name, platform, sha256: digest, size: 1, payloadRoot: root },
+        ],
       },
       null,
       2,
@@ -205,7 +237,9 @@ function run(opts: Options = {}): Run {
     linkSystemTools(bin, opts.without ?? []);
     if (!(opts.without ?? []).includes("curl")) fakeBin(bin, "curl", FAKE_CURL);
     (opts.release ?? ((d: string) => {
-      stageRelease(d, { version: VERSION });
+      // The default release lists a `windows-x64` entry FIRST, as every release does from M43 spec 06
+      // on, so every case below also proves that install.sh ignores it.
+      stageRelease(d, { version: VERSION, windows: true });
       stageRelease(d, { version: BETA_VERSION });
       writeFileSync(
         join(d, "tags.json"),
@@ -219,6 +253,8 @@ function run(opts: Options = {}): Run {
     }))(release);
     opts.seed?.(dir);
     const curlLog = join(root, "curl.log");
+    const headerLog = join(root, "headers.log");
+    const curlrcCopy = join(root, "auth.curlrc");
     const proc = Bun.spawnSync(["/bin/sh", SCRIPT, ...(opts.args ?? [])], {
       cwd: root,
       env: {
@@ -227,6 +263,8 @@ function run(opts: Options = {}): Run {
         COLLIE_DIR: dir,
         COLLIE_TEST_RELEASE: release,
         COLLIE_TEST_CURL_LOG: curlLog,
+        COLLIE_TEST_HEADER_LOG: headerLog,
+        COLLIE_TEST_CURLRC_COPY: curlrcCopy,
         ...opts.env,
       },
     });
@@ -236,6 +274,8 @@ function run(opts: Options = {}): Run {
       dir,
       home,
       curl: existsSync(curlLog) ? readFileSync(curlLog, "utf8") : "",
+      headers: existsSync(headerLog) ? readFileSync(headerLog, "utf8") : "",
+      curlrcMode: existsSync(curlrcCopy) ? (statSync(curlrcCopy).mode & 0o777).toString(8) : "",
       installed: existsSync(join(dir, "versions")),
     };
   } finally {
@@ -246,7 +286,7 @@ function run(opts: Options = {}): Run {
 }
 
 /** The layout cases need the tree to still exist, so they run the script themselves and inspect. */
-function runKeeping(opts: Options, inspect: (r: Omit<Run, "installed">) => void): void {
+function runKeeping(opts: Options, inspect: (r: Omit<Run, "installed" | "headers" | "curlrcMode">) => void): void {
   const root = mkdtempSync(join(tmpdir(), "collie-install-"));
   try {
     const home = join(root, "home");
@@ -287,7 +327,10 @@ function runKeeping(opts: Options, inspect: (r: Omit<Run, "installed">) => void)
   }
 }
 
-describe("scripts/install.sh", () => {
+// install.sh is a POSIX shell installer driven through /bin/sh, symlinks and a fake `curl`. A Windows
+// host has no /bin/sh, so these cases stay skipped there. Windows installs with install.ps1, which has
+// its own tests in install-ps1.test.ts, run on Windows against a local release mirror.
+describe.skipIf(process.platform === "win32")("scripts/install.sh", () => {
   test("is valid POSIX sh", () => {
     const proc = Bun.spawnSync(["/bin/sh", "-n", SCRIPT]);
     expect(proc.exitCode).toBe(0);
@@ -317,6 +360,9 @@ describe("scripts/install.sh", () => {
     expect(r.code).toBe(0);
     expect(r.out).toContain(`Collie v${VERSION}`);
     expect(r.out).not.toContain("beta");
+    // The manifest's `windows-x64` entry is never fetched: this platform's tarball is.
+    expect(r.curl).toContain(`collie-${VERSION}-${PLATFORM}.tar.gz`);
+    expect(r.curl).not.toContain("windows");
   });
 
   test("--beta is the opt-in, and it takes the newest prerelease by semver, not by string", () => {
@@ -389,6 +435,8 @@ describe("scripts/install.sh", () => {
     expect(r.out).toContain("nothing is running yet");
     expect(r.out).toContain("COLLIE_MUX");
     expect(r.out).toContain("collie start");
+    // Pairing is always on (ADR 0086): the install names `collie pair` as a step of its own.
+    expect(r.out).toContain("collie pair");
     expect(r.out).toContain("docs/security.md");
   });
 
@@ -494,8 +542,33 @@ describe("scripts/install.sh", () => {
     expect(r.code).toBe(1);
     expect(r.out).toContain("rate limit");
     expect(r.out).toContain("60 calls an hour");
+    expect(r.out).toContain("Set GH_TOKEN");
     expect(r.out).toContain("COLLIE_TAG=vX.Y.Z");
+    expect(r.headers).not.toContain("Authorization");
     expect(r.installed).toBe(false);
+  });
+
+  test("a GitHub token in the env goes with the tags call alone, and a message names the variable, never the value (#254)", () => {
+    const ok = run({ env: { GH_TOKEN: "ghp_secret" } });
+    expect(ok.code).toBe(0);
+    // One bearer header for the whole run: the tags call. The three downloads carry none. It travels
+    // in a curl config file at mode 600, never as a `-H` argument `ps` would show.
+    expect(ok.headers.split("\n").filter((line) => line.startsWith("Authorization: "))).toEqual([
+      "Authorization: Bearer ghp_secret",
+    ]);
+    expect(ok.curlrcMode).toBe("600");
+    const limited = run({ env: { COLLIE_TEST_API_CODE: "403", GITHUB_TOKEN: "ghp_secret" } });
+    expect(limited.code).toBe(1);
+    expect(limited.out).toContain("even with the token in GITHUB_TOKEN");
+    expect(limited.out).not.toContain("Set GH_TOKEN");
+    expect(limited.out).not.toContain("ghp_secret");
+    const refused = run({
+      env: { COLLIE_TEST_API_CODE: "401", COLLIE_GITHUB_TOKEN: "ghp_bad", GH_TOKEN: "ghp_second" },
+    });
+    expect(refused.code).toBe(1);
+    expect(refused.out).toContain("refused the token in COLLIE_GITHUB_TOKEN");
+    expect(refused.out).not.toContain("ghp_bad");
+    expect(refused.installed).toBe(false);
   });
 
   test("refuses a target directory that holds something else", () => {

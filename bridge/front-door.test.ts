@@ -1,9 +1,16 @@
 import { describe, expect, test } from "bun:test";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import {
   formatRecord,
+  parseRecord,
+  herdrActionCommand,
   instanceSuffixOf,
   managedHandlerPath,
+  PLUGIN_ID,
+  pluginIdFor,
+  realFrontDoorExec,
   releaseManagedFrontDoor,
   shouldReleaseFrontDoor,
   type FrontDoorDeps,
@@ -23,6 +30,7 @@ const RECORD = formatRecord({
   port: 8788,
   hostPort: "box.tail.ts.net:8788",
   proxy: "http://127.0.0.1:8788",
+  path: "/",
 });
 
 /** The status JSON tailscaled prints for a root mount Collie itself published. */
@@ -77,14 +85,57 @@ function harness(over: { record?: string | null; status?: string; missing?: bool
 describe("the record file both processes have to name identically", () => {
   test("the unsuffixed instance keeps today's name, byte for byte", () => {
     expect(managedHandlerPath("/config", instanceSuffixOf(undefined))).toBe(
-      "/config/tailscale-managed-handler",
+      join("/config", "tailscale-managed-handler"),
     );
   });
 
   test("a second instance names its own, so it can never take the first's door down", () => {
     expect(managedHandlerPath("/config", instanceSuffixOf("v1"))).toBe(
-      "/config/tailscale-managed-handler-v1",
+      join("/config", "tailscale-managed-handler-v1"),
     );
+  });
+});
+
+const REPO = join(import.meta.dir, "..");
+
+/** Every non-test `.ts` under one directory, recursively. */
+function sources(dir: string): string[] {
+  const found: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) found.push(...sources(path));
+    else if (entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts")) found.push(path);
+  }
+  return found;
+}
+
+describe("the plugin id every operator-facing command prints", () => {
+  test("the unsuffixed instance is the host's first Collie", () => {
+    expect(pluginIdFor(null)).toBe("herdr.collie");
+    expect(herdrActionCommand("restart", null)).toBe("herdr plugin action invoke restart --plugin herdr.collie");
+  });
+
+  test("a named instance is registered under its own id, and prints that one", () => {
+    // The same join as the plugin config dir. A command printing the bare id on this machine would
+    // be telling the operator to restart the neighbouring Collie, not this one.
+    expect(pluginIdFor("next")).toBe("herdr.collie-next");
+    expect(herdrActionCommand("update-major", "next")).toBe(
+      "herdr plugin action invoke update-major --plugin herdr.collie-next",
+    );
+  });
+
+  // The invariant the two tests above rest on: `herdrActionCommand` is the ONE place the flag is
+  // spelled. Any second copy is a bare `herdr.collie` frozen into the source, and on a host running
+  // `COLLIE_INSTANCE=next` that copy prints a command which restarts the neighbouring Collie.
+  // `front-door.ts` itself is the one file allowed to contain the string, in the comment that says
+  // exactly this.
+  test("no other source under bridge/ or cli/ spells the flag itself", () => {
+    const needle = `--plugin ${PLUGIN_ID}`;
+    const allowed = join(REPO, "bridge", "front-door.ts");
+    const offenders = [...sources(join(REPO, "bridge")), ...sources(join(REPO, "cli"))].filter(
+      (file) => file !== allowed && readFileSync(file, "utf8").includes(needle),
+    );
+    expect(offenders).toEqual([]);
   });
 });
 
@@ -95,7 +146,7 @@ describe("shouldReleaseFrontDoor — mode + record, and nothing else", () => {
 
   test("a deposed machine takes it down whatever mode its store still resolves to", () => {
     // The parked ex-lead: it never reaches `peer`, and its live mapping is what black-holes the
-    // pack's hostname while its own health check fails behind it.
+    // crew's hostname while its own health check fails behind it.
     expect(shouldReleaseFrontDoor({ mode: "lead", deposed: true, hasRecord: true })).toBe(true);
   });
 
@@ -150,5 +201,63 @@ describe("releaseManagedFrontDoor — only the recorded mapping", () => {
     expect(releaseManagedFrontDoor(h.deps)).toBe(false);
     expect(h.record()).toBe(RECORD);
     expect(h.err.join("\n")).toContain("tailscale not found");
+  });
+});
+
+// ADR 0052: a record may name a mount; the bridge's own teardown then scopes to that mount.
+describe("releaseManagedFrontDoor — a mounted door", () => {
+  const MOUNTED_RECORD = formatRecord({
+    mode: "http",
+    port: 8788,
+    hostPort: "box.tail.ts.net:8788",
+    proxy: "http://127.0.0.1:8788",
+    path: "/collie/",
+  });
+  const MOUNTED_OURS = JSON.stringify({
+    TCP: { "8788": { HTTP: true } },
+    Web: { "box.tail.ts.net:8788": { Handlers: { "/collie/": { Proxy: "http://127.0.0.1:8788" } } } },
+  });
+
+  test("a root record is the three-field line it always was; a mount adds one field", () => {
+    expect(RECORD).toBe("http:8788|box.tail.ts.net:8788|http://127.0.0.1:8788\n");
+    expect(MOUNTED_RECORD).toBe("http:8788|box.tail.ts.net:8788|http://127.0.0.1:8788|/collie/\n");
+    expect(parseRecord(RECORD).path).toBe("/");
+  });
+
+  test("removes the handler at the recorded mount, and leaves a root somebody else owns alone", () => {
+    const h = harness({ record: MOUNTED_RECORD, status: MOUNTED_OURS });
+    expect(releaseManagedFrontDoor(h.deps)).toBe(true);
+    expect(h.calls).toEqual(["tailscale serve status --json", "tailscale serve --http=8788 --set-path=/collie/ off"]);
+    expect(h.record()).toBeNull();
+  });
+
+  test("a mount replaced out from under us is refused like a root", () => {
+    const theirs = JSON.stringify({
+      TCP: { "8788": { HTTP: true } },
+      Web: { "box.tail.ts.net:8788": { Handlers: { "/collie/": { Proxy: "http://127.0.0.1:9999" } } } },
+    });
+    const h = harness({ record: MOUNTED_RECORD, status: theirs });
+    expect(releaseManagedFrontDoor(h.deps)).toBe(false);
+    expect(h.record()).toBe(MOUNTED_RECORD);
+  });
+});
+
+describe("realFrontDoorExec", () => {
+  test("a tool that never returns is killed at the bound and reads as a failure, so the bridge is not frozen", () => {
+    // A deposition on the wire runs this on the bridge's one thread. With no bound, a `tailscale`
+    // that hung froze every route, `/api/health` included. The bun running this test stands in for it.
+    const exec = realFrontDoorExec({}, "/nonexistent-home", 500);
+    const started = Date.now();
+    const r = exec.capture(process.execPath, ["-e", "setTimeout(() => {}, 60_000)"]);
+    expect(Date.now() - started).toBeLessThan(20_000);
+    expect(r.found).toBe(true);
+    expect(r.code).not.toBe(0);
+  });
+
+  test("a tool that answers inside the bound is read as before", () => {
+    const r = realFrontDoorExec({}, "/nonexistent-home").capture(process.execPath, ["-e", "console.log('ok')"]);
+    expect(r.found).toBe(true);
+    expect(r.code).toBe(0);
+    expect(r.stdout.trim()).toBe("ok");
   });
 });

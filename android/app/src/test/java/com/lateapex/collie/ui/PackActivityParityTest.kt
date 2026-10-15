@@ -26,7 +26,7 @@ class PackActivityParityTest {
             resources.getString(R.string.pack_member_secret_behind),
         )
         assertEquals(
-            "This collie is not leading a pack",
+            "This collie is not leading a crew",
             resources.getString(R.string.pack_solo_title),
         )
         assertEquals(

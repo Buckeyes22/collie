@@ -61,6 +61,7 @@
 
 import { declareCapabilities } from "../capabilities.ts";
 import { ZELLIJ_LOGO_SVG } from "./logo.ts";
+import { isUnnamedTab } from "../../pane-name.ts";
 import type { MuxAdapterFactory, MuxTarget } from "../registry.ts";
 import {
   muxAck,
@@ -77,6 +78,7 @@ import {
   type MuxOutcome,
   type MuxPane,
   type MuxRefusalOutcome,
+  type MuxSession,
   type MuxSnapshot,
   type MuxSpace,
   type MuxSpaceRequest,
@@ -91,6 +93,7 @@ import {
   type MuxWatchOptions,
 } from "../types.ts";
 import { resolveZellijBinary, SpawnZellijExec } from "./exec.ts";
+import { EXTENDED_ONLY_CHORDS } from "../keys.ts";
 import { toZellijKey, ZELLIJ_UNSENDABLE_KEYS } from "./keys.ts";
 import { zellijBeaconMatcher } from "./markers.ts";
 import {
@@ -135,13 +138,9 @@ export const ZELLIJ_SPACE_ID = "session";
  * How far behind the viewport a `recent` read is assumed to reach.
  *
  * zellij's own default `scroll_buffer_size` is 10 000 lines and no CLI verb reports the configured
- * value or the depth actually kept, so `readableLines` is that default plus the pane's rows. It is a
- * bound rather than a measurement, which is exactly what the contract asks the field for — and it is
- * the only thing that makes the mirror's "Load older" appear at all (../types.ts § readableLines).
- * An operator who lowered the setting gets a read that simply returns fewer lines.
+ * value or the depth actually kept, so there is no honest `readableLines` value to publish. Keep the
+ * requested read ceiling separate from available depth; the latter remains unknown for this adapter.
  */
-export const ASSUMED_SCROLLBACK_LINES = 10_000;
-
 /** How many request shapes one pane's revision tracker remembers. tmux's number, for tmux's reason. */
 const REVISION_VARIANTS = 32;
 
@@ -174,8 +173,9 @@ export const MAX_TYPED_CHARS = 128 * 1024;
  * else, `--full` reached 294 lines behind a 22-line viewport, `write-chars` typed literally,
  * `send-keys` typed and chorded and REFUSED a name it did not know, `rename-pane` set and cleared,
  * `close-pane`, `new-tab`, `rename-tab-by-id` and `close-tab-by-id` all answered, and `subscribe`
- * streamed JSON frames. `unsupportedKeys` is EMPTY and that is a finding, not an omission: zellij
- * sends every key in the contract's alphabet, including the six Herdr refuses (keys.ts).
+ * streamed JSON frames. `unsupportedKeys` holds no NAMED key and that is a finding, not an omission:
+ * zellij sends every key in the contract's alphabet, including the six Herdr refuses (keys.ts). It
+ * holds `ctrl+Enter`, which zellij delivers as a plain Enter (keys.ts header).
  */
 const ZELLIJ_CAPABILITIES = declareCapabilities({
   supports: [
@@ -190,7 +190,7 @@ const ZELLIJ_CAPABILITIES = declareCapabilities({
     "closeTab",
     "pushPaneEvents",
   ],
-  unsupportedKeys: ZELLIJ_UNSENDABLE_KEYS,
+  unsupportedKeys: [...ZELLIJ_UNSENDABLE_KEYS, ...EXTENDED_ONLY_CHORDS],
   // The only `bounded` declaration in this build, and the number is the census CEILING — the longest
   // a change nobody announced can sit unseen. Not the floor: an adaptive census runs faster than its
   // ceiling most of the time, and a bound that only holds when the herd happens to be busy is not a
@@ -198,6 +198,7 @@ const ZELLIJ_CAPABILITIES = declareCapabilities({
   // something a caller can promise, so the declaration states the cadence that always holds
   // (watch.ts § the cadence).
   topologyLatency: { kind: "bounded", ms: ZELLIJ_CENSUS_MAX_MS },
+  readLimits: { maxRequestedLines: 10_000 },
   notes: {
     agentDetection:
       "zellij does not know what an agent is. It can say what a pane is called and which command it was launched with, and neither is the same question — so every pane reads as a shell rather than as a guess that would pick the wrong grammar.",
@@ -208,13 +209,15 @@ const ZELLIJ_CAPABILITIES = declareCapabilities({
     createSpace:
       "One Collie on zellij drives exactly one zellij session, because every zellij verb is scoped to one. A session created from the phone would not appear in this collie at all, so the button is not offered.",
     sendKeys:
-      "zellij sends every key in Collie's alphabet and refuses a name it does not know rather than typing it as text. It drops a Super/Command modifier silently instead of encoding it, so a `meta` chord is refused rather than delivered as the bare key.",
+      "zellij sends every key in Collie's alphabet and refuses a name it does not know rather than typing it as text. It drops a Super/Command modifier silently instead of encoding it, so a `meta` chord is refused rather than delivered as the bare key. Ctrl+Enter is refused too: zellij delivers it as a plain Enter.",
     pushTopologyEvents:
       "Nothing in zellij's command line announces a pane or tab appearing, closing or being renamed — the plugin API is where such an event lives, and that is not a command line. A bounded census, 3 s after any change and relaxing to 12 s while nothing moves, is what keeps the promise instead.",
     pushPaneEvents:
       "`zellij subscribe` follows several panes at once and pushes a frame on every repaint, so a pane the operator is watching is reported without waiting for the census.",
     setFocus:
       "zellij can bring a TAB to the front, but nothing on its command line reliably focuses a pane inside one: `action focus-pane-id` exits 0 and moves nothing. Showing a tab and hoping the right pane is in front would put a neighbouring pane on the operator's screen, so Collie does not offer the button rather than half-keep the promise.",
+    listSessions:
+      "`zellij list-sessions` does name every session on this machine, and Collie reads it to find the one it drives. What it will not do is make one collie front several of them: zellij has no socket, so every read of a session is a process it has to start, and fronting N sessions would multiply the whole poll loop by N. A second zellij session is driven by a second collie, which is also the shape zellij itself takes, one client per session.",
   },
   // A Collie on zellij drives exactly ONE zellij session and that session is its one space — the
   // same fact that declines `createSpace`, read the other way round. So the phone drops the space
@@ -276,16 +279,26 @@ export class ZellijMux implements MuxAdapter {
    * (session.ts).
    */
   async snapshot(): Promise<MuxSnapshot> {
-    const [paneCall, tabCall] = await Promise.all([
-      this.session.run(ZELLIJ_LIST_PANES_ARGS),
-      this.session.run(ZELLIJ_LIST_TABS_ARGS),
-    ]);
+    // ONE AT A TIME, and this is not a style choice. These two listings ran under `Promise.all`, and
+    // two `zellij action` clients against one session make zellij answer one or both with an EMPTY
+    // stdout and exit 0 — measured on 0.44.2: 10 empty answers in 120 concurrent pairs, 0 in 240
+    // sequential ones (M22/04 zellij leg). The adapter was making its own contention, and every one
+    // of those turned into a disconnected banner for one sweep and a failed conformance check. The
+    // cost is one extra round trip on a transport that is process-per-read anyway; the census
+    // cadence (watch.ts) is what bounds how often this runs.
+    const paneCall = await this.session.run(ZELLIJ_LIST_PANES_ARGS);
     if (!paneCall.ok) throw new Error(`zellij: ${paneCall.detail}`);
+    const tabCall = await this.session.run(ZELLIJ_LIST_TABS_ARGS);
     if (!tabCall.ok) throw new Error(`zellij: ${tabCall.detail}`);
     const panes = parsePaneList(paneCall.result.stdout);
     const tabs = parseTabList(tabCall.result.stdout);
     if (panes === null || tabs === null) {
-      throw new Error(`zellij: could not read the session's listing: ${paneCall.result.stderr.trim() || "not JSON"}`);
+      // "Answered nothing" and "answered something unreadable" are different faults and send the
+      // reader to different places, so they are different sentences.
+      const why =
+        paneCall.result.stderr.trim() ||
+        (paneCall.result.stdout.trim().length === 0 ? "it answered nothing at all" : "not JSON");
+      throw new Error(`zellij: could not read the session's listing: ${why}`);
     }
     this.forgetGonePanes(panes);
     return toSnapshot(panes, tabs, this.session.label(), this.ownLabels);
@@ -368,9 +381,12 @@ export class ZellijMux implements MuxAdapter {
     for (const key of keys) {
       const result = toZellijKey(key);
       if (!result.ok) {
+        if (result.reason === "meta") {
+          return muxRefused(`zellij accepts a Super/Command chord and then drops the modifier, so ${key} would arrive as the bare key — it is refused rather than mis-sent`);
+        }
         return muxRefused(
-          result.reason === "meta"
-            ? `zellij accepts a Super/Command chord and then drops the modifier, so ${key} would arrive as the bare key — it is refused rather than mis-sent`
+          result.reason === "extended"
+            ? `zellij delivers ${key} as the plain key without its modifier, so it is refused rather than mis-sent`
             : `not a key: ${key}`,
         );
       }
@@ -435,9 +451,9 @@ export class ZellijMux implements MuxAdapter {
       spaceId: ZELLIJ_SPACE_ID,
       spaceLabel: this.session.label(),
       tabId: tabId(tabNumber),
-      // zellij's listing reports no working directory for a pane, so the honest answer is the one the
-      // request asked for and nothing invented when it asked for none.
-      cwd: request.cwd ?? "",
+      // The folder the listing reports for the fresh shell (zellij 0.44 and later), else the one the
+      // request asked for, and nothing invented when it asked for none.
+      cwd: fresh.cwd !== "" ? fresh.cwd : (request.cwd ?? ""),
     });
   }
 
@@ -507,6 +523,34 @@ export class ZellijMux implements MuxAdapter {
 
 
   /** The contract's watch over the pane stream plus a bounded census. All of it lives in watch.ts. */
+  /**
+   * Declined, and NOT because zellij cannot list its sessions, it can.
+   *
+   * Probed on 2026-09-08 with zellij 0.44.2: `zellij list-sessions --no-formatting` names every
+   * session on this machine and marks the stopped ones `(EXITED - attach to resurrect)`, and a
+   * session with no client attached still answers `action list-panes --all --json`. The adapter
+   * already reads that listing to bind itself (session.ts), and a session NAME is what this
+   * adapter's endpoint is, so the list and the endpoints are both there.
+   *
+   * What makes the answer no is the price of the endpoint. zellij has no control socket at all:
+   * every read is a `zellij action` PROCESS, two of them per census (`list-panes`, `list-tabs`) per
+   * session. One collie fronting the operator's five sessions would spawn ten processes per poll
+   * interval, forever, for panes nobody asked to see, where Herdr's whole session list costs one
+   * directory listing. So a second zellij session is fronted by a second collie, which is the shape
+   * zellij takes anyway: one client, one session (the same fact that declines `createSpace`).
+   *
+   * The refusal is the contract's, not an empty list: zellij's list is not empty, Collie is
+   * declining to front it.
+   */
+  listSessions(): Promise<MuxOutcome<readonly MuxSession[]>> {
+    return Promise.resolve(
+      muxUnsupported(
+        "listSessions",
+        "one collie drives one zellij session, zellij answers every read with a process rather than over a socket, so fronting several would multiply the poll loop by one process per session",
+      ),
+    );
+  }
+
   watch(options: MuxWatchOptions): MuxSubscription {
     const subscription = new ZellijWatch(this.session, options);
     this.watches.add(subscription);
@@ -624,6 +668,21 @@ function toSnapshot(
 ): MuxSnapshot {
   const tabByNumber = new Map(tabRecords.map((tab) => [tab.tabNumber, tab]));
   const activeTab = tabRecords.find((tab) => tab.active) ?? tabRecords.at(0);
+  // A pane whose tab did not come back in the same listing is DROPPED rather than carried with a
+  // dangling parent: the contract requires every pane to name a tab that is in the snapshot, and a
+  // half-listed pane would fail the whole herd's consistency check.
+  const kept = paneRecords.filter((pane) => tabByNumber.has(pane.tabNumber));
+  const panes: MuxPane[] = kept.map((pane) =>
+    toMuxPane(pane, tabByNumber.get(pane.tabNumber), sessionLabel, ownLabels),
+  );
+  // EVERY COUNT IS COUNTED HERE, off the panes this snapshot actually carries — never off zellij's
+  // own tab listing (MUX_CONTRACT.md § Contract-owned rules, *Counts*). `selectable_tiled_panes_count`
+  // plus `selectable_floating_panes_count` counts zellij's PLUGIN panes too — a tab-bar, a
+  // status-bar, a floating release-notes pane — and `parsePaneList` correctly drops those, so
+  // trusting zellij's number made a tab claim three panes over the two the operator could reach
+  // (measured, M22/04 zellij leg). The same applies to a pane dropped for a dangling tab above.
+  const panesPerTab = new Map<number, number>();
+  for (const pane of kept) panesPerTab.set(pane.tabNumber, (panesPerTab.get(pane.tabNumber) ?? 0) + 1);
   const spaces: MuxSpace[] = [
     {
       spaceId: ZELLIJ_SPACE_ID,
@@ -634,7 +693,7 @@ function toSnapshot(
       focused: true,
       activeTabId: activeTab === undefined ? "" : tabId(activeTab.tabNumber),
       tabCount: tabRecords.length,
-      paneCount: paneRecords.length,
+      paneCount: panes.length,
     },
   ];
   const tabs: MuxTab[] = tabRecords.map((tab) => ({
@@ -643,14 +702,8 @@ function toSnapshot(
     number: tab.position + 1,
     label: tab.name,
     focused: tab.active,
-    paneCount: tab.paneCount,
+    paneCount: panesPerTab.get(tab.tabNumber) ?? 0,
   }));
-  // A pane whose tab did not come back in the same listing is DROPPED rather than carried with a
-  // dangling parent: the contract requires every pane to name a tab that is in the snapshot, and a
-  // half-listed pane would fail the whole herd's consistency check.
-  const panes: MuxPane[] = paneRecords
-    .filter((pane) => tabByNumber.has(pane.tabNumber))
-    .map((pane) => toMuxPane(pane, tabByNumber.get(pane.tabNumber), sessionLabel, tabRecords.length, ownLabels));
   return { panes, spaces, tabs };
 }
 
@@ -659,7 +712,6 @@ function toMuxPane(
   raw: ZellijPaneRecord,
   tab: ZellijTabRecord | undefined,
   sessionLabel: string,
-  tabCount: number,
   ownLabels: ReadonlyMap<string, string>,
 ): MuxPane {
   const pane: MutableMuxPane = {
@@ -668,8 +720,8 @@ function toMuxPane(
     spaceLabel: sessionLabel,
     spaceNumber: 1,
     tabId: tabId(raw.tabNumber),
-    // zellij reports no working directory for a pane, in any of `list-panes`' field groups.
-    cwd: "",
+    // `pane_cwd`, read live by zellij 0.44 and later; empty when it reports none (protocol.ts).
+    cwd: raw.cwd,
     // The pane the operator's terminal is showing, and it takes BOTH flags. `is_focused` is a
     // property of the TAB — every tab remembers its own focused pane, so several report it at once
     // (probed: two panes in one tab both read `is_focused` after a split) — and `active` is the tab
@@ -680,8 +732,6 @@ function toMuxPane(
     // The header's decision: zellij knows of no agent, so every pane is a shell of unknown status.
     agent: "shell",
     status: "unknown",
-    // A bound rather than a measurement — see ASSUMED_SCROLLBACK_LINES.
-    readableLines: raw.contentRows + ASSUMED_SCROLLBACK_LINES,
   };
   // The raw fact, reported as one: `terminal_command` is what zellij was asked to run here, which is
   // NOT who runs here (the header, and ../types.ts § MuxPane.agent). `agent` above stays `"shell"`.
@@ -699,8 +749,12 @@ function toMuxPane(
     const printed = programTitle(raw.title);
     if (printed !== null) pane.terminalTitle = printed;
   }
-  const tabLabel = meaningfulTabName(tab, tabCount);
-  if (tabLabel !== null) pane.tabLabel = tabLabel;
+  const tabLabel = meaningfulTabName(tab);
+  if (tabLabel !== null) {
+    pane.tabLabel = tabLabel;
+    // meaningfulTabName already dropped zellij's `Tab #N`, so what is left was named by the operator.
+    pane.tabNamed = true;
+  }
   return pane;
 }
 
@@ -721,21 +775,18 @@ function programTitle(title: string): string | null {
   return trimmed;
 }
 
-/** zellij's own default name for a tab nobody has named: `Tab #1`, `Tab #2`, … (probed). */
-const DEFAULT_TAB_NAME = /^Tab #\d+$/u;
-
 /**
  * A tab name worth putting on screen, or null.
  *
- * zellij names an unnamed tab positionally, and in a one-tab session that reads as a bug rather than
- * a name — the same call Herdr's `meaningfulTabLabel` and tmux's `meaningfulWindowName` make. With
- * two or more tabs it is kept, because it is the only thing telling them apart.
+ * zellij names an unnamed tab positionally, and that reads as a bug rather than a name — the same
+ * call Herdr's `meaningfulTabLabel` and tmux's `meaningfulWindowName` make, through the one rule
+ * `isUnnamedTab`. The number is dropped whatever the tab count: it is a POSITION, and the tab strip
+ * already shows position by position.
  */
-function meaningfulTabName(tab: ZellijTabRecord | undefined, tabCount: number): string | null {
+function meaningfulTabName(tab: ZellijTabRecord | undefined): string | null {
   if (tab === undefined) return null;
   const name = tab.name.trim();
-  if (name.length === 0) return null;
-  if (DEFAULT_TAB_NAME.test(name) && tabCount <= 1) return null;
+  if (isUnnamedTab(name)) return null;
   return name;
 }
 

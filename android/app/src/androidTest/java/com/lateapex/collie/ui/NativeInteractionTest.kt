@@ -1,6 +1,9 @@
 package com.lateapex.collie.ui
 
 import android.content.Intent
+import android.content.Context
+import android.content.ContextWrapper
+import android.content.SharedPreferences
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
@@ -26,9 +29,16 @@ import com.lateapex.collie.CollieApplication
 import com.lateapex.collie.R
 import com.lateapex.collie.data.CollieRepository
 import com.lateapex.collie.data.ConnectionStore
+import com.lateapex.collie.data.LaunchIntentStore
+import com.lateapex.collie.data.AndroidKeystoreCipher
+import com.lateapex.collie.data.ScopedImageLoader
 import com.lateapex.collie.domain.*
 import com.lateapex.collie.network.*
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.*
 import org.junit.Assert.*
 import org.junit.runner.RunWith
@@ -43,9 +53,20 @@ class NativeInteractionTest {
     private val api = InteractionApi()
     private lateinit var fixtureStore: ConnectionStore
     private lateinit var previousRepository: CollieRepository
+    private lateinit var previousImageLoader: ScopedImageLoader
+    private lateinit var fixtureJournal: LaunchIntentStore
+    private lateinit var fixtureJournalPreferences: String
 
     @Before fun installTransport() {
         previousRepository = app.container.repository
+        previousImageLoader = app.container.imageLoader
+        fixtureJournalPreferences = "native_interaction_intents_${java.util.UUID.randomUUID()}"
+        val journalContext = object : ContextWrapper(app) {
+            override fun getSharedPreferences(name: String, mode: Int): SharedPreferences =
+                app.getSharedPreferences(fixtureJournalPreferences, mode)
+        }
+        fixtureJournal = LaunchIntentStore(journalContext,
+            AndroidKeystoreCipher(alias = "com.lateapex.collie.capability-fixture.launch-intents.v1"))
         NativePreferences(app).savePaneDraft(
             listOf("https://interaction.invalid/", "", "", "fixture:p1").joinToString("|"), "",
         )
@@ -58,13 +79,21 @@ class NativeInteractionTest {
         }
         fixtureStore = store
         // Confine replacement to instrumentation: no production test endpoint or auth exception.
+        val repository = CollieRepository(api, store, OriginValidator(), launchIntentStore = fixtureJournal)
         app.container.javaClass.getDeclaredField("repository").apply { isAccessible = true }
-            .set(app.container, CollieRepository(api, store, OriginValidator()))
+            .set(app.container, repository)
+        app.container.javaClass.getDeclaredField("imageLoader").apply { isAccessible = true }
+            .set(app.container, ScopedImageLoader(repository))
     }
 
     @After fun restoreTransport() {
+        app.container.imageLoader.retire()
+        app.container.javaClass.getDeclaredField("imageLoader").apply { isAccessible = true }
+            .set(app.container, previousImageLoader)
         app.container.javaClass.getDeclaredField("repository").apply { isAccessible = true }
             .set(app.container, previousRepository)
+        fixtureJournal.clear()
+        app.deleteSharedPreferences(fixtureJournalPreferences)
     }
 
     private fun launchPane() = ActivityScenario.launch<PaneActivity>(
@@ -101,10 +130,77 @@ class NativeInteractionTest {
         }
     }
 
+    @Test fun visibleRunRecoveryReloadsWithoutReplayThenRetriesTheOriginalBody() {
+        api.recipeRunsEnabled = true
+        ActivityScenario.launch<LaunchRecipeActivity>(LaunchRecipeActivity.intent(app, Scope(), LaunchRecipeActivity.MODE_RUN)).use { scenario ->
+            val exact = "printf '%s' \"fixture value\""
+            onView(withHint(R.string.recipes_run_input)).perform(scrollTo(), typeText(exact), closeSoftKeyboard())
+            onView(withHint(R.string.recipes_run_cwd)).perform(scrollTo(), typeText("/fixture space"), closeSoftKeyboard())
+            awaitRecipeButton(scenario, R.string.recipes_run, true)
+            onView(allOf(withText(R.string.recipes_run), isAssignableFrom(com.google.android.material.button.MaterialButton::class.java))).perform(scrollTo(), click())
+            onView(withText(R.string.recipes_no_prompt_ack)).check(matches(isDisplayed()))
+            onView(withId(android.R.id.message)).check(matches(withText(org.hamcrest.Matchers.containsString(exact))))
+            assertTrue(api.recipeRunBodies.isEmpty())
+            onView(withText(R.string.recipes_no_prompt_ack)).perform(click())
+            awaitRecipeButton(scenario, R.string.recipes_retry_run, false)
+            assertEquals(1, api.recipeRunBodies.size)
+            val first = api.recipeRunBodies.single()
+            val body = Json.parseToJsonElement(first).jsonObject
+            assertEquals(exact, body.getValue("run").jsonPrimitive.content)
+            assertEquals("/fixture space", body.getValue("cwd").jsonPrimitive.content)
+            assertEquals(36, body.getValue("requestId").jsonPrimitive.content.length)
+            onView(withText(R.string.recipes_retry_run)).perform(scrollTo()).check(matches(allOf(isDisplayed(), org.hamcrest.Matchers.not(isEnabled()))))
+            awaitRecipeButton(scenario, R.string.recipes_reload, true)
+            onView(withText(R.string.recipes_reload)).perform(scrollTo(), click())
+            awaitRecipeButton(scenario, R.string.recipes_retry_run, true)
+            assertEquals("Read-only reload must not replay", 1, api.recipeRunBodies.size)
+            onView(withText(R.string.recipes_retry_run)).perform(scrollTo(), click())
+            onView(withId(android.R.id.message)).check(matches(withText(org.hamcrest.Matchers.containsString(exact))))
+            onView(allOf(withText(R.string.recipes_retry_run), withId(android.R.id.button1))).perform(click())
+            awaitRecipeButton(scenario, R.string.recipes_retry_run, false)
+            assertEquals(listOf(first, first), api.recipeRunBodies.toList())
+        }
+    }
+
+    @Test fun retiredRunConfirmationCannotDispatchItsReviewedCommand() {
+        api.recipeRunsEnabled = true
+        ActivityScenario.launch<LaunchRecipeActivity>(LaunchRecipeActivity.intent(app, Scope(), LaunchRecipeActivity.MODE_RUN)).use { scenario ->
+            onView(withHint(R.string.recipes_run_input)).perform(scrollTo(), typeText("printf retired-fixture"), closeSoftKeyboard())
+            awaitRecipeButton(scenario, R.string.recipes_run, true)
+            onView(allOf(withText(R.string.recipes_run), isAssignableFrom(com.google.android.material.button.MaterialButton::class.java))).perform(scrollTo(), click())
+            onView(withText(R.string.recipes_no_prompt_ack)).check(matches(isDisplayed()))
+            scenario.onActivity { runBlocking { app.container.repository.disconnect() } }
+            onView(withText(R.string.recipes_no_prompt_ack)).perform(click())
+            androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+            assertTrue(api.recipeRunBodies.isEmpty())
+            onView(withText(R.string.recipes_run)).check(matches(org.hamcrest.Matchers.not(isEnabled())))
+        }
+    }
+
+    private fun awaitRecipeButton(scenario: ActivityScenario<LaunchRecipeActivity>, label: Int, enabled: Boolean) {
+        val deadline = android.os.SystemClock.uptimeMillis() + 8000L
+        do {
+            var ready = false
+            scenario.onActivity { activity ->
+                fun walk(view: View): Boolean {
+                    if (view is com.google.android.material.button.MaterialButton && view.text == activity.getString(label) && view.isShown && view.isEnabled == enabled) return true
+                    if (view is android.view.ViewGroup) for (i in 0 until view.childCount) if (walk(view.getChildAt(i))) return true
+                    return false
+                }
+                ready = walk(activity.window.decorView)
+            }
+            if (ready) return
+            android.os.SystemClock.sleep(100L)
+        } while (android.os.SystemClock.uptimeMillis() < deadline)
+        fail("Visible recipe control must reach the expected enabled state")
+    }
+
     @Test fun typedReplyAndSendReachTransportExactlyOnce() {
-        launchPane().use {
+        launchPane().use { scenario ->
+            awaitComposerAdmission(scenario)
             onView(withId(R.id.reply_input)).perform(click(), typeText("hello fixture"), closeSoftKeyboard())
             onView(withId(R.id.send_button)).perform(click())
+            awaitReplyCompletion(scenario)
             assertEquals(listOf("hello fixture"), api.replies.toList())
         }
     }
@@ -133,6 +229,18 @@ class NativeInteractionTest {
         launchPane().use {
             onView(withId(R.id.type_mode_button)).perform(click())
             onView(withId(R.id.reply_input)).perform(typeText("ab c"), pressKey(KeyEvent.KEYCODE_DEL), pressKey(KeyEvent.KEYCODE_ENTER))
+            // The terminal key queue drains through coroutines; Espresso's UI idle check alone
+            // does not mean the final queued write has reached the transport.
+            onView(isRoot()).perform(object : ViewAction {
+                override fun getConstraints(): Matcher<View> = isRoot()
+                override fun getDescription() = "Wait for the direct key sequence to reach the transport"
+                override fun perform(controller: UiController, view: View) {
+                    val deadline = android.os.SystemClock.uptimeMillis() + 4_000L
+                    while (api.keys.flatten().size < 6 && android.os.SystemClock.uptimeMillis() < deadline) {
+                        controller.loopMainThreadForAtLeast(25)
+                    }
+                }
+            })
             assertEquals(listOf("a", "b", "Space", "c", "Backspace", "Enter"), api.keys.flatten())
         }
     }
@@ -193,6 +301,7 @@ class NativeInteractionTest {
             onView(withId(R.id.settings_header_title)).check(matches(isDisplayed()))
             onView(withId(R.id.settings_pack_button)).perform(scrollTo(), click())
             onView(withId(R.id.pack_back_button)).perform(click())
+            awaitDisplayed(R.id.dashboard_panel)
             onView(withId(R.id.dashboard_panel)).check(matches(isDisplayed()))
         }
     }
@@ -293,8 +402,10 @@ class NativeInteractionTest {
 
     @Test fun pollingStopsInBackgroundAndResumesWithoutDuplicatingAReply() {
         launchPane().use { scenario ->
+            awaitComposerAdmission(scenario)
             onView(withId(R.id.reply_input)).perform(typeText("background fixture"), closeSoftKeyboard())
             onView(withId(R.id.send_button)).perform(click())
+            awaitReplyCompletion(scenario)
             scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED)
             val before = api.reads
             Thread.sleep(2300)
@@ -357,19 +468,23 @@ class NativeInteractionTest {
     }
 
     @Test fun quickReplySendsExactlyOnce() {
-        launchPane().use {
+        launchPane().use { scenario ->
+            awaitComposerAdmission(scenario)
             onView(withId(R.id.quick_mode_button)).perform(click())
             onView(withText("Fixture quick reply")).perform(click())
+            awaitReplyCompletion(scenario)
             assertEquals(listOf("Fixture quick reply"), api.replies.toList())
             onView(withId(R.id.composer_dock_close)).perform(click())
         }
     }
 
     @Test fun commandPaletteSearchSelectsAndSendsTheChosenCommand() {
-        launchPane().use {
+        launchPane().use { scenario ->
+            awaitComposerAdmission(scenario)
             onView(withId(R.id.agent_mode_button)).perform(click())
             onView(withHint(app.getString(R.string.pane_agent_search, 1))).perform(typeText("help"), closeSoftKeyboard())
             onView(withText("/help\nFixture help")).perform(click())
+            awaitReplyCompletion(scenario)
             assertEquals(listOf("/help"), api.replies.toList())
         }
     }
@@ -403,15 +518,28 @@ class NativeInteractionTest {
             val automation = instrumentation.uiAutomation
             val info = automation.serviceInfo
             val originalFlags = info.flags
-            info.flags = info.flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS
+            info.flags = info.flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS or
+                android.accessibilityservice.AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
             automation.serviceInfo = info
             try {
                 val rows = mutableListOf<android.graphics.Rect>()
+                val imeNodes = mutableListOf<String>()
+                val exposedKeys = mutableListOf<android.graphics.Rect>()
+                var latinKeyboard: android.graphics.Rect? = null
                 fun collect(node: android.view.accessibility.AccessibilityNodeInfo?) {
                     if (node == null) return
                     val bounds = android.graphics.Rect()
                     node.getBoundsInScreen(bounds)
                     if (node.className == "android.widget.LinearLayout") rows += bounds
+                    // Only IME layout metadata; never capture text from another app.
+                    imeNodes += "${node.className}:${node.viewIdResourceName}:$bounds"
+                    if (node.className?.toString()?.endsWith(".Key") == true && !bounds.isEmpty) {
+                        exposedKeys += android.graphics.Rect(bounds)
+                    }
+                    if (node.className == "android.view.View" &&
+                        node.viewIdResourceName == "com.android.inputmethod.latin:id/keyboard_view" && !bounds.isEmpty) {
+                        latinKeyboard = android.graphics.Rect(bounds)
+                    }
                     for (i in 0 until node.childCount) collect(node.getChild(i))
                 }
                 val keyboardDeadline = android.os.SystemClock.uptimeMillis() + 5000
@@ -419,6 +547,9 @@ class NativeInteractionTest {
                 var stableSince = android.os.SystemClock.uptimeMillis()
                 do {
                     rows.clear()
+                    imeNodes.clear()
+                    exposedKeys.clear()
+                    latinKeyboard = null
                     if (android.os.Build.VERSION.SDK_INT >= 34) automation.clearCache()
                     automation.windows.filter { it.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD }
                         .forEach { collect(it.root) }
@@ -428,15 +559,53 @@ class NativeInteractionTest {
                     if (rows.isNotEmpty() && now - stableSince >= 300) break
                     Thread.sleep(100)
                 } while (android.os.SystemClock.uptimeMillis() < keyboardDeadline)
-                // Gboard's English QWERTY keys are not accessibility children without TalkBack.
-                // Use the actual IME row bounds, not app-screen coordinates or injected characters.
-                val density = app.resources.displayMetrics.density
-                val width = app.resources.displayMetrics.widthPixels
-                val letters = rows.distinct().filter { it.width() > width * 0.8 && it.height() > density * 100 }.minByOrNull { it.height() }
-                    ?: error("Gboard letter rows unavailable: $rows density=$density width=$width")
-                val bottom = rows.distinct().filter { it.width() > width * 0.8 && it.height() in 1..(density * 100).toInt() && kotlin.math.abs(it.top - letters.bottom) < density * 4 }
-                    .minByOrNull { kotlin.math.abs(it.top - letters.bottom) }
-                    ?: error("Gboard bottom row unavailable: $rows letters=$letters")
+                val targets = if (exposedKeys.isNotEmpty()) {
+                    // LatinIME exposes actual key bounds. Group those keys, excluding its toolbar and
+                    // Android's navigation bar; a number row can precede the four QWERTY rows.
+                    val keyRows = exposedKeys.distinct().groupBy { it.top }.toSortedMap().values
+                        .map { row -> row.sortedBy { it.left } }
+                    assertTrue("IME did not expose four QWERTY key rows: $imeNodes", keyRows.size >= 4)
+                    val qwertyRows = keyRows.takeLast(4)
+                    val letters = qwertyRows[0]
+                    val bottom = qwertyRows[3]
+                    assertEquals("English QWERTY first row", 10, letters.size)
+                    assertTrue("English QWERTY middle rows", qwertyRows[1].size >= 9 && qwertyRows[2].size >= 9)
+                    val space = bottom.maxByOrNull { it.width() } ?: error("IME space key unavailable")
+                    assertTrue("IME space key must span several letter keys", space.width() > letters[0].width() * 2)
+                    val backspace = qwertyRows[2].last()
+                    val enter = bottom.last()
+                    listOf(letters[0], letters[1], space, backspace, enter)
+                        .map { it.exactCenterX() to it.exactCenterY() }
+                } else if (latinKeyboard != null) {
+                    // This LatinIME build exposes its actual key canvas, not individual keys.
+                    // Its measured four-row English layout excludes the suggestion strip and
+                    // Android navigation bar; retain exact delivered-key verification below.
+                    val canvas = requireNotNull(latinKeyboard)
+                    assertTrue("LatinIME canvas must occupy the keyboard width", canvas.width() > app.resources.displayMetrics.widthPixels * 0.8)
+                    fun target(column: Float, row: Int) =
+                        canvas.left + canvas.width() * column to canvas.top + canvas.height() * ((row + 0.5f) / 4f)
+                    listOf(target(0.05f, 0), target(0.15f, 0), target(0.5f, 3), target(0.95f, 2), target(0.95f, 3))
+                } else {
+                    // Gboard exposes row containers on this fixture, preserving its verified path.
+                    val density = app.resources.displayMetrics.density
+                    val width = app.resources.displayMetrics.widthPixels
+                    val letters = rows.distinct().filter { it.width() > width * 0.8 && it.height() > density * 100 }.minByOrNull { it.height() }
+                        ?: error("Gboard letter rows unavailable: $rows density=$density width=$width")
+                    val bottom = rows.distinct().filter { it.width() > width * 0.8 && it.height() in 1..(density * 100).toInt() && kotlin.math.abs(it.top - letters.bottom) < density * 4 }
+                        .minByOrNull { kotlin.math.abs(it.top - letters.bottom) }
+                        ?: error("Gboard bottom row unavailable: $rows letters=$letters")
+                    val rowCount = kotlin.math.round(letters.height().toFloat() / bottom.height()).toInt().coerceIn(3, 4)
+                    val rowHeight = letters.height() / rowCount.toFloat()
+                    val firstLetterRow = rowCount - 3
+                    fun rowCenter(row: Int) = letters.top + rowHeight * (firstLetterRow + row + 0.5f)
+                    listOf(
+                        letters.left + letters.width() * 0.05f to rowCenter(0),
+                        letters.left + letters.width() * 0.15f to rowCenter(0),
+                        bottom.exactCenterX() to bottom.exactCenterY(),
+                        letters.left + letters.width() * 0.95f to rowCenter(2),
+                        bottom.left + bottom.width() * 0.95f to bottom.exactCenterY(),
+                    )
+                }
                 fun tap(x: Float, y: Float) {
                     val now = android.os.SystemClock.uptimeMillis()
                     listOf(android.view.MotionEvent.ACTION_DOWN, android.view.MotionEvent.ACTION_UP).forEach { action ->
@@ -448,24 +617,13 @@ class NativeInteractionTest {
                     }
                     instrumentation.waitForIdleSync()
                 }
-                // Gboard may show a number row above the letters (the S25 Ultra's does, and the first
-                // taps typed "1", "2"): the block then holds four rows, not three. The bottom row,
-                // present in every layout, gives the row height.
-                val rowCount = kotlin.math.round(letters.height().toFloat() / bottom.height()).toInt().coerceIn(3, 4)
-                val rowHeight = letters.height() / rowCount.toFloat()
-                val firstLetterRow = rowCount - 3
-                fun rowCenter(row: Int) = letters.top + rowHeight * (firstLetterRow + row + 0.5f)
-                tap(letters.left + letters.width() * 0.05f, rowCenter(0))
-                tap(letters.left + letters.width() * 0.15f, rowCenter(0))
-                tap(bottom.exactCenterX(), bottom.exactCenterY())
-                tap(letters.left + letters.width() * 0.95f, rowCenter(2))
-                tap(bottom.left + bottom.width() * 0.95f, bottom.exactCenterY())
+                targets.forEach { (x, y) -> tap(x, y) }
                 val deliveryDeadline = android.os.SystemClock.uptimeMillis() + 3000
                 while (api.keys.flatten().size < 5 && android.os.SystemClock.uptimeMillis() < deliveryDeadline) Thread.sleep(50)
                 var detail = ""
                 scenario.onActivity {
                     val input = it.findViewById<DirectTypingEditText>(R.id.reply_input)
-                    detail = "letters=$letters bottom=$bottom direct=${input.directTypingEnabled} draft=${input.text}"
+                    detail = "targets=$targets direct=${input.directTypingEnabled} draft=${input.text} imeNodes=$imeNodes"
                 }
                 assertEquals(detail, listOf("q", "w", "Space", "Backspace", "Enter"), api.keys.flatten())
             } finally {
@@ -511,23 +669,77 @@ class NativeInteractionTest {
 
     @Test fun rejectedReplyKeepsTheDraftAndShowsTheFailure() {
         api.rejectReply = true
-        launchPane().use {
+        launchPane().use { scenario ->
+            awaitComposerAdmission(scenario)
+            scenario.onActivity { it.acceptUploadForTest("/fixture/upload.png") }
             onView(withId(R.id.reply_input)).perform(typeText("keep this draft"), closeSoftKeyboard())
             onView(withId(R.id.send_button)).perform(click())
+            awaitReplyCompletion(scenario)
             onView(withId(R.id.reply_input)).check(matches(withText("keep this draft")))
             onView(withId(R.id.error_text)).check(matches(isDisplayed()))
-            assertEquals(listOf("keep this draft"), api.replies.toList())
+            assertEquals(listOf("/fixture/upload.png\nkeep this draft"), api.replies.toList())
+            scenario.onActivity {
+                assertEquals("/fixture/upload.png\nkeep this draft", it.outgoingReplyForTest("keep this draft"))
+            }
             onView(withId(R.id.reply_input)).perform(replaceText(""), closeSoftKeyboard())
         }
     }
 
     @Test fun newSpaceFormSubmitsItsLabelAndDirectory() {
         ActivityScenario.launch(MainActivity::class.java).use {
+            awaitDisplayed(R.id.new_space)
             onView(withId(R.id.new_space)).perform(click())
             onView(withHint(R.string.space_directory_optional)).perform(typeText("/fixture"), closeSoftKeyboard())
             onView(withHint(R.string.space_label_optional)).perform(typeText("New fixture"), closeSoftKeyboard())
-            onView(withText(R.string.action_create)).perform(click())
+            onView(withText(R.string.action_create)).check { view, failure ->
+                if (failure != null) throw failure
+                var current: View? = view
+                while (current != null) {
+                    val item = current
+                    val rect = android.graphics.Rect()
+                    val visible = item.getGlobalVisibleRect(rect)
+                    android.util.Log.i("CollieFixtureSheet", "${item.javaClass.simpleName} id=${item.id} " +
+                        "height=${item.height} measured=${item.measuredHeight} top=${item.top} scrollY=${item.scrollY} " +
+                        "layoutHeight=${item.layoutParams?.height} visible=$visible rect=$rect")
+                    if (item.id == com.google.android.material.R.id.design_bottom_sheet) {
+                        val behavior = com.google.android.material.bottomsheet.BottomSheetBehavior.from(item)
+                        android.util.Log.i("CollieFixtureSheet", "state=${behavior.state} fitToContents=${behavior.isFitToContents} " +
+                            "peekHeight=${behavior.peekHeight} expandedOffset=${behavior.expandedOffset} maxHeight=${behavior.maxHeight}")
+                    }
+                    current = item.parent as? View
+                }
+            }
+            onView(withText(R.string.action_create)).perform(scrollTo(), click())
+            awaitTransportMutation { api.createdSpaces.isNotEmpty() }
             assertEquals(listOf("New fixture" to "/fixture"), api.createdSpaces)
+            onView(withId(R.id.composer_chrome)).check(matches(isDisplayed()))
+        }
+    }
+
+    @Test fun newSpaceLongFolderListScrollsToFullyVisibleCreateAndSubmitsOnce() {
+        api.folderRecent = (1..8).map { "/fixture/recent-$it" }
+        ActivityScenario.launch(MainActivity::class.java).use {
+            awaitDisplayed(R.id.new_space)
+            onView(withId(R.id.new_space)).perform(click())
+            awaitFolderRow("/fixture/recent-8")
+            onView(withHint(R.string.space_directory_optional)).perform(scrollTo(), typeText("/fixture"), closeSoftKeyboard())
+            onView(withHint(R.string.space_label_optional)).perform(scrollTo(), typeText("Long folder fixture"), closeSoftKeyboard())
+            onView(withText(R.string.action_create)).perform(scrollTo()).check { view, failure ->
+                if (failure != null) throw failure
+                var ancestor = view.parent as? View
+                while (ancestor != null && ancestor !is androidx.core.widget.NestedScrollView) ancestor = ancestor.parent as? View
+                val viewport = ancestor as? androidx.core.widget.NestedScrollView
+                    ?: throw AssertionError("Create must use the canonical scrolling viewport")
+                assertTrue("Folder list must produce real overflow", viewport.getChildAt(0).height > viewport.height)
+                assertTrue("Reaching Create must scroll the real viewport", viewport.scrollY > 0)
+                val rect = android.graphics.Rect()
+                assertTrue(view.getGlobalVisibleRect(rect))
+                assertEquals("The entire Create target must be visible", view.height, rect.height())
+                assertTrue("Create must retain a 48dp target", view.height >= (48 * view.resources.displayMetrics.density).toInt())
+                android.util.Log.i("CollieFixtureSheet", "overflow viewport=${viewport.height} content=${viewport.getChildAt(0).height} scrollY=${viewport.scrollY} createHeight=${view.height} rect=$rect")
+            }.perform(click())
+            awaitTransportMutation { api.createdSpaces.isNotEmpty() }
+            assertEquals(listOf("Long folder fixture" to "/fixture"), api.createdSpaces)
             onView(withId(R.id.composer_chrome)).check(matches(isDisplayed()))
         }
     }
@@ -619,6 +831,7 @@ class NativeInteractionTest {
             openWorktreeChoices()
             onView(withId(R.id.worktree_branch_input)).perform(typeText("fixture-branch"), closeSoftKeyboard())
             onView(withText(R.string.action_create)).perform(click())
+            awaitTransportMutation { api.worktreeBranches.isNotEmpty() }
             assertEquals(listOf("fixture-branch"), api.worktreeBranches)
             onView(withId(R.id.composer_chrome)).check(matches(isDisplayed()))
         }
@@ -628,6 +841,9 @@ class NativeInteractionTest {
         api.workspace = api.workspace.copy(repoRoot = "/fixture", isWorktree = false)
         ActivityScenario.launch(MainActivity::class.java).use {
             openWorktreeChoices()
+            // The branch field opens the IME; dismiss it before scrolling to the existing-worktree
+            // action, exactly as a user does when choosing an existing branch instead of typing.
+            onView(withId(R.id.worktree_branch_input)).perform(closeSoftKeyboard())
             onView(withText("existing-fixture")).perform(scrollTo(), click())
             assertTrue(api.openedWorktrees.isEmpty())
             onView(withText(R.string.action_open)).perform(click())
@@ -698,15 +914,38 @@ class NativeInteractionTest {
             onView(withId(R.id.reply_input)).perform(typeText("photo fixture"), closeSoftKeyboard())
             onView(withId(R.id.attach_image_button)).perform(click())
             val instrumentation = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation()
+            val pickerIntent = androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia()
+                .createIntent(app, androidx.activity.result.PickVisualMediaRequest(
+                    androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia.ImageOnly,
+                ))
+            val pickerPackage = pickerIntent.resolveActivity(app.packageManager)?.packageName
+            val photoPickerAvailable = androidx.activity.result.contract.ActivityResultContracts
+                .PickVisualMedia.isPhotoPickerAvailable(app)
+            assertNotNull("No system image-picker handler", pickerPackage)
             val deadline = android.os.SystemClock.uptimeMillis() + 5000
             var pickerVisible = false
             while (!pickerVisible && android.os.SystemClock.uptimeMillis() < deadline) {
                 val activePackage = instrumentation.uiAutomation.rootInActiveWindow?.packageName?.toString().orEmpty()
-                pickerVisible = activePackage.contains("photopicker") || activePackage.contains("providers.media")
+                // Modern picker provider UI can live in a different package from its resolved
+                // entrypoint. Retain its existing provider-window check; fallback DocumentsUI
+                // is checked against the actual contract-selected handler.
+                pickerVisible = if (photoPickerAvailable) {
+                    activePackage.contains("photopicker") || activePackage.contains("providers.media")
+                } else activePackage == pickerPackage
                 if (!pickerVisible) Thread.sleep(50)
             }
             assertTrue("System photo picker did not open", pickerVisible)
-            instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+            if (android.os.Build.VERSION.SDK_INT >= 28) {
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+            } else {
+                // API26 instrumentation cannot inject into DocumentsUI under the app identity.
+                // UiAutomation uses the existing test shell identity for the real Back key.
+                val now = android.os.SystemClock.uptimeMillis()
+                for (action in listOf(KeyEvent.ACTION_DOWN, KeyEvent.ACTION_UP)) {
+                    assertTrue("System picker Back event was not accepted", instrumentation.uiAutomation
+                        .injectInputEvent(KeyEvent(now, now, action, KeyEvent.KEYCODE_BACK, 0), true))
+                }
+            }
             onView(withId(R.id.reply_input)).check(matches(withText("photo fixture")))
             assertTrue(api.replies.isEmpty())
             onView(withId(R.id.reply_input)).perform(replaceText(""), closeSoftKeyboard())
@@ -718,8 +957,19 @@ class NativeInteractionTest {
         val preferences = NativePreferences(app)
         val handsFree = preferences.handsFreeEnabled
         preferences.handsFreeEnabled = false
-        androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().uiAutomation
-            .grantRuntimePermission(app.packageName, android.Manifest.permission.RECORD_AUDIO)
+        val automation = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().uiAutomation
+        if (android.os.Build.VERSION.SDK_INT >= 28) {
+            automation.grantRuntimePermission(app.packageName, android.Manifest.permission.RECORD_AUDIO)
+        } else {
+            // API 26 has no UiAutomation.grantRuntimePermission. Grant only this test application's
+            // declared permission, using the same shell identity as the modern automation helper.
+            check(app.packageName.matches(Regex("[A-Za-z0-9_.]+")))
+            android.os.ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand(
+                "pm grant ${app.packageName} android.permission.RECORD_AUDIO",
+            )).use { stream -> stream.copyTo(java.io.ByteArrayOutputStream()) }
+        }
+        assertEquals(android.content.pm.PackageManager.PERMISSION_GRANTED,
+            app.checkSelfPermission(android.Manifest.permission.RECORD_AUDIO))
         try {
             launchPane().use {
                 onView(withId(R.id.speech_button)).perform(click())
@@ -801,9 +1051,11 @@ class NativeInteractionTest {
     @Test fun codexComposerSendsWithItsVisiblePromptBinding() {
         api.summary = api.summary.copy(agent = "codex", kind = null)
         api.paneText = "transcript\n\n› \n\n  gpt-5 · /repo · Context 50% left"
-        launchPane().use {
+        launchPane().use { scenario ->
+            awaitComposerAdmission(scenario)
             onView(withId(R.id.reply_input)).perform(typeText("Fixture codex reply"), closeSoftKeyboard())
             onView(withId(R.id.send_button)).perform(click())
+            awaitReplyCompletion(scenario)
             assertEquals(listOf("Fixture codex reply"), api.replies.toList())
             assertFalse(api.replyBindings.single().isNullOrBlank())
         }
@@ -840,6 +1092,80 @@ class NativeInteractionTest {
             preferences.themeMode = original
             androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().runOnMainSync { preferences.applyTheme() }
         }
+    }
+
+    /** Observe asynchronous structural dispatch before asserting its exact one-shot payload. */
+    private fun awaitTransportMutation(condition: () -> Boolean) {
+        val deadline = android.os.SystemClock.uptimeMillis() + 5_000L
+        while (!condition() && android.os.SystemClock.uptimeMillis() < deadline) {
+            androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+            android.os.SystemClock.sleep(20L)
+        }
+        assertTrue("Accepted structural mutation did not reach the fixture transport", condition())
+    }
+
+    /** Observe asynchronous initial admission/activity routing; keep the final visible assertion. */
+    private fun awaitFolderRow(path: String) {
+        val deadline = android.os.SystemClock.uptimeMillis() + 5_000L
+        do {
+            try {
+                onView(withText(path)).check(matches(withText(path)))
+                return
+            } catch (_: androidx.test.espresso.NoMatchingViewException) {
+                // The captured folder response may not have rendered its rows yet.
+            }
+            android.os.SystemClock.sleep(50L)
+        } while (android.os.SystemClock.uptimeMillis() < deadline)
+        onView(withText(path)).check(matches(withText(path)))
+    }
+
+    /** Observe asynchronous initial admission/activity routing; keep the final visible assertion. */
+    private fun awaitDisplayed(id: Int) {
+        val deadline = android.os.SystemClock.uptimeMillis() + 5_000L
+        do {
+            try {
+                onView(withId(id)).check(matches(isDisplayed()))
+                return
+            } catch (_: androidx.test.espresso.NoMatchingViewException) {
+                // A destination Activity may not have attached its root yet.
+            } catch (_: AssertionError) {
+                // The bound view may still be waiting for its initial admitted snapshot.
+            }
+            android.os.SystemClock.sleep(50L)
+        } while (android.os.SystemClock.uptimeMillis() < deadline)
+        onView(withId(id)).check(matches(isDisplayed()))
+    }
+
+    /** Positive send fixtures wait for initial pane/config/snapshot admission before user input. */
+    private fun awaitComposerAdmission(scenario: ActivityScenario<PaneActivity>) {
+        val deadline = android.os.SystemClock.uptimeMillis() + 5_000L
+        var admitted = false
+        do {
+            scenario.onActivity { activity ->
+                val field = PaneActivity::class.java.getDeclaredField("currentState").apply { isAccessible = true }
+                val state = field.get(activity) as PaneUiState
+                admitted = state.canWrite && state.composerReady && !state.sending
+            }
+            if (admitted) return
+            android.os.SystemClock.sleep(50L)
+        } while (android.os.SystemClock.uptimeMillis() < deadline)
+        assertTrue("Positive fixture composer did not gain verified write admission", admitted)
+    }
+
+    /** Wait for the asynchronous reply actor, retaining the exact per-test transport assertions. */
+    private fun awaitReplyCompletion(scenario: ActivityScenario<PaneActivity>) {
+        val deadline = android.os.SystemClock.uptimeMillis() + 5_000L
+        var completed = false
+        do {
+            scenario.onActivity { activity ->
+                val field = PaneActivity::class.java.getDeclaredField("currentState").apply { isAccessible = true }
+                val state = field.get(activity) as PaneUiState
+                completed = api.replies.isNotEmpty() && !state.sending
+            }
+            if (completed) return
+            android.os.SystemClock.sleep(50L)
+        } while (android.os.SystemClock.uptimeMillis() < deadline)
+        assertTrue("Reply actor did not complete within the bounded fixture wait", completed)
     }
 
     private fun settleUi() {
@@ -898,6 +1224,9 @@ class NativeInteractionTest {
     }
 
     private class InteractionApi : CollieApi {
+        var recipeRunsEnabled = false
+        val recipeRunBodies = CopyOnWriteArrayList<String>()
+        var folderRecent: List<String> = emptyList()
         var pairedDevice: String? = "Fixture"
         var speechAvailable = false
         var transcriptions = 0
@@ -905,10 +1234,10 @@ class NativeInteractionTest {
         var sessions: List<SessionSummary> = emptyList()
         var workspace = WorkspaceSummary("w1", 1, "Fixture", false, "t1", 1, 1)
         @Volatile var offline = false
-        val worktreeBranches = mutableListOf<String>()
+        val worktreeBranches = CopyOnWriteArrayList<String>()
         val openedWorktrees = mutableListOf<String>()
         val revoked = mutableListOf<String>()
-        val createdSpaces = mutableListOf<Pair<String?, String?>>()
+        val createdSpaces = CopyOnWriteArrayList<Pair<String?, String?>>()
         var createdTabs = 0
         val launched = mutableListOf<String>()
         var paneText = "Fixture terminal\n$ "
@@ -928,6 +1257,7 @@ class NativeInteractionTest {
             AgentStatus.IDLE, "/fixture", false, kind = "shell", paneLabel = "Fixture shell")
         override suspend fun health(connection: Connection) = ok(HealthResponse(true, "1.5.1", false, "solo"))
         override suspend fun config(connection: Connection) = ok(BridgeConfigResponse(
+            receiptContextBound = recipeRunsEnabled,
             mux = MuxConfigResponse(name = "tmux"),
             stt = if (speechAvailable) SttCapability("fixture", true) else null,
             operatorCommands = listOf(OperatorCommand(agent = "shell", command = "/help", description = "Fixture help")),
@@ -961,6 +1291,14 @@ class NativeInteractionTest {
             worktreeBranches += branch
             return ok(WorktreeOpenResponse(true, created))
         }
+        override suspend fun createWorktreeFrozen(connection: Connection, scope: Scope,
+            workspaceId: String, canonicalBody: String): ApiResult<WorktreeOpenResponse> {
+            val body = Json.parseToJsonElement(canonicalBody).jsonObject
+            val branch = requireNotNull(body["branch"]).jsonPrimitive.content
+            require(branch.isNotBlank())
+            require(workspaceId == workspace.workspaceId)
+            return createWorktree(connection, scope, workspaceId, branch)
+        }
         override suspend fun openWorktree(connection: Connection, scope: Scope, workspaceId: String, path: String): ApiResult<WorktreeOpenResponse> {
             openedWorktrees += path
             return ok(WorktreeOpenResponse(true, created))
@@ -974,8 +1312,18 @@ class NativeInteractionTest {
             createdTabs++
             return ok(CreateResponse(true, created))
         }
+        override suspend fun folders(connection: Connection, scope: Scope) =
+            ok(FoldersResponse(recent = folderRecent, favourites = emptyList(), home = "/fixture"))
         override suspend fun launchers(connection: Connection, scope: Scope) =
-            ok(LaunchersResponse(listOf(Launcher("fixture-command", "Fixture launcher")), "/fixture"))
+            ok(LaunchersResponse(listOf(Launcher("fixture-command", "Fixture launcher")), "/fixture",
+                adding = if (recipeRunsEnabled) LaunchersAdding(true, true, true, "fixture-only.toml", 0, 20, emptyList()) else null))
+        override suspend fun checkRun(connection: Connection, scope: Scope, run: String) =
+            ok(LaunchCheckResponse(ok = true, noPrompts = true))
+        override suspend fun startRunFrozen(connection: Connection, scope: Scope, canonicalBody: String): ApiResult<CreateResponse> {
+            check(recipeRunsEnabled)
+            recipeRunBodies += canonicalBody
+            return ApiResult.Failure(ApiFailure.Network("Owned fixture lost run response"))
+        }
         override suspend fun launch(connection: Connection, scope: Scope, command: String, besidePaneId: String?): ApiResult<CreateResponse> {
             launched += command
             return ok(CreateResponse(true, created))
@@ -1002,9 +1350,9 @@ class NativeInteractionTest {
             updateStarts++
             return ok(UpdateStartResponse(true, target, major))
         }
-        override suspend fun pack(connection: Connection) = ok(PackStatusResponse(
-            PackIdentity("fixture", "Fixture pack", 1, 1), PackSelf("lead", "Fixture host", "1.5.1"), null,
-            listOf(PackMember("lead", "Fixture host", true, health = "reachable", lastSeenAt = 1,
+        override suspend fun crew(connection: Connection) = ok(CrewStatusResponse(
+            CrewIdentity("fixture", "Fixture pack", 1, 1), CrewSelf("lead", "Fixture host", "1.5.1"), null,
+            listOf(CrewMember("lead", "Fixture host", true, health = "reachable", lastSeenAt = 1,
                 version = "1.5.1", secretBehind = false, provisional = false)), 1,
         ))
         override suspend fun transcribe(connection: Connection, audio: AudioUpload): ApiResult<SttResponse> {

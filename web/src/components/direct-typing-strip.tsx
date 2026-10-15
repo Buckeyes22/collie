@@ -11,18 +11,21 @@ import { t } from "@/lib/i18n";
 // into a running agent. This strip sits where the eye already goes for composer state, cannot scroll
 // away, and says what is happening in words.
 //
-// WHEN THIS REACHES THE PACK BRANCH IT MUST NAME THE HOST. On v1 every write surface carries a
+// WHEN THIS REACHES THE CREW BRANCH IT MUST NAME THE HOST. On v1 every write surface carries a
 // HostChip, because a write names its target; a mode that streams keystrokes into a terminal without
 // saying WHICH machine would be the one write path that doesn't. That component does not exist on
 // main, so the chip goes in at the merge, next to the label below.
 export function DirectTypingStrip({ onStop }: { onStop: () => void }) {
   useLocale();
+  // Full-width banner, not a quiet row: this mode streams keystrokes into a
+  // live terminal, and the 2026-10-07 phone trap was an armed session nobody
+  // noticed. Destructive tint + STOP button, always in flow above the input.
   return (
-    <div className="flex items-center gap-2 px-1 pb-1 text-xs text-primary">
+    <div className="flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1 text-xs font-medium text-destructive">
       <Keyboard className="size-3.5 shrink-0" />
       <span className="min-w-0 flex-1 truncate">
-        <span className="font-medium">{t("sendMode.armed.title")}</span>
-        <span className="text-muted-foreground"> — {t("sendMode.armed.hint")}</span>
+        <span>{t("sendMode.armed.title")}</span>
+        <span className="opacity-80"> — {t("sendMode.armed.hint")}</span>
       </span>
       <button
         type="button"

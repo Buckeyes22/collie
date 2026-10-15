@@ -3,8 +3,8 @@
     <dimen name="dashboard_worktree_indent">20dp</dimen>
     <dimen name="dashboard_row_padding">14dp</dimen>
     <style name="Widget.Collie.Header.Pill" parent="Widget.AppCompat.Button.Borderless">
-        <item name="android:layout_width">wrap_content</item><item name="android:layout_height">44dp</item>
-        <item name="android:maxWidth">104dp</item><item name="android:minWidth">0dp</item><item name="android:minHeight">44dp</item>
+        <item name="android:layout_width">wrap_content</item><item name="android:layout_height">@dimen/collie_touch_target</item>
+        <item name="android:maxWidth">104dp</item><item name="android:minWidth">@dimen/collie_touch_target</item><item name="android:minHeight">@dimen/collie_touch_target</item>
         <item name="android:background">@drawable/bg_header_pill</item><item name="android:drawablePadding">4dp</item>
         <item name="android:ellipsize">end</item><item name="android:maxLines">1</item>
         <item name="android:paddingStart">9dp</item><item name="android:paddingEnd">9dp</item>
@@ -27,7 +27,7 @@
     <string name="dashboard_host_incompatible">incompatible</string>
     <string name="dashboard_needs_count">%1$d need you</string>
     <string name="dashboard_working_count">%1$d working</string>
-    <string name="dashboard_pack_details">Pack health and formation</string>
+    <string name="dashboard_pack_details">Crew health and formation</string>
     <string name="dashboard_pane_host_unreachable">%1$s · unreachable</string>
     <string name="dashboard_pane_host_incompatible">%1$s · incompatible</string>
     <string name="dashboard_pane_host_accessibility">Host: %1$s</string>

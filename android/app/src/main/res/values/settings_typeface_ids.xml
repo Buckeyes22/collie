@@ -1,0 +1,4 @@
+<resources>
+    <item name="settings_ui_typeface_value" type="id" />
+    <item name="collie_content_typeface" type="id" />
+</resources>

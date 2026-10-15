@@ -1,0 +1,42 @@
+[0m[38;2;215;119;87m ▐[0m[38;2;215;119;87m[48;2;0;0;0m▛███▛█   [0m[1mClaude Code [0m[38;2;153;153;153mv2.1.291[0m
+[0m[38;2;215;119;87m▝▜[0m[38;2;215;119;87m[48;2;0;0;0m█████[0m[38;2;215;119;87m█▀  [0m[38;2;153;153;153mSonnet 5.5 · Claude Max[0m
+[0m[38;2;215;119;87m ▝▝   ▝▝   [0m[38;2;153;153;153m/tmp/claude-lab/project[0m
+
+
+[0m[38;2;153;153;153m[48;2;55;55;55m❯ [0m[38;2;255;255;255m[48;2;55;55;55mread README.md and reply with one [0m[48;2;55;55;55m   [0m
+[0m[48;2;55;55;55m  [0m[38;2;255;255;255m[48;2;55;55;55mshort sentence[0m[48;2;55;55;55m                       [0m
+  
+  [0m[38;2;153;153;153mRead [0m[1m[38;2;153;153;153m1[0m[38;2;153;153;153m file (ctrl+o to expand)[0m
+
+[0m[38;2;255;255;255m● [0mThe README says this is a throwaway
+  lab project used for screen captures.
+
+[0m[38;2;153;153;153m✻[0m [0m[38;2;153;153;153mCogitated for 3s · done 6:32 PM[0m
+
+[0m[38;2;136;136;136m───────────────────────────────────────[0m
+❯ /
+[0m[38;2;136;136;136m───────────────────────────────────────[0m
+  [0m[38;2;177;185;249m❯ /add-dir       Add a new working[0m
+                   [0m[38;2;177;185;249mdirectory[0m
+  [0m[38;2;153;153;153m  /advisor       Let Claude consult[0m
+                   [0m[38;2;153;153;153ma stronger model …[0m
+  [0m[38;2;153;153;153m  /artifacts     Browse your[0m
+                   [0m[38;2;153;153;153mpublished and sha…[0m
+  [0m[38;2;153;153;153m  …o-mode-setup  Teach auto mode[0m
+                   [0m[38;2;153;153;153mabout your enviro…[0m
+  [0m[38;2;153;153;153m  /autocompact   Set how full the[0m
+                   [0m[38;2;153;153;153mcontext gets befo…[0m
+  [0m[38;2;153;153;153m  /autofix-pr    Monitor and[0m
+                   [0m[38;2;153;153;153mautofix any issue…[0m
+  [0m[38;2;153;153;153m  /background    Send this session[0m
+                   [0m[38;2;153;153;153mto the background…[0m
+  [0m[38;2;153;153;153m  /branch        Create a branch of[0m
+                   [0m[38;2;153;153;153mthe current conve…[0m
+  [0m[38;2;153;153;153m  /btw           Ask a quick side[0m
+                   [0m[38;2;153;153;153mquestion without …[0m
+  [0m[38;2;153;153;153m  /bug           Report a bug or[0m
+                   [0m[38;2;153;153;153mshare your conver…[0m
+  [0m[38;2;153;153;153m  /cd            Move this session[0m
+                   [0m[38;2;153;153;153mto a new working …[0m
+  [0m[38;2;153;153;153m  /chrome        Open Claude in[0m
+                   [0m[38;2;153;153;153mChrome settings[0m

@@ -3,11 +3,12 @@ package com.lateapex.collie.network
 import com.lateapex.collie.domain.CollieOrigin
 import com.lateapex.collie.domain.Connection
 import com.lateapex.collie.domain.PaneAddress
+import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
-import okhttp3.mockwebserver.MockResponse
-import okhttp3.mockwebserver.MockWebServer
+import mockwebserver3.MockResponse
+import mockwebserver3.MockWebServer
 import okhttp3.tls.HandshakeCertificates
 import okhttp3.tls.HeldCertificate
 import org.junit.After
@@ -15,10 +16,12 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import okio.buffer
 
 class HardeningLifecycleApiClientTest {
     private lateinit var server: MockWebServer
     private lateinit var api: CollieApiClient
+    private lateinit var client: OkHttpClient
     private var origin = CollieOrigin("https://localhost/")
 
     @Before
@@ -34,10 +37,10 @@ class HardeningLifecycleApiClientTest {
             .addTrustedCertificate(certificate.certificate)
             .build()
         server = MockWebServer().apply {
-            useHttps(serverCertificates.sslSocketFactory(), false)
+            useHttps(serverCertificates.sslSocketFactory())
             start()
         }
-        val client: OkHttpClient = CollieApiClient.defaultHttpClient().newBuilder()
+        client = CollieApiClient.defaultHttpClient().newBuilder()
             .sslSocketFactory(clientCertificates.sslSocketFactory(), clientCertificates.trustManager)
             .build()
         api = CollieApiClient(client, Json { ignoreUnknownKeys = true; encodeDefaults = false })
@@ -46,23 +49,71 @@ class HardeningLifecycleApiClientTest {
 
     @After
     fun tearDown() {
-        server.shutdown()
+        server.close()
+    }
+
+    @Test
+    fun configuredIngressRequiresRequestBoundExactOwnedEnvelopeEvenForEqualRefusalProse() = runBlocking {
+        val id="fixture-request-identity"
+        val configured=CollieApiClient(client.newBuilder().addInterceptor { chain ->
+            val request=chain.request().newBuilder().tag(NativeIngressEvidence::class.java,NativeIngressEvidence(id,origin.value,1)).build()
+            chain.proceed(request)
+        }.build(),Json {ignoreUnknownKeys=true})
+        val connection=Connection(origin,"phone","valid-pairing")
+        data class Case(val marker:String,val bodyId:String,val extra:String,val expected:FailureSource)
+        for((marker,bodyId,extra,expected) in listOf(
+            Case("native_gateway",id,"",FailureSource.GATEWAY),
+            Case("collie",id,"",FailureSource.UNKNOWN),
+            Case("native_gateway","other-request","",FailureSource.UNKNOWN),
+            Case("native_gateway",id,",\"error\":\"device expired\"",FailureSource.UNKNOWN))) {
+            server.enqueue(MockResponse.Builder().code(403).setHeader("X-Collie-Response-Source",marker)
+                .setHeader("X-Collie-Native-Request-Id",id).setHeader("X-Collie-Error-Source","native_gateway")
+                .setHeader("X-Collie-Error-Factor","identity").setHeader("X-Collie-Error-Code","identity.expired")
+                .body("{\"source\":\"native_gateway\",\"factor\":\"identity\",\"code\":\"identity.expired\",\"requestId\":\"$bodyId\"$extra}").build())
+            val http=(configured.health(connection) as ApiResult.Failure).error as ApiFailure.Http
+            assertEquals(expected,http.source);assertEquals(false,http.retiresPairing())
+        }
+        assertEquals(4,server.requestCount)
+    }
+
+    @Test
+    fun unchangedPeerReadStillCarriesTheAnsweringLeaderIncarnation() = runBlocking {
+        server.enqueue(MockResponse.Builder().code(304).setHeader("ETag", "same")
+            .setHeader("X-Collie-Lead-Id", "lead").setHeader("X-Collie-Lead-Epoch", "two").build())
+        val result = api.pane(Connection(origin, "phone", "token"), PaneAddress(paneId = "p1"), 600, "same", false) as ApiResult.NotModified
+        assertEquals(ControlAuthority("lead", "two"), result.controlAuthority)
+    }
+
+    @Test
+    fun identicalProxyProseAndStatusOnlyRetiresWithAuthoritativeHeaders() = runBlocking {
+        val connection = Connection(origin, "phone", "token")
+        for ((source, factor, expected) in listOf(Triple(null, null, false), Triple("gateway", "pairing", false),
+            Triple("collie", "identity", false), Triple("collie", "pairing", true))) {
+            val response = MockResponse.Builder().code(401).body("{\"error\":\"device expired\",\"code\":\"pairing.expired\",\"source\":\"collie\",\"factor\":\"pairing\"}")
+            if (source != null) response.setHeader("X-Collie-Error-Source", source)
+            if (factor != null) response.setHeader("X-Collie-Error-Factor", factor)
+            response.setHeader("X-Collie-Error-Code", "pairing.expired")
+            server.enqueue(response.build())
+            val result = api.health(connection) as ApiResult.Failure
+            assertEquals(expected, (result.error as ApiFailure.Http).retiresPairing())
+        }
+        assertEquals(4, server.requestCount)
     }
 
     @Test
     fun terminalWriteIsNotReplayedForServiceUnavailableRetryAfterZero() = runBlocking {
         server.enqueue(
-            MockResponse()
-                .setResponseCode(503)
+            MockResponse.Builder()
+                .code(503)
                 .setHeader("Retry-After", "0")
                 .setHeader("Content-Type", "application/json")
-                .setBody("""{"error":"temporarily unavailable"}"""),
+                .body("""{"error":"temporarily unavailable"}""").build(),
         )
         server.enqueue(
-            MockResponse()
-                .setResponseCode(200)
+            MockResponse.Builder()
+                .code(200)
                 .setHeader("Content-Type", "application/json")
-                .setBody("""{"ok":true}"""),
+                .body("""{"ok":true}""").build(),
         )
 
         val result = api.reply(
@@ -75,7 +126,109 @@ class HardeningLifecycleApiClientTest {
         val failure = (result as ApiResult.Failure).error as ApiFailure.Http
         assertEquals(503, failure.status)
         assertEquals(1, server.requestCount)
-        assertEquals("/api/pane/w1%3Ap1/reply", server.takeRequest().path)
+        assertEquals("/api/pane/w1%3Ap1/reply", server.takeRequest().target)
+    }
+
+    @Test
+    fun truncatedBodiesBecomeFailuresForReadsWritesAndPairingWithoutReplaying() = runBlocking {
+        val connection = Connection(origin, "phone", "token")
+        val calls: List<suspend () -> ApiResult<*>> = listOf(
+            { api.health(connection) },
+            { api.reply(connection, PaneAddress(paneId = "w1:p1"), "send once") },
+            { api.pair(origin, "fake-code", "phone") },
+        )
+        calls.forEachIndexed { index, invoke ->
+            server.enqueue(MockResponse.Builder().body("{\"ok\":true,\"padding\":\"${"x".repeat(2048)}\"}")
+                .onResponseBody(mockwebserver3.SocketEffect.CloseSocket()).build())
+            val result = invoke()
+            assertTrue("body I/O errors must not escape to a UI coroutine", result is ApiResult.Failure)
+            assertTrue((result as ApiResult.Failure).error is ApiFailure.Network)
+            assertEquals(index + 1, server.requestCount)
+        }
+    }
+
+    @Test
+    fun responseBodyIsReadOffTheCallingThreadAndClosedBeforeReturning() = runBlocking {
+        val caller = Thread.currentThread()
+        var bodyThread: Thread? = null
+        var closed = false
+        val inspectedClient = client.newBuilder().addInterceptor { chain ->
+            val response = chain.proceed(chain.request())
+            val original = response.body!!
+            val source = object : okio.ForwardingSource(original.source()) {
+                override fun read(sink: okio.Buffer, byteCount: Long): Long {
+                    bodyThread = Thread.currentThread()
+                    return super.read(sink, byteCount)
+                }
+                override fun close() { closed = true; super.close() }
+            }
+            response.newBuilder().body(object : okhttp3.ResponseBody() {
+                override fun contentType() = original.contentType()
+                override fun contentLength() = original.contentLength()
+                override fun source() = source.buffer()
+            }).build()
+        }.build()
+        server.enqueue(MockResponse.Builder().body("{\"ok\":true,\"version\":\"1.19.0\",\"deposed\":false,\"mode\":\"bridge\"}").build())
+        val result = CollieApiClient(inspectedClient, Json { ignoreUnknownKeys = true }).health(Connection(origin, "phone", "token"))
+        assertTrue(result is ApiResult.Success)
+        assertTrue(bodyThread != null && bodyThread !== caller)
+        assertTrue(closed)
+    }
+
+    @Test
+    fun cancellationWhileReadingTheBodyClosesTheResponseWithoutReplaying() = runBlocking {
+        val reading = java.util.concurrent.CountDownLatch(1)
+        val closed = java.util.concurrent.CountDownLatch(1)
+        val inspectedClient = client.newBuilder().addInterceptor { chain ->
+            val response = chain.proceed(chain.request())
+            val original = response.body!!
+            val source = object : okio.ForwardingSource(original.source()) {
+                override fun read(sink: okio.Buffer, byteCount: Long): Long {
+                    reading.countDown()
+                    return super.read(sink, byteCount)
+                }
+                override fun close() {
+                    try { super.close() } finally { closed.countDown() }
+                }
+            }.buffer()
+            response.newBuilder().body(object : okhttp3.ResponseBody() {
+                override fun contentType() = original.contentType()
+                override fun contentLength() = original.contentLength()
+                override fun source() = source
+            }).build()
+        }.build()
+        server.enqueue(MockResponse.Builder().body("{\"ok\":true}")
+            .bodyDelay(2, java.util.concurrent.TimeUnit.SECONDS).build())
+        val call = async(kotlinx.coroutines.Dispatchers.Default) {
+            CollieApiClient(inspectedClient, Json { ignoreUnknownKeys = true })
+                .health(Connection(origin, "phone", "token"))
+        }
+        try {
+            assertTrue(reading.await(3, java.util.concurrent.TimeUnit.SECONDS))
+            call.cancel()
+            call.join()
+            assertTrue(closed.await(3, java.util.concurrent.TimeUnit.SECONDS))
+            assertEquals(1, server.requestCount)
+        } finally { call.cancel() }
+    }
+
+    @Test
+    fun speechBudgetAlsoAppliesToSocketReadsAndWrites() = runBlocking {
+        var readTimeout = 0
+        var writeTimeout = 0
+        val inspectedClient = client.newBuilder().addInterceptor { chain ->
+            readTimeout = chain.readTimeoutMillis()
+            writeTimeout = chain.writeTimeoutMillis()
+            chain.proceed(chain.request())
+        }.build()
+        server.enqueue(MockResponse.Builder().body("{\"ok\":true,\"text\":\"speech\"}").build())
+        val audio = AudioUpload("audio/mp4", byteArrayOf(1))
+        val result = CollieApiClient(inspectedClient, Json { ignoreUnknownKeys = true })
+            .transcribe(Connection(origin, "phone", "token"), audio)
+        assertTrue(result is ApiResult.Success)
+        val expected = (CollieApiClient.sttTimeoutSeconds(audio.bytes.size) * 1000).toInt()
+        assertEquals(expected, readTimeout)
+        assertEquals(expected, writeTimeout)
     }
 
 }

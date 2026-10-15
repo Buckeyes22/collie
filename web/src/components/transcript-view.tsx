@@ -4,9 +4,13 @@ import { ChevronRight, Info, TriangleAlert, User, Wrench } from "lucide-react";
 import { AgentIcon } from "@/components/agent-icon";
 import { MarkdownText } from "@/components/markdown-text";
 import { cn } from "@/lib/utils";
+import { imageSrc } from "@/lib/api";
+import { useAuthedUrl } from "@/lib/authed-url";
 import { splitHighlight } from "@/lib/transcript-search";
+import type { Scope } from "@/lib/scope";
 import type { TranscriptEntry, TranscriptPart } from "@/lib/types";
-import { t } from "@/lib/i18n";
+import { getLocaleSnapshot, t, tn } from "@/lib/i18n";
+import { useDashPrefs } from "@/hooks/use-dash-prefs";
 import { useLocale } from "@/hooks/use-locale";
 
 // Renders an agent transcript — the conversation history a Claude pane's terminal structurally
@@ -20,19 +24,22 @@ import { useLocale } from "@/hooks/use-locale";
 // AST which the renderer maps to React elements, so no HTML string is ever constructed. Do not
 // "improve" this by swapping in a markdown→HTML library without re-deriving that boundary.
 
-/** Times only — the date lives on the day divider, and a phone row has no width to spare. */
+/** Times only — the date lives on the day divider, and a phone row has no width to spare. Keyed on
+ *  the active app locale (not the browser default) so the clock format follows a language switch. */
 function clockTime(iso: string): string {
   if (!iso) return "";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
-  return new Intl.DateTimeFormat("en", { hour: "2-digit", minute: "2-digit" }).format(d);
+  const locale = getLocaleSnapshot().locale;
+  return new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit" }).format(d);
 }
 
 function dayKey(iso: string): string {
   if (!iso) return "";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
-  return new Intl.DateTimeFormat("en", { dateStyle: "medium" }).format(d);
+  const locale = getLocaleSnapshot().locale;
+  return new Intl.DateTimeFormat(locale, { dateStyle: "medium" }).format(d);
 }
 
 /** Plain text with find hits marked — for strings that are NOT Markdown (shell commands, output). */
@@ -56,11 +63,55 @@ function Highlight({ text, query }: { text: string; query: string }) {
 }
 
 /**
+ * One image out of the journal: a picture an agent attached, spoke, or a tool returned.
+ *
+ * It is an ANCHOR to the bytes, not a bare `<img>`. That is what makes it keyboard reachable and
+ * long-pressable — the same affordance the mirror's image card has — and it is the only way to see
+ * a screenshot at full size on a phone.
+ *
+ * `imageSrc` decides whether the reference is loadable AT ALL (`lib/api.ts`): a blob path on the
+ * host the pane belongs to, or inline bytes, and nothing else. A journal is an agent's own output,
+ * so a reference it refuses renders nothing rather than a broken image.
+ */
+function JournalImage({
+  ref_,
+  alt,
+  scope,
+}: {
+  ref_: string;
+  alt: string;
+  scope?: Scope;
+}) {
+  // Vetted first, then loaded with the pairing token (lib/authed-url.ts): reads need it (ADR 0086),
+  // and an `<img src>` cannot send it. Nothing is drawn until the bytes are here.
+  const { url } = useAuthedUrl(imageSrc(ref_, scope));
+  if (url === null) return null;
+  return (
+    <a href={url} target="_blank" rel="noopener noreferrer" className="inline-block cursor-zoom-in">
+      <img
+        src={url}
+        alt={alt}
+        className="max-h-96 w-auto max-w-full rounded border object-contain shadow-xs"
+        loading="lazy"
+      />
+    </a>
+  );
+}
+
+/**
  * A tool call: its one-line summary always, its output behind a tap. Collapsed by default because a
  * thread is mostly tool traffic (705 of 914 turns in a real session) and expanding it all would bury
  * the prose you opened the history to read.
  */
-function ToolPart({ part, query }: { part: Extract<TranscriptPart, { kind: "tool" }>; query: string }) {
+function ToolPart({
+  part,
+  query,
+  scope,
+}: {
+  part: Extract<TranscriptPart, { kind: "tool" }>;
+  query: string;
+  scope?: Scope;
+}) {
   const [open, setOpen] = useState(false);
   const result = part.result;
   const isError = result?.isError === true;
@@ -93,20 +144,36 @@ function ToolPart({ part, query }: { part: Extract<TranscriptPart, { kind: "tool
         )}
       </button>
       {open && result && (
-        <pre className="overflow-x-auto border-t px-2 py-1.5 font-mono text-[11px] leading-snug whitespace-pre-wrap">
-          {result.text}
-          {result.truncated && (
-            <span className="text-muted-foreground">{`\n${t("transcript.outputTruncated")}`}</span>
+        <div className="border-t">
+          {result.imageUrl && (
+            <div className="border-b bg-background/50 p-2">
+              <JournalImage ref_={result.imageUrl} alt={t("transcript.toolImageAlt")} scope={scope} />
+            </div>
           )}
-        </pre>
+          {result.text && (
+            <pre className="overflow-x-auto px-2 py-1.5 font-mono text-[11px] leading-snug [font-variant-ligatures:none] whitespace-pre-wrap">
+              {result.text}
+              {result.truncated && (
+                <span className="text-muted-foreground">{`\n${t("transcript.outputTruncated")}`}</span>
+              )}
+            </pre>
+          )}
+        </div>
       )}
     </div>
   );
 }
 
-function Part({ part, query }: { part: TranscriptPart; query: string }) {
+function Part({ part, query, scope }: { part: TranscriptPart; query: string; scope?: Scope }) {
   // Tool output is COMMAND output, not prose — it stays verbatim in a monospace block (see ToolPart).
-  if (part.kind === "tool") return <ToolPart part={part} query={query} />;
+  if (part.kind === "tool") return <ToolPart part={part} query={query} scope={scope} />;
+  if (part.kind === "image") {
+    return (
+      <div className="my-1.5">
+        <JournalImage ref_={part.url} alt={t("transcript.attachmentAlt")} scope={scope} />
+      </div>
+    );
+  }
   // Prose is Markdown, so it renders formatted. MarkdownText emits React elements only — never
   // markup — so this keeps the same XSS boundary the raw text node had.
   return (
@@ -128,14 +195,31 @@ function Turn({
   agent,
   showHeader,
   query,
+  scope,
+  drawCompactions,
 }: {
   entry: TranscriptEntry;
   agent?: string;
   /** False for a turn continuing the same speaker's run — see the grouping note in TranscriptView. */
   showHeader: boolean;
   query: string;
+  /** Whether a compaction's recap is drawn, or only the one-line marker where it happened. */
+  drawCompactions: boolean;
+  /** Which machine + session this pane lives on — an image's bytes live there, not on the lead. */
+  scope?: Scope;
 }) {
   const time = clockTime(entry.ts);
+
+  // The recap is the agent's own history of itself, thousands of characters long. Unless the reader
+  // asked for it, the page keeps the place it happened and none of the text.
+  if (entry.role === "summary" && !drawCompactions) {
+    return (
+      <p className="py-1 text-center text-xs text-muted-foreground">
+        {t("transcript.summaryLabel")}
+        {time && ` · ${time}`}
+      </p>
+    );
+  }
 
   // Neither of these is speech, so both render dashed-and-muted — visibly set apart from the
   // conversation rather than attributed to the user or the agent.
@@ -148,23 +232,27 @@ function Turn({
           {time && ` · ${time}`}
         </div>
         {entry.parts.map((part, i) => (
-          <Part key={i} part={part} query={query} />
+          <Part key={i} part={part} query={query} scope={scope} />
         ))}
       </div>
     );
   }
 
   const isUser = entry.role === "user";
+  // The reader's own turn wears the brand's orange, so it is findable by colour in a column of
+  // grey. Chat's stream draws the same well for the same reason (chat-cards.tsx § UserTurn) — one
+  // treatment, two surfaces. Orange and not the info blue: inline code owns that blue, and a code
+  // chip inside a user turn would otherwise sit on a ground of its own hue.
   return (
-    <div className={isUser ? "rounded-lg border bg-muted/50 px-3 py-2" : "px-1"}>
+    <div className={isUser ? "rounded-lg border border-status-working/25 bg-status-working/8 px-3 py-2" : "px-1"}>
       {showHeader && (
         <div className="mb-1 flex items-center gap-1.5">
           {isUser ? (
-            <User className="size-3.5 text-muted-foreground" />
+            <User className="size-3.5 text-status-working" />
           ) : (
             <AgentIcon agent={agent ?? "claude"} className="size-4" />
           )}
-          <span className="text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
+          <span className={`text-[11px] font-semibold tracking-wide uppercase ${isUser ? "text-status-working" : "text-muted-foreground"}`}>
             {isUser ? t("transcript.youLabel") : (agent ?? t("transcript.agentFallback"))}
           </span>
           {time && <span className="text-[11px] text-muted-foreground">{time}</span>}
@@ -172,10 +260,103 @@ function Turn({
       )}
       <div className="space-y-1.5">
         {entry.parts.map((part, i) => (
-          <Part key={i} part={part} query={query} />
+          <Part key={i} part={part} query={query} scope={scope} />
         ))}
       </div>
     </div>
+  );
+}
+
+/**
+ * A turn with its tool parts taken out, plus how many were taken.
+ *
+ * The parts are DROPPED rather than hidden with CSS, so nothing off-screen is built: a measured
+ * session runs 892 assistant turns, most of them a tool call, and rendering all of them invisibly
+ * costs the same as rendering them.
+ */
+function withoutTools(entry: TranscriptEntry): { entry: TranscriptEntry; hidden: number } {
+  const parts = entry.parts.filter((p) => p.kind !== "tool");
+  const hidden = entry.parts.length - parts.length;
+  return hidden === 0 ? { entry, hidden } : { entry: { ...entry, parts }, hidden };
+}
+
+/**
+ * One muted line standing in for the steps a turn took, with a tap that brings them back.
+ *
+ * A silent gap would be worse than the wall it replaced: a reader who cannot see that the agent ran
+ * anything cannot tell a quiet turn from a busy one, and would have no way to find the command they
+ * came looking for. The line is per TURN, not per call — one line where forty cards were.
+ */
+function HiddenTools({ count, onShow }: { count: number; onShow: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onShow}
+      // 44px tap floor (DESIGN.md §6), drawn as a row rather than a button so it reads as a gap in
+      // the transcript and not as an action the turn is offering.
+      className="flex min-h-11 w-full items-center gap-2 text-left text-xs text-muted-foreground transition-colors active:bg-muted/60"
+    >
+      <Wrench aria-hidden className="size-3.5 shrink-0" />
+      {tn("transcript.tools.hidden", count)}
+    </button>
+  );
+}
+
+/**
+ * One turn, with its steps drawn or stood in for.
+ *
+ * Split out of the map so the hiding lives in one place: `Turn` keeps its whole job, which is
+ * drawing whatever parts it is handed, and knows nothing about the setting.
+ */
+function TurnBody({
+  entry,
+  agent,
+  showHeader,
+  query,
+  scope,
+  drawTools,
+  drawCompactions,
+  onShowTools,
+}: {
+  entry: TranscriptEntry;
+  agent?: string;
+  showHeader: boolean;
+  query: string;
+  scope?: Scope;
+  drawTools: boolean;
+  drawCompactions: boolean;
+  onShowTools: () => void;
+}) {
+  if (drawTools) {
+    return (
+      <Turn
+        entry={entry}
+        agent={agent}
+        showHeader={showHeader}
+        query={query}
+        scope={scope}
+        drawCompactions={drawCompactions}
+      />
+    );
+  }
+  const { entry: trimmed, hidden } = withoutTools(entry);
+  // A turn that was NOTHING but tool calls has no header worth keeping either — drawing the speaker
+  // and the time above a single "3 steps" line puts more chrome on screen than the thing it hides.
+  if (trimmed.parts.length === 0) {
+    return hidden === 0 ? null : <HiddenTools count={hidden} onShow={onShowTools} />;
+  }
+  return (
+    <>
+      <Turn
+        entry={trimmed}
+        agent={agent}
+        showHeader={showHeader}
+        query={query}
+        scope={scope}
+        drawCompactions={drawCompactions}
+      />
+      {hidden > 0 && <HiddenTools count={hidden} onShow={onShowTools} />}
+    </>
   );
 }
 
@@ -184,6 +365,7 @@ export function TranscriptView({
   agent,
   query = "",
   focusedUuid,
+  scope,
 }: {
   entries: TranscriptEntry[];
   /** The pane's agent name, for the per-turn brand icon. */
@@ -192,8 +374,21 @@ export function TranscriptView({
   query?: string;
   /** The turn a find/jump landed on; ringed so you can see where you were sent. */
   focusedUuid?: string;
+  /** Which machine + session this pane lives on. An image's bytes sit on the host whose journal
+   *  named them, so a blob URL takes the same scope every other per-pane request takes. */
+  scope?: Scope;
 }) {
   useLocale();
+  const { prefs } = useDashPrefs();
+  // Turns whose steps the reader asked to see again, by uuid. Per view and never persisted: the
+  // setting is the standing answer, this is "show me this one".
+  const [shown, setShown] = useState<Record<string, true>>({});
+  // A FIND ALWAYS WINS. Tool output is where a command lives, so a search that matched inside one
+  // and then drew nothing would be a silent wrong answer — the worst kind. While a query is on
+  // screen every part is drawn, whatever the setting says.
+  const drawTools = prefs.showToolCalls || query !== "";
+  // Same rule for a compaction's recap: a search must be able to land inside it.
+  const drawCompactions = prefs.showCompactions || query !== "";
   // Consecutive turns from the same speaker are GROUPED — only the first of a run carries the
   // role/time header. A real thread is overwhelmingly long runs of assistant turns (892 of 914 in a
   // measured session), so repeating "CLAUDE 06:43 PM" above every tool call would roughly double the
@@ -231,7 +426,16 @@ export function TranscriptView({
                 <div className="h-px flex-1 bg-border" />
               </div>
             )}
-            <Turn entry={entry} agent={agent} showHeader={showHeader} query={query} />
+            <TurnBody
+              entry={entry}
+              agent={agent}
+              showHeader={showHeader}
+              query={query}
+              scope={scope}
+              drawTools={drawTools || shown[entry.uuid] === true}
+              drawCompactions={drawCompactions}
+              onShowTools={() => setShown((s) => ({ ...s, [entry.uuid]: true }))}
+            />
           </div>
         );
       })}

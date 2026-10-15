@@ -68,8 +68,9 @@
     </LinearLayout>
     <EditText
         android:id="@+id/space_filter"
+            android:importantForAutofill="no"
         android:layout_width="match_parent"
-        android:layout_height="44dp"
+        android:layout_height="@dimen/collie_touch_target"
         android:background="@drawable/bg_collie_input"
         android:hint="@string/filter_spaces"
         android:imeOptions="actionDone"

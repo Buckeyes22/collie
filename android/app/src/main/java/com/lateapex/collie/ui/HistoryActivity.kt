@@ -36,6 +36,8 @@ import androidx.lifecycle.lifecycleScope
 import com.lateapex.collie.CollieApplication
 import com.lateapex.collie.R
 import com.lateapex.collie.databinding.ActivityHistoryBinding
+import com.lateapex.collie.data.ScopedReadContext
+import com.lateapex.collie.data.ScopedRequestKey
 import com.lateapex.collie.domain.PaneAddress
 import com.lateapex.collie.domain.Scope
 import com.lateapex.collie.network.ApiResult
@@ -45,11 +47,20 @@ import kotlinx.coroutines.launch
 import kotlin.math.max
 import kotlin.math.min
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 
 /** Read-only transcript reader. It intentionally never joins the live-pane polling loop. */
 class HistoryActivity : AppCompatActivity() {
     private lateinit var binding: ActivityHistoryBinding
     private lateinit var address: PaneAddress
+    private var authorityRegistration: AutoCloseable? = null
+    private var savedCopy: com.lateapex.collie.data.SavedCopyProvenance? = null
+    private var savedVersion: com.lateapex.collie.data.ScopedCustodyVersion? = null
+    private var savedExpiry: kotlinx.coroutines.Job? = null
+    private var savedClear: AutoCloseable? = null
+
+    private var retired = false
     private var entries = emptyList<TranscriptEntry>()
     private var hasMore = false
     private var fileTruncated = false
@@ -67,14 +78,35 @@ class HistoryActivity : AppCompatActivity() {
     private val turnViews = linkedMapOf<String, View>()
     private val historyTextTargets = linkedMapOf<HistorySearchKey, HistoryTextTarget>()
     private val expandedTools = mutableSetOf<Pair<String, Int>>()
-    private val renderer by lazy {
-        HistoryTurnRenderer(
-            this,
-            intent.getStringExtra(EXTRA_AGENT).orEmpty(),
-            expandedTools,
-            ::toggleTool,
-            historyTextTargets::put,
-        )
+    @Volatile private var custodyActor: ScopedReadContext? = null
+    @Volatile private var admittedRenderContext: ScopedReadContext? = null
+    private val admittedEntryUuids = ConcurrentHashMap.newKeySet<String>()
+    private var renderer: HistoryTurnRenderer? = null
+    private var rendererActor: Pair<ScopedRequestKey, Long>? = null
+    private val rendererAdmissionRevision = AtomicLong()
+    private var rendererBuiltAdmissionRevision = -1L
+    @Volatile private var refreshContinuation: String? = null
+    @Volatile private var refreshContinuationActor: Pair<ScopedRequestKey, Long>? = null
+
+    private fun rendererForAdmittedRead(): HistoryTurnRenderer {
+        val readContext = admittedRenderContext
+        val actor = readContext?.let { it.key to it.navigationGeneration }
+        val admissionRevision = rendererAdmissionRevision.get()
+        if (renderer == null || rendererActor != actor || rendererBuiltAdmissionRevision != admissionRevision) {
+            rendererActor = actor
+            rendererBuiltAdmissionRevision = admissionRevision
+            renderer = HistoryTurnRenderer(
+                this,
+                intent.getStringExtra(EXTRA_AGENT).orEmpty(),
+                expandedTools,
+                ::toggleTool,
+                historyTextTargets::put,
+                (application as CollieApplication).container.imageLoader,
+                readContext,
+                readContextForEntry = { uuid -> readContext?.takeIf { uuid in admittedEntryUuids } },
+            )
+        }
+        return requireNotNull(renderer)
     }
 
     private fun toggleTool(uuid: String, partIndex: Int) {
@@ -107,13 +139,77 @@ class HistoryActivity : AppCompatActivity() {
             paneId,
         )
         retainedReader = ViewModelProvider(this)[HistoryReaderViewModel::class.java]
+        val connectionAtOpen = repository.connection.value
+        if (retainedReader.state != null && (retainedReader.context == null || repository.isActorRetired(retainedReader.context!!))) {
+            retainedReader.state = null
+            retainedReader.findQuery = ""
+        }
+        repository.selectSubject(address.scope, address.paneId)
+        savedClear = repository.offlineContentStore?.onReadsCleared { cutoff ->
+            withMainCustodyAck {
+                if (savedCopy?.clearRevision?.let { it < cutoff } == true) {
+                    val selected = repository.offlineSelection(address.scope, address.paneId)
+                    eraseSavedHistory()
+                    selected?.let(repository::expireSavedCopy)
+                }
+            }
+        }
+        authorityRegistration = repository.onReadContextRetired { event ->
+            withOfflineRetirementOnMain(event, { savedVersion }) {
+                eraseSavedHistory()
+            }
+            withRetirementOnMain(event, { custodyActor }) {
+                val reason = event.reason
+                loading = false
+                admittedRenderContext = null
+                admittedEntryUuids.clear()
+                rendererAdmissionRevision.incrementAndGet()
+                refreshContinuation = null
+                refreshContinuationActor = null
+                renderer = null
+                rendererActor = null
+                if (reason in setOf(com.lateapex.collie.data.AuthorityInvalidation.PAIRING_RETIRED,
+                    com.lateapex.collie.data.AuthorityInvalidation.CONNECTION_CHANGED, com.lateapex.collie.data.AuthorityInvalidation.DISCONNECTED)) {
+                    retired = true
+                    entries = emptyList()
+                    retainedReader.state = null
+                    retainedReader.findQuery = ""
+                    retainedReader.connection = null
+                    retainedReader.context = null
+                    findHits = emptyList()
+                    findStops = emptyList()
+                    turnViews.clear()
+                    historyTextTargets.clear()
+                    expandedTools.clear()
+                    pendingRestoreAnchor = null
+                    loading = false
+                    runOnUiThread {
+                        renderer = null
+                        rendererActor = null
+                        binding.historyFindQuery.text?.clear()
+                        binding.historyEntries.removeAllViews()
+                        finish()
+                    }
+                } else {
+                    runOnUiThread {
+                        renderer = null
+                        rendererActor = null
+                        if (!isFinishing && entries.isNotEmpty()) renderEntries()
+                    }
+                }
+            }
+        }
+        retainedReader.connection = connectionAtOpen
+        custodyActor = retainedReader.context
         restoreReaderState(savedInstanceState)
         binding.historySubtitle.text = intent.getStringExtra(EXTRA_TITLE)?.trim()?.takeIf(String::isNotEmpty) ?: paneId
         binding.historyBackButton.setOnClickListener { finish() }
         binding.historyClose.setOnClickListener { finish() }
         binding.historyFindOpen.setOnClickListener(::openFind)
+        binding.historyFindQuery.contentDescription = getString(R.string.history_find_coverage)
         binding.historyFindClose.setOnClickListener { closeFind() }
         binding.historyLoadOlder.setOnClickListener { growUpward() }
+        binding.historyRefresh.setOnClickListener { refreshRetainedHistory() }
         restoringFindState = true
         binding.historyFindQuery.setText(retainedReader.findQuery)
         restoringFindState = false
@@ -157,6 +253,10 @@ class HistoryActivity : AppCompatActivity() {
             }
         }
         binding.root.applyAppTypeface()
+        lifecycleScope.launch {
+            restoreSavedHistory()
+            repository.offlineContentStore?.changes?.collect { if (savedCopy != null) restoreSavedHistory() }
+        }
         if (entries.isNotEmpty()) {
             renderEntries()
             restoreFindChrome()
@@ -167,8 +267,17 @@ class HistoryActivity : AppCompatActivity() {
         }
     }
 
+    override fun onDestroy() {
+        authorityRegistration?.close()
+        authorityRegistration = null
+        savedClear?.close(); savedClear = null
+        super.onDestroy()
+    }
+
     override fun onSaveInstanceState(outState: Bundle) {
+        if (retired) { super.onSaveInstanceState(outState); return }
         val anchor = captureReadAnchor()
+        retainedReader.context = custodyActor
         retainedReader.state = HistoryRetainedState(
             entries = entries,
             hasMore = hasMore,
@@ -270,19 +379,94 @@ class HistoryActivity : AppCompatActivity() {
             .hideSoftInputFromWindow(binding.historyRoot.windowToken, 0)
     }
 
+    private fun eraseSavedHistory() {
+        savedExpiry?.cancel(); savedExpiry = null; savedCopy = null; savedVersion = null
+        entries = emptyList(); admittedEntryUuids.clear(); admittedRenderContext = null
+        retainedReader.state = null; retainedReader.findQuery = ""
+        historyTextTargets.values.forEach { it.view.text = "" }
+        historyTextTargets.clear(); turnViews.clear(); expandedTools.clear(); findHits = emptyList(); findStops = emptyList()
+        renderer = null; rendererActor = null
+        binding.historyEntries.removeAllViews(); binding.historyFindQuery.text?.clear()
+        hasMore = false; loading = false
+    }
+
+    private suspend fun restoreSavedHistory(expected: ScopedReadContext? = null) {
+        val store = repository.offlineContentStore ?: return
+        val selected = repository.offlineSelection(address.scope, address.paneId) ?: return
+        if (expected != null && (selected.committed.connection !== expected.connection ||
+            selected.scope.incarnation != expected.connectionIncarnation || expected.requestScope != address.scope)) return
+        if (expected == null && savedCopy?.scope?.let { it != selected.scope } == true) return
+        val copy = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { store.pane(selected.scope) }
+        if (!repository.isOfflineSelectionCurrent(selected)) return
+        if (copy == null) {
+            if (savedCopy != null) { repository.expireSavedCopy(selected); eraseSavedHistory() }
+            return
+        }
+        if (copy.value.entries.isEmpty() || !repository.isOfflineOwnerCurrent(selected)) return
+        if (!repository.showSavedCopy(selected, copy.provenance.capturedAt, afterFailedRead = expected != null) || !repository.isOfflineOwnerCurrent(selected)) return
+        val displayVersion = repository.savedCopyVersion(selected) ?: return
+        if (!store.isDisplayCurrent(copy.provenance)) return
+        savedCopy = copy.provenance; savedVersion = displayVersion
+        admittedRenderContext = null; admittedEntryUuids.clear(); renderer = null; rendererActor = null
+        entries = copy.value.entries; hasMore = false; total = entries.size; loading = false; loadedOnce = true
+        renderEntries(); renderState(savedCopyCaption(copy.provenance))
+        savedExpiry?.cancel()
+        savedExpiry = lifecycleScope.launch {
+            kotlinx.coroutines.delay((copy.provenance.expiresAt - System.currentTimeMillis()).coerceAtLeast(1))
+            if (savedVersion == displayVersion) {
+                repository.expireSavedCopy(selected)
+                if (savedVersion == displayVersion) eraseSavedHistory()
+            }
+        }
+    }
+
     private fun loadPage(older: Boolean) {
         if (loading || older && !hasMore) return
         val oldest = entries.firstOrNull()?.uuid
         if (older && oldest == null) return
         val anchor = if (older) captureAnchor() else null
+        val context = repository.readContext(address.scope, address.paneId) ?: return
+        if (custodyActor != null && (custodyActor?.connection !== context.connection || custodyActor?.connectionIncarnation != context.connectionIncarnation)) {
+            entries = emptyList(); retainedReader.state = null; retainedReader.findQuery = ""
+            findHits = emptyList(); findStops = emptyList(); expandedTools.clear(); turnViews.clear(); historyTextTargets.clear()
+            renderer = null; rendererActor = null; admittedEntryUuids.clear(); renderEntries()
+        }
+        custodyActor = context
         loading = true
         binding.historyProgress.isVisible = !loadedOnce
         binding.historyLoadOlder.isEnabled = false
         if (loadedOnce) binding.historyLoadOlder.setText(R.string.history_loading)
         lifecycleScope.launch {
-            when (val result = repository.history(address, limit = HISTORY_PAGE_SIZE, before = oldest.takeIf { older })) {
-                is ApiResult.Success -> applyPage(result.value, older, anchor)
-                is ApiResult.Failure -> renderFailure(MainViewModel.describe(resources, result.error))
+            val result = repository.history(
+                address,
+                limit = HISTORY_PAGE_SIZE,
+                before = oldest.takeIf { older },
+                expectedContext = context,
+            )
+            if (retired || !repository.isCurrent(context)) {
+                if (!retired && (result as? ApiResult.Failure)?.error.let { (it as? com.lateapex.collie.network.ApiFailure.Http)?.status in setOf(401, 403) }) {
+                    restoreSavedHistory(context)
+                    renderFailure(MainViewModel.describe(resources, (result as ApiResult.Failure).error))
+                }
+                return@launch
+            }
+            when (result) {
+                is ApiResult.Success -> {
+                    // Only a page admitted under this exact context can authorize its image
+                    // references. Retained entries rendered before this read stay inert.
+                    if (savedCopy != null) eraseSavedHistory()
+                    if (result.value.available) {
+                        repository.retainPane(context, null, result.value.entries)
+                        if (!repository.isCurrent(context)) return@launch
+                    }
+                    admittedRenderContext = context
+                    if (admittedEntryUuids.addAll(result.value.entries.map { it.uuid })) rendererAdmissionRevision.incrementAndGet()
+                    applyPage(result.value, older, anchor)
+                }
+                is ApiResult.Failure -> {
+                    restoreSavedHistory(context)
+                    renderFailure(MainViewModel.describe(resources, result.error))
+                }
                 is ApiResult.NotModified -> renderFailure(getString(R.string.history_load_failed))
             }
             loading = false
@@ -327,6 +511,115 @@ class HistoryActivity : AppCompatActivity() {
         }
     }
 
+    /** Re-read the retained page range under one actor so lifecycle-retained rows can recover images. */
+    private fun refreshRetainedHistory() {
+        if (loading || entries.isEmpty()) return
+        val context = repository.readContext(address.scope, address.paneId) ?: run {
+            renderFailure(getString(R.string.history_access_changed))
+            return
+        }
+        if (custodyActor != null && (custodyActor?.connection !== context.connection || custodyActor?.connectionIncarnation != context.connectionIncarnation)) {
+            entries = emptyList(); retainedReader.state = null; retainedReader.findQuery = ""
+            findHits = emptyList(); findStops = emptyList(); expandedTools.clear(); turnViews.clear(); historyTextTargets.clear()
+            renderer = null; rendererActor = null; admittedEntryUuids.clear(); renderEntries()
+            custodyActor = context
+            loadPage(older = false)
+            return
+        }
+        custodyActor = context
+        val retained = entries.toList()
+        val retainedOldest = retained.firstOrNull()?.uuid ?: return
+        // Let renderEntries consume the saved UUID/offset anchor if the user taps before its
+        // restoration post runs; otherwise preserve the currently visible scroll position.
+        val anchor = if (pendingRestoreAnchor == null) captureAnchor() else null
+        loading = true
+        binding.historyRefresh.isEnabled = false
+        binding.historyProgress.isVisible = false
+        lifecycleScope.launch {
+            val refreshed = mutableListOf<TranscriptEntry>()
+            val admitted = mutableSetOf<String>()
+            val actor = context.key to context.navigationGeneration
+            var before: String? = refreshContinuation.takeIf { refreshContinuationActor == actor }
+            var lastPage: PaneHistoryResponse? = null
+            var failure: String? = null
+            var pages = 0
+            // The user explicitly asks to restore the already-loaded range. Cap a single action
+            // at 24 bounded pages; if the retained window is larger, the next tap continues from
+            // the saved cursor under this exact actor.
+            val pageCap = min(24, max(1, (retained.size + 49) / 50 + 1))
+            while (pages < pageCap && repository.isCurrent(context)) {
+                val result = repository.history(
+                    address,
+                    limit = HISTORY_PAGE_SIZE,
+                    before = before,
+                    expectedContext = context,
+                )
+                if (!repository.isCurrent(context)) break
+                when (result) {
+                    is ApiResult.Success -> {
+                        val page = result.value
+                        if (!page.available) {
+                            failure = unavailableMessage(page.reason)
+                            break
+                        }
+                        if (page.entries.isEmpty()) {
+                            lastPage = page
+                            break
+                        }
+                        pages++
+                        refreshed += page.entries
+                        admitted += page.entries.map { it.uuid }
+                        lastPage = page
+                        if (retainedOldest in admitted || !page.hasMore) {
+                            refreshContinuation = null
+                            refreshContinuationActor = null
+                            break
+                        }
+                        val nextBefore = page.entries.first().uuid
+                        if (nextBefore == before) break
+                        before = nextBefore
+                        refreshContinuation = before
+                        refreshContinuationActor = actor
+                    }
+                    is ApiResult.Failure -> {
+                        failure = MainViewModel.describe(resources, result.error)
+                        break
+                    }
+                    is ApiResult.NotModified -> {
+                        // A fresh request has no validator; 304 cannot authorize retained rows.
+                        failure = getString(R.string.history_load_failed)
+                        break
+                    }
+                }
+            }
+            if (repository.isCurrent(context) && admitted.isNotEmpty()) {
+                admittedRenderContext = context
+                if (admittedEntryUuids.addAll(admitted)) rendererAdmissionRevision.incrementAndGet()
+                entries = HistoryPresentation.mergeNewer(entries, refreshed)
+                lastPage?.let { page ->
+                    hasMore = page.hasMore
+                    fileTruncated = page.fileTruncated
+                    total = max(max(total, page.total), entries.size)
+                }
+                renderEntries(anchor = anchor)
+                // Keep the successful page actors and rows, but do not hide why the remaining
+                // retained rows are still inert. The same-actor continuation cursor is left in
+                // place so the visible refresh action resumes exactly where this request stopped.
+                if (failure != null) renderFailure(failure)
+                updateRefreshVisibility()
+            } else if (failure != null) {
+                renderFailure(failure)
+            }
+            loading = false
+            binding.historyRefresh.isEnabled = true
+            binding.historyProgress.isVisible = false
+        }
+    }
+
+    private fun updateRefreshVisibility() {
+        binding.historyRefresh.isVisible = entries.isNotEmpty() && entries.any { it.uuid !in admittedEntryUuids }
+    }
+
     private fun captureAnchor(): ScrollAnchor = ScrollAnchor(
         height = binding.historyScroll.getChildAt(0)?.height ?: 0,
         top = binding.historyScroll.scrollY,
@@ -347,8 +640,9 @@ class HistoryActivity : AppCompatActivity() {
     }
 
     private fun renderFailure(detail: String) {
-        renderState(detail.ifBlank { getString(R.string.history_load_failed) })
+        renderState(listOfNotNull(savedCopy?.let(::savedCopyCaption), detail.ifBlank { getString(R.string.history_load_failed) }).joinToString("\n"))
         binding.historyLoadOlder.isVisible = hasMore || renderCount < entries.size
+        updateRefreshVisibility()
     }
 
     @Suppress("unused") // Kept as a zero-argument entry point for focused rendering tests.
@@ -363,6 +657,7 @@ class HistoryActivity : AppCompatActivity() {
         historyCount.text = if (total > 0) getString(R.string.history_shown_count, shown.size, total) else ""
         val allRendered = start == 0
         historyLoadOlder.isVisible = entries.isNotEmpty() && (!allRendered || hasMore)
+        historyRefresh.isVisible = entries.isNotEmpty() && entries.any { it.uuid !in admittedEntryUuids }
         renderState(
             when {
                 entries.isEmpty() -> getString(R.string.history_empty)
@@ -381,7 +676,7 @@ class HistoryActivity : AppCompatActivity() {
                 historyEntries.addView(dayDivider(turn.day))
                 lastDay = turn.day
             }
-            val view = renderer.turnView(turn, showHeader = newDay || turn.role != lastRole)
+            val view = rendererForAdmittedRead().turnView(turn, showHeader = newDay || turn.role != lastRole)
             turnViews[turn.uuid] = view
             historyEntries.addView(view)
             lastRole = turn.role
@@ -591,6 +886,8 @@ class HistoryActivity : AppCompatActivity() {
 }
 
 internal class HistoryReaderViewModel : ViewModel() {
+    var context: ScopedReadContext? = null
+    var connection: com.lateapex.collie.domain.Connection? = null
     var state: HistoryRetainedState? = null
     var findQuery: String = ""
 }

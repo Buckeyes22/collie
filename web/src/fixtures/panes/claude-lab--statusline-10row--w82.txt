@@ -1,0 +1,48 @@
+  retreated into a niche and thrived there. Unix systems, servers, and developer
+  workflows relied on shells, and the rise of the internet meant that
+  administrators connected to remote machines through SSH, a text channel. The
+  terminal emulator became a window inside the GUI, and the pairing proved
+  remarkably durable.
+
+  [0m[1mThe Modern Revival[0m
+
+  Since roughly 2010, terminal interfaces have enjoyed a renaissance. Several
+  forces contributed. Developers spend much of their day in version control,
+  containers, and cloud tooling, all command-driven. Terminal multiplexers like
+  tmux and editors like Vim and Neovim built loyal followings. Modern terminals
+  gained truecolor support, Unicode, images, hyperlinks, and GPU rendering, as
+  with Kitty, Alacritty, WezTerm, and iTerm2.
+
+  New toolkits reflect this energy: Rust's ratatui, Go's Bubble Tea, Python's
+  Textual, and JavaScript's Ink. Applications such as lazygit, k9s, btop, and htop
+  offer rich, keyboard-driven dashboards that start instantly and work over SSH.
+  More recently, AI coding assistants have chosen the terminal as their home, a
+  sign that the medium still fits workflows that value speed, scriptability, and
+  composition.
+
+  [0m[1mConclusion[0m
+
+  The history of the terminal user interface is a story of constraints turning
+  into virtues. Teletypes gave us the command line; glass terminals gave us cursor
+  addressing; the VT100 gave us a shared standard; curses gave us portability;
+  and the PC gave us the text-mode application. Today's terminal tools inherit all
+  of it. Beneath their polish, they still send escape sequences to a grid of
+  character cells, much as a 1978 VT100 did, which suggests that the idea has
+  staying power.
+
+[0m[38;2;153;153;153m✻[0m [0m[38;2;153;153;153mCogitated for 18s · done 7:13 PM[0m
+
+[0m[38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────[0m
+❯ [0m[2msave it to docs/terminal-history.md[0m
+[0m[38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────[0m
+  [0m[38;2;153;153;153mstatus row 1 of ten · lab[0m
+  [0m[38;2;153;153;153mstatus row 2 of ten · lab[0m
+  [0m[38;2;153;153;153mstatus row 3 of ten · lab[0m
+  [0m[38;2;153;153;153mstatus row 4 of ten · lab[0m
+  [0m[38;2;153;153;153mstatus row 5 of ten · lab[0m
+  [0m[38;2;153;153;153mstatus row 6 of ten · lab[0m
+  [0m[38;2;153;153;153mstatus row 7 of ten · lab[0m
+  [0m[38;2;153;153;153mstatus row 8 of ten · lab[0m
+  [0m[38;2;153;153;153mstatus row 9 of ten · lab[0m
+  [0m[38;2;153;153;153mstatus row 10 of ten · lab[0m
+  [0m[38;2;153;153;153m⏸ manual mode on · ← for agents[0m

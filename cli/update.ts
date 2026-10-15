@@ -1,21 +1,30 @@
 import { basename, dirname, join } from "node:path";
 
+import { binaryName, collieBinary, HOST, type Host } from "../bridge/host.ts";
+import { envGet } from "../bridge/tools.ts";
 import type { JsonValue } from "../bridge/json.ts";
 import {
   type ApiTag,
   compareSemver,
   followsTrain,
+  githubCredential,
   githubTagsUrl,
+  isGithubApiUrl,
   majorOf,
   MANIFEST_SCHEMA_VERSION,
+  MIRROR_FETCH,
+  mirrorRefusal,
+  mirrorWarning,
+  updateMirror,
   parsePrereleaseTag,
   parseReleaseManifest,
-  parseTagsResponse,
+  readAllTags,
 } from "../bridge/update.ts";
-import { STALE_AFTER_MS, type UpdateRun } from "../bridge/update-run.ts";
+import { STALE_AFTER_MS, inFlight, type UpdateRun } from "../bridge/update-run.ts";
+import { STAGING_LOG_LINES, STAGING_LOG_PREFIX, stagingLogPath } from "../bridge/staging-log.ts";
 import { manifestVersionFrom, readBuildInfo } from "../bridge/version.ts";
 import { type BuildDeps, cmdBuild } from "./build.ts";
-import { logFilePath } from "./lifecycle.ts";
+import { logFilePath, systemdUserReachable } from "./lifecycle.ts";
 import {
   binaryLayout,
   type BinaryLayout,
@@ -27,12 +36,25 @@ import {
   originMatches,
   updateRepoOf,
   DEFAULT_UPDATE_REPO,
+  PACKAGED_SENTENCE,
+  WINDOWS_CHECKOUT_SENTENCE,
 } from "./install-kind.ts";
-import type { Environment, EnvVars } from "./context.ts";
+import { packageCommand } from "./package-command.ts";
+import { herdrActionCommand, type Environment, type EnvVars } from "./context.ts";
 import { EXIT } from "./io.ts";
 import { cmdLink, isCollieBinaryPath, type LinkReader, linkPath, type LinkWriter } from "./link.ts";
-import type { Exec, Files, Net, NetFailure } from "./sys.ts";
-import { collieBinary, unitName } from "./unit.ts";
+import {
+  type BunReadiness,
+  type Exec,
+  type ExecResult,
+  type Files,
+  type Net,
+  type NetFailure,
+  type RunnableBun,
+  resolveRunnableBun,
+} from "./sys.ts";
+import { tagRemote } from "./update-remote.ts";
+import { unitName } from "./unit.ts";
 import {
   driveApply,
   HEALTH_POLL_MS,
@@ -41,6 +63,7 @@ import {
   probeConfigOf,
   probeTarget,
   healthTimeoutMs,
+  HANDOFF_CONFIRM_MS,
   idleRun,
   launchPlan,
   lockVerdict,
@@ -48,6 +71,7 @@ import {
   readRun,
   reduce,
   releaseLock,
+  type RunEvent,
   serviceLogTail,
   takeLock,
   writeRun,
@@ -81,9 +105,9 @@ export interface UpdateDeps extends BuildDeps {
   link: LinkWriter;
   /** The two anonymous HTTPS GETs the binary path makes (`cli/sys.ts`). No test may reach a network. */
   net: Net;
-  /** `process.platform` / `process.arch`, injected so a test pins a platform rather than inheriting
-   *  the host's — the artifact this install may take is decided from them. */
-  platform: string;
+  /** The host (`bridge/host.ts`) and `process.arch`, injected so a test pins a platform rather than
+   *  inheriting the machine's — the artifact this install may take is decided from them. */
+  host: Host;
   arch: string;
   /** The clock and the wait the detached runner's health gate is driven by (M15/04). Injected for
    *  the same reason everything else here is: a test drives a 30 s budget in no time at all. */
@@ -101,8 +125,45 @@ export interface UpdateDeps extends BuildDeps {
 // already spells them `from "./update.ts"`.
 export { isManagedCheckout };
 
-/** The command that consents to a major crossing — printed wherever one is refused. */
-export const MAJOR_ACTION = "herdr plugin action invoke update-major --plugin herdr.collie";
+/**
+ * The Bun this update will RUN, or null when there is none — the same lookup `update --check`'s
+ * preflight reports (`cli/update-check.ts`) and the same one the shim bootstraps with.
+ *
+ * Not `exec.which("bun")`. Herdr invokes a plugin action with no login shell, so the directory the
+ * operator's profile exports is simply absent from PATH, and a bare name would refuse an update the
+ * shim would have built without complaint (#169). The preflight already told the operator it found
+ * a Bun at an absolute path; the verb has to run THAT one, or the two disagree on the same host.
+ *
+ * Callers spawn `path` and pass its `dirname` as the child's PATH prefix: `bun cli/main.ts build`
+ * spawns `bun` again by name for the two installs and the Vite build.
+ */
+function bunReadiness(deps: UpdateDeps): BunReadiness {
+  return resolveRunnableBun(deps.exec, deps.files, deps.ctx.env, deps.ctx.home);
+}
+
+/**
+ * Resolve and prove Bun before the path that needs it. `--version` is bounded in `cli/sys.ts`, so
+ * a malformed executable cannot advance a managed checkout and then leave it unable to rebuild.
+ */
+function requireRunnableBun(deps: UpdateDeps, need: string): RunnableBun | null {
+  const readiness = bunReadiness(deps);
+  if (readiness.kind === "ready") return readiness.bun;
+  const reason =
+    readiness.kind === "missing"
+      ? "bun is not installed"
+      : `bun at ${readiness.tool.path} is not runnable — \`bun --version\` did not return a readable version`;
+  deps.io.err(`error: ${reason} — ${need}.`);
+  deps.io.err("       Install or repair Bun from https://bun.sh, then re-run update.");
+  return null;
+}
+
+/**
+ * The command that consents to a major crossing — printed wherever one is refused.
+ *
+ * A function of the instance, not a constant: on a named instance the bare `herdr.collie` names the
+ * host's FIRST Collie, so an operator following it would cross a major on the wrong service.
+ */
+export const majorAction = (instance: string | null): string => herdrActionCommand("update-major", instance);
 
 // ── Target selection (pure — ADR 0020) ───────────────────────────────────────
 // A routine `update` no longer means "the tip of the default branch": it means "the newest RELEASE
@@ -299,7 +360,7 @@ export function wantsToTag(args: readonly string[]): string | null {
 /**
  * `--run-id <opaque>` — the other plumbing flag: the id of the run this update belongs to (M16/04).
  *
- * It is written into `<state dir>/update.json` and read back by the pack and by nobody else: a peer's
+ * It is written into `<state dir>/update.json` and read back by the crew and by nobody else: a peer's
  * memory of "I already rolled back from this tag" is keyed by (tag, run id), so a fresh confirm on
  * the phone mints a new id and permits exactly one further attempt. It never becomes a path, a URL
  * or a comparison against a clock — it is compared for equality with itself and printed nowhere.
@@ -463,7 +524,7 @@ function printCurrent(deps: UpdateDeps, at: ReleaseTag): void {
 function announceMajor(deps: UpdateDeps, higher: ReleaseTag | null): void {
   if (higher === null) return;
   deps.io.out(`note: Collie ${higher.version} is out — a NEW MAJOR, which a routine update never takes.`);
-  deps.io.out(`      Read its release notes, then consent to it with:  ${MAJOR_ACTION}`);
+  deps.io.out(`      Read its release notes, then consent to it with:  ${majorAction(deps.ctx.instance)}`);
 }
 
 /**
@@ -480,10 +541,23 @@ export interface CheckoutOutcome {
    */
   moved: boolean;
   /**
+   * The version this advance was AIMED at, or null when it aimed at nothing (every failure, every
+   * "nothing to take"). Answered by the code that chose the target, never re-read off disk
+   * afterwards: the manifest is rewritten by the checkout, so reading it back would be trusting the
+   * very step whose success is in question — and on a linked clone, which fast-forwards a branch,
+   * there is no chosen tag to read at all. It is what an in-place run records as its `to`.
+   */
+  to: string | null;
+  /**
    * The next major's release, when one exists and we did not just take it — re-printed at the very
    * END of the transcript, which is the part the operator reads.
    */
   higher: ReleaseTag | null;
+  /**
+   * The exact Bun proven runnable before this managed checkout moved. It is optional because no-op
+   * and refusal paths deliberately never probe Bun, and linked checkouts do not hand off this way.
+   */
+  bun?: RunnableBun;
 }
 
 /**
@@ -518,11 +592,11 @@ export function updateCheckout(
   if (!isGitCheckout(deps.exec, root)) {
     deps.io.err(`error: ${root} is not a git checkout — refresh it with:`);
     deps.io.err("       herdr plugin install AltanS/collie --yes");
-    return { code: EXIT.FAIL, moved: false, higher: null };
+    return { code: EXIT.FAIL, moved: false, to: null, higher: null };
   }
 
   // BEFORE any fetch, and therefore before any `checkout --detach --force`. See {@link assertOrigin}.
-  if (!assertOrigin(deps)) return { code: EXIT.FAIL, moved: false, higher: null };
+  if (!assertOrigin(deps)) return { code: EXIT.FAIL, moved: false, to: null, higher: null };
 
   const installed = installedVersion(deps);
   const toTag = opts.toTag ?? null;
@@ -546,7 +620,7 @@ function updateLinked(
   if (toTag !== null) {
     deps.io.err("error: `--to-tag` names a release tag, and this checkout follows a branch.");
     deps.io.err("       Take that release by hand with `git checkout <tag>` and rebuild.");
-    return { code: EXIT.FAIL, moved: false, higher: null };
+    return { code: EXIT.FAIL, moved: false, to: null, higher: null };
   }
   const headNow = (): string => deps.exec.capture("git", gitArgs(root, ["rev-parse", "HEAD"])).stdout.trim();
   const before = headNow();
@@ -556,7 +630,7 @@ function updateLinked(
   // different commits, and a gate that judged one while the pull took the other would refuse a
   // fast-forward that never leaves the major (and, after 1.0 lands on `main`, would refuse EVERY
   // pull on a 0.x branch). Judge exactly the commit the pull will land on.
-  if (git(["fetch", "origin"]) !== EXIT.OK) return { code: EXIT.FAIL, moved: false, higher: null };
+  if (git(["fetch", "origin"]) !== EXIT.OK) return { code: EXIT.FAIL, moved: false, to: null, higher: null };
   const upstream = deps.exec.capture(
     "git",
     gitArgs(root, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]),
@@ -573,9 +647,9 @@ function updateLinked(
     if (!crossMajor && majorVerdict(installed, fetched) === "crosses") {
       deps.io.out(`refusing to update: ${installed} → ${fetched} (${ref}) crosses a MAJOR version.`);
       deps.io.out("A major means you have to change something — so it is never taken by a routine update.");
-      deps.io.out(`Read its release notes, then consent to it with:  ${MAJOR_ACTION}`);
+      deps.io.out(`Read its release notes, then consent to it with:  ${majorAction(deps.ctx.instance)}`);
       deps.io.out("(nothing was pulled — this checkout is unchanged)");
-      return { code: EXIT.OK, moved: false, higher: null };
+      return { code: EXIT.OK, moved: false, to: null, higher: null };
     }
   }
   deps.io.out("updating Collie (git pull --ff-only)…");
@@ -583,7 +657,7 @@ function updateLinked(
   // A `--ff-only` pull that finds nothing to take succeeds and moves no commit — the linked-clone
   // spelling of "already current". Compare HEAD across the pull rather than parsing git's wording:
   // "Already up to date." is a translated, version-dependent sentence, and the sha is neither.
-  return { code, moved: code === EXIT.OK && headNow() !== before, higher: null };
+  return { code, moved: code === EXIT.OK && headNow() !== before, to: null, higher: null };
 }
 
 /**
@@ -600,10 +674,10 @@ function updateManaged(
   toTag: string | null,
 ): CheckoutOutcome {
   const root = deps.ctx.root;
-  const ls = deps.exec.capture("git", gitArgs(root, ["ls-remote", "--tags", "origin"]));
+  const ls = deps.exec.capture("git", gitArgs(root, ["ls-remote", "--tags", tagRemote(deps.exec, root)]));
   if (!ls.found || ls.code !== 0) {
     deps.io.err("error: could not list the upstream release tags — is the remote reachable?");
-    return { code: EXIT.FAIL, moved: false, higher: null };
+    return { code: EXIT.FAIL, moved: false, to: null, higher: null };
   }
   const head = deps.exec.capture("git", gitArgs(root, ["rev-parse", "HEAD"])).stdout.trim();
   const managedTags = parseRemoteTags(ls.stdout);
@@ -614,7 +688,7 @@ function updateManaged(
   });
   if (!asked.ok) {
     deps.io.err(`error: ${asked.reason}.`);
-    return { code: EXIT.FAIL, moved: false, higher: null };
+    return { code: EXIT.FAIL, moved: false, to: null, higher: null };
   }
   const plan = asked.plan;
 
@@ -624,28 +698,35 @@ function updateManaged(
     // branch points at today", which is unreleased work nobody consented to.
     if (plan.newest === null) {
       deps.io.err("error: no release tags on origin — cannot pin an unversioned checkout.");
-      return { code: EXIT.FAIL, moved: false, higher: null };
+      return { code: EXIT.FAIL, moved: false, to: null, higher: null };
     }
+    const bun = requireRunnableBun(deps, "this update cannot rebuild the selected release; the checkout is unchanged");
+    if (bun === null) return { code: EXIT.FAIL, moved: false, to: null, higher: null };
     deps.io.out(
       `updating Collie (Herdr-managed checkout: no readable version — pinning to newest release tag ${plan.newest.tag})…`,
     );
     const pinned = detachOnto(deps, git, plan.newest.tag);
-    return { code: pinned, moved: pinned === EXIT.OK, higher: null };
+    return { code: pinned, moved: pinned === EXIT.OK, to: plan.newest.version, higher: null, bun };
   }
   if (plan.kind === "no-higher-major") {
     printNoHigherMajor(deps, plan.major);
-    return { code: EXIT.OK, moved: false, higher: null };
+    return { code: EXIT.OK, moved: false, to: null, higher: null };
   }
   if (plan.kind === "no-release") {
     printNoRelease(deps, plan.major, "leaving this checkout where it is");
     announceMajor(deps, plan.higher);
-    return { code: EXIT.OK, moved: false, higher: plan.higher };
+    return { code: EXIT.OK, moved: false, to: null, higher: plan.higher };
   }
   if (plan.kind === "current") {
     printCurrent(deps, plan.at);
     announceMajor(deps, plan.higher);
-    return { code: EXIT.OK, moved: false, higher: plan.higher };
+    return { code: EXIT.OK, moved: false, to: null, higher: plan.higher };
   }
+  // Target selection above is read-only. Prove the exact Bun that will run the fetched source
+  // before `detachOnto` reaches its first mutation (`git fetch`), so a bad compiler leaves this
+  // managed checkout exactly where it was.
+  const bun = requireRunnableBun(deps, "this update cannot rebuild the selected release; the checkout is unchanged");
+  if (bun === null) return { code: EXIT.FAIL, moved: false, to: null, higher: null };
   deps.io.out(
     plan.crossesMajor
       ? `crossing to Collie ${plan.target.version} (--major given: consented)…`
@@ -655,7 +736,13 @@ function updateManaged(
   if (code === EXIT.OK && !plan.crossesMajor) announceMajor(deps, plan.higher);
   // A crossing just TOOK `higher`; naming it again at the end of the transcript would advertise the
   // release the operator is now standing on.
-  return { code, moved: code === EXIT.OK, higher: plan.crossesMajor ? null : plan.higher };
+  return {
+    code,
+    moved: code === EXIT.OK,
+    to: plan.target.version,
+    higher: plan.crossesMajor ? null : plan.higher,
+    bun,
+  };
 }
 
 /** Fetch the release tag `tag` and re-detach onto it, the way Herdr got this checkout here. */
@@ -677,8 +764,8 @@ function detachOnto(deps: UpdateDeps, git: (args: readonly string[]) => number, 
   //     older commit. Now `isReleaseBuild` compares it against HEAD, they differ, and a genuine
   //     release is stamped `<version>-dev`. Measured in the VM lab on a guest whose clone carried an
   //     older `v1.0.0`: `collie version` → `1.0.0-dev+8d57cc8`. The PWA footer and the
-  //     `X-Collie-Build` header then call a release a development build, and `cli/pack-update.ts`'s
-  //     `answersThisBuild` reads the `-dev` tail as "not that commit" — so a pack member updated
+  //     `X-Collie-Build` header then call a release a development build, and `cli/crew-update.ts`'s
+  //     `answersThisBuild` reads the `-dev` tail as "not that commit" — so a crew member updated
   //     this way looks like it never took the push it did take.
   //
   // Storing the ref replaces absent-or-stale with true, in both shapes.
@@ -690,9 +777,10 @@ function detachOnto(deps: UpdateDeps, git: (args: readonly string[]) => number, 
   // `--depth 1` ONLY when we are already shallow, so an update never truncates the history of a full
   // clone someone happens to have detached.
   const spec = `+${ref}:${ref}`;
+  const remote = tagRemote(deps.exec, root);
   const fetch = isShallow(deps.exec, root)
-    ? ["fetch", "--depth", "1", "origin", spec]
-    : ["fetch", "origin", spec];
+    ? ["fetch", "--depth", "1", remote, spec]
+    : ["fetch", remote, spec];
   if (git(fetch) !== EXIT.OK) return EXIT.FAIL;
   // `--force` because `build` runs `bun install`, which can rewrite the TRACKED lockfiles: a plain
   // checkout would then refuse on the dirty tree and re-break the very update path this fixes.
@@ -763,7 +851,7 @@ const releaseCore = (v: string): string => (v.split("+")[0] ?? v).replace(/-(?:d
  */
 function installIsIntact(deps: UpdateDeps): boolean {
   const root = deps.ctx.root;
-  if (!deps.files.exists(collieBinary(root))) return false;
+  if (!deps.files.exists(collieBinary(root, deps.host))) return false;
   const manifest = manifestVersionFrom(deps.files.read(join(root, "herdr-plugin.toml")));
   const built = readBuildInfo(deps.files.read(join(root, "web", "dist", "build-info.json")));
   if (manifest === null || built === null) return false;
@@ -782,7 +870,7 @@ function installIsIntact(deps: UpdateDeps): boolean {
  */
 function closeWithMajor(deps: UpdateDeps, higher: ReleaseTag | null): void {
   if (higher === null) return;
-  deps.io.out(`note: Collie ${higher.version} is out — a NEW MAJOR. Take it with:  ${MAJOR_ACTION}`);
+  deps.io.out(`note: Collie ${higher.version} is out — a NEW MAJOR. Take it with:  ${majorAction(deps.ctx.instance)}`);
 }
 
 /** The check is `hooks status --check`, which answers in milliseconds; a longer wait is a hang. */
@@ -806,7 +894,7 @@ const HOOKS_CHECK_TIMEOUT_MS = 5_000;
 function nudgeHooks(deps: UpdateDeps, binary: string): void {
   let r;
   try {
-    r = deps.exec.capture(binary, ["hooks", "status", "--check"], HOOKS_CHECK_TIMEOUT_MS);
+    r = deps.exec.capture(binary, ["hooks", "status", "--check"], HOOKS_CHECK_TIMEOUT_MS, undefined, ITS_OWN_ROOT);
   } catch {
     // `capture` throws when the child cannot even start (ENOEXEC, EACCES) — spawn failure, silence.
     return;
@@ -839,7 +927,7 @@ export async function cmdApplyUpdate(deps: UpdateDeps, args: readonly string[] =
     // service is untouched and consistent — but the operator has to know the update did not land.
     deps.io.err("error: update stopped — the checkout advanced but the build failed.");
     deps.io.err("       The running bridge and the served UI are unchanged. Fix the build and re-run");
-    deps.io.err("       `herdr plugin action invoke update --plugin herdr.collie`.");
+    deps.io.err(`       \`${herdrActionCommand("update", deps.ctx.instance)}\`.`);
     return built;
   }
   const restarted = await deps.restart();
@@ -847,8 +935,69 @@ export async function cmdApplyUpdate(deps: UpdateDeps, args: readonly string[] =
   refreshRegistry(deps);
   deps.io.out("✓ update complete");
   // `build` just wrote this binary from the code we are running, so it is the new list, not ours.
-  nudgeHooks(deps, collieBinary(deps.ctx.root));
+  nudgeHooks(deps, collieBinary(deps.ctx.root, deps.host));
   return EXIT.OK;
+}
+
+/**
+ * Record an IN-PLACE update that has already succeeded, so a restarted lead can find its crew turns.
+ *
+ * The other two update paths reach the record through {@link handOff}, which writes it before it
+ * launches the detached runner and then leaves the runner to drive it. This path has no runner: the
+ * `_apply-update` child builds, restarts and verifies inside its own process, and until now it wrote
+ * nothing at all. `--run-id` was accepted, carried the whole way here and dropped, because
+ * `wantsRunId` was read at the two `handOff` calls and nowhere else.
+ *
+ * The cost was not the missing `--status` line. `settleUpdateGate` in `bridge/index.ts` re-derives
+ * the crew's turn queue from this file, because the update restarts the very bridge that held the
+ * queue in memory and the record is the only thing that survives it. No record, so the gate returned
+ * early on every tick forever, so no peer was ever handed its turn — the lead updated itself and the
+ * crew sat still until the operator tapped "Retry crew update" by hand. Every install from an
+ * ordinary git checkout had this, which is the documented default.
+ *
+ * ONE WRITE, AFTER THE FACT, and that is the honest shape here. The child has already returned 0,
+ * which means it built, restarted and verified; walking the record through those states one at a
+ * time would be narrating a machine that has finished running. `idleRun` rather than the record on
+ * disk for the same reason {@link handOff} uses it: the previous run's terminal state is a log, not
+ * a state this run must transition out of.
+ *
+ * `pass` here means WHAT THIS PATH CAN KNOW: the child returned 0, so it built, restarted the
+ * service and returned without an error. It is not the health-gate pass the detached runner writes,
+ * because an in-place checkout has no gate to poll — ADR 0006 gives it no previous version on disk
+ * to roll back to, so there is nothing a failed probe could do but say so. Reading `done` here as
+ * "the runner verified it" would be reading more than the word carries on this path.
+ *
+ * Best-effort. A failed write must not turn a successful update into a failed command — the new
+ * version is already built, restarted and serving. It IS said out loud, because a silent failure
+ * here is the very bug this function exists to fix, wearing a success message.
+ */
+function recordInPlaceRun(
+  deps: UpdateDeps,
+  runId: string | null,
+  from: string | null,
+  to: string | null,
+  startedAt: number,
+): void {
+  // TWO clocks, not one. `begin` carries the real start, taken before the advance; everything after
+  // it carries now. A single `now` for all five would have written `startedAt === updatedAt` on a run
+  // that visibly took half a minute, and `collie update --status` prints both of those numbers.
+  const now = deps.now();
+  const events: RunEvent[] = [{ kind: "stage" }, { kind: "restart" }, { kind: "verify" }, { kind: "pass" }];
+  try {
+    const begun = reduce(idleRun(startedAt), { kind: "begin", from, to, pid: deps.pid, runId }, startedAt);
+    writeRun(deps.files, deps.ctx.stateDir, events.reduce((run, event) => reduce(run, event, now), begun));
+    // Only when a crew is actually waiting on it. A run with no id was started from a terminal by
+    // someone who never asked for one, and a line about peers there would be noise about nothing.
+    if (runId !== null) deps.io.out("  Crew turn recorded — peers level on this lead's next poll.");
+  } catch (err) {
+    // Said out loud, because the silence is the bug. The update itself stands — the new version is
+    // built, restarted and serving — but a crew will not level off a record that was not written,
+    // and an operator who does not know that is an operator watching a peer sit still for no
+    // visible reason. Name the manual way out in the same breath.
+    deps.io.err(`warning: the update landed, but its run record could not be written (${String(err)}).`);
+    deps.io.err("         A crew will not level its peers from this run. Level them from the phone's");
+    deps.io.err("         \"Retry crew update\", or run `collie update` on each peer.");
+  }
 }
 
 /**
@@ -874,13 +1023,31 @@ export async function cmdUpdate(deps: UpdateDeps, args: readonly string[] = []):
   // route every second update back into the in-place path it just left. A checkout that is not under
   // the layout stages only when it is a LINKED CLONE: a Herdr-managed checkout keeps ADR 0006's
   // in-place advancement for this milestone (see that ADR's 2026-09-03 amendment).
-  const staged = isCheckout && (underVersions(deps.ctx.root) || install.kind === "linked-clone");
-  const layout = isCheckout ? layoutForCheckout(deps.ctx.root) : null;
+  const staged = isCheckout && (underVersions(deps.ctx.root, deps.host) || install.kind === "linked-clone");
+  const layout = isCheckout ? layoutForCheckout(deps.ctx.root, deps.host) : null;
   // The record, not the act — `--status` reads `<state dir>/update.json` and touches nothing, so it
   // is answered before the lock, before the install kind matters and before any network call.
   if (wantsStatus(args)) return cmdUpdateStatus(deps, args);
+  // Windows takes a release install only. Refused here, before the lock, the record or any fetch,
+  // so nothing on disk changes (WINDOWS_CHECKOUT_SENTENCE says why).
+  if (isCheckout && deps.host.platform === "win32") {
+    deps.io.err(`error: ${WINDOWS_CHECKOUT_SENTENCE}`);
+    return EXIT.FAIL;
+  }
   if (args.includes("--rollback")) {
     if (install.kind === "binary") return await rollbackBinary(deps);
+    if (install.kind === "packaged") {
+      // Above the checkout branch on purpose: the message below it is three sentences about
+      // `versions/` layouts and `git checkout`, none of which exist here, and the real answer is the
+      // package manager's own downgrade (`pacman -U` from the cache, `brew` an older formula).
+      // The main refusal below names the command that takes the NEXT version; a rollback wants the
+      // previous one, which no `pacman -Syu` spelling reaches, so this one names the boundary and
+      // sends the operator to the manager rather than to a command.
+      deps.io.err(`error: ${deps.ctx.root} is a packaged install — ${PACKAGED_SENTENCE}, and Collie stages`);
+      deps.io.err("       no versions here to roll back to. Reinstall the previous version through");
+      deps.io.err("       your package manager.");
+      return EXIT.FAIL;
+    }
     if (staged && layout !== null) return await rollbackCheckout(deps, layout);
     deps.io.err("error: `--rollback` flips the `current` symlink back to the previous version, and this");
     deps.io.err("       install has no `versions/` layout to flip inside — a Herdr-managed checkout");
@@ -888,7 +1055,19 @@ export async function cmdUpdate(deps: UpdateDeps, args: readonly string[] = []):
     deps.io.err("       Take a specific release with `git checkout v<version>` and rebuild.");
     return EXIT.FAIL;
   }
-  if (install.kind === "binary") return await updateBinary(deps, args);
+  if (install.kind === "binary") return await withStagingRecord(deps, () => updateBinary(deps, args));
+  if (install.kind === "packaged") {
+    // Not a failure to diagnose — a boundary to respect (ADR 0035). The sentence is the shared one
+    // the preflight's `package` check and `doctor`'s install line print, so a reword reaches every
+    // surface at once. The COMMAND is named only where the resolved root names a manager we know;
+    // where it does not, Collie says the boundary and stops rather than guessing a manager and
+    // sending the operator after a package that may not exist.
+    const cmd = packageCommand(deps.ctx.root);
+    deps.io.err(`error: ${deps.ctx.root} is a packaged install — ${PACKAGED_SENTENCE}.`);
+    deps.io.err("       `collie update` will not replace its files.");
+    if (cmd !== null) deps.io.err(`       Take the new version with: ${cmd}`);
+    return EXIT.FAIL;
+  }
   if (install.kind === "unknown") {
     deps.io.err(`error: cannot tell how this Collie was installed (${unknownEvidence(deps, install.why)}).`);
     deps.io.err("       `collie update` will not guess. A git checkout refreshes with:");
@@ -897,7 +1076,14 @@ export async function cmdUpdate(deps: UpdateDeps, args: readonly string[] = []):
     deps.io.err("       with a `current` symlink beside it; see docs/install.md.");
     return EXIT.FAIL;
   }
-  if (staged && layout !== null) return await updateStagedCheckout(deps, layout, args);
+  if (staged && layout !== null) return await withStagingRecord(deps, () => updateStagedCheckout(deps, layout, args));
+  // Read BEFORE the advance rewrites the manifest — this is the version being left behind, and it is
+  // the only moment it is still on disk. `handOff`'s callers get theirs from the `versions/` layout;
+  // an in-place checkout has no previous directory to name, so the manifest is the whole record of it.
+  const from = installedVersion(deps);
+  // The run's real start, for the record written at the end of it. Everything below this line is
+  // the run: the fetch, the advance, the build, the restart.
+  const startedAt = deps.now();
   const advanced = updateCheckout(deps, { crossMajor: wantsMajor(args), toTag: wantsToTag(args) });
   if (advanced.code !== EXIT.OK) return advanced.code;
   // Nothing was taken AND what is on disk is whole: stop here. This used to fall through, so
@@ -913,17 +1099,20 @@ export async function cmdUpdate(deps: UpdateDeps, args: readonly string[] = []):
     closeWithMajor(deps, advanced.higher);
     return EXIT.OK;
   }
-  if (deps.exec.which("bun") === null) {
-    deps.io.err("error: bun not found — the checkout advanced, but rebuilding needs Bun.");
-    deps.io.err("       Install it from https://bun.sh and re-run update.");
-    return EXIT.FAIL;
-  }
+  // A managed advance already proved and carried this exact Bun before its fetch. A repair of an
+  // incomplete, already-current checkout still needs the same proof, but intact no-ops above remain
+  // Bun-free.
+  const bun =
+    advanced.bun ?? requireRunnableBun(deps, "this update cannot rebuild the current checkout");
+  if (bun === null) return EXIT.FAIL;
   const r = deps.exec.runIn(
-    "bun",
+    bun.path,
     [join(deps.ctx.root, "cli", "main.ts"), "_apply-update"],
     deps.ctx.root,
+    dirname(bun.path),
   );
   if (!r.found || r.code !== 0) return EXIT.FAIL;
+  recordInPlaceRun(deps, wantsRunId(args), from, advanced.to, startedAt);
   // `_apply-update` ran as a child with our own stdio, so its `✓ update complete` is already on the
   // screen. This lands after it — the last line of the transcript.
   closeWithMajor(deps, advanced.higher);
@@ -936,7 +1125,9 @@ export async function cmdUpdate(deps: UpdateDeps, args: readonly string[] = []):
 // manifest, `package.json`, `.env.example`, `docs/`), and `<root>/current` is a RELATIVE symlink at
 // exactly one of them. An update lays a new version down beside the old one and flips that symlink;
 // two atomic renames, and the previous version is still on disk afterwards, which is what makes
-// `--rollback` almost free.
+// `--rollback` almost free. On Windows `current` is a directory junction with an absolute target
+// instead, flipped by `flipJunction`; Bun resolves `process.execPath` through it there too (Windows
+// 11 VM, 2026-10-02), so the paragraph below holds on every host.
 //
 // The running bridge is pinned to the version directory it was started from — `process.execPath` is
 // realpath-resolved, so `resolvePluginRoot` returns `versions/X.Y.Z`, never `current` — so it keeps
@@ -977,27 +1168,40 @@ export function parseApiTags(tags: readonly ApiTag[]): ReleaseTag[] {
  * so the baseline penalty is not observable here.
  */
 export function platformId(platform: string, arch: string): string | null {
+  // Windows ships x64 only (M43). Windows on ARM stays best effort, so it gets the honest refusal.
+  if (platform === "win32") return arch === "x64" ? "windows-x64" : null;
   const os = platform === "linux" ? "linux" : platform === "darwin" ? "macos" : null;
   const cpu = arch === "x64" ? "x64" : arch === "arm64" ? "arm64" : null;
   return os === null || cpu === null ? null : `${os}-${cpu}`;
+}
+
+/** `%SystemRoot%\System32\tar.exe`: the bsdtar Windows ships, which reads a zip. */
+export function windowsTar(env: Environment, host: Host): string {
+  return host.path.join(envGet(env, "SystemRoot", host) ?? "C:\\Windows", "System32", "tar.exe");
 }
 
 /** `collie-<version>.manifest.json` — CONSTRUCTED from the version, never read from a document. */
 export const manifestAssetName = (version: string): string => `collie-${version}.manifest.json`;
 
 /** A release asset's URL, built from (repo, tag, name) alone — see `parseReleaseManifest`'s header
- *  on why the manifest carries no URLs of its own. */
-export const releaseAssetUrl = (repo: string, tag: string, name: string): string =>
-  `https://github.com/${repo}/releases/download/${tag}/${name}`;
+ *  on why the manifest carries no URLs of its own. With a rehearsal mirror (`updateMirror`,
+ *  a loopback-only test seam, `bridge/update.ts`), the same path on that mirror. */
+export const releaseAssetUrl = (repo: string, tag: string, name: string, mirror: string | null = null): string =>
+  `${mirror ?? "https://github.com"}/${repo}/releases/download/${tag}/${name}`;
 
 /** The evidence line `doctor` and the refusal above both quote for an install we cannot name. */
-function unknownEvidence(deps: UpdateDeps, why: "no-marker" | "orphan-layout" | "loose-binary"): string {
+function unknownEvidence(
+  deps: UpdateDeps,
+  why: "no-marker" | "orphan-layout" | "loose-binary" | "broken-checkout",
+): string {
   const root = deps.ctx.root;
   switch (why) {
     case "no-marker":
       return `no herdr-plugin.toml at ${root}`;
     case "orphan-layout":
-      return `a versions/ layout at ${binaryLayout(root).installRoot} with no \`current\` symlink`;
+      return `a versions/ layout at ${binaryLayout(root, deps.host).installRoot} with no \`current\` symlink`;
+    case "broken-checkout":
+      return `${root}/.git exists but git will not read it`;
     case "loose-binary":
       // NOT "neither a checkout nor a layout": a staged checkout is BOTH, so the either/or would be
       // read as a rule rather than as the two absent shapes it actually reports.
@@ -1005,11 +1209,31 @@ function unknownEvidence(deps: UpdateDeps, why: "no-marker" | "orphan-layout" | 
   }
 }
 
-/** One sentence for a failed HTTPS GET, with the rate limit named because it is the likely one. */
-function netError(deps: UpdateDeps, what: string, failure: NetFailure): void {
+/**
+ * One sentence for a failed HTTPS GET, with the rate limit named because it is the likely one, and
+ * the token named when the request carried one (#254). Only a request to `api.github.com` carries
+ * it, so only that one can be refused for it or be rate-limited despite it. The token is named by the
+ * VARIABLE it came from, never by value: this line reaches a terminal, a log and a bug report.
+ */
+function netError(deps: UpdateDeps, what: string, url: string, failure: NetFailure): void {
+  const credential = isGithubApiUrl(url) ? githubCredential(deps.ctx.env) : null;
+  if (failure.status === 401 && credential !== null) {
+    deps.io.err(`error: GitHub refused the token in ${credential.source} (HTTP 401). Fix it or unset it.`);
+    deps.io.err("       Nothing was changed.");
+    return;
+  }
   if (failure.status === 403 || failure.status === 429) {
-    deps.io.err(`error: GitHub rate-limited ${what} (HTTP ${failure.status}). Wait an hour, or follow`);
-    deps.io.err("       docs/upgrading.md. Nothing was changed.");
+    if (credential !== null) {
+      deps.io.err(`error: GitHub rate-limited ${what} (HTTP ${failure.status}), even with the token in`);
+      deps.io.err(`       ${credential.source}. Wait an hour, or follow docs/upgrading.md. Nothing was changed.`);
+    } else if (isGithubApiUrl(url)) {
+      deps.io.err(`error: GitHub rate-limited ${what} (HTTP ${failure.status}). Wait an hour, or set GH_TOKEN`);
+      deps.io.err("       to a GitHub token with no scopes, so the limit is yours (docs/upgrading.md).");
+      deps.io.err("       Nothing was changed.");
+    } else {
+      deps.io.err(`error: GitHub rate-limited ${what} (HTTP ${failure.status}). Wait an hour, or follow`);
+      deps.io.err("       docs/upgrading.md. Nothing was changed.");
+    }
     return;
   }
   if (failure.status !== null) {
@@ -1022,9 +1246,29 @@ function netError(deps: UpdateDeps, what: string, failure: NetFailure): void {
 /** Everything under `.staging`, and everything in `.trash`. A killed update leaves scratch; entering
  *  with a clean one costs nothing and removes a class of half-state. */
 function sweepScratch(deps: UpdateDeps, layout: BinaryLayout): void {
-  deps.files.removeTree(layout.stagingDir);
+  clearScratch(deps, layout.stagingDir);
   for (const entry of deps.files.list(layout.trashDir)) {
-    deps.files.removeTree(join(layout.trashDir, entry));
+    clearScratch(deps, join(layout.trashDir, entry));
+  }
+}
+
+/**
+ * Remove one scratch tree. On Windows a file that a running process executes cannot be deleted: the
+ * Task Scheduler launcher runs the `collie.exe` of the version it started from until the next
+ * `collie stop` or logon, so when an update prunes that version, its `collie.exe` stays behind in
+ * `.trash`. The next update then died on that file before it asked for a release (M43 spec 08
+ * rehearsal, 2026-10-02). There it is a note, and a later update clears it. Elsewhere a failure still
+ * stops the update, as before.
+ */
+function clearScratch(deps: UpdateDeps, path: string): void {
+  if (deps.host.platform !== "win32") {
+    deps.files.removeTree(path);
+    return;
+  }
+  try {
+    deps.files.removeTree(path);
+  } catch (err) {
+    deps.io.out(`note: the old folder ${path} is still in use (${String(err)}), so it stays for now. It is harmless, and the next update removes it. This does not stop the update.`);
   }
 }
 
@@ -1035,6 +1279,26 @@ function toTrash(deps: UpdateDeps, layout: BinaryLayout, version: string): void 
   const held = join(layout.trashDir, `${version}.${Date.now().toString(36)}`);
   deps.files.rename(join(layout.versionsDir, version), held);
   deps.files.removeTree(held);
+}
+
+/**
+ * {@link toTrash} for the update itself, which must not die on a busy folder. On Windows a version
+ * folder is held while a process runs from it (the launcher, an old bridge): after a rollback, the
+ * next update to the same version finds that folder and its `collie.exe` in use. The move is retried
+ * like every rename here ({@link renameSettled}); a tree that moved but cannot be deleted yet stays in
+ * `.trash` with a note ({@link clearScratch}), and a later update clears it. `null` when the folder
+ * left `versions`, else why it could not.
+ */
+async function moveVersionAside(deps: UpdateDeps, layout: BinaryLayout, version: string): Promise<string | null> {
+  deps.files.mkdirp(layout.trashDir);
+  const held = deps.host.path.join(layout.trashDir, `${version}.${Date.now().toString(36)}`);
+  try {
+    await renameSettled(deps, deps.host.path.join(layout.versionsDir, version), held);
+  } catch (err) {
+    return String(err);
+  }
+  clearScratch(deps, held);
+  return null;
 }
 
 /** The versions on disk that are actually installable — a readable version name AND a binary. */
@@ -1067,10 +1331,11 @@ export function currentVersionDir(deps: { readonly link: LinkReader }, layout: B
  * implementation would be a second thing to get atomic.
  */
 function flipCurrent(deps: UpdateDeps, layout: BinaryLayout, version: string): boolean {
-  const staged = join(layout.installRoot, ".current.new");
+  if (deps.host.platform === "win32") return flipJunction(deps, layout, version);
+  const staged = deps.host.path.join(layout.installRoot, ".current.new");
   try {
     deps.link.remove(staged);
-    deps.link.symlink(join("versions", version), staged);
+    deps.link.symlink(deps.host.path.join("versions", version), staged);
     deps.files.rename(staged, layout.currentLink);
     return true;
   } catch (err) {
@@ -1079,16 +1344,176 @@ function flipCurrent(deps: UpdateDeps, layout: BinaryLayout, version: string): b
   }
 }
 
+/** The one command that makes a junction by hand, in a form both cmd and PowerShell accept. */
+export const junctionCommand = (at: string, target: string): string => `cmd /c mklink /J "${at}" "${target}"`;
+
+/**
+ * The Windows flip. `current` is a directory junction there (`LinkWriter.junction`), and two facts
+ * measured on the Windows 11 VM on 2026-10-02 change the steps: a rename onto an existing junction
+ * fails with EPERM, so the one atomic rename above is not possible; and removing a junction never
+ * touches the folder it names. So the new junction is built beside `current` first, which proves the
+ * folder can be named before anything moves; then the old junction goes and the new one is renamed
+ * into its place. The time without a `current` is that one rename. When the rename fails, the old
+ * junction is put back, so a failure leaves `current` on the version it named before.
+ *
+ * A junction names an ABSOLUTE folder, so the install root is not movable on Windows the way the
+ * relative symlink keeps it movable elsewhere.
+ */
+function flipJunction(deps: UpdateDeps, layout: BinaryLayout, version: string): boolean {
+  const staged = deps.host.path.join(layout.installRoot, ".current.new");
+  const target = deps.host.path.join(layout.versionsDir, version);
+  const said = (why: string): void =>
+    deps.io.err(`error: could not point ${layout.currentLink} at versions/${version} — ${why}`);
+  const before = deps.link.probe(layout.currentLink);
+  if (before.kind === "other") {
+    // A real folder or a file has the name: it is not Collie's link, so it is not Collie's to remove.
+    said(`it is ${before.what}, not a junction`);
+    return false;
+  }
+  try {
+    deps.link.remove(staged);
+    deps.link.junction(target, staged);
+  } catch (err) {
+    said(String(err));
+    return false;
+  }
+  try {
+    if (before.kind === "symlink") deps.link.remove(layout.currentLink);
+    deps.files.rename(staged, layout.currentLink);
+    return true;
+  } catch (err) {
+    said(String(err));
+    if (before.kind === "symlink" && deps.link.probe(layout.currentLink).kind === "absent") {
+      try {
+        deps.link.junction(before.target, layout.currentLink);
+        deps.io.err(`       ${layout.currentLink} still names ${before.target}. Nothing was changed.`);
+      } catch (again) {
+        deps.io.err(`       ${layout.currentLink} is missing now, and putting it back failed too — ${String(again)}`);
+        deps.io.err(`       Make it again by hand: ${junctionCommand(layout.currentLink, before.target)}`);
+      }
+    }
+    return false;
+  }
+}
+
+/** How many times a Windows rename is tried while the folder is busy, about five seconds in all. */
+export const RENAME_TRIES = 5;
+
+/**
+ * `rename`, tried again on Windows while the folder is busy. A freshly unpacked folder is often held
+ * for a moment by Defender or the search indexer, and the rename then fails with EBUSY or EPERM. The
+ * pauses grow by half a second (0.5 s, 1 s, 1.5 s, 2 s). Any other error, or any error off Windows,
+ * is thrown at once, exactly as before.
+ */
+async function renameSettled(deps: Pick<UpdateDeps, "files" | "host" | "sleep">, from: string, to: string): Promise<void> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      deps.files.rename(from, to);
+      return;
+    } catch (err) {
+      // SAFETY: the assertion asserts nothing. `catch` binds `unknown`; a Node errno error carries a
+      // string `code`, and any other value reads `undefined` here, which is the "not busy" answer.
+      const code = (err as { code?: string }).code;
+      const busy = code === "EBUSY" || code === "EPERM" || code === "EACCES";
+      if (deps.host.platform !== "win32" || !busy || attempt >= RENAME_TRIES) throw err;
+      await deps.sleep(500 * attempt);
+    }
+  }
+}
+
 /** The design's 20 s bound on the smoke test: `version` answers in milliseconds, so a binary still
  *  silent after this long is not slow, it is hung — and a hung candidate must FAIL the smoke, not
  *  hang the update with it. */
 const SMOKE_TIMEOUT_MS = 20_000;
 
-/** `<dir>/bin/collie version` must exit 0, name `version`, and answer within the bound. This is
- *  where a wrong architecture, a truncated payload, a Gatekeeper refusal and a hang all surface. */
-function smoke(deps: UpdateDeps, dir: string, version: string): boolean {
-  const r = deps.exec.capture(join(dir, "bin", "collie"), ["version"], SMOKE_TIMEOUT_MS);
-  return r.found && r.code === 0 && r.stdout.includes(version);
+/**
+ * What a child that is ANOTHER install's `collie` must not inherit from this process (#283).
+ *
+ * `bridge/root.ts` takes `COLLIE_PLUGIN_ROOT` before anything else, and this process may well carry
+ * one: the macOS LaunchAgent and the systemd unit both inject the service's root, and the phone's
+ * update runs as a child of that service. A candidate run under it reads the OLD root's version
+ * files and answers with the OLD version; a `build` run under it builds the old tree; a `restart`
+ * run under it writes the old root back into the unit. So the variable is REMOVED, never set: the
+ * child then finds its own root from its own path (`<dir>/bin/collie`, or the source it runs from),
+ * which is exactly what it does when an operator types `collie update` in a shell — the path that
+ * has always worked. Setting it to the child's directory would say the same for a smoke and bake
+ * `current` into the unit for a restart, which no interactive update ever wrote.
+ */
+const ITS_OWN_ROOT = { COLLIE_PLUGIN_ROOT: null } as const;
+
+/** The longest complaint a staging abort carries. It lands in the run record, which the phone
+ *  prints, so a binary's own wall of stderr does not get to blow up that screen. */
+const COMPLAINT_MAX = 160;
+
+function capComplaint(line: string): string {
+  return line.length <= COMPLAINT_MAX ? line : `${line.slice(0, COMPLAINT_MAX)}…`;
+}
+
+/** The last `n` non-empty lines of a stream, trimmed. */
+function tailLines(text: string, n: number): string[] {
+  return text
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l !== "")
+    .slice(-n);
+}
+
+/**
+ * What the smoke found. `why` is one short clause; `headline` is the one line of the child's own
+ * that goes into the record (its first complaint on stderr, else its last word on stdout); `tail` is
+ * its last lines, for the log and the terminal.
+ */
+export type SmokeResult =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly why: string; readonly headline?: string; readonly tail: readonly string[] };
+
+/**
+ * `<dir>/bin/collie version` must exit 0, name `version`, and answer within the bound. This is
+ * where a wrong architecture, a truncated payload, a Gatekeeper refusal and a hang all surface.
+ *
+ * Run with {@link ITS_OWN_ROOT}, or the candidate answers with this process's version (#283). A
+ * failure says why and keeps the child's last lines, because "did not run" with nothing after it is
+ * the report that took a macOS operator three attempts and a log dive to not explain.
+ */
+export function smoke(
+  // `host` picks the binary's name (`collie.exe` on Windows); the running machine's when absent.
+  deps: Pick<UpdateDeps, "exec"> & { readonly host?: Host },
+  dir: string,
+  version: string,
+): SmokeResult {
+  let r: ExecResult;
+  try {
+    r = deps.exec.capture(collieBinary(dir, deps.host), ["version"], SMOKE_TIMEOUT_MS, undefined, ITS_OWN_ROOT);
+  } catch (err) {
+    // `capture` throws when the child cannot even start (ENOEXEC, EACCES).
+    return { ok: false, why: `it could not be started: ${err instanceof Error ? err.message : String(err)}`, tail: [] };
+  }
+  if (!r.found) return { ok: false, why: "its binary is missing or not executable", tail: [] };
+  const tail = tailLines(`${r.stdout}\n${r.stderr}`, SMOKE_TAIL_LINES);
+  const headline = r.stderr.split("\n").map((l) => l.trim()).find((l) => l !== "") ?? tailLines(r.stdout, 1)[0];
+  const failed = (why: string): SmokeResult =>
+    headline === undefined ? { ok: false, why, tail } : { ok: false, why, headline, tail };
+  if (r.signal !== undefined) return failed(`killed by ${r.signal}`);
+  if (r.code === 124) return failed(`no answer in ${Math.round(SMOKE_TIMEOUT_MS / 1000)}s`);
+  if (r.code !== 0) return failed(`exit ${r.code}`);
+  if (!r.stdout.includes(version)) {
+    const said = tailLines(r.stdout, 1)[0] ?? "nothing";
+    return { ok: false, why: `\`collie version\` answered ${said}, not ${version}`, tail: [] };
+  }
+  return { ok: true };
+}
+
+/** How many of the candidate's own lines a failed smoke keeps, for the log and the terminal. */
+const SMOKE_TAIL_LINES = 5;
+
+/**
+ * The run record's reason for a failed smoke, one line in the voice of the other aborts, capped as
+ * they are. The child's headline goes after the clause: on a Mac that is where a `dyld` or a
+ * Gatekeeper refusal names itself.
+ */
+export function smokeReason(result: Extract<SmokeResult, { ok: false }>): string {
+  const said = result.headline === undefined ? "" : `: ${result.headline}`;
+  return capComplaint(`the new version did not start here (${result.why})${said}`);
 }
 
 /**
@@ -1097,28 +1522,43 @@ function smoke(deps: UpdateDeps, dir: string, version: string): boolean {
  * only then collect old versions.
  */
 async function updateBinary(deps: UpdateDeps, args: readonly string[]): Promise<number> {
-  const layout = binaryLayout(deps.ctx.root);
+  const layout = binaryLayout(deps.ctx.root, deps.host);
   const repo = updateRepoOf(deps.ctx.env);
   // 1. A redirected updater is never silent — the repo IS the trust boundary on this path.
   if (repo !== DEFAULT_UPDATE_REPO) deps.io.out(`update source: github.com/${repo} (COLLIE_UPDATE_REPO)`);
-  const platform = platformId(deps.platform, deps.arch);
+  const platform = platformId(deps.host.platform, deps.arch);
   if (platform === null) {
     deps.io.err("error: Collie publishes no release artifact for this platform.");
     deps.io.err("       Update by pulling and rebuilding a checkout — see docs/install.md.");
     return EXIT.FAIL;
   }
+  // A rehearsal mirror is a test seam: it is said loudly, and a value that is not loopback stops here.
+  const mirror = updateMirror(deps.ctx.env);
+  if (!mirror.ok) {
+    deps.io.err(`error: ${mirrorRefusal(mirror.value)} Nothing was changed.`);
+    return EXIT.FAIL;
+  }
+  if (mirror.base !== null) deps.io.err(mirrorWarning(mirror.base));
   // 2. Sweep scratch before anything else.
   sweepScratch(deps, layout);
 
   // 3. One HTTPS GET. Never a second endpoint, never a guessed version.
-  const tagsResponse = await deps.net.getJson(githubTagsUrl(repo));
+  // Every request to a mirror refuses a redirect; with no mirror the requests are the ones they were.
+  // Every page of the tag list (`readAllTags`); a failed page is the failed release check.
+  const via = mirror.base === null ? undefined : MIRROR_FETCH;
+  let failedUrl = githubTagsUrl(repo, mirror.base);
+  const tagsResponse = await readAllTags(repo, mirror.base, async (url) => {
+    failedUrl = url;
+    const page = await deps.net.getJson(url, via);
+    // SAFETY: `Net.getJson` hands back what `Response.json()` produced, which IS a JsonValue by
+    // construction; `parseTagsResponse` checks every field it keeps.
+    return page.ok ? { ok: true, value: page.value as JsonValue } : page;
+  });
   if (!tagsResponse.ok) {
-    netError(deps, "the release check", tagsResponse.failure);
+    netError(deps, "the release check", failedUrl, tagsResponse.failure);
     return EXIT.FAIL;
   }
-  // SAFETY: `Net.getJson` hands back what `Response.json()` produced, which IS a JsonValue by
-  // construction; `parseTagsResponse` checks every field it keeps.
-  const tags = parseApiTags(parseTagsResponse(tagsResponse.value as JsonValue));
+  const tags = parseApiTags(tagsResponse.tags);
 
   // 4. The same plan the git paths make. `head: ""` is correct rather than a fudge: a binary install
   //    has no checked-out commit, so `planUpdate`'s commit arm must never fire and the VERSION
@@ -1163,11 +1603,21 @@ async function updateBinary(deps: UpdateDeps, args: readonly string[]): Promise<
       : `updating Collie (binary install: ${target.tag} for ${platform})…`,
   );
 
+  // THE STAGING WINDOW OPENS HERE (M20/10), at the first step that costs time. Everything above is
+  // local: a version read, a tag list, a plan. Below it are two network round trips, an unpack and a
+  // smoke, and until this record existed the phone had nothing to say about any of them.
+  const progress = beginStaging(deps, {
+    from: currentVersionDir(deps, layout),
+    to: target.version,
+    runId: wantsRunId(args),
+  });
+  progress.note(`fetching ${target.version} for ${platform}`);
+
   // 5. The manifest, and this platform's artifact inside it.
-  const manifestUrl = releaseAssetUrl(repo, target.tag, manifestAssetName(target.version));
-  const manifestResponse = await deps.net.getJson(manifestUrl);
+  const manifestUrl = releaseAssetUrl(repo, target.tag, manifestAssetName(target.version), mirror.base);
+  const manifestResponse = await deps.net.getJson(manifestUrl, via);
   if (!manifestResponse.ok) {
-    netError(deps, `the release manifest for ${target.version}`, manifestResponse.failure);
+    netError(deps, `the release manifest for ${target.version}`, manifestUrl, manifestResponse.failure);
     return EXIT.FAIL;
   }
   // SAFETY: as above — a parsed JSON document, and `parseReleaseManifest` checks every field.
@@ -1185,6 +1635,14 @@ async function updateBinary(deps: UpdateDeps, args: readonly string[]): Promise<
     return EXIT.FAIL;
   }
   const artifact = verdict.manifest.artifacts.find((a) => a.platform === platform);
+  if (artifact === undefined && platform === "windows-x64") {
+    // For one release cycle a release may ship without its Windows zip (release.yml), and that must
+    // read as a pause, not as a reason to build from source on a machine with no toolchain.
+    const said = `release ${target.version} has no Windows build; try again after the next release`;
+    deps.io.err(`error: ${said}. Nothing was changed.`);
+    abandonStaging(deps, said);
+    return EXIT.FAIL;
+  }
   if (artifact === undefined) {
     deps.io.err(`error: release ${target.version} publishes no artifact for ${platform}.`);
     deps.io.err('       Build from source instead: docs/install.md → "From source". Nothing was changed.');
@@ -1194,10 +1652,11 @@ async function updateBinary(deps: UpdateDeps, args: readonly string[]): Promise<
   // 6. Download into scratch — same filesystem as `versions/`, so every rename below is a real one.
   const tarball = join(layout.stagingDir, artifact.name);
   deps.files.mkdirp(layout.stagingDir);
-  const got = await deps.net.download(releaseAssetUrl(repo, target.tag, artifact.name), tarball);
+  const tarballUrl = releaseAssetUrl(repo, target.tag, artifact.name, mirror.base);
+  const got = await deps.net.download(tarballUrl, tarball, via);
   if (!got.ok) {
     deps.files.removeTree(layout.stagingDir);
-    netError(deps, `downloading ${artifact.name}`, got.failure);
+    netError(deps, `downloading ${artifact.name}`, tarballUrl, got.failure);
     return EXIT.FAIL;
   }
   // 7. Verify. Hard fail, and there is no flag to skip it.
@@ -1211,9 +1670,16 @@ async function updateBinary(deps: UpdateDeps, args: readonly string[]): Promise<
   }
 
   // 8. Lay down: extract, check the payload is whole, then ONE rename into `versions/<version>`.
+  progress.note(`unpacking ${artifact.name}`);
   const unpacked = join(layout.stagingDir, "x");
   deps.files.mkdirp(unpacked);
-  const untar = deps.exec.capture("tar", ["-xzf", tarball, "-C", unpacked]);
+  // The Windows asset is a zip. Windows' own `tar.exe` (bsdtar, in System32 since Windows 10) reads
+  // it, and it is named by its full path because Git for Windows can put a GNU tar first on PATH,
+  // and GNU tar cannot read a zip. `Expand-Archive` reads it too, but needs PowerShell and is slow.
+  const untar =
+    deps.host.platform === "win32"
+      ? deps.exec.capture(windowsTar(deps.ctx.env, deps.host), ["-xf", tarball, "-C", unpacked])
+      : deps.exec.capture("tar", ["-xzf", tarball, "-C", unpacked]);
   if (!untar.found || untar.code !== 0) {
     deps.files.removeTree(layout.stagingDir);
     deps.io.err(`error: could not unpack ${artifact.name}${untar.found ? "" : " — tar is not installed"}.`);
@@ -1221,8 +1687,9 @@ async function updateBinary(deps: UpdateDeps, args: readonly string[]): Promise<
     return EXIT.FAIL;
   }
   const payload = join(unpacked, artifact.payloadRoot);
-  const required = ["bin/collie", "web/dist/index.html", "herdr-plugin.toml", "package.json"];
-  const missing = required.filter((rel) => !deps.files.exists(join(payload, ...rel.split("/"))));
+  const required = [`bin/${binaryName(deps.host)}`, "web/dist/index.html", "herdr-plugin.toml", "package.json"];
+  const missingIn = (dir: string): string[] => required.filter((rel) => !deps.files.exists(join(dir, ...rel.split("/"))));
+  const missing = missingIn(payload);
   if (missing.length > 0) {
     deps.files.removeTree(layout.stagingDir);
     deps.io.err(`error: ${artifact.name} is not a complete Collie payload (missing ${missing.join(", ")}).`);
@@ -1230,19 +1697,66 @@ async function updateBinary(deps: UpdateDeps, args: readonly string[]): Promise<
     return EXIT.FAIL;
   }
   // tar carries the mode, and every runner that builds one sets it — but a umask or a re-packed
-  // archive can still land a non-executable binary, and the cost of being sure is one call.
-  deps.exec.capture("chmod", ["0755", join(payload, "bin", "collie")]);
+  // archive can still land a non-executable binary, and the cost of being sure is one call. NTFS has
+  // no mode bit, so Windows skips it.
+  if (deps.host.platform !== "win32") deps.exec.capture("chmod", ["0755", collieBinary(payload, deps.host)]);
   const laid = join(layout.versionsDir, target.version);
-  if (deps.files.exists(laid)) toTrash(deps, layout, target.version);
-  deps.files.mkdirp(layout.versionsDir);
-  deps.files.rename(payload, laid);
+  // A folder of this version is there already: a rollback left it, or an update stopped half way.
+  const stuck = deps.files.exists(laid) ? await moveVersionAside(deps, layout, target.version) : null;
+  if (stuck !== null) {
+    // On Windows the launcher keeps running from the version it started with, through a rollback and
+    // a `collie restart`, so the folder of the version rolled away from stays in use until the next
+    // `collie stop` or logon. That folder is used as it is only when it is COMPLETE and its
+    // `collie.exe` is byte for byte the one just downloaded: a release re-cut under the same version,
+    // or a folder an interrupted run left, is another build. The smoke below still checks that it runs.
+    const incomplete = missingIn(laid);
+    const held = deps.files.digest(collieBinary(laid, deps.host));
+    const same = incomplete.length === 0 && held !== null && held === deps.files.digest(collieBinary(payload, deps.host));
+    if (!same) {
+      const why = incomplete.length > 0 ? `it is missing ${incomplete.join(", ")}` : "its collie.exe is not the one just downloaded";
+      deps.files.removeTree(layout.stagingDir);
+      deps.io.err(`error: ${laid} is still in use, and ${why}, so this update cannot use it or replace it now (${stuck}).`);
+      deps.io.err("       Nothing was changed. Run `collie stop`, then `collie start`, then run `collie update` again.");
+      abandonStaging(deps, `the old ${target.version} folder is in use and is not this build`);
+      return EXIT.FAIL;
+    }
+    const said = `${laid} is still in use and holds this same build, so this update uses it as it is. This does not stop the update.`;
+    deps.io.out(`note: ${said}`);
+    progress.note(said);
+  } else {
+    deps.files.mkdirp(layout.versionsDir);
+    try {
+      await renameSettled(deps, payload, laid);
+    } catch (err) {
+      deps.files.removeTree(layout.stagingDir);
+      deps.io.err(`error: could not move ${artifact.payloadRoot} into ${layout.versionsDir} (${String(err)}).`);
+      deps.io.err("       Nothing was changed. Try again in a minute.");
+      abandonStaging(deps, `the unpacked ${target.version} could not be moved into versions`);
+      return EXIT.FAIL;
+    }
+  }
   deps.files.removeTree(layout.stagingDir);
 
   // 9. Smoke BEFORE the flip: nothing the operator can see has moved yet.
-  if (!smoke(deps, laid, target.version)) {
-    toTrash(deps, layout, target.version);
-    deps.io.err(`error: ${target.version} did not run here (\`collie version\` failed before the swap).`);
+  progress.note(`checking that ${target.version} runs here`);
+  const smoked = smoke(deps, laid, target.version);
+  if (!smoked.ok) {
+    // The failure below is the news; a folder that cannot leave yet is one more note under it.
+    const stuckAfterSmoke = await moveVersionAside(deps, layout, target.version);
+    if (stuckAfterSmoke !== null) {
+      const said = `${laid} stays for now (${stuckAfterSmoke}); a later update replaces it`;
+      deps.io.out(`note: ${said}`);
+      progress.note(said);
+    }
+    const reason = smokeReason(smoked);
+    // The child's own lines go to the staging log and the terminal (the runner log, on a phone's
+    // run): the reason in the record is one capped line, and this is the rest of it.
+    progress.note(reason);
+    for (const line of smoked.tail) progress.note(`  ${line}`);
+    deps.io.err(`error: ${target.version} did not run here (\`collie version\` failed before the swap: ${smoked.why}).`);
+    for (const line of smoked.tail) deps.io.err(`       | ${line}`);
     deps.io.err(`       Nothing was changed — this install is still ${installed ?? "where it was"}.`);
+    abandonStaging(deps, reason);
     return EXIT.FAIL;
   }
 
@@ -1295,7 +1809,7 @@ function collectOldVersions(deps: UpdateDeps, layout: BinaryLayout, keepVersion:
  * want back once the bug is understood.
  */
 async function rollbackBinary(deps: UpdateDeps): Promise<number> {
-  const layout = binaryLayout(deps.ctx.root);
+  const layout = binaryLayout(deps.ctx.root, deps.host);
   const at = currentVersionDir(deps, layout) ?? layout.version;
   const older = installedVersions(deps, layout).filter((v) => compareSemver(v, at) < 0);
   const target = older[older.length - 1];
@@ -1306,12 +1820,15 @@ async function rollbackBinary(deps: UpdateDeps): Promise<number> {
   deps.io.out(`rolling back ${at} → ${target}…`);
   if (!flipCurrent(deps, layout, target)) return EXIT.FAIL;
   const restarted = await deps.restart();
-  if (restarted !== EXIT.OK || !smoke(deps, layout.currentLink, target)) {
+  const smoked: SmokeResult =
+    restarted === EXIT.OK ? smoke(deps, layout.currentLink, target) : { ok: false, why: "the restart failed", tail: [] };
+  if (!smoked.ok) {
     // Roll FORWARD again to where this started, and say so: a rollback that half-lands is worse than
     // one that never happened.
     flipCurrent(deps, layout, at);
     await deps.restart();
-    deps.io.err(`error: ${target} did not come up — rolled forward to ${at} again. Nothing was changed.`);
+    deps.io.err(`error: ${target} did not come up (${smoked.why}) — rolled forward to ${at} again. Nothing was changed.`);
+    for (const line of smoked.tail) deps.io.err(`       | ${line}`);
     return EXIT.FAIL;
   }
   deps.io.out(`✓ rolled back to ${target}`);
@@ -1361,25 +1878,26 @@ export interface BuildMarker {
  * root. {@link binaryLayout} derives the same five paths from a version DIRECTORY, which is what the
  * running process sits in once the layout exists; this derives them from the root above it.
  */
-export function checkoutLayout(installRoot: string): BinaryLayout {
+export function checkoutLayout(installRoot: string, host: Host = HOST): BinaryLayout {
+  const at = (...parts: string[]): string => host.path.join(installRoot, ...parts);
   return {
     installRoot,
-    versionsDir: join(installRoot, "versions"),
-    currentLink: join(installRoot, "current"),
-    stagingDir: join(installRoot, ".staging"),
-    trashDir: join(installRoot, ".trash"),
+    versionsDir: at("versions"),
+    currentLink: at("current"),
+    stagingDir: at(".staging"),
+    trashDir: at(".trash"),
     version: "",
   };
 }
 
 /** Does `root` sit at `<install-root>/versions/<name>` — i.e. is this install already staged? */
-function underVersions(root: string): boolean {
-  return basename(dirname(root)) === "versions";
+function underVersions(root: string, host: Host = HOST): boolean {
+  return host.path.basename(host.path.dirname(root)) === "versions";
 }
 
 /** The layout a checkout at `root` updates under, whether it has been migrated yet or not. */
-function layoutForCheckout(root: string): BinaryLayout {
-  return underVersions(root) ? binaryLayout(root) : checkoutLayout(root);
+function layoutForCheckout(root: string, host: Host): BinaryLayout {
+  return underVersions(root, host) ? binaryLayout(root, host) : checkoutLayout(root, host);
 }
 
 /** `<dir>/.collie-build`. */
@@ -1438,7 +1956,7 @@ export interface VersionOnDisk {
  * at: `.staging`, a stray note, an operator's backup copy.
  */
 export function listVersions(
-  deps: { readonly files: Files },
+  deps: { readonly files: Files; readonly host?: Host },
   layout: BinaryLayout,
   kind: "binary" | "checkout",
 ): VersionOnDisk[] {
@@ -1450,7 +1968,7 @@ export function listVersions(
       const complete =
         kind === "checkout"
           ? readBuildMarker(deps, at) !== null
-          : deps.files.exists(join(at, "bin", "collie"));
+          : deps.files.exists(collieBinary(at, deps.host));
       return [{ dir, version: kind === "checkout" ? dir.slice(1) : dir, complete }];
     })
     .toSorted((a, b) => compareSemver(a.version, b.version));
@@ -1546,7 +2064,16 @@ export function pruneVersions(
  * the stable name is the one that was switched.
  */
 function restartThroughCurrent(deps: UpdateDeps, layout: BinaryLayout): boolean {
-  const r = deps.exec.runIn(join(layout.currentLink, "bin", "collie"), ["restart"], layout.installRoot);
+  // ITS OWN ROOT (#283): under this process's `COLLIE_PLUGIN_ROOT` the new binary would take the OLD
+  // root for its own and write it back into the unit, which is the cosmetic flip this function exists
+  // to prevent, arriving by the environment instead.
+  const r = deps.exec.runIn(
+    collieBinary(layout.currentLink, deps.host),
+    ["restart"],
+    layout.installRoot,
+    undefined,
+    ITS_OWN_ROOT,
+  );
   return r.found && r.code === 0;
 }
 
@@ -1562,17 +2089,18 @@ function republishName(deps: UpdateDeps, root: string, previousBinary: string): 
   const at = linkPath(deps.ctx.home);
   const probe = deps.link.probe(at);
   if (probe.kind !== "symlink" || probe.target !== previousBinary) return;
-  if (!isCollieBinaryPath(probe.target)) return;
-  cmdLink({ ctx: { ...deps.ctx, root }, io: deps.io, files: deps.files, fs: deps.link });
+  if (!isCollieBinaryPath(probe.target, deps.host)) return;
+  cmdLink({ ctx: { ...deps.ctx, root }, io: deps.io, files: deps.files, fs: deps.link, host: deps.host });
 }
 
 /** Fetch one release tag and STORE it locally — the refspec `detachOnto` explains at length. */
 function fetchTag(deps: UpdateDeps, root: string, tag: string): boolean {
   const ref = `refs/tags/${tag}`;
   const spec = `+${ref}:${ref}`;
+  const remote = tagRemote(deps.exec, root);
   const args = isShallow(deps.exec, root)
-    ? ["fetch", "--depth", "1", "origin", spec]
-    : ["fetch", "origin", spec];
+    ? ["fetch", "--depth", "1", remote, spec]
+    : ["fetch", remote, spec];
   const r = deps.exec.runIn("git", gitArgs(root, args), root);
   if (!r.found) {
     deps.io.err("error: git not found — cannot stage a version");
@@ -1598,7 +2126,7 @@ async function updateStagedCheckout(
   // `ls-remote`, `fetch`, `worktree add` and `worktree prune` are all answered the same from any of
   // them — and using our own root means a migration and a re-stage spell it identically.
   const git = root;
-  const migrating = !underVersions(root);
+  const migrating = !underVersions(root, deps.host);
 
   if (!isGitCheckout(deps.exec, git)) {
     deps.io.err(`error: ${git} is not a git checkout — refresh it with:`);
@@ -1608,7 +2136,7 @@ async function updateStagedCheckout(
   // BEFORE any fetch. See {@link assertOrigin}: a fork's tags are not this install's to take.
   if (!assertOrigin(deps, git)) return EXIT.FAIL;
 
-  const ls = deps.exec.capture("git", gitArgs(git, ["ls-remote", "--tags", "origin"]));
+  const ls = deps.exec.capture("git", gitArgs(git, ["ls-remote", "--tags", tagRemote(deps.exec, git)]));
   if (!ls.found || ls.code !== 0) {
     deps.io.err("error: could not list the upstream release tags — is the remote reachable?");
     return EXIT.FAIL;
@@ -1659,31 +2187,12 @@ async function updateStagedCheckout(
   const higher =
     plan.kind === "unknown-version" || (plan.kind === "advance" && plan.crossesMajor) ? null : plan.higher;
 
-  if (deps.exec.which("bun") === null) {
-    deps.io.err("error: bun not found — staging a version builds it, and that needs Bun.");
-    deps.io.err("       Install it from https://bun.sh and re-run update. Nothing was changed.");
-    return EXIT.FAIL;
-  }
-  deps.io.out(
-    plan.kind === "advance" && plan.crossesMajor
-      ? `crossing to Collie ${target.version} (--major given: consented)…`
-      : `updating Collie (staged checkout: building ${target.tag} beside the running version)…`,
-  );
-  if (migrating) {
-    deps.io.out(`  first staged update: ${layout.versionsDir} and ${layout.currentLink} are created now.`);
-  }
-
-  // 1. The tag, stored locally — a worktree is added from a ref, and the ref has to exist here.
-  if (!fetchTag(deps, git, target.tag)) {
-    deps.io.err(`error: update stopped at the FETCH stage — ${target.tag} could not be fetched.`);
-    deps.io.err("       Nothing was staged and nothing was swapped.");
-    return EXIT.FAIL;
-  }
-
-  // 2. The worktree. A leftover directory of the same name is removed first: it is either a killed
-  //    stage or the version we are re-staging after a failed build, and neither is `current`.
   const dir = target.tag;
   const at = join(layout.versionsDir, dir);
+  // DECIDED BEFORE BUN AND BEFORE THE RECORD (#231, #232). This check needs neither a compiler nor a
+  // fetch, so it runs ahead of both: an install whose target is already live must not be refused
+  // for a broken Bun it will never use, and must not open a `staging` record it would then have to
+  // close as an abort, which a waiting phone reads as "failed" about an install that is fine.
   if (currentVersionDir(deps, layout) === dir) {
     // The target is already live. This is not the `plan.kind === "current"` case above — that one is
     // decided from the manifest of the version we are RUNNING, and an install whose root still
@@ -1698,6 +2207,36 @@ async function updateStagedCheckout(
     deps.io.err("       would remove the running install. Roll back first, or remove it by hand.");
     return EXIT.FAIL;
   }
+  const bun = requireRunnableBun(deps, "staging a version cannot build it; nothing was changed");
+  if (bun === null) return EXIT.FAIL;
+  deps.io.out(
+    plan.kind === "advance" && plan.crossesMajor
+      ? `crossing to Collie ${target.version} (--major given: consented)…`
+      : `updating Collie (staged checkout: building ${target.tag} beside the running version)…`,
+  );
+  if (migrating) {
+    deps.io.out(`  first staged update: ${layout.versionsDir} and ${layout.currentLink} are created now.`);
+  }
+
+  // THE STAGING WINDOW OPENS HERE (M20/10), at the first step that costs time. The fetch, the
+  // worktree and the build are minutes on slow hardware, and until this record existed the phone had
+  // nothing to say about any of them but "Starting…".
+  const progress = beginStaging(deps, {
+    from: stagedCurrent(deps, layout)?.dir ?? null,
+    to: target.version,
+    runId: wantsRunId(args),
+  });
+  progress.note(`fetching ${target.tag}`);
+
+  // 1. The tag, stored locally — a worktree is added from a ref, and the ref has to exist here.
+  if (!fetchTag(deps, git, target.tag)) {
+    deps.io.err(`error: update stopped at the FETCH stage — ${target.tag} could not be fetched.`);
+    deps.io.err("       Nothing was staged and nothing was swapped.");
+    return EXIT.FAIL;
+  }
+
+  // 2. The worktree. A leftover directory of the same name is removed first: it is either a killed
+  //    stage or the version we are re-staging after a failed build, and neither is `current`.
   if (deps.files.exists(at)) removeStagedVersion(deps, layout, dir, git);
   deps.files.mkdirp(layout.versionsDir);
   const added = deps.exec.runIn(
@@ -1714,7 +2253,13 @@ async function updateStagedCheckout(
 
   // 3. The build, INSIDE the worktree and from the NEW source — the same handoff reason the in-place
   //    path re-execs for: the build logic that must run is the one that was just fetched.
-  const built = deps.exec.runIn("bun", [join(at, "cli", "main.ts"), "build"], at);
+  //
+  // THE LONGEST STEP OF THE LONGEST WINDOW. Said out loud before it starts, because a minute of
+  // silence here is the minute that produced "Still starting. The host has not reported the run yet."
+  progress.note(`building ${target.tag} — this is the slow part`);
+  // ITS OWN ROOT (#283): the new source resolves its root from `COLLIE_PLUGIN_ROOT` first, so under
+  // this process's value it would build the RUNNING tree and leave the worktree without a binary.
+  const built = deps.exec.runIn(bun.path, [join(at, "cli", "main.ts"), "build"], at, dirname(bun.path), ITS_OWN_ROOT);
   if (!built.found || built.code !== 0) {
     deps.io.err(`error: update stopped at the BUILD stage — ${target.tag} did not build.`);
     deps.io.err("       `current` never moved: the running bridge and the served UI are unchanged.");
@@ -1724,6 +2269,7 @@ async function updateStagedCheckout(
   }
 
   // 4. The marker, LAST — the evidence the flip demands.
+  progress.note(`${target.version} built, handing off to the runner`);
   writeBuildMarker(deps, at, { version: target.version, commit: target.commit });
 
   // 5. HAND OFF. The flip, the restart, the health gate and the one rollback all happen in the
@@ -1815,13 +2361,13 @@ async function rollbackCheckout(deps: UpdateDeps, layout: BinaryLayout): Promise
  * checkout owns is the right answer.
  */
 function runnerBinary(deps: UpdateDeps): string {
-  return isCollieBinaryPath(deps.execPath) ? deps.execPath : collieBinary(deps.ctx.root);
+  return isCollieBinaryPath(deps.execPath, deps.host) ? deps.execPath : collieBinary(deps.ctx.root, deps.host);
 }
 
 /** The one thing an operator is told to run, and it is a path, not a verb — `current` may be wrong. */
-function recoveryCommand(layout: BinaryLayout, from: string | null): string {
+function recoveryCommand(layout: BinaryLayout, from: string | null, host: Host): string {
   if (from === null) return "collie update  (there is no previous version on disk to flip back to)";
-  return `${join(layout.versionsDir, from, "bin", "collie")} update --rollback`;
+  return `${collieBinary(join(layout.versionsDir, from), host)} update --rollback`;
 }
 
 /** What the runner was asked to do, parsed out of its own argv. */
@@ -1896,6 +2442,10 @@ export const RUNNER_ENV_KEYS = [
   // guess a mux — so a runner without it dies on a question nobody is there to answer.
   "COLLIE_MUX",
   "COLLIE_CONFIG_DIR",
+  // The base config file's path, when the operator moved it. The runner re-reads `~/.collie/config.toml`
+  // from its own $HOME and the instance file from its own config dir, exactly as it re-reads the
+  // `.env` — but a path nobody can re-derive has to travel (ADR 0040).
+  "COLLIE_CONFIG",
   "COLLIE_STATE_DIR",
   "COLLIE_PLUGIN_ROOT",
   "COLLIE_PORT",
@@ -1922,6 +2472,142 @@ function updateLockVerdict(deps: UpdateDeps): ReturnType<typeof lockVerdict> {
 /** The record on disk as of now, or null — the staleness rule applied through the process table. */
 function currentRun(deps: UpdateDeps): UpdateRun | null {
   return readRun(deps.files, deps.ctx.stateDir, deps.now(), (pid) => deps.exec.processCommand(pid) !== null);
+}
+
+/**
+ * Run one of the two staging arms, and close the record behind it if it did not hand off.
+ *
+ * `beginStaging` writes `staging` at the FIRST expensive step, which is the whole point of it — but
+ * every failure below that line (a fetch, a worktree, a build, a smoke) returns an exit code and
+ * writes nothing. Without this the record would sit at `staging` until the staleness rule caught it
+ * ten minutes later and reported `interrupted`, "the updater pid is gone", about a process that had
+ * exited cleanly with a diagnosis already on the operator's terminal. Worse, the phone reads that
+ * record as a live run and disables the button, so the retry is not offered either.
+ *
+ * `abort` is the state machine's own word for it: staging gave up, nothing had moved, the record
+ * goes back to `idle` carrying the reason.
+ */
+async function withStagingRecord(deps: UpdateDeps, arm: () => Promise<number>): Promise<number> {
+  const code = await arm();
+  if (code !== EXIT.OK) abandonStaging(deps);
+  return code;
+}
+
+/** Return this process's own `staging` record to `idle`. Another process's record is never touched. */
+function abandonStaging(deps: UpdateDeps, reason: string = STAGING_GAVE_UP): void {
+  try {
+    const run = currentRun(deps);
+    if (run === null || run.state !== "staging" || run.pid !== deps.pid) return;
+    writeRun(deps.files, deps.ctx.stateDir, reduce(run, { kind: "abort", reason }, deps.now()));
+  } catch {
+    /* see `beginStaging`: nothing about the record may fail an update, and this one has failed already */
+  }
+}
+
+/** What an aborted staging record says. The terminal above it has already said which step and why. */
+const STAGING_GAVE_UP = "staging stopped before the new version was laid down";
+/** The abort reason when the target was already `current`: nothing was staged because nothing needed to be. */
+
+/**
+ * THE STAGING WINDOW, REPORTING ITSELF (M20/10).
+ *
+ * Two things start together and end together: a `staging` run record on disk, written BEFORE the
+ * fetch rather than after the build, and a progress file this recorder appends whole lines to.
+ * Between them the phone has a state to render and something in it that changes, over the one part
+ * of an update that actually takes a minute.
+ *
+ * `staging` is the existing state and not a new one. The wire already carries it, every reader
+ * already renders it as "Staging {version}…", and a seventh run state would be a word on the wire
+ * that no released phone knows for a window it already has a word for. It is simply written earlier
+ * than it used to be, which is what the operator was missing.
+ *
+ * NOTHING HERE MAY FAIL AN UPDATE. Every write is best-effort: a state directory that cannot be
+ * written is a progress file that does not exist, and a progress file that does not exist reads as
+ * "this bridge is older than the field" — exactly the absent-means-closed reading the rest of the
+ * update wire takes.
+ */
+interface StagingProgress {
+  /** Say what is happening now. One whole line, appended, bounded to the last few. */
+  note(line: string): void;
+}
+
+function beginStaging(deps: UpdateDeps, a: { from: string | null; to: string; runId: string | null }): StagingProgress {
+  const now = deps.now();
+  // THE LOCK IS READ FIRST. `handOff` refuses a second update, but it refuses at the END of staging,
+  // and this record is written at the start of it — so without this a terminal `collie update` run
+  // beside a live one would overwrite the live run's record, and its progress file, minutes before
+  // being told no. `update.json` has one writer at a time, and that is how it stays that way.
+  if (!updateLockVerdict(deps).ok) return { note: () => {} };
+  // AND A LIVE RECORD IS NOT OVERWRITTEN EITHER, which is the rest of that same question. The lock is
+  // taken at `handOff`, i.e. at the END of staging, so two updates started minutes apart inside one
+  // staging window both read an unheld lock and the check above lets both through. The record on
+  // disk closes the gap: an in-flight state that another process wrote is that process's record, and
+  // `readUpdateRun` has already applied the staleness rule to it, so a crashed updater's marker does
+  // not block a retry for ever. One writer at a time, which is the file's whole contract.
+  const live = currentRun(deps);
+  if (live !== null && live.pid !== deps.pid && inFlight(live.state)) return { note: () => {} };
+  // The record FIRST, so the phone has something to read from the first second. `handOff` writes the
+  // same state again when staging ends; `reduce` is a pure fold over the same events, so the second
+  // write is the same shape with a later `updatedAt` rather than a contradiction.
+  try {
+    writeRun(
+      deps.files,
+      deps.ctx.stateDir,
+      reduce(
+        reduce(idleRun(now), { kind: "begin", from: a.from, to: a.to, pid: deps.pid, runId: a.runId }, now),
+        { kind: "stage" },
+        now,
+      ),
+    );
+  } catch {
+    /* a record nobody could write is a record the phone reads as absent — never a failed update */
+  }
+  if (a.runId === null) return { note: () => {} };
+  const path = stagingLogPath(deps.ctx.stateDir, a.runId);
+  // The PREVIOUS run's file goes now, on the one tick that knows a new run has started. Keyed names
+  // already make a stale file unreadable as the current one; this is so they do not accumulate.
+  try {
+    for (const name of deps.files.list(deps.ctx.stateDir)) {
+      if (name.startsWith(STAGING_LOG_PREFIX) && join(deps.ctx.stateDir, name) !== path) {
+        deps.files.remove(join(deps.ctx.stateDir, name));
+      }
+    }
+  } catch {
+    /* best effort — a leftover file is untidy, never wrong */
+  }
+  // Held in memory and rewritten whole, which is what bounds the file and what guarantees it always
+  // ends on a line boundary. `Files` has `write` and no `append`, and adding one for this would be a
+  // new seam for every verb to carry for the sake of forty lines.
+  const kept: string[] = [];
+  return {
+    note(line) {
+      for (const part of line.split("\n")) {
+        if (part.trim() !== "") kept.push(part);
+      }
+      if (kept.length > STAGING_LOG_LINES) kept.splice(0, kept.length - STAGING_LOG_LINES);
+      try {
+        deps.files.write(path, `${kept.join("\n")}\n`, 0o600);
+      } catch {
+        /* see the header: never fail an update over a progress line */
+      }
+    },
+  };
+}
+
+/**
+ * The `.service` unit this process is a member of the cgroup of, or null when it is not in one.
+ *
+ * Read through the {@link Files} seam so a test can state either answer. cgroup v2 writes one line,
+ * `0::<path>`; v1 writes one per controller. The path is the last colon-separated field either way,
+ * and only a leaf ending in `.service` is the case that matters: a `session-<n>.scope` (an ssh
+ * shell) has no main process, so nothing in it exiting tears the cgroup down.
+ */
+function serviceCgroup(files: Files): string | null {
+  for (const line of (files.read("/proc/self/cgroup") ?? "").split("\n")) {
+    const path = line.split(":").at(-1)?.trim() ?? "";
+    if (path.endsWith(".service")) return path.split("/").at(-1) ?? path;
+  }
+  return null;
 }
 
 /**
@@ -1956,25 +2642,68 @@ function handOff(
   writeRun(deps.files, deps.ctx.stateDir, staging);
 
   const plan = launchPlan({
-    platform: deps.platform,
+    host: deps.host,
     binary: runnerBinary(deps),
     args: applyArgv({ ...a, handoff: deps.pid }),
     unit: unitName(deps.ctx.instance),
     stamp: now.toString(36),
-    hasSystemdRun: deps.exec.which("systemd-run") !== null,
+    hasSystemdRun: deps.exec.which("systemd-run") !== null && systemdUserReachable(deps.exec, deps.ctx.env),
     hasSetsid: deps.exec.which("setsid") !== null,
   });
-  const pid = deps.exec.spawnDetached(plan.command, {
-    cwd: layout.installRoot,
-    env: runnerEnv(deps.ctx.env),
-    logPath: logFilePath(deps.ctx.configDir, deps.ctx.instance),
-  });
-  if (pid === null) {
+  const logPath = logFilePath(deps.ctx.configDir, deps.ctx.instance);
+  // A handoff that did not happen is a FAILURE, printed and recorded. Without this branch the record
+  // sits at `staging` until the staleness rule reads it as `interrupted` ten minutes later, the phone
+  // shows a live-looking run for that whole window, and a retry is refused for it.
+  // The complaint text ends up in the abort reason, which the phone displays: {@link COMPLAINT_MAX}.
+
+  const refused = (reason: string, said: string): number => {
     releaseLock(deps.files, deps.ctx.stateDir);
-    writeRun(deps.files, deps.ctx.stateDir, reduce(staging, { kind: "abort", reason: plan.note }, deps.now()));
-    deps.io.err("error: the update was staged, but the detached updater could not be started.");
+    writeRun(deps.files, deps.ctx.stateDir, reduce(staging, { kind: "abort", reason }, deps.now()));
+    deps.io.err(`error: ${said}`);
     deps.io.err(`       Nothing was swapped. Apply it by hand: ${runnerBinary(deps)} ${applyArgv({ ...a, handoff: 0 }).join(" ")}`);
     return EXIT.FAIL;
+  };
+
+  if (plan.confirms === "manager") {
+    // The client is a client: `systemd-run` without `--wait` returns as soon as the manager has
+    // accepted the job and started the unit, so waiting for it costs tens of milliseconds and buys
+    // the whole guarantee. The runner is then in a unit of its own, and this process may exit —
+    // which, as the main process of a service, is exactly what used to kill the client mid-flight
+    // (`Exec.spawnDetached`, and ADR 0037).
+    const client = deps.exec.runLogged(plan.command, {
+      cwd: layout.installRoot,
+      env: runnerEnv(deps.ctx.env),
+      logPath,
+      timeoutMs: HANDOFF_CONFIRM_MS,
+    });
+    if (client.code !== 0) {
+      // The manager's own complaint, because `exit 1` on its own tells an operator nothing. Capped:
+      // this text lands in the abort reason, which the phone displays, and a manager can be verbose.
+      const first = client.stderr.split("\n").map((l) => l.trim()).find((l) => l !== "");
+      const complaint = first === undefined ? undefined : capComplaint(first);
+      const why = client.timedOut ? `timeout after ${Math.round(HANDOFF_CONFIRM_MS / 1000)}s` : `exit ${client.code}`;
+      const reason = `the ${plan.kind} handoff was refused (${why})${complaint === undefined ? "" : `: ${complaint}`}`;
+      return refused(reason, `the update was staged, but ${reason}.`);
+    }
+  } else {
+    // This tier has no manager to ask, and its child is not a fast client — it IS the runner. So a
+    // launch from inside a service cgroup dies within milliseconds of this function returning: this
+    // process is the unit's main process, and its exit has systemd tear the cgroup down under the
+    // default `KillMode=control-group`, taking the runner with it long before the swap it was
+    // started for. That is worse than the stall this spec removes. Refusing is the honest answer.
+    const unit = serviceCgroup(deps.files);
+    if (unit !== null) {
+      const reason = `the ${plan.kind} handoff cannot run from inside ${unit}: a hand-off from inside a service needs the user manager`;
+      return refused(reason, `the update was staged, but ${reason}.`);
+    }
+    const pid = deps.exec.spawnDetached(plan.command, {
+      cwd: layout.installRoot,
+      env: runnerEnv(deps.ctx.env),
+      logPath,
+    });
+    if (pid === null) {
+      return refused(plan.note, "the update was staged, but the detached updater could not be started.");
+    }
   }
   deps.io.out(`✓ ${a.to} is staged — ${plan.note}.`);
   deps.io.out("  The swap, the restart and the health check run there, so this command is done.");
@@ -2028,7 +2757,7 @@ export const wantsStatus = (args: readonly string[]): boolean => args.includes("
  * {@link driveApply}, which is where the machine lives.
  */
 async function runApply(deps: UpdateDeps, a: ApplyArgs): Promise<number> {
-  const layout = a.kind === "binary" ? binaryLayout(deps.ctx.root) : layoutForCheckout(deps.ctx.root);
+  const layout = a.kind === "binary" ? binaryLayout(deps.ctx.root, deps.host) : layoutForCheckout(deps.ctx.root, deps.host);
   const stateDir = deps.ctx.stateDir;
   // The lock this run inherits is the one the staging process took (`--handoff <pid>`). Any other
   // holder is somebody else's run and refuses us, exactly as it refuses a second `collie update`.
@@ -2082,7 +2811,7 @@ async function runApply(deps: UpdateDeps, a: ApplyArgs): Promise<number> {
       timeoutMs: healthTimeoutMs(deps.ctx.env),
       pollMs: HEALTH_POLL_MS,
     },
-    { to: a.to, from: a.from, version: a.version, commit: a.commit, recovery: recoveryCommand(layout, a.from) },
+    { to: a.to, from: a.from, version: a.version, commit: a.commit, recovery: recoveryCommand(layout, a.from, deps.host) },
     start,
   );
   releaseLock(deps.files, stateDir);
@@ -2090,13 +2819,13 @@ async function runApply(deps: UpdateDeps, a: ApplyArgs): Promise<number> {
   if (run.state === "done") {
     // The two names that must follow a flip, and the nudge that must be asked of the NEW binary.
     if (a.kind === "checkout") {
-      if (!underVersions(deps.ctx.root)) {
-        republishName(deps, join(layout.versionsDir, a.to), collieBinary(deps.ctx.root));
+      if (!underVersions(deps.ctx.root, deps.host)) {
+        republishName(deps, deps.host.path.join(layout.versionsDir, a.to), collieBinary(deps.ctx.root, deps.host));
       }
       refreshRegistry(deps, layout.currentLink);
     }
     deps.io.out(`✓ updated to ${a.version === "" ? a.to : a.version}`);
-    nudgeHooks(deps, join(layout.currentLink, "bin", "collie"));
+    nudgeHooks(deps, collieBinary(layout.currentLink, deps.host));
     return EXIT.OK;
   }
   if (run.state === "rolled-back") {
@@ -2106,6 +2835,6 @@ async function runApply(deps: UpdateDeps, a: ApplyArgs): Promise<number> {
   }
   deps.io.err(`error: ${a.to} did not come up, and neither did the rollback. Nothing will restart again.`);
   deps.io.err(`       ${run.reason ?? "no reason recorded"}`);
-  deps.io.err(`       Recover with: ${run.recovery ?? recoveryCommand(layout, a.from)}`);
+  deps.io.err(`       Recover with: ${run.recovery ?? recoveryCommand(layout, a.from, deps.host)}`);
   return EXIT.FAIL;
 }

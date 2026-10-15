@@ -1,3 +1,4 @@
+import { reflowSoftWraps } from "./reflow";
 // The Claude Code adapter — the one agent whose TUI shape is VERIFIED (input box, menu footers,
 // stepper header) against the fixture corpus in web/src/fixtures/panes/*.txt. Its detectors
 // (prompt-select, wizard, preview-select, chrome, markers) live alongside this file; this module
@@ -8,17 +9,28 @@
 // TUI shape, so it has no adapter and keeps the plain raw terminal mirror — running Claude's matchers
 // on it could mis-lift a menu, strip real output as "chrome", or paint a bogus status strip.
 
-import { trimTrailingBlank, type Block, type StyledLine } from "../../blocks";
+import { lineText, trimTrailingBlank, type Block, type StyledLine } from "../../blocks";
 import type { HarnessAdapter } from "../types";
 import { detectPreviewSelectRegion } from "./preview-select";
 import { detectWizardRegion } from "./wizard";
 import { detectMultiSelectRegion } from "./multi-select";
 import { detectPromptSelectRegion } from "./prompt-select";
+import { detectEffortRegion } from "./effort";
+import { detectResumePickerRegion } from "./resume";
+import { detectSwitchModelRegion } from "./switch-model";
+import { detectMarketplacesRegion } from "./marketplaces";
 import { detectMenuRegion } from "./menu";
 import { detectAutocompleteRegion } from "./autocomplete";
-import { stripChrome, extractStatusLines, extractInputDraft, hasInputBox } from "./chrome";
-import { reflowSoftWraps } from "./reflow";
-import { isPastePlaceholderOnly, pasteCarriesSend } from "./paste";
+import {
+  stripChrome,
+  extractStatusLines,
+  extractAgentsFooter,
+  extractInputDraft,
+  hasInputBox,
+  namesAModalKey,
+  inputBoxTail,
+} from "./chrome";
+import { collapsesAsPaste, isPastePlaceholderOnly, pasteCarriesSend } from "./paste";
 
 /**
  * Claude's block pipeline: detect a tail dialog (preview / wizard / prompt-select), replacing it with
@@ -76,8 +88,61 @@ export function claudeBuildBlocks(lines: StyledLine[]): Block[] {
     return blocks;
   }
 
+  // The `/effort` slider (effort.ts) — a specific grammar for a screen the generic one below CAN
+  // claim but cannot read: the value lives in the `▲`'s column, and the arrows are advertised by the
+  // footer itself, which the generic detector never scans (and must not, since MENU_ARROW_ROW
+  // matches that line with an empty value and the rest of the footer as its verb).
+  const effortRegion = detectEffortRegion(lines);
+  if (effortRegion) {
+    const before = trimTrailingBlank(lines.slice(0, effortRegion.startLine));
+    const blocks: Block[] = [];
+    if (before.length > 0) blocks.push({ kind: "raw", lines: before });
+    blocks.push({ kind: "menu", menu: effortRegion.model, lines: lines.slice(effortRegion.startLine) });
+    return blocks;
+  }
+
+  // The `/resume` session picker (resume.ts, .adr/0058) — another screen the generic menu CAN claim
+  // but cannot drive: its footer never names Enter or the arrows, so the generic card could only
+  // cancel. Recognised by its own title, search box and footer, it lifts as a pointed list whose
+  // taps walk the `❯` and send Enter, the one unprinted key ADR 0058 allows on this dialog alone.
+  const resumeRegion = detectResumePickerRegion(lines);
+  if (resumeRegion) {
+    const before = trimTrailingBlank(lines.slice(0, resumeRegion.startLine));
+    const blocks: Block[] = [];
+    if (before.length > 0) blocks.push({ kind: "raw", lines: before });
+    blocks.push({ kind: "prompt-select", prompt: resumeRegion.model, lines: lines.slice(resumeRegion.startLine) });
+    return blocks;
+  }
+
+  // The "Switch model?" confirmation (switch-model.ts) — the footerless screen the `/model` picker
+  // opens when the conversation is cached. No footer names a key and no "Do you want to" question
+  // makes it a permission dialog, so every grammar above declines it and the generic menu below
+  // could not read it either. Recognised by its own title under the `▔` edge and its two numbered
+  // rows, it lifts as a pointed list: a tap is the arrow walk from the `❯` plus Enter, never a digit.
+  const switchModelRegion = detectSwitchModelRegion(lines);
+  if (switchModelRegion) {
+    const before = trimTrailingBlank(lines.slice(0, switchModelRegion.startLine));
+    const blocks: Block[] = [];
+    if (before.length > 0) blocks.push({ kind: "raw", lines: before });
+    blocks.push({ kind: "prompt-select", prompt: switchModelRegion.model, lines: lines.slice(switchModelRegion.startLine) });
+    return blocks;
+  }
+
+  // The `/plugin` Marketplaces tab and a marketplace's detail screen (marketplaces.ts). Their footers
+  // say "Enter to select", which files them as a question the question grammars cannot read, so the
+  // generic menu below stands aside. Recognised by their own words, they lift as a menu of the keys
+  // the footer printed, minus remove, whose confirm the phone cannot read.
+  const marketplacesRegion = detectMarketplacesRegion(lines);
+  if (marketplacesRegion) {
+    const before = trimTrailingBlank(lines.slice(0, marketplacesRegion.startLine));
+    const blocks: Block[] = [];
+    if (before.length > 0) blocks.push({ kind: "raw", lines: before });
+    blocks.push({ kind: "menu", menu: marketplacesRegion.model, lines: lines.slice(marketplacesRegion.startLine) });
+    return blocks;
+  }
+
   // LAST RESORT: a modal screen none of the specific grammars claimed, driven by the keys its own
-  // footer names (menu.ts). It runs after all four deliberately — every grammar above encodes a
+  // footer names (menu.ts). It runs after all seven deliberately — every grammar above encodes a
   // VERIFIED keystroke recipe for a dialog it recognises, and this one only knows what the screen
   // printed. It must never pre-empt them; it exists to catch what they decline (the `/model` picker),
   // where the alternative is no buttons at all and a composer send typed into the picker.
@@ -91,14 +156,17 @@ export function claudeBuildBlocks(lines: StyledLine[]): Block[] {
   }
 
   // The COMPLETION POPUP (autocomplete.ts) — the one non-raw block that is not a dialog. It runs last
-  // because it is the least specific tail shape, and it is gated on `hasInputBox` because that is what
-  // separates a live composer with a popup under it from a modal: `stripChrome` below has already had
-  // to find the same box (it peels this very run to reach it), so the two answers cannot disagree.
+  // because it is the least specific tail shape, and it is gated on the input box's tail being
+  // CLASSIFIED as the popup (chrome.ts), because that is what separates a live composer with a popup
+  // under it from a modal, and from popup-shaped rows under a box whose draft is not a slash command.
+  // `stripChrome` below has already had to find the same box and the same tail, so the two answers
+  // cannot disagree.
   //
   // The transcript above stays raw and the box stays stripped, exactly as on any other idle screen —
   // the popup is simply lifted out of the mirror, where a 220-column list soft-wrapped into an
-  // unreadable wall on a phone, and rendered as a list.
-  if (hasInputBox(lines)) {
+  // unreadable wall on a phone, and rendered as a list. An `unknown` tail gets no block of its own: it
+  // is left on the raw mirror by stripChrome, below the transcript.
+  if (inputBoxTail(lines) === "autocomplete") {
     const autoRegion = detectAutocompleteRegion(lines);
     if (autoRegion) {
       const before = reflowSoftWraps(trimTrailingBlank(stripChrome(lines)));
@@ -116,20 +184,54 @@ export function claudeBuildBlocks(lines: StyledLine[]): Block[] {
   return [{ kind: "raw", lines: reflowSoftWraps(stripChrome(lines)) }];
 }
 
-export { extractStatusLines, extractInputDraft };
+export { extractStatusLines, extractAgentsFooter, extractInputDraft };
+
+// How many of the screen's last non-blank rows may carry a modal's mark. A footer wraps onto at most
+// three rows (menu-hints MAX_FOOTER_ROWS), and a hint can sit a row or two above it.
+const MODAL_HINT_ROWS = 6;
+
+// A select's live pointer on a numbered row ("❯ 1. Yes"), and a bare "Press Enter to continue" style
+// prompt, whose key token `namesAMenuKey` does not take. Either is a modal a shell prompt never is.
+const POINTED_OPTION_ROW = /^\s*❯\s*\d+\.\s+\S/;
+const PRESS_KEY_PROMPT = /\bpress\s+(?:enter|esc|escape|any key)\b/i;
+
+/** Whether the screen's last non-blank rows show a Claude modal: a row naming a key the way a modal's
+ *  footer does, a pointed numbered option, or a "Press Enter" prompt. */
+function tailNamesAKey(lines: StyledLine[]): boolean {
+  const rows: string[] = [];
+  for (let i = lines.length - 1; i >= 0 && rows.length < MODAL_HINT_ROWS; i--) {
+    const text = lineText(lines[i]!);
+    if (text.trim() !== "") rows.push(text);
+  }
+  const texts = lines.map(lineText);
+  return rows.some((t) => namesAModalKey(t, texts) || POINTED_OPTION_ROW.test(t) || PRESS_KEY_PROMPT.test(t));
+}
 
 export const claudeAdapter: HarnessAdapter = {
   agent: "claude",
   buildBlocks: claudeBuildBlocks,
   extractStatusLines,
+  extractAgentsFooter,
   extractInputDraft,
   // The reply path's pre-flight: Claude's input box is exactly what `hasInputBox` finds, and its
   // absence is exactly the condition under which typing lands in a modal instead (#34's shape).
   composerReady: hasInputBox,
+  // The way OUT of a Claude modal, for the unread-dialog card (.adr/0053). Every Claude footer that
+  // names one names `Esc to cancel` — the `/model` picker, the rewind screen, the config screens and
+  // the `/effort` slider all print it, and `claude/markers.ts` treats the phrase as background chrome
+  // precisely because it is on so many of them.
+  cancelKey: "Escape",
+  // Every Claude modal the card has ever been right about names a key in its last rows: "Esc to
+  // cancel", "Esc to close", "enter to return", "Enter to select" (the allow-list in
+  // unread-dialog.test.ts), and a missed select still shows its `❯ N.` pointer. The shell prompt
+  // under a starting or exiting Claude shows none of these.
+  modalOnScreen: tailNamesAKey,
   // Long sends never appear in the box as themselves — Claude collapses them into `[Pasted text #N
   // +M lines]` — so the reply guard's literal match can't verify them and the send stalls. These two
   // read that token: as send evidence when it's consistent with what we typed (.adr/0010), and as
   // "this isn't the user's text" for the stranded-draft preview's Take over.
   draftCarriesSend: pasteCarriesSend,
   draftIsOpaque: isPastePlaceholderOnly,
+  // A send long enough to collapse goes as one bracketed paste; see `collapsesAsPaste`.
+  bracketedPaste: collapsesAsPaste,
 };

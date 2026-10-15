@@ -1,3 +1,4 @@
+import type { HostControlPort } from "../host-control/types.ts";
 // The mux registry — the SINGLE decision site for "which multiplexer is this collie driving".
 //
 // Maps a configured mux name to the factory that builds its adapter. Adding a multiplexer is one
@@ -19,8 +20,12 @@
 // that and neither axis is pluggable any more.
 
 import type { BeaconMatcher } from "../beacon/decorate.ts";
+import type { HostCandidate, HostProbe } from "./host-candidates.ts";
+import { durableMuxFactory } from "./durable/adapter.ts";
 import { herdrMuxFactory } from "./herdr/adapter.ts";
+import { ternMuxFactory } from "./tern/adapter.ts";
 import { tmuxMuxFactory } from "./tmux/adapter.ts";
+import { tuiosMuxFactory } from "./tuios/adapter.ts";
 import { zellijMuxFactory } from "./zellij/adapter.ts";
 import type { MuxAdapter } from "./types.ts";
 
@@ -78,6 +83,25 @@ export interface MuxAdapterFactory {
    * nothing here may spawn, dial or probe. Absent means the endpoint speaks for itself.
    */
   describeTarget?(endpoint: string): string;
+  /**
+   * The ssh targets this multiplexer already knows about, offered to the operator as candidates for
+   * `collie crew add` (ADR 0036 (c)) — or absent when this multiplexer links no machines.
+   *
+   * **ABSENT IS A REAL ANSWER and it is the tmux and zellij case**, exactly as with
+   * {@link beaconMatcher}: neither one has a machine list at all, so neither one offers candidates,
+   * and there is nothing for them to implement. The field's presence is precisely "this multiplexer
+   * keeps a list of machines".
+   *
+   * On the FACTORY and not on the built adapter, because the answer is not a pane question. A
+   * {@link MuxAdapter} never sees a host, in any parameter or any return shape (ADR 0022, ADR 0036),
+   * and a host list on that interface would put the host axis inside the one seam that must never
+   * grow one. It takes a {@link HostProbe} rather than a {@link MuxTarget} for the same reason: this
+   * reads the multiplexer's CLIENT-side configuration, which is not addressed by an endpoint.
+   *
+   * Read-only and total. Collie never writes a multiplexer's own endpoint state, and a provider whose
+   * tool is missing or broken returns no candidates rather than throwing — see {@link HostProbe}.
+   */
+  hostCandidates?(probe: HostProbe): readonly HostCandidate[];
 }
 
 /**
@@ -87,7 +111,32 @@ export interface MuxAdapterFactory {
  * Deliberately a list of factories and not a map — the map is derived below, so a key can never
  * drift from the factory it points at.
  */
-export const MUX_ADAPTERS: readonly MuxAdapterFactory[] = [herdrMuxFactory, tmuxMuxFactory, zellijMuxFactory];
+export const MUX_ADAPTERS: readonly MuxAdapterFactory[] = [herdrMuxFactory, ternMuxFactory, tmuxMuxFactory, zellijMuxFactory, tuiosMuxFactory, durableMuxFactory];
+
+/** One provider's answer, tagged with the multiplexer it came from — the row's source. */
+export interface MuxHostCandidates {
+  readonly mux: string;
+  readonly candidates: readonly HostCandidate[];
+}
+
+/**
+ * Every registered multiplexer's candidate ssh targets, in registry order.
+ *
+ * Asked of every factory rather than of the CONFIGURED one, on purpose: the question is "what does
+ * this machine already know about other machines", which does not change with the multiplexer Collie
+ * happens to be driving. A factory with no {@link MuxAdapterFactory.hostCandidates} is skipped
+ * without being called, and a provider whose tool is absent answers with an empty list — so the
+ * common case costs nothing and no name is branched on above this line.
+ */
+export function muxHostCandidates(probe: HostProbe): readonly MuxHostCandidates[] {
+  const answers: MuxHostCandidates[] = [];
+  for (const factory of MUX_ADAPTERS) {
+    if (factory.hostCandidates === undefined) continue;
+    const candidates = factory.hostCandidates(probe);
+    if (candidates.length > 0) answers.push({ mux: factory.mux, candidates });
+  }
+  return answers;
+}
 
 /**
  * The name a bridge falls back to when its environment carries no `COLLIE_MUX` at all.
@@ -184,4 +233,12 @@ export function createMux(
     throw new Error(`unknown multiplexer "${name}" — this build drives: ${muxNames(registry).join(", ") || "none"}`);
   }
   return factory.create(target);
+}
+
+/** Provider selection stays at the mux registry seam; declaration never implies administration support. */
+export function hostControlForMux(name: string): HostControlPort | undefined {
+  // Administration is bound to a runtime adapter instance and its verified endpoint witness.
+  // A mux name alone cannot establish which host/server would receive a write.
+  void name;
+  return undefined;
 }

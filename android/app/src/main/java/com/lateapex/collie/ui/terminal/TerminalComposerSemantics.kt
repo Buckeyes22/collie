@@ -33,11 +33,46 @@ object TerminalComposerSemantics {
         val rawLines = tail.replace("\r\n", "\n").replace('\r', '\n').split('\n')
         return when (agent?.trim()?.lowercase()) {
             "claude" -> claudeDraft(rawLines, lines)
-            "codex" -> codexDraft(tail, lines)
+            "codex" -> CodexComposer.locate(tail)?.draft()?.let(::TerminalDraft)
+            "pi" -> PiComposer.locate(tail)?.draft()?.let(::TerminalDraft)
             "grok" -> grokDraft(lines)
             "agy", "antigravity" -> agyDraft(lines)
+            "muse" -> museDraft(tail)
             else -> null
         }
+    }
+
+    /** Muse's measured `Voice / ❯ draft / rule / status` tail, including opaque paste tokens. */
+    private fun museDraft(tail: String): TerminalDraft? {
+        val lines = TerminalPlainText.strip(tail).replace("\r\n", "\n").replace('\r', '\n')
+            .split('\n').map(String::trimEnd)
+        if (AgentSemanticParser.detect("muse", tail, revision = 0) != null) return null
+        val status = lines.indexOfLast(String::isNotBlank)
+        if (status < 3 || !MUSE_STATUS.matches(lines[status])) return null
+        val bottom = status - 1
+        if (!MUSE_RULE.matches(lines[bottom])) return null
+
+        var prompt = bottom - 1
+        var walked = 0
+        while (prompt >= 0 && walked++ < MAX_SCAN_LINES &&
+            (lines[prompt].isBlank() || lines[prompt].startsWith("  "))
+        ) prompt--
+        if (prompt < 1 || !MUSE_PROMPT.matches(lines[prompt])) return null
+        if (!MUSE_VOICE.matches(lines[prompt - 1])) return null
+
+        val parts = mutableListOf<String>()
+        MUSE_PROMPT.matchEntire(lines[prompt])?.groupValues?.get(1)?.trim()
+            ?.takeIf(String::isNotEmpty)?.let(parts::add)
+        for (index in prompt + 1 until bottom) {
+            val row = lines[index]
+            if (row.isBlank()) continue
+            if (!row.startsWith("  ")) return null
+            row.trim().takeIf(String::isNotEmpty)?.let(parts::add)
+        }
+        val draft = parts.joinToString(" ").trim()
+        if (draft.isEmpty()) return null
+        val compact = draft.replace(Regex("\\s+"), "")
+        return TerminalDraft(draft, opaque = MUSE_PASTE_TOKEN.containsMatchIn(compact))
     }
 
     private fun claudeDraft(rawLines: List<String>, lines: List<String>): TerminalDraft? {
@@ -107,29 +142,6 @@ object TerminalComposerSemantics {
         return -1
     }
 
-    private fun codexDraft(rawTail: String, lines: List<String>): TerminalDraft? {
-        val status = lines.indexOfLast(String::isNotBlank)
-        val rawLines = rawTail.replace("\r\n", "\n").replace('\r', '\n').split('\n')
-        if (status < 0 || !CodexStatusRow.matches(rawLines.getOrNull(status) ?: return null)) return null
-        var cursor = status - 1
-        while (cursor >= 0 && lines[cursor].isBlank()) cursor--
-        val end = cursor
-        var walked = 0
-        while (cursor >= 0 && walked++ < MAX_SCAN_LINES) {
-            val row = lines[cursor]
-            if (row.trimStart().startsWith("›")) {
-                val head = row.trimStart().removePrefix("›").trim()
-                val parts = mutableListOf(head)
-                for (index in cursor + 1..end) parts += lines[index].trim()
-                val draft = parts.filter(String::isNotEmpty).joinToString(" ")
-                return draft.takeIf(String::isNotEmpty)?.let(::TerminalDraft)
-            }
-            if (row.isBlank() || !row.startsWith("  ")) return null
-            cursor--
-        }
-        return null
-    }
-
     private fun grokDraft(lines: List<String>): TerminalDraft? {
         val last = lines.indexOfLast(String::isNotBlank)
         if (last < 0) return null
@@ -175,6 +187,11 @@ object TerminalComposerSemantics {
     private val GROK_BOTTOM = Regex("^\\s*╰─+\\s+[\\s\\S]+?\\s+─╯$")
     private val GROK_INNER = Regex("^\\s*│ ([\\s\\S]*)│$")
     private val GROK_PROMPT = Regex("^\\s*│ ❯([\\s\\S]*)│$")
+    private val MUSE_RULE = Regex("^[─━═-]{8,}$")
+    private val MUSE_VOICE = Regex("^─{2,} Voice input \\(.*\\) ─{8,}$")
+    private val MUSE_STATUS = Regex("^  \\S.*·.*$")
+    private val MUSE_PROMPT = Regex("^❯ ?(.*)$")
+    private val MUSE_PASTE_TOKEN = Regex("\\[PastedContent\\d+chars\\]")
 }
 
 class StableTerminalDraft(private val now: () -> Long) {

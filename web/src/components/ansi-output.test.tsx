@@ -1,10 +1,119 @@
-import { describe, expect, it } from "vitest";
-import { render } from "@testing-library/react";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, waitFor } from "@testing-library/react";
 import type { ComponentProps } from "react";
+import { MemoryRouter } from "react-router";
 
+import { http, HttpResponse } from "msw";
 import { AnsiOutput } from "./ansi-output";
+import { FileLinksProvider } from "./file-links";
+import { paneLinkHandlers, PaneFileLinks, testFileOpener } from "@/test/file-links";
+import { server } from "@/test/setup";
+import { codexPaddingScreen } from "@/test/codex-padding";
 
 const ESC = "\x1b";
+const MUTED_RULE_COLOUR = "var(--terminal-muted-fg, #a1a1a1)"; // dark half as the fallback
+
+// The mirror is shared by every harness. What it does per harness comes through the adapter registry
+// (`adapterFor(agent)?.prepareDisplay`), so it must not import a harness module of its own.
+describe("ansi-output's harness boundary", () => {
+  it("imports nothing from a lib/harness/<name>/ module", () => {
+    const source = readFileSync(join(import.meta.dirname, "ansi-output.tsx"), "utf8");
+    const imports = [...source.matchAll(/from\s+"([^"]+)"/g)].map((m) => m[1]!);
+    expect(imports.filter((spec) => /lib\/harness\/[^"]+/.test(spec))).toEqual([]);
+  });
+});
+
+describe("Grok's phone display", () => {
+  const captured = readFileSync(
+    join(import.meta.dirname, "..", "fixtures", "panes", "grok--output-scrollbar.txt"),
+    "utf8",
+  );
+
+  it("shows the reply without terminal padding or the scrollbar's empty viewport rows", () => {
+    const { container } = render(
+      <AnsiOutput text={captured} agent="grok" query="GB_BROWSER_RENDER_END" currentMatch={0} />,
+    );
+    const pre = container.querySelector("pre")!;
+    expect(pre.textContent).toContain("GB_BROWSER_RENDER_BEGIN");
+    expect(pre.textContent).toContain("GB_BROWSER_RENDER_END");
+    expect(pre.textContent).not.toContain("█");
+    expect(pre.textContent).not.toMatch(/\n(?: *\n){3}/);
+    expect(pre.textContent).not.toMatch(/ {10,}(?:\n|$)/);
+    expect(pre.querySelector('[data-find-match="current"]')!.textContent).toBe("GB_BROWSER_RENDER_END");
+    expect([...pre.querySelectorAll("span")].some(
+      (s) => s.style.backgroundColor === "rgb(28, 28, 28)" && s.textContent!.trim() !== "",
+    )).toBe(true);
+  });
+
+  it("applies screen-row hiding before compacting Grok's display", () => {
+    const { container } = render(<AnsiOutput text={captured} agent="grok" hideLeadingLines={20} />);
+    const pre = container.querySelector("pre")!;
+    expect(pre.textContent).toContain("Help improve Grok");
+    expect(pre.textContent).not.toContain("const message");
+    expect(pre.textContent).not.toMatch(/ {10,}(?:\n|$)/);
+  });
+
+  it("keeps a typed block and its meaningful background while dropping only right padding", () => {
+    const text = [
+      `${ESC}[48;2;36;36;36m literal ${ESC}[38;2;225;225;225m█${ESC}[0m          `,
+      "  ╭────────────────────────────────────────╮",
+      "  │ ❯                                      │",
+      "  ╰──────────────────── Grok 4.7 (high) ─╯",
+      "",
+      "  Shift+Tab:mode  │  Ctrl+.:shortcuts",
+    ].join("\n");
+    const { container } = render(<AnsiOutput text={text} agent="grok" />);
+    const pre = container.querySelector("pre")!;
+    expect(pre.textContent).toBe(" literal █");
+    expect([...pre.querySelectorAll("span")].some(
+      (s) => s.style.backgroundColor === "rgb(36, 36, 36)",
+    )).toBe(true);
+  });
+
+  // A run of coloured blanks after text is a swatch, not padding: no text on the row wears that
+  // colour, so it is the content. Only blanks on the canvas, or in a colour the row's own text sits
+  // on (a code block's fill), are padding.
+  it("keeps trailing blanks in a colour no text on the row uses", () => {
+    const text = [
+      `${ESC}[48;2;20;20;20mswatch:${ESC}[48;2;200;30;30m   ${ESC}[48;2;20;20;20m          ${ESC}[0m`,
+      "  ╭────────────────────────────────────────╮",
+      "  │ ❯                                      │",
+      "  ╰──────────────────── Grok 4.7 (high) ─╯",
+      "",
+      "  Shift+Tab:mode  │  Ctrl+.:shortcuts",
+    ].join("\n");
+    const { container } = render(<AnsiOutput text={text} agent="grok" />);
+    const pre = container.querySelector("pre")!;
+    expect(pre.textContent).toBe("swatch:   ");
+    expect([...pre.querySelectorAll("span")].some(
+      (s) => s.style.backgroundColor === "rgb(200, 30, 30)" && s.textContent === "   ",
+    )).toBe(true);
+  });
+
+  it("keeps a painted dark block when it belongs to colored message text, not canvas padding", () => {
+    const text = [
+      `${ESC}[48;2;20;20;20m${ESC}[38;2;225;225;225m literal   ${ESC}[38;2;25;25;25m${ESC}[48;2;25;25;25m█${ESC}[0m`,
+      "  ╭────────────────────────────────────────╮",
+      "  │ ❯                                      │",
+      "  ╰──────────────────── Grok 4.7 (high) ─╯",
+      "",
+      "  Shift+Tab:mode  │  Ctrl+.:shortcuts",
+    ].join("\n");
+    const { container } = render(<AnsiOutput text={text} agent="grok" />);
+    expect(container.querySelector("pre")!.textContent).toBe(" literal   █");
+  });
+
+  it.each([
+    { agent: "grok", grammars: false, wrap: true },
+    { agent: "grok", grammars: true, wrap: false },
+    { agent: undefined, grammars: true, wrap: true },
+  ])("keeps column-faithful output outside Grok's wrapped normal view ($agent, $grammars, $wrap)", (props) => {
+    const { container } = render(<AnsiOutput text={captured} {...props} />);
+    expect(container.querySelector("pre")!.textContent).toContain("█");
+  });
+});
 
 // The mirror renders in DARK space under every theme, and the light theme inverts it wholesale
 // (.adr/0002). These guard the two ways that arrangement silently breaks.
@@ -42,8 +151,6 @@ describe("terminal mirror colour space", () => {
       (s) => s.textContent?.includes(has) && s.querySelector("span") === null,
     );
 
-  const MUTED_RULE_COLOUR = "rgb(161, 161, 161)"; // #a1a1a1, --muted-foreground's dark half
-
   it("keeps muted rule glyphs on a literal dark-space grey", () => {
     const span = leafSpan(mirror("├────────────┤\n"), "─");
     expect(span).toBeDefined();
@@ -68,10 +175,123 @@ describe("terminal mirror colour space", () => {
   });
 });
 
+// The mirror must stay selectable on the phone. An installed iOS PWA (display:standalone) suppresses
+// long-press selection app-wide unless an element opts back in with -webkit-user-select:text — so
+// without these the operator can't select-and-copy the terminal text on the phone at all (the pane
+// menu's "Copy output" is the one-tap alternative). Pinned as the classes that PRODUCE the behaviour,
+// the way the colour-space tests above are, since jsdom runs no selection.
+describe("terminal mirror text selection (mobile copy)", () => {
+  it("opts the <pre> back into text selection, both spellings", () => {
+    const { container } = render(<AnsiOutput text="hello" />);
+    const pre = container.querySelector("pre")!;
+    expect(pre.className).toContain("select-text");
+    expect(pre.className).toContain("[-webkit-user-select:text]");
+  });
+});
+
+// Native mirrors (muse in .adr/0047) skip the light-theme inversion: the palette reads raw on
+// the reference ground, while inversion drops body text to ~2:1. opencode is NOT one: on its
+// dark background answer the body is rgb(238,238,238), 1.13:1 raw against 17.32:1 inverted.
+// The <pre> carries the
+// reference ground in light and dark-space halves under `dark:`, and only bright foregrounds —
+// unreadable on white — resolve dark through a light-gated custom property.
+describe("native mirror (muse)", () => {
+  // `grammars={false}` throughout this block, and it is the point rather than a workaround: the
+  // native display pass is PRESENTATION, not a grammar, so it is gated on the native-mirror
+  // predicate and runs with the adapter switched off (.adr/0047, harness/index.ts). Leaving grammars
+  // on would also hand these one-line fragments to the M34 post-pass — a pane with no composer on it
+  // is the unread-dialog card's screen (.adr/0053) — and the `<pre>` found below would be the card's
+  // own mirror rather than the block renderer's.
+  function nativePre(text: string, agent?: string) {
+    const { container } = render(<AnsiOutput text={text} agent={agent} grammars={false} />);
+    return container.querySelector("pre")!;
+  }
+
+  it.each([["muse"]])("renders %s on the reference ground with no inversion filter", (agent) => {
+    const pre = nativePre("hello", agent);
+    expect(pre.className).toContain("terminal-muse");
+    expect(pre.className).toContain("bg-[#fffbf8]");
+    expect(pre.className).toContain("text-[#0a0a0a]");
+    expect(pre.className).toContain("dark:bg-[#0a0a0a]");
+    expect(pre.className).toContain("dark:text-[#fafafa]");
+    expect(pre.className).not.toContain("invert(1)");
+  });
+
+  // The per-pane override (lib/mirror-invert.ts) is the seam ADR 0002 reserved, and it is what
+  // actually serves a light-themed opencode or codex pane. It wins in BOTH directions.
+  it("renders natively when the pane opts in, against the agent bit", () => {
+    for (const agent of ["opencode", "codex", undefined]) {
+      const { container } = render(
+        <AnsiOutput text="hello" agent={agent} nativeMirror grammars={false} />,
+      );
+      const pre = container.querySelector("pre")!;
+      expect(pre.className).toContain("bg-[#fffbf8]");
+      expect(pre.className).not.toContain("invert(1)");
+    }
+  });
+
+  it("inverts when the pane opts out, even for a native agent", () => {
+    const { container } = render(
+      <AnsiOutput text="hello" agent="muse" nativeMirror={false} grammars={false} />,
+    );
+    const pre = container.querySelector("pre")!;
+    expect(pre.className).toContain("[filter:invert(1)_hue-rotate(180deg)]");
+    expect(pre.className).not.toContain("bg-[#fffbf8]");
+  });
+
+  it("keeps inverting every other agent", () => {
+    // "Muse" and "muse-code" pin the exactness: near-miss strings must not engage (#99).
+    for (const agent of [undefined, "shell", "codex", "opencode", "Muse", "muse-code"]) {
+      const pre = nativePre("hello", agent);
+      expect(pre.className).not.toContain("terminal-muse");
+      expect(pre.className).toContain("[filter:invert(1)_hue-rotate(180deg)]");
+    }
+  });
+
+  it("marks muted spans for the light-gated chrome rule", () => {
+    const pre = nativePre("─".repeat(12), "muse");
+    const span = [...pre.querySelectorAll("span")].find((s) => s.textContent!.includes("─"));
+    expect(span!.className).toContain("terminal-muted");
+    expect(span!.style.color).toBe(MUTED_RULE_COLOUR);
+  });
+
+  it("resolves bright foregrounds through the light-gated property, dark untouched", () => {
+    const pre = nativePre(`${ESC}[38;2;250;250;249mbright${ESC}[0m`, "muse");
+    const span = [...pre.querySelectorAll("span")].find((s) => s.textContent === "bright");
+    expect(span!.className).toContain("terminal-light-dark-fg");
+    // Emitted colour stays the fallback: dark defines nothing, so it stands. (jsdom keeps
+    // the parser's spaceless rgb() inside var(); browsers parse either spelling.)
+    expect(span!.style.color).toBe("var(--terminal-light-dark-fg, rgb(250,250,249))");
+  });
+
+  it("leaves Muse's dark body tones raw", () => {
+    const pre = nativePre(`${ESC}[38;2;111;114;122mbody${ESC}[0m`, "muse");
+    const span = [...pre.querySelectorAll("span")].find((s) => s.textContent === "body");
+    expect(span!.className).not.toContain("terminal-light-dark-fg");
+    expect(span!.style.color).toBe("rgb(111, 114, 122)");
+  });
+
+  it.each([["muse"]])("paints the current find match for %s without the cancelling filter", (agent) => {
+    const text = `${ESC}[38;2;111;114;122mfind the needle${ESC}[0m`;
+    const { container } = render(
+      <AnsiOutput text={text} query="needle" currentMatch={0} agent={agent} grammars={false} />,
+    );
+    const match = container.querySelector('[data-find-match="current"]')!;
+    expect(match.className).toContain("bg-yellow-400");
+    expect(match.className).toContain("text-black");
+    expect(match.className).not.toContain("invert(1)");
+  });
+
+  it("keeps the cancelling filter on current matches elsewhere", () => {
+    const { container } = render(<AnsiOutput text="find the needle" query="needle" currentMatch={0} />);
+    const match = container.querySelector('[data-find-match="current"]')!;
+    expect(match.className).toContain("[filter:invert(1)_hue-rotate(180deg)]");
+  });
+});
+
 // Wrap defaults ON (#53): the mirror is mostly agent prose and a phone shows far fewer columns than
-// the desktop width panes are spawned at. The no-wrap branch is still the right rendering for TUI
-// tables and box drawing, but it is now reachable ONLY through the View toggle — so it is exactly
-// the kind of code a later refactor can drop without any test noticing.
+// the desktop width panes are spawned at. Structural clipping applies only in this wrap-on path;
+// with View's Wrap off, the full pre pans instead, so both paths need coverage.
 describe("mirror line wrapping", () => {
   function preFor(props: Partial<ComponentProps<typeof AnsiOutput>>) {
     const { container } = render(<AnsiOutput text="a very long line" {...props} />);
@@ -91,10 +311,27 @@ describe("mirror line wrapping", () => {
     expect(cls).not.toContain("whitespace-pre-wrap");
   });
 
-  it("keeps a marked ANSI border to one clipped row without changing its text, styles, links, or find offsets", () => {
-    const border = `  ${"─".repeat(20)}  `;
-    const text = `ordinary prose\n${ESC}[41m${border.slice(0, 12)}${ESC}[44m${border.slice(12)}${ESC}[0m\nsee https://herdr.dev/docs\n`;
-    const { container } = render(<AnsiOutput text={text} query="───" />);
+  it("rebalances rewrapped lines against orphans while wrapping", () => {
+    const cls = preFor({}).className;
+    expect(cls).toContain("text-pretty");
+    // ...and off the panning path: a column-faithful pan breaks nothing at all.
+    expect(preFor({ wrap: false }).className).not.toContain("text-pretty");
+  });
+
+  it("keeps a live-shaped ANSI labelled rule clipped while muting only its rule runs", () => {
+    const purple = "rgb(209, 131, 232)";
+    const leadBg = "rgb(24, 25, 26)";
+    const labelBg = "rgb(27, 28, 29)";
+    const url = "https://herdr.dev/docs";
+    const tail = "─".repeat(20);
+    const visibleRule = `── ⠴ Working ${url} ${tail}`;
+    const rule =
+      `${ESC}[0m${ESC}[38;2;209;131;232;48;2;24;25;26m── ⠴${ESC}[0m ` +
+      `${ESC}[0m${ESC}[38;2;209;131;232;48;2;27;28;29mWorking ${url} ${tail}${ESC}[0m`;
+    const text = `ordinary prose\n${rule}\n`;
+    const visibleText = `ordinary prose\n${visibleRule}\n`;
+    const query = `${url} ─`; // crosses the label → tail split introduced by structural refinement
+    const { container, rerender } = render(<AnsiOutput text={text} query={query} currentMatch={0} agent="pi" />);
     const pre = container.querySelector("pre")!;
     // `span.overflow-hidden`, not `span.inline-block`: the table-run scroller is an inline-block too.
     const clipped = pre.querySelector("span.overflow-hidden")!;
@@ -107,17 +344,66 @@ describe("mirror line wrapping", () => {
     expect(clipped.className).toContain("whitespace-pre");
     expect(clipped.className).not.toContain("whitespace-nowrap");
     expect(clipped.className).toContain("break-normal");
-    expect(clipped.textContent).toBe(border);
-    expect(clipped.children).toHaveLength(2);
-    // SAFETY: `children` is typed `Element`, but the mirror renders every segment as a <span> with
-    // an inline style — which is exactly what these two lines assert. Two assertions, two reasons,
-    // same reason.
-    const [first, second] = [clipped.children[0] as HTMLElement, clipped.children[1] as HTMLElement];
-    expect(first.style.backgroundColor).toBe("var(--ansi-1)");
-    expect(second.style.backgroundColor).toBe("var(--ansi-4)");
-    expect(clipped.querySelector("[data-find-match]")).not.toBeNull();
-    expect(pre.querySelector("a")?.textContent).toBe("https://herdr.dev/docs");
-    expect(pre.textContent).toBe(`ordinary prose\n${border}\nsee https://herdr.dev/docs\n`);
+    // Firefox must not restore LINK_CLASS's break-all inside a no-wrap row.
+    expect(clipped.className).toContain("[&_a]:break-normal");
+    expect(clipped.textContent).toBe(visibleRule);
+    expect(clipped.children).toHaveLength(5);
+    // SAFETY: `children` is typed Element, but these five nodes are the renderer's segment spans.
+    const [lead, spinner, separator, label, trailing] = [...clipped.children] as HTMLElement[];
+    expect(lead.style.color).toBe(MUTED_RULE_COLOUR);
+    expect(lead.style.fontWeight).toBe("400");
+    expect(lead.style.opacity).toBe("1");
+    expect(lead.style.backgroundColor).toBe(leadBg);
+    expect(spinner.style.color).toBe(purple);
+    expect(spinner.style.backgroundColor).toBe(leadBg);
+    expect(separator.style.color).toBe("");
+    expect(label.style.color).toBe(purple);
+    expect(label.style.backgroundColor).toBe(labelBg);
+    expect(trailing.style.color).toBe(MUTED_RULE_COLOUR);
+    expect(trailing.style.fontWeight).toBe("400");
+    expect(trailing.style.opacity).toBe("1");
+    expect(trailing.style.backgroundColor).toBe(labelBg);
+    const anchor = clipped.querySelector("a")!;
+    expect(anchor.getAttribute("href")).toBe(url);
+    expect(anchor.getAttribute("target")).toBe("_blank");
+    expect(anchor.getAttribute("rel")).toBe("noopener noreferrer");
+    expect(anchor.className).toContain("underline");
+    expect(anchor.className).toContain("cursor-pointer");
+    expect(anchor.className).toContain("py-[0.35em]");
+    const match = anchor.querySelector('[data-find-match="current"]')!;
+    expect(match.textContent).toBe(url);
+    const offsetsOf = (selector: string) => {
+      const walker = document.createTreeWalker(pre, NodeFilter.SHOW_TEXT);
+      const offsets: number[] = [];
+      let offset = 0;
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        if (node.parentElement?.closest(selector) && !offsets.includes(offset)) offsets.push(offset);
+        offset += node.textContent!.length;
+      }
+      return offsets;
+    };
+    expect(offsetsOf('[data-find-match]')).toEqual([
+      visibleText.indexOf(url),
+      visibleText.indexOf(url) + url.length,
+      visibleText.indexOf(url) + url.length + 1,
+    ]);
+    expect(offsetsOf("a")).toEqual([visibleText.indexOf(url)]);
+    const textNodes = document.createTreeWalker(clipped, NodeFilter.SHOW_TEXT);
+    const nodes: Node[] = [];
+    for (let node = textNodes.nextNode(); node; node = textNodes.nextNode()) nodes.push(node);
+    const selection = document.getSelection()!;
+    const range = document.createRange();
+    range.setStart(nodes[0]!, 0);
+    range.setEnd(nodes.at(-1)!, nodes.at(-1)!.textContent!.length);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    expect(selection.toString()).toBe(visibleRule);
+    selection.removeAllRanges();
+    expect(pre.textContent).toBe(visibleText);
+
+    rerender(<AnsiOutput text={text} query={query} currentMatch={0} agent="pi" wrap={false} />);
+    expect(container.querySelector("span.overflow-hidden")).toBeNull();
+    expect(container.querySelector("pre")!.textContent).toBe(visibleText);
   });
 
   it("clips a plain border only while wrapping, leaving ordinary output and wrap-off panning alone", () => {
@@ -136,11 +422,15 @@ describe("mirror line wrapping", () => {
     expect(pannedPre.querySelector("span.overflow-hidden")).toBeNull();
     expect(pannedPre.textContent).toBe(`${border}\n`);
   });
-  it("clips Codex's labelled rules and tags only its terminal-wide user fill for mobile transparency", () => {
+  it("tags only Codex's terminal-wide user fill for mobile transparency", () => {
     const user = `${ESC}[48;2;240;240;240m› submitted message${" ".repeat(32)}${ESC}[0m`;
     const diff = `${ESC}[48;2;33;58;43m+ semantic diff${ESC}[0m`;
-    const rule = `─ Worked for 31m ${"─".repeat(32)}`;
-    const { container } = render(<AnsiOutput text={`${user}\n${diff}\n${rule}\n`} agent="codex" />);
+    // The mark is gated on the codex adapter, so grammars stay ON — which means the fragment has to
+    // be a plausible codex pane. Without a composer on screen the M34 post-pass answers with the
+    // unread-dialog card instead of the mirror (.adr/0053), and the marked span would never render.
+    const { container } = render(
+      <AnsiOutput text={`${user}\n${diff}\n${codexPaddingScreen}`} agent="codex" />,
+    );
     // SAFETY: the marked segment is a <span> the renderer just produced, so querySelector on the
     // class it only ever sets on a span returns an HTMLElement or null; the assertions below
     // dereference it and would fail loudly on null.
@@ -156,7 +446,6 @@ describe("mirror line wrapping", () => {
     )!;
     expect(diffSpan.classList.contains("terminal-mobile-transparent-bg")).toBe(false);
     expect(diffSpan.getAttribute("style")).toContain("rgb(33, 58, 43)");
-    expect(container.querySelector("span.inline-block")?.textContent).toBe(rule);
   });
 
   it("does not suppress the same ANSI background for an unknown agent", () => {
@@ -364,6 +653,31 @@ describe("clickable links in the mirror", () => {
     expect(anchors.map((a) => a.textContent).join("")).toBe("https://herdr.dev/docs");
   });
 
+  // The mirror renders the *grid*, so a URL longer than the pane arrives cut at the column edge: one
+  // anchor with a truncated href, and the rest of the URL as inert text. The logical read the bridge
+  // sends for exactly that case is what turns the fragments back into the one URL they were.
+  it("links every fragment of a wrapped URL to the whole URL, when the logical text is there", () => {
+    const pre = mirror({
+      text: "run this:\nhttps://a.dev/auth?client=1&s\ntate=y then\n",
+      logicalText: "run this:\nhttps://a.dev/auth?client=1&state=y then\n",
+    });
+    const anchors = [...pre.querySelectorAll("a")];
+    expect(anchors.map((a) => a.getAttribute("href"))).toEqual([
+      "https://a.dev/auth?client=1&state=y",
+      "https://a.dev/auth?client=1&state=y",
+    ]);
+    expect(anchors.map((a) => a.textContent).join("")).toBe("https://a.dev/auth?client=1&state=y");
+    // Faithfulness is not negotiable: the rows are still exactly what the terminal printed.
+    expect(pre.textContent).toBe("run this:\nhttps://a.dev/auth?client=1&s\ntate=y then\n");
+  });
+
+  it("keeps the fragment truncated when no logical text came with it", () => {
+    const pre = mirror({ text: "https://a.dev/auth?client=1&s\ntate=y then\n" });
+    expect([...pre.querySelectorAll("a")].map((a) => a.getAttribute("href"))).toEqual([
+      "https://a.dev/auth?client=1&s",
+    ]);
+  });
+
   // Find and links split the same coordinate space; the order they nest in is the easy thing to get
   // wrong, and getting it wrong drops one of them.
   it("still highlights a find match inside a link", () => {
@@ -379,6 +693,7 @@ describe("clickable links in the mirror", () => {
   it("underlines in currentColor rather than a fixed colour", () => {
     const a = mirror({ text: "https://herdr.dev\n" }).querySelector("a")!;
     expect(a.className).toContain("underline");
+    expect(a.className).toContain("break-all");
     expect(a.className).not.toMatch(/decoration-\[#/);
   });
 
@@ -392,5 +707,258 @@ describe("clickable links in the mirror", () => {
     const a = mirror({ text: "https://herdr.dev\n" }).querySelector("a")!;
     expect(a.className).toContain("py-[0.35em]");
     expect(a.className).not.toMatch(/\bpy-\[[\d.]+px\]/);
+  });
+});
+
+// ── Terminal graphics (Kitty placeholders) ───────────────────────────────────
+// The terminal painted the pixels itself and left a rectangle of U+10EEEE cells behind, so what
+// reaches the mirror is placeholder characters (lib/mirror-images.ts's header). These pin the four
+// things that make the card stand in for them honestly: one card per image however many cells it
+// covers, a badge rather than a wrong picture, a row's own text survives, and — the one that bit —
+// every character the card replaced still counts in the find/link coordinate space.
+
+describe("terminal mirror image placeholders", () => {
+  const KITTY_PLACEHOLDER = "\u{10EEEE}\u{10EEEE}\u{10EEEE}";
+  const BLOB = "/api/blobs/0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+  it("renders a placeholder badge when images are absent", () => {
+    const { container } = render(<AnsiOutput text={`header\n${KITTY_PLACEHOLDER}\nfooter`} />);
+    expect(container.textContent).toContain("[Image]");
+  });
+
+  // Reads need the pairing token (ADR 0086), so the card's bytes are fetched with it and drawn from
+  // an object URL. The card appears once they are here.
+  const firstImg = (container: HTMLElement) =>
+    vi.waitFor(() => {
+      const img = container.querySelector("img");
+      if (img === null) throw new Error("no picture yet");
+      return img;
+    });
+
+  it("renders an inline image when images are provided", async () => {
+    const { container } = render(
+      <AnsiOutput text={`header\n${KITTY_PLACEHOLDER}\nfooter`} images={[BLOB]} />,
+    );
+    const img = await firstImg(container);
+    expect(img.getAttribute("src")).toMatch(/^blob:/);
+  });
+
+  it("is ONE card for one image, however many cells it covers", async () => {
+    const rows = `${KITTY_PLACEHOLDER}\n${KITTY_PLACEHOLDER}\n${KITTY_PLACEHOLDER}`;
+    const { container } = render(<AnsiOutput text={`header\n${rows}\nfooter`} images={[BLOB]} />);
+    await firstImg(container);
+    expect(container.querySelectorAll("img")).toHaveLength(1);
+  });
+
+  it("reports the cluster count, which is what makes the caller's fetch on-demand", () => {
+    const onImageClusterCount = vi.fn();
+    const two = `${KITTY_PLACEHOLDER}\n${KITTY_PLACEHOLDER}\nbetween\n${KITTY_PLACEHOLDER}`;
+    render(<AnsiOutput text={two} onImageClusterCount={onImageClusterCount} />);
+    expect(onImageClusterCount).toHaveBeenLastCalledWith(2);
+    onImageClusterCount.mockClear();
+    render(<AnsiOutput text="no images here" onImageClusterCount={onImageClusterCount} />);
+    expect(onImageClusterCount).toHaveBeenLastCalledWith(0);
+  });
+
+  it("shows a badge for the cluster the ordering could not match, never a repeated image", async () => {
+    // Aligned from the END: the one image belongs to the LAST cluster, and the first gets the badge.
+    const two = `${KITTY_PLACEHOLDER}\nbetween\n${KITTY_PLACEHOLDER}`;
+    const { container } = render(<AnsiOutput text={two} images={[BLOB]} />);
+    await firstImg(container);
+    expect(container.querySelectorAll("img")).toHaveLength(1);
+    expect(container.textContent).toContain("[Image]");
+  });
+
+  it("keeps the text on a row that holds both a placeholder and real text", async () => {
+    const { container } = render(
+      <AnsiOutput text={`Screenshot: ${KITTY_PLACEHOLDER}\nafter`} images={[BLOB]} />,
+    );
+    await firstImg(container);
+    // The sentence survives, the card renders beside it, and the placeholder glyphs are gone.
+    expect(container.textContent).toContain("Screenshot:");
+    expect(container.querySelectorAll("img")).toHaveLength(1);
+    expect(container.textContent).not.toContain("\u{10EEEE}");
+  });
+
+  it("advances the find offset over the rows the card replaced", () => {
+    // The bug this pins: the cluster loop used to skip the placeholder lines WITHOUT advancing the
+    // shared offset, so every find match and every autolink below an image was addressed a
+    // screenful early and highlighted the wrong characters.
+    const text = `aaa\n${KITTY_PLACEHOLDER}\nbbbbbbb needle ccc`;
+    const { container } = render(<AnsiOutput text={text} query="needle" currentMatch={0} />);
+    const hit = container.querySelector("[data-find-match]")!;
+    expect(hit.textContent).toBe("needle");
+  });
+
+  it("advances the autolink offset over them too", () => {
+    const url = "https://herdr.dev/x";
+    const text = `aaa\n${KITTY_PLACEHOLDER}\nsee ${url} now`;
+    const { container } = render(<AnsiOutput text={text} />);
+    // Two anchors: the image card's own, and the autolink. The autolink's text must be the URL.
+    const link = [...container.querySelectorAll("a")].find((a) => a.querySelector("img") === null)!;
+    expect(link.textContent).toBe(url);
+    expect(link.getAttribute("href")).toBe(url);
+  });
+
+  it("says on the card that the picture was matched by order", async () => {
+    // The match is an approximation, so a matched card must read as a guess and point at History.
+    const { container } = render(
+      <AnsiOutput text={`header\n${KITTY_PLACEHOLDER}\nfooter`} images={[BLOB]} />,
+    );
+    await firstImg(container);
+    expect(container.textContent).toContain("matched by order, open History to check");
+    expect(container.querySelector("a[title]")?.getAttribute("title")).toBe(
+      "matched by order, open History to check",
+    );
+  });
+
+  it("does not put the matched-by-order line on the badge", () => {
+    // The badge claims nothing about a picture, so there is nothing for it to hedge.
+    const { container } = render(<AnsiOutput text={`header\n${KITTY_PLACEHOLDER}\nfooter`} />);
+    expect(container.textContent).toContain("[Image]");
+    expect(container.textContent).not.toContain("matched by order");
+  });
+
+  it("falls back to the badge when the image fails to load", async () => {
+    // A peer on an older build has no `blobs/<hash>` route and answers 404 (CREW_PROTOCOL §9.1),
+    // and a blob can also be gone. Either way: the badge, never a broken-image glyph.
+    const { container } = render(
+      <AnsiOutput text={`header\n${KITTY_PLACEHOLDER}\nfooter`} images={[BLOB]} />,
+    );
+    fireEvent.error(await firstImg(container));
+    expect(container.querySelector("img")).toBeNull();
+    expect(container.textContent).toContain("[Image]");
+  });
+
+  it("falls back to the badge when the bridge refuses the bytes", async () => {
+    // The fetch now carries the token, so a refusal (404 from an old peer, 403 before pairing)
+    // arrives as an answer, not as an `<img>` error. Same outcome: the badge.
+    server.use(http.get("/api/blobs/:hash", () => new HttpResponse("not found", { status: 404 })));
+    const { container } = render(
+      <AnsiOutput text={`header\n${KITTY_PLACEHOLDER}\nfooter`} images={[BLOB]} />,
+    );
+    await vi.waitFor(() => expect(container.textContent).toContain("[Image]"));
+    expect(container.querySelector("img")).toBeNull();
+  });
+});
+
+// A segment's background paints its content box and a glyph paints its EM BOX, so at the mirror's
+// 1.25 leading every character whose job is to fill its cell is a quarter of a row short and the
+// pill or bar it belongs to steps at the join (lib/cell-glyphs.ts). These guard the three things
+// painting it instead must not cost: the text, the offsets, and the paint's own colour source.
+describe("cell-filling glyphs", () => {
+  const LEFT_CAP = "\ue0b6";
+  const RIGHT_CAP = "\ue0b4";
+  const FULL_BLOCK = "\u2588";
+
+  function mirror(text: string, props?: Partial<ComponentProps<typeof AnsiOutput>>) {
+    const { container } = render(<AnsiOutput text={text} {...props} />);
+    return container;
+  }
+
+  it("paints a Powerline cap as a cell-sized box and leaves the text intact", () => {
+    const container = mirror(`${LEFT_CAP}CX${RIGHT_CAP} 7d`);
+    const caps = container.querySelectorAll(".cell-glyph");
+    expect(caps).toHaveLength(2);
+    expect(caps[0]!.getAttribute("data-cell")).toBe("round-left");
+    expect(caps[1]!.getAttribute("data-cell")).toBe("round-right");
+    // The character is still a text node inside the box. It is invisible because its ink and the
+    // fill behind it are both currentColor — not because it was replaced.
+    expect(caps[0]!.textContent).toBe(LEFT_CAP);
+    expect(container.querySelector("pre")!.textContent).toBe(`${LEFT_CAP}CX${RIGHT_CAP} 7d`);
+  });
+
+  it("adds no element to a line with nothing to paint", () => {
+    expect(mirror("ordinary output").querySelectorAll(".cell-glyph")).toHaveLength(0);
+  });
+
+  // The paint is a fixed rule per shape in index.css, keyed on `data-cell`. The polling path
+  // builds no style object for it, and a pane byte never reaches a style attribute.
+  it("names its shape and carries no inline style", () => {
+    const cap = mirror(`${LEFT_CAP}CX${RIGHT_CAP}`).querySelector(".cell-glyph")!;
+    expect(cap.getAttribute("data-cell")).toBe("round-left");
+    expect(cap.hasAttribute("style")).toBe(false);
+  });
+
+  // Find splits a segment by OFFSET into the visible text. Painting happens inside each piece, so
+  // a match that sits beyond a painted character must still land on the right characters.
+  it("keeps find offsets correct across a painted character", () => {
+    const container = mirror(`${FULL_BLOCK}${FULL_BLOCK} needle`, {
+      query: "needle",
+      currentMatch: 0,
+    });
+    expect(container.querySelector('[data-find-match="current"]')!.textContent).toBe("needle");
+    expect(container.querySelectorAll(".cell-glyph")).toHaveLength(2);
+  });
+
+  // Links split the same coordinate space as find, and an autolink's offsets are taken over the
+  // same visible text. A URL after a painted character must still be anchored over its own
+  // characters, with nothing of the bar inside the anchor.
+  it("keeps link offsets correct across a painted character", () => {
+    const url = "https://herdr.dev/docs";
+    const container = mirror(`${FULL_BLOCK}${FULL_BLOCK} ${url}`);
+    const anchor = container.querySelector("a")!;
+    expect(anchor.textContent).toBe(url);
+    expect(anchor.getAttribute("href")).toBe(url);
+    expect(container.querySelectorAll(".cell-glyph")).toHaveLength(2);
+  });
+
+  // A block character INSIDE the match: the highlight span owns the run, so the painting has to
+  // happen within it or a highlighted bar loses its cells.
+  it("paints inside a find match too", () => {
+    const container = mirror(`bar ${FULL_BLOCK}${FULL_BLOCK}`, { query: `r ${FULL_BLOCK}` });
+    const match = container.querySelector("[data-find-match]")!;
+    expect(match.textContent).toBe(`r ${FULL_BLOCK}`);
+    expect(match.querySelectorAll(".cell-glyph")).toHaveLength(1);
+  });
+});
+
+// The pane's own mirror links a path the agent printed beside the URLs it already links (ADR 0088).
+describe("terminal mirror file paths", () => {
+  const mirror = (text: string, opened: string[]) =>
+    render(
+      <FileLinksProvider value={testFileOpener(opened)}>
+        <AnsiOutput text={text} />
+      </FileLinksProvider>,
+    );
+
+  it("a path under the root opens Files in the app, a URL still opens a new tab", () => {
+    const opened: string[] = [];
+    const { container } = mirror("wrote docs/guide.md:3 see https://example.com/a.md", opened);
+    const [file, url] = [...container.querySelectorAll("a")];
+    expect(file!.textContent).toBe("docs/guide.md:3");
+    expect(file!.getAttribute("target")).toBeNull();
+    expect(url!.getAttribute("href")).toBe("https://example.com/a.md");
+    expect(url!.getAttribute("target")).toBe("_blank");
+    fireEvent.click(file!);
+    expect(opened).toEqual(["/pane/w1%3Ap1/changes/files?path=docs%2Fguide.md&line=3"]);
+  });
+
+  it("finds paths per row and keeps the find offsets of the rows below", () => {
+    const { container } = mirror("one src/a.ts\ntwo /etc/hosts\nthree lib/b.ts", []);
+    expect([...container.querySelectorAll("a")].map((a) => a.textContent)).toEqual(["src/a.ts", "lib/b.ts"]);
+  });
+
+  it("with no opener only URLs are links", () => {
+    const { container } = render(<AnsiOutput text="wrote docs/guide.md" />);
+    expect(container.querySelector("a")).toBeNull();
+  });
+
+  it("through the pane's real opener, only a path the bridge said exists becomes a link", async () => {
+    const asked: string[][] = [];
+    server.use(...paneLinkHandlers(["src/a.ts"], asked));
+    const { container } = render(
+      <MemoryRouter>
+        <PaneFileLinks>
+          <AnsiOutput text={"one src/a.ts\ntwo ../shared/routes.ts\nthree lib/gone.ts see https://example.com/x"} />
+        </PaneFileLinks>
+      </MemoryRouter>,
+    );
+    // Before the answer only the URL is a link.
+    expect([...container.querySelectorAll("a")].map((a) => a.textContent)).toEqual(["https://example.com/x"]);
+    await waitFor(() => expect(container.querySelectorAll("a")).toHaveLength(2));
+    expect([...container.querySelectorAll("a")].map((a) => a.textContent)).toEqual(["src/a.ts", "https://example.com/x"]);
+    // `../shared/routes.ts` climbs out of the root, so it is never asked about.
+    expect(asked).toEqual([["src/a.ts", "lib/gone.ts"]]);
   });
 });

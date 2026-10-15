@@ -8,7 +8,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.doubleOrNull
 
-/** A prepared contract, with no provider or Android notification side effects. */
+/** Validated navigation/display contract consumed after authenticated encrypted native delivery. */
 data class NativePushPayload(
     val registrationId: String,
     val slot: String,

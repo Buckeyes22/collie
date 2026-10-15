@@ -15,6 +15,7 @@ internal data class SwitcherPaneRow(
 )
 
 internal sealed interface PaneSwitcherSection {
+    data class Pinned(val rows: List<SwitcherPaneRow>) : PaneSwitcherSection
     data class Agents(
         val bucket: TriageBucket,
         val rows: List<SwitcherPaneRow>,
@@ -46,12 +47,16 @@ internal object PaneSwitcherModel {
         mux: MuxConfigResponse?,
         servers: List<ServerSummary>?,
         launching: Set<String>,
+        pinned: (PaneSummary) -> Boolean = { false },
     ): List<PaneSwitcherSection> {
-        val agents = panes.filterNot(::isShell)
-        val shells = panes.filter(::isShell)
+        val (selectedPins, unpinned) = panes.partition(pinned)
+        val pinnedPanes = selectedPins.sortedWith(nativePanePlaceOrder)
+        val agents = unpinned.filterNot(::isShell)
+        val shells = unpinned.filter(::isShell)
         val home = launcherHome.trimEnd('/')
         val hostRefusal = hostWriteRefusal(current.scope.host, servers)
         return buildList {
+            if (pinnedPanes.isNotEmpty()) add(PaneSwitcherSection.Pinned(pinnedPanes.map { row(it, current, home) }))
             val byBucket = agents.groupBy(DashboardModel::bucketOf)
             TriageBucket.entries.forEach { bucket ->
                 val source = byBucket[bucket].orEmpty()
@@ -107,6 +112,7 @@ internal object PaneSwitcherModel {
         val own = listOf(
             pane.paneLabel,
             pane.sessionName,
+            pane.soleTabName,
             pane.terminalTitle.takeUnless { staleTitle },
         ).firstNotNullOfOrNull { it?.takeIf(String::isNotBlank) }
         val shortCwd = pane.cwd.takeIf(String::isNotBlank)?.let { shortenHome(it, home) }

@@ -10,3 +10,6 @@
 -keepclassmembers class <2>$<3> {
     kotlinx.serialization.KSerializer serializer(...);
 }
+
+# JNI entry is resolved by its exact class and method name.
+-keep class com.lateapex.collie.ui.BoundedWoff2Decoder { native <methods>; }

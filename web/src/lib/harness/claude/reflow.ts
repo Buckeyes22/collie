@@ -7,7 +7,7 @@
 // so tables keep their rows for table-run.ts to pan and lists keep their line breaks.
 
 import type { StyledLine } from "../../blocks";
-import { lineText } from "./chrome";
+import { lineText } from "./markers";
 
 // ⏺ is deliberately NOT in the bullet class: it is the marker Claude paints on its own answer
 // paragraphs, and the indented lines under it are exactly the soft wraps this module exists to

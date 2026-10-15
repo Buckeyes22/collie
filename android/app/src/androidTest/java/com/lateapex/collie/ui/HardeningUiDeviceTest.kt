@@ -24,7 +24,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.lateapex.collie.CollieApplication
 import com.lateapex.collie.R
 import com.lateapex.collie.domain.Connection
-import com.lateapex.collie.network.PackMember
+import com.lateapex.collie.network.CrewMember
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -135,15 +135,13 @@ class HardeningUiDeviceTest {
             connectionStore.clear()
             ActivityScenario.launch(MainActivity::class.java).use { scenario ->
                 val displayWidthDp = scenarioActivityWidthDp(scenario)
-                onView(withId(R.id.pair_button)).perform(scrollTo()).check(matches(isDisplayed()))
-                onView(withId(R.id.connect_button)).perform(scrollTo()).check(matches(isDisplayed()))
-
-                scenario.onActivity { activity ->
-                    val labels = listOf(
-                        R.id.pair_button to R.string.pair_and_connect,
-                        R.id.connect_button to R.string.connect_read_only,
-                    )
-                    labels.forEach { (buttonId, labelId) ->
+                val labels = listOf(
+                    R.id.pair_button to R.string.pair_and_connect,
+                    R.id.connect_button to R.string.connect_read_only,
+                )
+                labels.forEach { (buttonId, labelId) ->
+                    onView(withId(buttonId)).perform(scrollTo()).check(matches(isDisplayed()))
+                    scenario.onActivity { activity ->
                         val button = activity.findViewById<TextView>(buttonId)
                         val textLayout = requireNotNull(button.layout) { "button text must be laid out" }
                         val ellipsisCount = (0 until textLayout.lineCount).sumOf(textLayout::getEllipsisCount)
@@ -200,7 +198,7 @@ class HardeningUiDeviceTest {
                         (1..6).map { member("peer-$it") }
                     val blocked = members.associate { it.id to 3 }
                     val view = PackFormationView(context)
-                    var selected: PackMember? = null
+                    var selected: CrewMember? = null
                     view.submit(members, "deputy", blocked, onSelected = { selected = it })
 
                     val widthPx = (240f * context.resources.displayMetrics.density).toInt()
@@ -315,7 +313,7 @@ class HardeningUiDeviceTest {
         connection?.let(app.container.connectionStore::save)
     }
 
-    private fun member(id: String, lead: Boolean = false) = PackMember(
+    private fun member(id: String, lead: Boolean = false) = CrewMember(
         id = id,
         name = "Fixture $id",
         isLead = lead,

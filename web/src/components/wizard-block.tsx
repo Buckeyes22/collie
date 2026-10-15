@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { AlertTriangle, Check, Loader2 } from "lucide-react";
 
+import { AnswerList } from "@/components/answer-list";
 import { WizardStepper } from "@/components/wizard-stepper";
-import type { WizardModel, WizardOption } from "@/lib/blocks";
+import type { StyledLine, WizardModel, WizardOption } from "@/lib/blocks";
 import { OptionButton, PromptPanel, QuestionHeading } from "@/components/option-button";
 import {
   WIZARD_BACK_KEYS,
@@ -16,6 +17,8 @@ import { useLocale } from "@/hooks/use-locale";
 export interface WizardBlockProps {
   /** The detected wizard step (question or Submit review) with its stepper state. */
   wizard: WizardModel;
+  /** The region this block replaced — passed through to PromptPanel as its way back (ADR 0056). */
+  lines?: StyledLine[];
   /**
    * Injected send handler (from AgentChat). Presentational contract: this component NEVER touches
    * the network — every control resolves to ONE keystroke (`keys`) that the handler race-guards
@@ -32,7 +35,7 @@ export interface WizardBlockProps {
 // the single source of truth for selections; Collie holds no form state of its own. Every visible
 // string (chip labels, question, options, answers) is a React text node — the XSS boundary is
 // unchanged. One control can be in flight at a time (spinner shows, the rest lock).
-export function WizardBlock({ wizard, onAction, disabled }: WizardBlockProps) {
+export function WizardBlock({ wizard, lines, onAction, disabled }: WizardBlockProps) {
   useLocale();
   const [sending, setSending] = useState<string | null>(null);
   const locked = disabled || sending !== null;
@@ -57,7 +60,7 @@ export function WizardBlock({ wizard, onAction, disabled }: WizardBlockProps) {
   );
 
   return (
-    <PromptPanel ariaLabel={review ? t("dialog.reviewAnswers") : wizard.question}>
+    <PromptPanel ariaLabel={review ? t("dialog.reviewAnswers") : wizard.question} raw={lines}>
       {/* Stepper: one chip per question plus the fixed Submit step, flanked by the same back/next
           navigation the TUI drives with ←/→ (each tap sends exactly that one key). */}
       <WizardStepper
@@ -171,16 +174,7 @@ function ReviewStep({
   return (
     <>
       <div className="text-sm font-medium text-foreground">{t("dialog.reviewAnswers")}</div>
-      {wizard.answers.length > 0 && (
-        <dl className="flex flex-col gap-1.5 rounded-lg border border-border bg-muted/30 px-3 py-2">
-          {wizard.answers.map((qa, i) => (
-            <div key={i}>
-              <dt className="font-content text-xs text-muted-foreground">{qa.question}</dt>
-              <dd className="font-content text-sm font-medium text-foreground">{qa.answer}</dd>
-            </div>
-          ))}
-        </dl>
-      )}
+      <AnswerList answers={wizard.answers} />
       {wizard.incomplete && (
         <div className="flex items-center gap-1.5 text-xs text-status-working">
           <AlertTriangle className="size-3.5 shrink-0" />
@@ -191,7 +185,7 @@ function ReviewStep({
         <button
           type="button"
           disabled={locked}
-          onClick={() => onPress("submit", WIZARD_SUBMIT_KEYS)}
+          onClick={() => onPress("submit", wizard.submitKeys ?? WIZARD_SUBMIT_KEYS)}
           className="flex w-full items-center justify-center gap-2 rounded-lg border border-primary/60 bg-primary/15 px-3 py-2 text-sm font-medium text-foreground transition-colors active:bg-primary/25 disabled:opacity-60"
         >
           {sendingId === "submit" ? (
@@ -202,13 +196,13 @@ function ReviewStep({
         <button
           type="button"
           disabled={locked}
-          onClick={() => onPress("cancel", WIZARD_CANCEL_KEYS)}
+          onClick={() => onPress("cancel", wizard.cancelKeys ?? WIZARD_CANCEL_KEYS)}
           className="flex w-full items-center justify-center gap-2 rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground transition-colors active:bg-muted disabled:opacity-60"
         >
           {sendingId === "cancel" ? (
             <Loader2 className="size-3.5 shrink-0 animate-spin" aria-label={t("dialog.sendingAria")} />
           ) : null}
-          {t("dialog.cancel")}
+          {wizard.cancelLabel ?? t("dialog.cancel")}
         </button>
       </div>
     </>

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { ComponentProps } from "react";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { createMemoryRouter, RouterProvider } from "react-router";
@@ -17,6 +17,15 @@ import {
   uninstallFakeMediaRecorder,
 } from "@/test/media-recorder";
 import { Composer } from "./composer";
+
+// M46 spec 11 turns every send off for a pane the bridge has not answered lately (lib/liveness.ts).
+// These suites drive sends against a mocked network and never poll first, so they pin the pane live;
+// the gating itself is covered by liveness.test.ts and the *-offline suites.
+vi.mock("@/lib/liveness", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/liveness")>()),
+  isLive: () => true,
+  useLive: () => true,
+}));
 
 // The composer's microphone (ADR 0029). Two gates decide whether it is drawn at all — the bridge
 // publishing a provider, and this browser being able to record — and jsdom fails the second one by
@@ -86,11 +95,8 @@ function baseProps(
     text: "pane output",
     terminalDraft: null,
     rawTerminalDraft: null,
-    prefs: { wrap: true, fontSize: 11, draftFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true },
-    setWrap: vi.fn(),
-    stepFontSize: vi.fn(),
-    setRawTerminal: vi.fn(),
-    setTapToFocus: vi.fn(),
+    prefs: { wrap: true, fontSize: 11, draftFontSize: 14, chatFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true },
+    display: { open: false, onToggle: vi.fn() },
     onSent: vi.fn(),
     ...overrides,
   };
@@ -161,8 +167,10 @@ describe("Composer — the record button is drawn only when there is a microphon
     renderComposer();
     await waitFor(() => expect(reads).toBe(1));
     expect(screen.queryByRole("button", { name: /record a voice message/i })).toBeNull();
-    // …and the field keeps the narrow padding, so a collie without one loses no width to it.
-    expect(screen.getByPlaceholderText(/type a reply/i).className).toContain("pr-11");
+    // …and the field reserves no strip at all, so a collie without one loses no width to it. It
+    // was `pr-11` while the attach button stood in the field's corner; the button is the field's
+    // sibling on the box's one row now (ADR 0057) and nothing inside the field reserves width.
+    expect(screen.getByPlaceholderText(/type a reply/i).className).not.toMatch(/(?:^|\s)pr-/);
   });
 
   it("renders no microphone in an insecure context, even with a provider configured", async () => {
@@ -202,8 +210,9 @@ describe("Composer — the microphone IS the primary button, until you type", ()
 
     expect(await screen.findByRole("button", { name: /record a voice message/i })).toBeEnabled();
     expect(screen.queryByRole("button", { name: /^send$/i })).toBeNull();
-    // Same padding as a collie with no microphone at all — the field pays nothing for the feature.
-    expect(screen.getByPlaceholderText(/type a reply/i).className).toContain("pr-11");
+    // Same field as a collie with no microphone at all: it pays nothing for the feature, and
+    // since the buttons became the field's siblings it reserves no horizontal strip for anything.
+    expect(screen.getByPlaceholderText(/type a reply/i).className).not.toMatch(/(?:^|\s)pr-/);
   });
 
   it("becomes Send on the first character, and the microphone on the last one deleted", async () => {
@@ -221,6 +230,26 @@ describe("Composer — the microphone IS the primary button, until you type", ()
 
     await user.clear(box);
     expect(await screen.findByRole("button", { name: /record a voice message/i })).toBeEnabled();
+  });
+
+  // ADR 0060: a chip is something to send, so a box holding only chips shows Send.
+  it("a box holding only chips shows Send, not the microphone", async () => {
+    server.use(
+      configHandler(CONFIG_WITH_STT),
+      http.post(/\/api\/pane\/[^/]+\/upload$/, () => HttpResponse.json({ ok: true, path: "/a.png" })),
+    );
+    renderComposer();
+    const box = await screen.findByPlaceholderText(/type a reply/i);
+    await screen.findByRole("button", { name: /record a voice message/i });
+
+    // SAFETY: `getByTestId` throws when the element is absent, and this id is on an `<input>`.
+    const photos = screen.getByTestId("attach-photos") as HTMLInputElement;
+    fireEvent.change(photos, { target: { files: [new File(["x"], "a.png", { type: "image/png" })] } });
+    await waitFor(() => expect(box).toHaveValue("[Image #1] "));
+    fireEvent.change(box, { target: { value: "" } });
+
+    expect(screen.queryByRole("button", { name: /record a voice message/i })).toBeNull();
+    expect(screen.getByRole("button", { name: /^send$/i })).toBeEnabled();
   });
 
   it("whitespace alone is not text — a box holding only spaces still offers the microphone", async () => {

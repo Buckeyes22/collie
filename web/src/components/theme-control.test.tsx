@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 // use-theme holds module-scope state, so each case re-imports both the hook and this component to
@@ -20,11 +20,33 @@ describe("ThemeControl", () => {
     document.head.innerHTML = "";
   });
 
+  it("translates its options once the German bundle lands", async () => {
+    // `vi.resetModules()` in `load()` means ThemeControl gets a FRESH copy of `@/lib/i18n` too, so
+    // the locale store this test drives has to be that same fresh copy, not the one a top-level
+    // import would have bound before the reset.
+    vi.resetModules();
+    const [{ ThemeControl }, { __resetLocale, setLocale, whenLocaleReady }] = await Promise.all([
+      import("./theme-control"),
+      import("@/lib/i18n"),
+    ]);
+    __resetLocale();
+    render(<ThemeControl />);
+
+    await act(async () => {
+      setLocale("en");
+      await whenLocaleReady("en");
+    });
+
+    const group = screen.getByRole("radiogroup", { name: "Theme" });
+    const options = within(group).getAllByRole("radio");
+    expect(options.map((o) => o.textContent)).toEqual(["System", "Light", "Dark"]);
+  });
+
   it("renders three options with the stored one selected", async () => {
     const { ThemeControl } = await load("dark");
     render(<ThemeControl />);
 
-    const group = screen.getByRole("radiogroup", { name: "Appearance" });
+    const group = screen.getByRole("radiogroup", { name: "Theme" });
     const options = within(group).getAllByRole("radio");
     expect(options.map((o) => o.textContent)).toEqual(["System", "Light", "Dark"]);
     expect(options.map((o) => o.getAttribute("aria-checked"))).toEqual(["false", "false", "true"]);

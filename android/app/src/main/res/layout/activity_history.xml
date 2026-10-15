@@ -121,7 +121,7 @@
             <EditText
                 android:id="@+id/history_find_query"
                 android:layout_width="0dp"
-                android:layout_height="44dp"
+                android:layout_height="@dimen/collie_touch_target"
                 android:layout_marginStart="6dp"
                 android:layout_weight="1"
                 android:autofillHints=""
@@ -197,10 +197,23 @@
                 android:paddingVertical="12dp">
 
                 <com.google.android.material.button.MaterialButton
+                    android:id="@+id/history_refresh"
+                    style="@style/Widget.Collie.Button.Borderless"
+                    android:layout_width="match_parent"
+                    android:layout_height="@dimen/collie_touch_target"
+                    android:drawableStart="@drawable/ic_history_transcript"
+                    android:drawablePadding="6dp"
+                    android:contentDescription="@string/history_refresh"
+                    android:text="@string/history_refresh"
+                    android:textColor="@color/collie_muted"
+                    android:textSize="12sp"
+                    android:visibility="gone" />
+
+                <com.google.android.material.button.MaterialButton
                     android:id="@+id/history_load_older"
                     style="@style/Widget.Collie.Button.Borderless"
                     android:layout_width="match_parent"
-                    android:layout_height="44dp"
+                    android:layout_height="@dimen/collie_touch_target"
                     android:drawableStart="@drawable/ic_history_load_older"
                     android:drawablePadding="6dp"
                     android:text="@string/history_load_older"

@@ -1,0 +1,46 @@
+  and Emacs and Vim grew into full environments.
+
+  [0m[1mEclipse by the Graphical Interface[0m
+
+  Graphical interfaces, popularized by the Macintosh in 1984 and Windows in the
+  1990s, pushed text interfaces out of mainstream computing. Terminals remained
+  the realm of system administrators, programmers and enthusiasts. The terminal
+  became something you opened inside a window rather than the machine itself. Yet
+  it did not die. Remote servers, embedded systems and scripting all benefitted
+  from text's low bandwidth, composability and scriptability. SSH, [0m[38;2;177;185;249mtmux [0m(2007) and
+  GNU Screen turned the terminal into a persistent, multiplexed workspace that
+  survived disconnections.
+
+  [0m[1mThe Modern Revival[0m
+
+  Since about 2010, terminal interfaces have enjoyed a renaissance. Several
+  factors drove it. Developers spend their days with Git, containers and cloud
+  tooling, which are overwhelmingly command-line driven. Terminal emulators gained
+  GPU acceleration, true-color support, ligatures and image protocols, with
+  projects such as iTerm2, Kitty, Alacritty and WezTerm. Tools like [0m[38;2;177;185;249mhtop[0m, [0m[38;2;177;185;249mtig[0m,
+  [0m[38;2;177;185;249mlazygit[0m, [0m[38;2;177;185;249mk9s [0mand [0m[38;2;177;185;249mbtop [0mshowed that text interfaces could be as interactive and
+  polished as GUIs while running over SSH.
+
+  New frameworks reflect the trend: Python's Textual and Rich, Go's Bubble Tea,
+  Rust's Ratatui and JavaScript's Ink bring modern ideas like declarative layouts,
+  component models and CSS-like styling into the terminal. Most recently, AI
+  coding assistants have chosen the terminal as their primary home, because it
+  sits where developers already work.
+
+  [0m[1mConclusion[0m
+
+  Terminal user interfaces have moved from necessity to choice. They began as the
+  only way to talk to a computer, evolved into sophisticated text-mode
+  applications, were overshadowed by graphics, and are now valued for speed,
+  portability and keyboard-driven efficiency. Their durability comes from a simple
+  idea that appeared with the first teletype: text is a universal medium, and a
+  well-designed conversation with a machine never goes out of style.
+
+[0m[38;2;153;153;153m✻[0m [0m[38;2;153;153;153mWorked for 17s · done 7:15 PM[0m
+
+[0m[38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────[0m
+❯ [0m[2msave it to docs/essay.md[0m
+[0m[38;2;136;136;136m──────────────────────────────────────────────────────────────────────────────────[0m
+  [0m[38;2;153;153;153m1. build ok  2. tests ok[0m
+  [0m[38;2;153;153;153mEsc to interrupt is not a key hint here[0m
+  [0m[38;2;153;153;153m⏸ manual mode on · ← for agents[0m

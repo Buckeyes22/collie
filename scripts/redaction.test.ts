@@ -5,9 +5,13 @@ import { join } from "node:path";
 const root = join(import.meta.dir, "..");
 
 // Paths outside the check: the Android sources have their own guard in notices.test.ts, and the
-// remediation plan names the patterns.
+// remediation plan names the patterns. Acceptance/source-review records intentionally retain
+// the user-requested exact local evidence paths; none configures a shipped origin or account.
 const excluded = [
   "android/app/src",
+  "android/acceptance",
+  "android/FILES_PREVIEW_SECURITY.md",
+  "android/UPSTREAM_API_COMPATIBILITY.md",
   "docs/superpowers/plans/2026-10-08-public-release-remediation.md",
 ];
 

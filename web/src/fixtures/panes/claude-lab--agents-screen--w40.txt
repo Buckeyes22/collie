@@ -1,0 +1,18 @@
+
+[0m[1mClaude Code [0m[38;2;153;153;153mv2.1.291[0m
+[0m[38;2;153;153;153mSonnet 5.5 · /…/project[0m
+[0m[38;2;153;153;153m2 awaiting input · 0 working · 0[0m
+[0m[38;2;153;153;153mcompleted[0m
+
+[0m[38;2;153;153;153mYour conversation moved to the[0m
+[0m[38;2;153;153;153mbackground — enter opens it · esc[0m
+[0m[38;2;153;153;153mreturns to it · ctrl+c twice quits[0m
+
+[0m[38;2;153;153;153mNeeds input[0m
+[0m[38;2;255;193;7m[48;2;55;55;55m✻[0m[38;2;255;255;255m[48;2;55;55;55m [0m[1m[38;2;255;255;255m[48;2;55;55;55mREADME review[0m[48;2;55;55;55m  [0m[38;2;153;153;153m[48;2;55;55;55mThe README says t…[0m[48;2;55;55;55m   [0m[38;2;153;153;153m[48;2;55;55;55m1s[0m
+[0m[38;2;255;193;7m✻[0m[38;2;153;153;153m README.md      describe the task…   6m[0m
+
+[0m[2m────────────────────────────────────────[0m
+[0m[38;2;153;153;153m❯ describe a task for a new session[0m
+[0m[2m────────────────────────────────────────[0m
+  [0m[38;2;153;153;153menter to return · ? for shortcuts[0m

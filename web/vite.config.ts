@@ -5,6 +5,15 @@ import { VitePWA } from "vite-plugin-pwa";
 import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import {
+  channelFor,
+  includeAssetsFor,
+  manifestFor,
+  precacheIgnoresFor,
+  transformIndexIcons,
+  type Channel,
+  type ChannelEvidence,
+} from "./vite-icons";
 
 // The bridge (Bun server) serves the built app from `web/dist` and proxies nothing — the
 // browser talks to the same origin for both static files and /api. In `vite dev`, proxy the
@@ -94,18 +103,47 @@ function gitSha(): string {
 }
 // Clean-tree builds off a non-release commit (a preview branch, mid-development main) would
 // otherwise stamp a version string identical to the real `vX.Y.Z` release, since `-dirty` only
-// fires on an uncommitted tree. `-dev` covers that gap: true only when the `vX.Y.Z` tag exists
-// AND points at HEAD. Compare full shas (`rev-parse HEAD`, not the short one gitSha() uses) since
-// that's what the tag's rev-parse resolves to. Any failure (no tag, no git) returns true — i.e.
-// we don't add the marker — mirroring build.ts's isStaleBuild "never nag spuriously" policy.
-function isReleaseBuild(version: string): boolean {
+// fires on an uncommitted tree. `-dev` covers that gap, but "does the version's tag exist and
+// point at HEAD" alone is not enough: a checkout can legitimately hold no tags at all and still be
+// a release. There are three shapes, and `channelFor` (vite-icons.ts) is the pure decision over
+// them:
+//
+//   1. no git at all (a tarball or packaged build) -> release
+//   2. git works, but the checkout holds NO tags at all -> release. This is the shallow, detached
+//      checkout `herdr plugin install` leaves (cli/update.ts's header, around line 67): `git init`
+//      + `fetch --depth 1` + `checkout --detach`, so it never fetched a tag either way. `collie
+//      update` fetches tags properly later (cli/update.ts, ~700-735), but until then an empty tag
+//      list here is normal for a genuine release install, not evidence of a dev tree.
+//   3. git works and tags exist -> a real dev checkout, so the version's own tag decides: its
+//      commit matching HEAD means release, anything else (including a missing tag for this
+//      version) means dev. This is the case a dev lane on an untagged `chore(release):` commit
+//      used to get wrong, building as release before its tag existed.
+//
+// Each git call below has its own try/catch, so one failure (e.g. no `.git`) doesn't discard
+// evidence another call already gathered.
+function gitEvidence(version: string): ChannelEvidence {
+  let head: string | null;
   try {
-    const tagCommit = git(`git rev-parse -q --verify "refs/tags/v${version}^{commit}"`);
-    const headCommit = git("git rev-parse HEAD");
-    return tagCommit === headCommit;
+    head = git("git rev-parse HEAD");
   } catch {
-    return true;
+    head = null;
   }
+  let tagCommit: string | null;
+  try {
+    tagCommit = git(`git rev-parse -q --verify "refs/tags/v${version}^{commit}"`);
+  } catch {
+    tagCommit = null;
+  }
+  let tagCount: number | null;
+  try {
+    const tags = git("git tag -l")
+      .split("\n")
+      .filter((line) => line.length > 0);
+    tagCount = tags.length;
+  } catch {
+    tagCount = null;
+  }
+  return { head, tagCommit, tagCount };
 }
 // SAFETY: `web/package.json` is this repo's own manifest, sitting next to this config, and
 // `scripts/check-version.sh` gates every build on its `version` agreeing with the other two files —
@@ -117,12 +155,17 @@ const pkgVersion = (
 ).version;
 const buildSha = gitSha();
 const buildTime = new Date().toISOString();
-const stampedVersion = isReleaseBuild(pkgVersion) ? pkgVersion : `${pkgVersion}-dev`;
+// channelFor(pkgVersion's evidence) is computed ONCE and drives both the version stamp above and
+// the icon/manifest channel below — never call it twice, the two must always agree.
+const channel: Channel = channelFor(gitEvidence(pkgVersion));
+const releaseBuild = channel === "release";
+const stampedVersion = releaseBuild ? pkgVersion : `${pkgVersion}-dev`;
 const BUILD_INFO = {
   version: stampedVersion,
   sha: buildSha,
   time: buildTime,
   id: `${stampedVersion}+${buildSha}.${Math.floor(Date.parse(buildTime) / 1000)}`,
+  channel,
 };
 
 // Emit dist/build-info.json so the bridge can read the current build id. Kept out of the SW precache
@@ -138,12 +181,73 @@ const buildInfoPlugin: Plugin = {
   },
 };
 
+// A release build must ship index.html byte-for-byte unchanged, so this only rewrites the four
+// icon <link> hrefs, and only for index.html — never playground.html, which carries its own
+// -playground links statically instead (see playground.html itself). vite-icons.ts's
+// transformIndexIcons is a no-op on the release channel, so the `if` here is belt-and-braces: it
+// also means the hook never even inspects a file that isn't index.html.
+const channelIconsPlugin: Plugin = {
+  name: "collie-channel-icons",
+  transformIndexHtml: {
+    order: "pre",
+    handler(html, ctx) {
+      if (!ctx.filename.endsWith("/index.html")) return html;
+      return transformIndexIcons(html, channel);
+    },
+  },
+};
+
+const channelManifest = manifestFor(channel);
+
+// ADR 0052: ONE BUILD SERVES ANY MOUNT. The shell (index.html) is built ROOT-ABSOLUTE, every
+// reference `/…`, and the bridge resolves it to the mount it was started with when it serves the
+// file (bridge/server.ts, `mountIndexHtml`); at the root it is served as it lies on disk. Inside the
+// bundle nothing may name the root: a chunk reaches its siblings and its assets from
+// `import.meta.url`, a stylesheet from its own address, so the same files work under any path.
+// `renderBuiltUrl` is how Vite is told that split: the HTML host keeps the base, every other host
+// gets a relative URL.
+//
+// The guard on the shell's half of that contract. One reference that is not root-absolute — a
+// bare `assets/x.js`, a `./` — would mount at the root and break under a path, at runtime, on
+// someone else's machine; so a build whose index.html carries one fails HERE. External and inline
+// values are not references to this build.
+const mountReadyShellPlugin: Plugin = {
+  name: "collie-mount-ready-shell",
+  apply: "build",
+  // Read back from disk once everything is written: the HTML transform hooks still see Vite's
+  // public-asset placeholders in the inline style, which are resolved after them.
+  writeBundle(options) {
+    const dir = options.dir ?? resolve(import.meta.dirname, "dist");
+    const html = readFileSync(resolve(dir, "index.html"), "utf8");
+    const refs = [...html.matchAll(/(?:href|src)="([^"]*)"|url\(["']?([^"')]*)["']?\)/g)].map(
+      (m) => m[1] ?? m[2] ?? "",
+    );
+    const foreign = refs.filter(
+      (ref) => ref !== "" && !/^\/(?!\/)/.test(ref) && !ref.startsWith("#") && !/^(?:https?:|data:|mailto:)/.test(ref),
+    );
+    if (foreign.length > 0) {
+      throw new Error(
+        `index.html carries ${String(foreign.length)} reference(s) that are not root-absolute, so the bridge could` +
+          ` not mount it under a path: ${foreign.join(", ")}`,
+      );
+    }
+  },
+};
+
 export default defineConfig({
+  // The shell is root-absolute and the bridge mounts it (ADR 0052, above).
+  base: "/",
+  experimental: {
+    renderBuiltUrl(_filename, { hostType }) {
+      return hostType === "html" ? undefined : { relative: true };
+    },
+  },
   define: { __BUILD_INFO__: JSON.stringify(BUILD_INFO) },
   plugins: [
     react(),
     tailwindcss(),
     buildInfoPlugin,
+    channelIconsPlugin,
     VitePWA({
       // Build the manifest + service worker. We use `injectManifest` (not the default generateSW)
       // because we hand-write the SW in `src/sw.ts` to add `push` + `notificationclick` handlers a
@@ -153,51 +257,68 @@ export default defineConfig({
       // Registration is done manually in main.tsx via the `virtual:pwa-register` module (a bundled,
       // same-origin script) so we never inject an inline <script>, which the strict CSP blocks.
       injectRegister: false,
+      // `crossorigin="use-credentials"` on the manifest <link>: browsers fetch a manifest without
+      // cookies by default, so behind Cloudflare Access the request never reaches Collie and the app
+      // cannot install (#341, ADR 0081). Same-origin everywhere else, so no other door notices.
+      useCredentials: true,
       registerType: "autoUpdate",
       strategies: "injectManifest",
       srcDir: "src",
       filename: "sw.ts", // source; compiled to dist/sw.js (the bridge sets Service-Worker-Allowed: /)
-      includeAssets: ["favicon.svg", "favicon.ico", "favicon-96x96.png", "apple-touch-icon.png"],
+      includeAssets: includeAssetsFor(channel),
       manifest: {
-        name: "Collie",
-        short_name: "Collie",
+        name: channelManifest.name,
+        short_name: channelManifest.short_name,
         description: "Monitor and reply to your terminal AI agents from your phone",
-        id: "/",
-        start_url: "/",
-        scope: "/",
+        // Relative, so the installed app's start page and scope are the mount the manifest was
+        // served from (ADR 0052). No `id`: a manifest id is resolved against the ORIGIN, so a
+        // relative one would name the root for every mount; left out it defaults to the processed
+        // `start_url`, which for a root install is `https://host/`, the identity every phone
+        // already holds. Do not add an `id` or a query to `start_url`: either mints a new app and
+        // orphans every home-screen icon.
+        start_url: "./",
+        scope: "./",
         display: "standalone",
         // Not locked to portrait: the manifest was the only thing stopping an installed Collie from
         // rotating on a tablet. Every route lays out as a centred column rather than a fluid sheet —
-        // 640px on the dashboard, space, Settings, Pack and Updates, 768px on the pane and history
+        // 640px on the dashboard, space, Settings, Crew and Updates, 768px on the pane and history
         // screens above that breakpoint — so a wide viewport gets a real layout and not a stretched
         // phone. `"any"` defers to the device instead of overriding it, so a tablet held in
         // landscape with rotation lock on still stays portrait.
         orientation: "any",
         background_color: "#0a0a0a",
         theme_color: "#0a0a0a",
-        icons: [
-          // The 192/512 are safe-zone-padded, so they serve as both the regular ("any") install
-          // icon and the Android adaptive ("maskable") icon, and they paint their own paper —
-          // an app icon that lets the home screen through is a bug. (favicon.svg is intentionally
-          // NOT a manifest icon: it is a different drawing — the head alone, on no background,
-          // legible at 16px — so declaring it sizes:"any" would let an installer pick the wrong
-          // artwork for the install icon.)
-          //
-          // THE TILES ARE THE DARK POLARITY BECAUSE THE MANIFEST IS DARK. Android paints the
-          // install splash as this icon centred on `background_color`, and a manifest colour is a
-          // single value — it cannot follow the OS the way index.html's paired `theme-color` metas
-          // and index.css's `light-dark()` do. `background_color` and `theme_color` were already
-          // both #0a0a0a, so the light tile that shipped first put a near-white square on black:
-          // the one combination that is wrong under EVERY theme. Making the tile dark makes all
-          // three manifest values agree, and it is the choice that costs least — flipping
-          // `background_color` to the light paper instead would leave `theme_color` dark, i.e. a
-          // light splash under dark system bars, and it would still be one fixed polarity.
-          // The tile's own paper is #0f1113 against a #0a0a0a splash: a hair lighter, invisible in
-          // practice, and `background_color` is left alone so the installed chrome keeps one value.
-          // If these are ever re-copied, take the `collie-tile-dark-*` files, not the light ones.
-          { src: "/web-app-manifest-192x192.png", sizes: "192x192", type: "image/png", purpose: "any maskable" },
-          { src: "/web-app-manifest-512x512.png", sizes: "512x512", type: "image/png", purpose: "any maskable" },
-        ],
+        // The 192/512 are safe-zone-padded, so they serve as both the regular ("any") install
+        // icon and the Android adaptive ("maskable") icon, and they paint their own paper —
+        // an app icon that lets the home screen through is a bug. (favicon.svg is intentionally
+        // NOT a manifest icon: it is a different drawing — the head alone, on no background,
+        // legible at 16px — so declaring it sizes:"any" would let an installer pick the wrong
+        // artwork for the install icon.)
+        //
+        // THE TILES ARE THE DARK POLARITY BECAUSE THE MANIFEST IS DARK. Android paints the
+        // install splash as this icon centred on `background_color`, and a manifest colour is a
+        // single value — it cannot follow the OS the way index.html's paired `theme-color` metas
+        // and index.css's `light-dark()` do. `background_color` and `theme_color` were already
+        // both #0a0a0a, so the light tile that shipped first put a near-white square on black:
+        // the one combination that is wrong under EVERY theme. Making the tile dark makes all
+        // three manifest values agree, and it is the choice that costs least — flipping
+        // `background_color` to the light paper instead would leave `theme_color` dark, i.e. a
+        // light splash under dark system bars, and it would still be one fixed polarity.
+        // The tile's own paper is #0f1113 against a #0a0a0a splash: a hair lighter, invisible in
+        // practice, and `background_color` is left alone so the installed chrome keeps one value.
+        // If these are ever re-copied, take the `collie-tile-dark-*` files, not the light ones.
+        //
+        // A dev build (channel !== "release") swaps this pair for the `-dev` tiles instead
+        // (vite-icons.ts's manifestFor) — same dark polarity, same safe-zone padding, orange
+        // paint, so a dev install is unmistakable next to a release install on the same home
+        // screen without breaking either fact above.
+        // vite-icons.ts spells the tile srcs root-absolute; the manifest is relative (above).
+        icons: channelManifest.icons.map((icon) => ({
+          src: `./${icon.src.replace(/^\/+/, "")}`,
+          sizes: icon.sizes,
+          type: icon.type,
+          purpose: icon.purpose,
+        })),
       },
       injectManifest: {
         // Files baked into the precache manifest (injected at src/sw.ts's `self.__WB_MANIFEST`).
@@ -207,11 +328,17 @@ export default defineConfig({
         // `unicode-range` already makes them lazy (index.css), so precaching them would charge
         // every install for glyphs most herds never paint. src/sw.ts caches them on first use.
         globPatterns: ["**/*.{js,css,html,svg,png,ico,webmanifest}"],
+        // A release build's precache must not carry the dev channel's icons, and neither build
+        // may carry the playground's — see vite-icons.ts's precacheIgnoresFor. Without this, a
+        // release SW precached the dev AND playground icon sets too, every byte of it competing
+        // with the app's own polls on a slow link (2026-09-12 proxy log on a phone).
+        globIgnores: precacheIgnoresFor(channel),
       },
       // Over plain HTTP (insecure context) the SW can't register; in dev we don't want it anyway.
       devOptions: { enabled: false },
     }),
     playgroundOnlyPlugin,
+    mountReadyShellPlugin,
   ],
   resolve: {
     alias: { "@": resolve(import.meta.dirname, "src") },

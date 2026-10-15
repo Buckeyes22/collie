@@ -1,12 +1,14 @@
 package com.lateapex.collie.ui.terminal
 
+import com.lateapex.collie.network.PromptColumns
+
 /**
  * Produces conservative optimistic-concurrency evidence from the exact pane the operator saw.
  * The bridge re-reads immediately before a write and requires this region to remain near the tail.
  */
 object PromptBinding {
     private const val MAX_LINES = 3
-    private const val MAX_CHARS = 8_192
+    private const val MAX_CHARS = 32_768
     private const val MAX_DRAFT_LINES = 100
     private val sgr = Regex("(?:\u001B\\[|\u009B)[0-?]*[ -/]*m")
 
@@ -26,44 +28,35 @@ object PromptBinding {
         val key = agent?.trim()?.lowercase().orEmpty()
         return when (key) {
             "codex" -> codexComposerRegion(text)
+            "pi" -> PiComposer.emptyRegion(text)
             "claude" -> claudeComposerRegion(text)
             "grok" -> grokComposerRegion(text)
             "omp" -> ompComposerRegion(text)
             "agy", "antigravity" -> agyComposerRegion(text)
+            "muse" -> museComposerRegion(text)
             else -> tailRegion(text)
         }
     }
 
-    private fun codexComposerRegion(text: String): String? {
-        val framed = frame(text)
-        val lines = framed.plain
-        var status = lines.indexOfLast { it.trim().isNotEmpty() }
-        if (status < 0 || !CodexStatusRow.matches(framed.raw[status])) return null
+    /** Muse's measured bare prompt is live only when no recognized dialog owns the keyboard. */
+    private fun museComposerRegion(text: String): String? {
+        if (AgentSemanticParser.detect("muse", text, revision = 0) != null) return null
+        val lines = normalizedLines(text)
+        val status = lines.lastOrNull() ?: return null
+        if (!MUSE_STATUS.matches(status)) return null
+        val bottom = lines.lastIndex - 1
+        if (bottom < 2 || !MUSE_RULE.matches(lines[bottom])) return null
+        val prompt = lines[bottom - 1]
+        if (prompt != "❯") return null
+        val voice = lines[bottom - 2]
+        if (!MUSE_VOICE.matches(voice)) return null
+        return prompt.takeIf { verifyNearTail(text, it) }
+    }
 
-        var cursor = status - 1
-        var gap = 0
-        while (cursor >= 0 && lines[cursor].trim().isEmpty()) {
-            cursor--
-            if (++gap > 2) return null
-        }
-        if (cursor < 0) return null
-        val draftEnd = cursor
-        var scanned = 0
-        while (cursor >= 0 && scanned++ < 100) {
-            val row = lines[cursor].trimEnd()
-            if (row == "›" || row.startsWith("› ")) {
-                if (draftEnd != cursor) return null
-                if (!isEmptyCodexPrompt(text, cursor, row)) return null
-                val candidate = lines.subList(cursor, draftEnd + 1)
-                    .joinToString("\n") { it.trimEnd() }
-                return candidate.takeIf {
-                    it.length in 1..MAX_CHARS && verifyNearTail(text, it)
-                }
-            }
-            if (row.isEmpty() || !CODEX_CONTINUATION.matches(row)) return null
-            cursor--
-        }
-        return null
+    private fun codexComposerRegion(text: String): String? {
+        val composer = CodexComposer.locate(text) ?: return null
+        if (composer.draft() != null) return null
+        return composer.region().takeIf { it.length in 1..MAX_CHARS && verifyNearTail(text, it) }
     }
 
     /** Claude's `rule / ❯ / rule` input box, followed by at most the bridge's tail allowance. */
@@ -250,8 +243,9 @@ object PromptBinding {
     }
 
     /** Mirrors bridge/prompt-binding.ts and is kept public for contract tests. */
-    fun verifyNearTail(freshText: String, expected: String, tailLines: Int = 6): Boolean {
-        val fresh = normalizedLines(freshText)
+    fun verifyNearTail(freshText: String, expected: String, tailLines: Int = 6, expectedColumns: PromptColumns? = null): Boolean {
+        if (expectedColumns != null && !expectedColumns.valid()) return false
+        val fresh = normalizedLines(if (expectedColumns == null) freshText else PromptColumnText.crop(freshText, expectedColumns))
         val wanted = normalizedLines(expected)
         if (wanted.isEmpty()) return false
         var lastMatch = -1
@@ -273,52 +267,6 @@ object PromptBinding {
             .replace('\r', '\n')
             .split('\n')
 
-    private fun isEmptyCodexPrompt(fullText: String, rowIndex: Int, plainRow: String): Boolean {
-        if (plainRow == "›") return true
-        val body = plainRow.removePrefix("› ").trimEnd()
-        if (body.isEmpty()) return true
-        if (body != CODEX_PLACEHOLDER) return false
-        val rawRow = fullText.replace("\r\n", "\n").replace('\r', '\n')
-            .split('\n')
-            .getOrNull(rowIndex)
-            ?: return false
-        return placeholderBodyIsDim(rawRow)
-    }
-
-    /** Codex distinguishes its empty placeholder from identical operator text with dim paint. */
-    private fun placeholderBodyIsDim(rawRow: String): Boolean {
-        var index = 0
-        var plainOffset = 0
-        var dim = false
-        var sawBody = false
-        while (index < rawRow.length) {
-            if (rawRow[index] == '\u001b' && index + 1 < rawRow.length && rawRow[index + 1] == '[') {
-                var end = index + 2
-                while (end < rawRow.length && rawRow[end].code !in 0x40..0x7e) end++
-                if (end >= rawRow.length) return false
-                if (rawRow[end] == 'm') {
-                    val body = rawRow.substring(index + 2, end)
-                    val codes = if (body.isBlank()) listOf(0) else body.split(';').mapNotNull(String::toIntOrNull)
-                    for (code in codes) when (code) {
-                        0, 22 -> dim = false
-                        2 -> dim = true
-                    }
-                }
-                index = end + 1
-                continue
-            }
-            val char = rawRow[index++]
-            if (plainOffset >= 2 && !char.isWhitespace()) {
-                sawBody = true
-                if (!dim) return false
-            }
-            plainOffset++
-        }
-        return sawBody
-    }
-
-    private val CODEX_CONTINUATION = Regex("^ {2}\\s*\\S.*$")
-    private const val CODEX_PLACEHOLDER = "Ask Codex to do anything"
     private val CLAUDE_BOTTOM = Regex("^─{8,}$")
     private val CLAUDE_LABELLED = Regex("^─+\\s+(.+)\\s+─+$")
     private const val CLAUDE_EMPTY_PLACEHOLDER = "Press up to edit queued messages"
@@ -334,5 +282,8 @@ object PromptBinding {
     private val OMP_OPEN_BOTTOM = Regex("^╰─(?: ([\\s\\S]*))?$")
     private val AGY_BORDER = Regex("^[─━═-]{8,}$")
     private val AGY_PROMPTS = setOf(">", "❯", "›")
+    private val MUSE_RULE = Regex("^[─━═-]{8,}$")
+    private val MUSE_VOICE = Regex("^─{2,} Voice input \\(.*\\) ─{8,}$")
+    private val MUSE_STATUS = Regex("^  \\S.*·.*$")
     private val BOX_DRAWING_RANGE = 0x2500..0x257f
 }

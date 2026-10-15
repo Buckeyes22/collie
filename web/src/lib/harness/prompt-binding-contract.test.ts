@@ -2,6 +2,8 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { buildBlocks } from "./index";
+import type { ColumnRange } from "../column-range";
 import { parseAnsi } from "../ansi";
 import { splitLines, type StyledLine } from "../blocks";
 import { detectMultiSelect } from "./claude/multi-select";
@@ -9,6 +11,8 @@ import { detectPreviewSelect } from "./claude/preview-select";
 import { detectPromptSelect } from "./claude/prompt-select";
 import { detectWizard } from "./claude/wizard";
 import { detectMenu } from "./claude/menu";
+import { detectResumePicker } from "./claude/resume";
+import { detectMarketplaces } from "./claude/marketplaces";
 
 // The client half of the prompt-binding contract. See the sibling test in
 // bridge/prompt-binding.test.ts for the full reasoning; in short:
@@ -38,6 +42,8 @@ interface RegionRow {
   fixture: string;
   detector: string;
   region: string;
+  agent?: string;
+  bindColumns?: ColumnRange;
 }
 
 // SAFETY: `prompt-binding-regions.json` is this repo's own committed golden, and every field the
@@ -57,7 +63,15 @@ function detectRegion(lines: StyledLine[]): { detector: string; region: string }
   if (preview) return { detector: "preview-select", region: preview.regionSignature };
   const multi = detectMultiSelect(lines);
   if (multi) return { detector: "multi-select", region: multi.regionSignature };
-  // Last, exactly as claudeBuildBlocks orders it: the generic menu only claims what all four declined.
+  // The /resume picker (.adr/0058) lifts as a prompt-select block, and claudeBuildBlocks tries it just
+  // before the generic menu, which would otherwise claim the same screen.
+  const resume = detectResumePicker(lines);
+  if (resume) return { detector: "prompt-select", region: resume.signature };
+  // The `/plugin` Marketplaces tab and detail screen lift as a menu, and claudeBuildBlocks tries them
+  // just before the generic menu too.
+  const marketplaces = detectMarketplaces(lines);
+  if (marketplaces) return { detector: "menu", region: marketplaces.signature };
+  // Last, exactly as claudeBuildBlocks orders it: the generic menu only claims what all six declined.
   const menu = detectMenu(lines);
   if (menu) return { detector: "menu", region: menu.signature };
   return null;
@@ -74,9 +88,11 @@ describe("client/bridge binding contract", () => {
     ]);
   });
 
-  for (const { fixture, detector, region } of REGIONS) {
+  for (const { fixture, detector, region, agent, bindColumns } of REGIONS) {
     it(`${detector}: ${fixture} still derives byte-identically`, () => {
-      const found = detectRegion(fixtureLines(fixture));
+      const card = agent === undefined ? undefined : buildBlocks(fixtureLines(fixture), { agent }).find((block) => block.kind === "prompt-select");
+      const found = agent === undefined ? detectRegion(fixtureLines(fixture)) : card?.kind === "prompt-select" ? { detector: "prompt-select", region: card.prompt.signature } : null;
+      if (card?.kind === "prompt-select") expect(card.prompt.bindColumns).toEqual(bindColumns);
       expect(found).not.toBeNull();
       expect(found!.detector).toBe(detector);
       expect(found!.region).toBe(region);

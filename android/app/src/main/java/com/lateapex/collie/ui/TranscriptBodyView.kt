@@ -7,6 +7,7 @@ import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.TextView
 import androidx.annotation.VisibleForTesting
 import androidx.core.content.ContextCompat
 import androidx.core.view.doOnPreDraw
@@ -14,6 +15,9 @@ import androidx.core.view.isVisible
 import com.google.android.material.button.MaterialButton
 import com.lateapex.collie.R
 import com.lateapex.collie.network.TranscriptEntry
+import com.lateapex.collie.data.ScopedImageLoader
+import com.lateapex.collie.data.ScopedReadContext
+import com.lateapex.collie.data.ScopedRequestKey
 
 /**
  * The pane body for a journalled agent: one turn card per transcript entry, grown upwards by
@@ -24,6 +28,10 @@ class TranscriptBodyView @JvmOverloads constructor(
     attrs: AttributeSet? = null,
 ) : FrameLayout(context, attrs) {
     var onLoadOlder: (() -> Unit)? = null
+    var onSendQueuedNow: ((QueuedSendNow) -> Unit)? = null
+    var onDisplayedFileReferences: ((TextView, CharSequence, ScopedReadContext) -> Unit)? = null
+    /** Reset discovery accounting only when bind actually changes the displayed turn batch. */
+    var onFileReferenceBatchStarted: (() -> Unit)? = null
 
     /** Where a bind that added or replaced turns left the reader; wired to the diagnostics trace. */
     var onPlaced: ((Map<String, Any?>) -> Unit)? = null
@@ -91,11 +99,26 @@ class TranscriptBodyView @JvmOverloads constructor(
         isVisible = false
         setOnClickListener { onLoadOlder?.invoke() }
     }
+    private val sendQueuedNow = MaterialButton(context).apply {
+        id = R.id.transcript_send_queued_now
+        revealOnFocusHint = false
+        transformationMethod = null
+        isVisible = false
+        setOnClickListener { boundSendNow?.let { onSendQueuedNow?.invoke(it) } }
+    }
+    private val queuedContainer = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
+    private var boundQueued: List<String> = emptyList()
+    private var boundSendNow: QueuedSendNow? = null
     private val expandedTools = mutableSetOf<Pair<String, Int>>()
     private val turns = linkedMapOf<String, View>()
+    private val turnFileActors = mutableMapOf<String, ScopedReadContext?>()
+    private var rendererGeneration = 0L
     private var renderer: HistoryTurnRenderer? = null
     private var boundAgent: String? = null
+    private var boundImageActor: ImageRenderActor? = null
     private var boundEntries: List<TranscriptEntry> = emptyList()
+    private var boundFilesAdmissionReady = false
+    private var boundFilesAdmissionGeneration = 0L
 
     init {
         addView(scroll, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
@@ -104,9 +127,24 @@ class TranscriptBodyView @JvmOverloads constructor(
             loadOlder,
             LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT),
         )
+        turnsContainer.addView(queuedContainer)
+        turnsContainer.addView(sendQueuedNow)
     }
 
-    fun bind(agent: String, entries: List<TranscriptEntry>, hasMore: Boolean) {
+    fun bind(
+        agent: String,
+        entries: List<TranscriptEntry>,
+        hasMore: Boolean,
+        queued: List<String> = emptyList(),
+        imageLoader: ScopedImageLoader? = null,
+        readContext: ScopedReadContext? = null,
+        filesAdmissionReady: Boolean = false,
+        sendNow: QueuedSendNow? = null,
+        sendNowEnabled: Boolean = false,
+        sendNowPending: Boolean = false,
+        sendNowAttempted: Boolean = false,
+        filesAdmissionGeneration: Long = 0L,
+    ) {
         val atBottom = scroll.scrollY + scroll.height >= (scroll.getChildAt(0)?.height ?: 0) - dp(8)
         // The reader's place is the first turn on screen and its offset from the top. Restoring
         // that, rather than shifting by however much the list grew, keeps an append below from
@@ -115,34 +153,84 @@ class TranscriptBodyView @JvmOverloads constructor(
         val anchor = if (atBottom) null else firstVisibleTurn()
         loadOlder.isVisible = hasMore
         // A pane switch or a cleared journal starts the body over; a normal re-bind only appends.
-        val reset = turns.isNotEmpty() && turns.keys.any { key -> entries.none { it.uuid == key } }
+        val imageActor = readContext?.let { ImageRenderActor(it.key, it.navigationGeneration) }
+        val imageAuthorityChanged = boundImageActor != imageActor
+        val reset = turns.isNotEmpty() && (imageAuthorityChanged || turns.keys.any { key -> entries.none { it.uuid == key } })
         if (reset) {
+            turns.values.forEach(turnsContainer::removeView)
             turns.clear()
-            turnsContainer.removeViews(1, turnsContainer.childCount - 1)
+            turnFileActors.clear()
         }
-        if (agent != boundAgent || renderer == null) {
+        if (agent != boundAgent || renderer == null || boundImageActor != imageActor) {
             boundAgent = agent
-            renderer = HistoryTurnRenderer(context, agent, expandedTools, ::toggleTool)
+            boundImageActor = imageActor
+            val generation = ++rendererGeneration
+            renderer = HistoryTurnRenderer(context, agent, expandedTools,
+                { uuid, partIndex -> toggleTool(uuid, partIndex, generation) }, imageLoader = imageLoader, readContext = readContext)
         }
+        val oldViews = turns.toMap()
+        val previous = boundEntries.associateBy { it.uuid }
         boundEntries = entries
+        val filesAdmissionChanged = boundFilesAdmissionReady != filesAdmissionReady ||
+            boundFilesAdmissionGeneration != filesAdmissionGeneration
+        boundFilesAdmissionReady = filesAdmissionReady
+        boundFilesAdmissionGeneration = filesAdmissionGeneration
+        val fileBatchChanged = reset || entries.any { turns[it.uuid] == null || previous[it.uuid] != it }
+        if (fileBatchChanged) onFileReferenceBatchStarted?.invoke()
         val before = turns.size
         entries.forEachIndexed { index, entry ->
-            if (turns[entry.uuid] != null) return@forEachIndexed
+            val existing = turns[entry.uuid]
+            if (existing != null && previous[entry.uuid] == entry) return@forEachIndexed
             val turn = HistoryPresentation.turn(entry, agent, resources)
             val view = renderer!!.turnView(turn, showHeader = true).noRevealOnFocus()
             styleUserTurn(view, entry)
             turns[entry.uuid] = view
+            turnFileActors[entry.uuid] = readContext
             // The "Load older" button is child 0; each turn sits at its entry's list position.
+            if (existing != null) turnsContainer.removeView(existing)
             turnsContainer.addView(view, index + 1)
         }
+        if (fileBatchChanged || filesAdmissionChanged) {
+            // Admission changes revisit retained cards without resetting their distinct-path quota.
+            // Retained cards count in the new batch too, and keep their own accepted actor.
+            // An unchanged supporting-state bind neither clears the quota nor borrows authority.
+            turns.forEach { (uuid, view) -> turnFileActors[uuid]?.let { decorateFileReferences(view, it) } }
+        }
+        if (queued != boundQueued) {
+            boundQueued = queued.toList()
+            queuedContainer.removeAllViews()
+            queued.forEach { text ->
+                queuedContainer.addView(TextView(context).apply {
+                    this.text = context.getString(R.string.pane_transcript_queued, text)
+                    setTextIsSelectable(true)
+                    setPadding(dp(12), dp(8), dp(12), dp(8))
+                    setTextColor(ContextCompat.getColor(context, R.color.collie_muted))
+                    noRevealOnFocus()
+                })
+            }
+        }
+        boundSendNow = sendNow
+        sendQueuedNow.isVisible = sendNow != null && queued.isNotEmpty()
+        sendQueuedNow.text = context.getString(
+            when {
+                sendNowPending -> R.string.pane_transcript_sending_now
+                sendNowAttempted -> R.string.pane_transcript_send_check_queue
+                else -> R.string.pane_transcript_send_now
+            },
+        )
+        sendQueuedNow.isEnabled = sendNow != null && sendNowEnabled && !sendNowPending && !sendNowAttempted
         val added = turns.size - before
         val restore = {
             val scrollBefore = scroll.scrollY
             placing = true
             if (reset || anchor == null) {
                 if (reset || atBottom) scroll.scrollTo(0, (turnsContainer.height - scroll.height).coerceAtLeast(0))
-            } else if (anchor.first.parent === turnsContainer) {
-                scroll.scrollTo(0, anchor.first.top - anchor.second)
+            } else {
+                val anchored = if (anchor.first.parent === turnsContainer) anchor.first else {
+                    val uuid = previous.keys.firstOrNull { oldViews[it] === anchor.first }
+                    uuid?.let { turns[it] }
+                }
+                anchored?.let { scroll.scrollTo(0, it.top - anchor.second) }
             }
             placing = false
             if (added > 0 || reset) {
@@ -169,6 +257,29 @@ class TranscriptBodyView @JvmOverloads constructor(
         // though the trace showed the bottom (S25 Ultra, 2026-09-18).
         turnsContainer.doOnPreDraw { restore() }
     }
+
+    private fun decorateFileReferences(root: View, actor: ScopedReadContext) {
+        val pending = java.util.ArrayDeque<View>()
+        pending.add(root)
+        while (pending.isNotEmpty()) {
+            val view = pending.removeLast()
+            if (view is TextView) {
+                val text = view.text
+                if (text.isNotEmpty() && text.length <= PrintedPathLinks.MAX_SOURCE_CHARS &&
+                    (PrintedPathLinks.hasAbsoluteCandidates(text.toString()) || PrintedPathLinks.extract(text.toString()).isNotEmpty())
+                ) {
+                    onDisplayedFileReferences?.invoke(view, text, actor)
+                }
+            } else if (view is ViewGroup) {
+                for (index in view.childCount - 1 downTo 0) pending.add(view.getChildAt(index))
+            }
+        }
+    }
+
+    private data class ImageRenderActor(
+        val key: ScopedRequestKey,
+        val navigationGeneration: Long,
+    )
 
     /** The first turn whose bottom is below the scroll top, with its offset from that top. */
     private fun firstVisibleTurn(): Pair<View, Int>? {
@@ -200,16 +311,21 @@ class TranscriptBodyView @JvmOverloads constructor(
         content.setPadding(dp(12), dp(8), dp(12), dp(8))
     }
 
-    private fun toggleTool(uuid: String, partIndex: Int) {
+    private fun toggleTool(uuid: String, partIndex: Int, generation: Long) {
+        if (generation != rendererGeneration || turns[uuid] == null) return
+        val capturedActor = turnFileActors[uuid]
         val key = uuid to partIndex
         if (key in expandedTools) expandedTools -= key else expandedTools += key
         val entry = boundEntries.firstOrNull { it.uuid == uuid } ?: return
-        val index = turns.keys.indexOf(uuid) + 1
+        val index = turnsContainer.indexOfChild(turns[uuid])
         val rebuilt = renderer!!.turnView(HistoryPresentation.turn(entry, boundAgent.orEmpty(), resources), showHeader = true)
             .noRevealOnFocus()
         turns[uuid] = rebuilt
         turnsContainer.removeViewAt(index)
         turnsContainer.addView(rebuilt, index)
+        // Expansion/collapse rebuilds all prose/tool TextViews. Reuse only this turn's original
+        // accepted actor; an unchanged poll or a detached old toggle cannot acquire new authority.
+        capturedActor?.let { decorateFileReferences(rebuilt, it) }
     }
 
     @VisibleForTesting

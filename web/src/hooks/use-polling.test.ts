@@ -5,6 +5,7 @@ import {
   HOME_BUSY_MS,
   HOT_MS,
   IDLE_MS,
+  RETRY_MS,
   SUPERSEDE_MS,
   intervalFor,
   type PollIntent,
@@ -20,7 +21,7 @@ import {
   stampTopology,
 } from "@/lib/poll-intent";
 import type { HomeData } from "@/lib/loaders";
-import type { AgentView } from "@/lib/types";
+import type { AgentView, UpdateInfo, UpdateRun } from "@/lib/types";
 
 // usePolling reads useRevalidator(); drive its state/revalidate directly (hoisted so the vi.mock
 // factory can close over the holder). intervalFor is pure and doesn't touch it.
@@ -142,7 +143,7 @@ describe("intervalFor", () => {
     expect(intervalFor(elsewhere, null, on())).toBe(HOME_BUSY_MS);
     expect(intervalFor(elsewhere, undefined, on())).toBe(HOME_BUSY_MS);
     expect(intervalFor(blockedPane, null, on())).toBe(HOME_BUSY_MS);
-    // An absent intent is a legitimate caller (PackProvider asks for the gap alone).
+    // An absent intent is a legitimate caller (CrewProvider asks for the gap alone).
     expect(intervalFor(elsewhere, null)).toBe(HOME_BUSY_MS);
   });
 
@@ -162,6 +163,93 @@ describe("intervalFor", () => {
 
   it("a pane the snapshot no longer knows about is not 'open'", () => {
     expect(intervalFor(idlePane, "w99:phantom", on({ changed: true }))).toBe(IDLE_MS);
+  });
+
+  it("polls that got no answer retry on a doubling backoff that never exceeds the cadence", () => {
+    const home = makeData([]);
+    expect(intervalFor(home, null, on({ failures: 0 }))).toBe(IDLE_MS);
+    expect(intervalFor(home, null, on({ failures: 1 }))).toBe(RETRY_MS);
+    expect(intervalFor(home, null, on({ failures: 2 }))).toBe(RETRY_MS * 2);
+    expect(intervalFor(home, null, on({ failures: 3 }))).toBe(RETRY_MS * 4);
+    expect(intervalFor(home, null, on({ failures: 50 }))).toBe(IDLE_MS);
+    expect(intervalFor(home, null, on({ failures: 3, topologyBursting: true }))).toBe(BURST_MS);
+  });
+});
+
+describe("usePolling — retrying failed polls", () => {
+  // A stale render as the root loader hands it back: `failure` is what the run's own herd read said.
+  const failing = (failure: HomeData["failure"] = "network"): HomeData => ({
+    ...makeData([]),
+    error: true,
+    authError: failure === "other",
+    failure,
+  });
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    rr.state = "idle";
+    rr.revalidate.mockClear();
+    resetPollIntent();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // Each loader result is a new object, so each rerender below is one more poll's answer.
+  it("backs off per failed result, resets on success, and does not hurry an auth refusal", () => {
+    const { rerender } = renderHook(({ data }: { data: HomeData }) => usePolling(data), {
+      initialProps: { data: failing() },
+    });
+    const expectNextTickAt = (ms: number) => {
+      rr.revalidate.mockClear();
+      vi.advanceTimersByTime(ms - 1);
+      expect(rr.revalidate).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(rr.revalidate).toHaveBeenCalledTimes(1);
+    };
+
+    expectNextTickAt(RETRY_MS);
+    act(() => rerender({ data: failing() }));
+    expectNextTickAt(RETRY_MS * 2);
+    act(() => rerender({ data: makeData([]) }));
+    expectNextTickAt(IDLE_MS);
+    act(() => rerender({ data: failing("other") }));
+    expectNextTickAt(IDLE_MS);
+    act(() => rerender({ data: failing() }));
+    expectNextTickAt(RETRY_MS);
+  });
+
+  // A 5xx is an answer: the proxy is up and the bridge behind it is not, most often mid-restart. A
+  // retry 0.5s later would be one more 5xx, and the second in a row latches the outage
+  // (lib/connection-health.ts `noteServerFailure`), so one proxy blip would turn the screen red.
+  it("a 5xx result does not shorten the gap, alone or in a run", () => {
+    const { rerender } = renderHook(({ data }: { data: HomeData }) => usePolling(data), {
+      initialProps: { data: failing("server") },
+    });
+    rr.revalidate.mockClear();
+    vi.advanceTimersByTime(IDLE_MS - 1);
+    expect(rr.revalidate).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(rr.revalidate).toHaveBeenCalledTimes(1);
+
+    // A 5xx between two no-answer polls ends the run: the next no-answer starts again at RETRY_MS.
+    act(() => rerender({ data: failing() }));
+    act(() => rerender({ data: failing("server") }));
+    act(() => rerender({ data: failing() }));
+    rr.revalidate.mockClear();
+    vi.advanceTimersByTime(RETRY_MS);
+    expect(rr.revalidate).toHaveBeenCalledTimes(1);
+  });
+
+  // A stale render that made no read of its own (the latched navigation fast path) carries no
+  // `failure`, so it is not hurried either: the next ordinary poll is the read that decides.
+  it("a stale render with no read of its own keeps the ordinary gap", () => {
+    renderHook(({ data }: { data: HomeData }) => usePolling(data), {
+      initialProps: { data: { ...makeData([]), error: true } },
+    });
+    rr.revalidate.mockClear();
+    vi.advanceTimersByTime(IDLE_MS - 1);
+    expect(rr.revalidate).not.toHaveBeenCalled();
   });
 });
 
@@ -305,6 +393,30 @@ describe("usePolling — superseding a wedged revalidation", () => {
       Reflect.deleteProperty(navigator, "onLine"); // restore the prototype getter
     }
   });
+
+  // M46 pass 3: the network changing is the moment to ask, not the next beat of the cadence. Both
+  // events start a read at once and supersede one in flight: that read began on the network that
+  // just went away, and on a VPN with the radio off it would hang until its deadline.
+  it.each(["offline", "online"])("reads AT ONCE on `%s`, superseding a read already in flight", (event) => {
+    rr.state = "loading"; // a read is in flight, well inside SUPERSEDE_MS
+    renderHook(() => usePolling(hotData(), HOT_PANE));
+    window.dispatchEvent(new Event(event));
+    expect(rr.revalidate).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads AT ONCE on `offline` from rest, before the next tick", () => {
+    rr.state = "idle";
+    renderHook(() => usePolling(makeData([]), null)); // the dashboard over an idle herd: IDLE_MS
+    window.dispatchEvent(new Event("offline"));
+    expect(rr.revalidate).toHaveBeenCalledTimes(1);
+  });
+
+  it("coming back to the foreground supersedes a read left in flight", () => {
+    rr.state = "loading";
+    renderHook(() => usePolling(hotData(), HOT_PANE));
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(rr.revalidate).toHaveBeenCalledTimes(1);
+  });
 });
 
 
@@ -438,4 +550,72 @@ describe("usePolling — bursts and the follow intent", () => {
     expect(rr.revalidate).not.toHaveBeenCalled(); // frozen mirror, slow poll
   });
 
+});
+
+// ── An update run is the cadence's business (M20/08) ────────────────────────
+
+describe("an update in flight is the fastest thing on the screen it is on", () => {
+  const run = (state: UpdateRun["state"], over: Partial<UpdateRun> = {}): UpdateRun => ({
+    schema: 1,
+    state,
+    from: "1.5.0",
+    to: "1.6.0",
+    startedAt: 1_000,
+    updatedAt: 2_000,
+    pid: 42,
+    attempt: 0,
+    ...over,
+  });
+
+  /** The everyday shape of the block, with only what the case is about changed. */
+  const withRun = (over: Partial<UpdateInfo>): HomeData => ({
+    ...makeData([]),
+    update: {
+      current: "1.5.0",
+      latest: "1.6.0",
+      latestUrl: null,
+      releaseAvailable: false,
+      majorAvailable: null,
+      majorUrl: null,
+      bridgeStale: false,
+      checkedAt: null,
+      ...over,
+    },
+  });
+
+  it("a run somebody is still driving polls at HOT_MS, on a page with no pane and an idle herd", () => {
+    // Measured on 2026-09-08: `/settings/updates` opens no pane, so with an idle herd this page fell
+    // to rule 5 and polled every six seconds for the whole update. The one screen where the operator
+    // is provably watching something happen was the slowest screen in the app.
+    for (const state of ["preflight", "staging", "restarting", "verifying"] as const) {
+      expect(intervalFor(withRun({ run: run(state) }), null)).toBe(HOT_MS);
+    }
+  });
+
+  it("a terminal run does not — a finished update is not a reason to keep the radio warm", () => {
+    for (const state of ["done", "rolled-back", "stuck", "interrupted", "idle"] as const) {
+      expect(intervalFor(withRun({ run: run(state) }), null)).toBe(IDLE_MS);
+    }
+    expect(intervalFor(withRun({}), null)).toBe(IDLE_MS);
+  });
+
+  it("a PEERS-ONLY run counts too, and it has no local record at all (M20/09)", () => {
+    // "Retry crew update" writes nothing to `update.json`, so a rule that read only `run` would poll
+    // that whole run at six seconds.
+    expect(intervalFor(withRun({ peers: [{ name: "minibuch", state: "updating" }] }), null)).toBe(HOT_MS);
+    // And it stops when the lead says the run settled, not when a timer says so.
+    expect(
+      intervalFor(
+        withRun({ peers: [{ name: "minibuch", state: "done" }], settledAt: 5_000 }),
+        null,
+      ),
+    ).toBe(IDLE_MS);
+  });
+
+  it("a pane the operator is actually on still outranks it", () => {
+    // The rule sits BELOW the pane rules on purpose: a page left open on Updates must not out-argue
+    // a mirror somebody is reading.
+    const data = withRun({ run: run("staging") });
+    expect(intervalFor(data, "w1:p1", { bursting: true, following: true, changed: false })).toBe(BURST_MS);
+  });
 });

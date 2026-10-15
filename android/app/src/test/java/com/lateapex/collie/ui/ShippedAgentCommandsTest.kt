@@ -25,7 +25,7 @@ class ShippedAgentCommandsTest {
         arrays.forEach { (agent, expected) ->
             assertEquals("$agent shipped command catalog drifted from web", expected, ShippedAgentCommands.forAgent(agent))
         }
-        assertEquals(167, arrays.values.sumOf { it.size })
+        assertEquals(168, arrays.values.sumOf { it.size })
     }
 
     private fun findWebCatalog(): File {

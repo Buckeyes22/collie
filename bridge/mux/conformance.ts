@@ -37,6 +37,7 @@
 // structure change nobody announced).
 // Adding tmux (M10/04) or zellij (M10/05) is that fixture plus a registry entry — never a test file.
 
+import { isMuxAgentName } from "./agents.ts";
 import { MUX_CAPABILITIES, type MuxCapability } from "./capabilities.ts";
 import { checkIdentitySet, idsLostBetween, isValidMuxId } from "./identity.ts";
 import { canonicalMuxKey, MUX_NAMED_KEYS } from "./keys.ts";
@@ -117,10 +118,14 @@ export interface MuxConformanceWorld {
    * ({@link MuxPane.focused}), and a fact nothing can move is a fact nothing proves. It is the
    * perturbation behind "the snapshot reports the terminal's focus", which is the half of the focus
    * contract that holds even where `setFocus` is declined.
+   *
+   * OPTIONAL, for one case only: a multiplexer with no terminal at all (a durable program), where
+   * there is nothing for an operator to focus. A world that omits it is held to the opposite
+   * promise instead: no pane is ever reported focused, and `setFocus` answers `unsupported`.
    */
-  focusOutOfBand(paneId: string): Promise<void>;
+  focusOutOfBand?(paneId: string): Promise<void>;
   /**
-   * The herd's SHAPE changes and nothing announces it — the operator renamed a tab with their own
+   * The herd's SHAPE changes and nothing announces it — the operator changed it with their own
    * keyboard.
    *
    * The sibling of {@link pokeTopology} and its opposite: that one announces a change on a channel,
@@ -128,9 +133,11 @@ export interface MuxConformanceWorld {
    * change that was announced would have reached the watch by itself and proved nothing about
    * looking on demand.
    *
-   * A tab rename rather than a new pane, and deliberately: every multiplexer Collie drives has tabs
-   * with labels, so the perturbation is one every fixture can simulate honestly (this file asks for
-   * exactly that of a shared world knob).
+   * WHICH change is the fixture's to pick, as long as its multiplexer can really make it and
+   * {@link topologySignature} can see it: a renamed tab, a renamed space, or a pane opened or closed.
+   * A tab rename is the usual one. It is not required, because a multiplexer whose tabs have no
+   * names (an adapter that declines `renameTab`) cannot rename one, and a fixture that did would be
+   * simulating something its multiplexer never does. The check does not name the change it expects.
    */
   pokeTopologyOutOfBand(): Promise<void>;
   /**
@@ -204,6 +211,9 @@ function livePanes(snapshot: MuxSnapshot): readonly MuxPane[] {
  * The four capabilities missing from it are missing for a reason: `agentDetection` and
  * `agentSessionRef` are fields on a pane record rather than calls (their answer is checked on the
  * snapshot), and the two push capabilities are properties of `watch`, which every adapter has.
+ * `listSessions` IS in the table, and it is the one entry that is not about a pane: it asks what
+ * else of this multiplexer runs on this machine, which is a question with a refusal shape like any
+ * other (M22/02).
  */
 interface CapabilityCall {
   readonly capability: MuxCapability;
@@ -338,6 +348,14 @@ function capabilityCalls(adapter: MuxAdapter, targets: CallTargets): CapabilityC
       // probe must never run it against a real multiplexer (the header's rule).
       writes: true,
       run: async () => refusalOf(await adapter.setFocus(targets.paneId)),
+    },
+    {
+      capability: "listSessions",
+      // A read, and the reason it is safe against a live multiplexer: an adapter that keeps such a
+      // list answers it from configuration it already has, and one that does not refuses before it
+      // looks anything up.
+      writes: false,
+      run: async () => refusalOf(await adapter.listSessions()),
     },
     // The destructive pair is last so a world that runs the whole table top-down still has a pane and
     // a tab to aim the earlier calls at.
@@ -491,19 +509,66 @@ const snapshotIsWellFormed: MuxReadCheck = {
       if (!isValidMuxId(tab.tabId)) problems.push(`tab id "${tab.tabId}" is not transport-safe`);
       if (!spaceIds.has(tab.spaceId)) problems.push(`tab "${tab.tabId}" names space "${tab.spaceId}", which is not in the snapshot`);
     }
+    // A COUNT IS A COUNT OF WHAT THE SNAPSHOT CARRIES (MUX_CONTRACT.md § Contract-owned rules,
+    // *Counts*). Measured on the zellij leg of M22/04: zellij's own tab listing counts its plugin
+    // panes — a tab-bar, a status-bar, a floating release-notes pane — which the adapter correctly
+    // drops, so a tab said "3 panes" over the 2 the operator could reach. A count nobody grades is a
+    // count that drifts, and the phone renders it beside the panes it contradicts.
+    const panesPerTab = new Map<string, number>();
+    const panesPerSpace = new Map<string, number>();
+    const tabsPerSpace = new Map<string, number>();
+    for (const pane of snapshot.panes) {
+      panesPerTab.set(pane.tabId, (panesPerTab.get(pane.tabId) ?? 0) + 1);
+      panesPerSpace.set(pane.spaceId, (panesPerSpace.get(pane.spaceId) ?? 0) + 1);
+    }
+    for (const tab of snapshot.tabs) tabsPerSpace.set(tab.spaceId, (tabsPerSpace.get(tab.spaceId) ?? 0) + 1);
+    for (const tab of snapshot.tabs) {
+      const carried = panesPerTab.get(tab.tabId) ?? 0;
+      if (tab.paneCount !== carried) {
+        problems.push(`tab "${tab.tabId}" reports paneCount ${String(tab.paneCount)} and the snapshot carries ${String(carried)} of its panes`);
+      }
+    }
+    for (const space of snapshot.spaces) {
+      const panes = panesPerSpace.get(space.spaceId) ?? 0;
+      const tabs = tabsPerSpace.get(space.spaceId) ?? 0;
+      if (space.paneCount !== panes) {
+        problems.push(`space "${space.spaceId}" reports paneCount ${String(space.paneCount)} and the snapshot carries ${String(panes)} of its panes`);
+      }
+      if (space.tabCount !== tabs) {
+        problems.push(`space "${space.spaceId}" reports tabCount ${String(space.tabCount)} and the snapshot carries ${String(tabs)} of its tabs`);
+      }
+    }
     for (const pane of snapshot.panes) {
       if (!spaceIds.has(pane.spaceId)) problems.push(`pane "${pane.paneId}" names space "${pane.spaceId}", which is not in the snapshot`);
       if (!tabIds.has(pane.tabId)) problems.push(`pane "${pane.paneId}" names tab "${pane.tabId}", which is not in the snapshot`);
-      // The agent name keys the harness and journal registries. An empty or upper-cased one misses
-      // both lookups silently, so it is a contract violation rather than a cosmetic slip.
-      if (pane.agent.length === 0) problems.push(`pane "${pane.paneId}" reports an empty agent name`);
-      else if (pane.agent !== pane.agent.toLowerCase()) {
-        problems.push(`pane "${pane.paneId}" reports agent "${pane.agent}", which is not lower-cased`);
-      }
     }
+    problems.push(...agentNameProblems(snapshot.panes));
     return problems;
   },
 };
+
+/**
+ * The agent-name rule over one snapshot's panes (agents.ts). Exported so the rule is tested on its
+ * own, with a name no registered adapter reports.
+ *
+ * The agent name keys the harness and journal registries, and both look it up exactly. An empty or
+ * upper-cased name misses both, and so does a multiplexer's own id for a harness (`claude-code`),
+ * so each is a contract violation rather than a cosmetic slip.
+ */
+export function agentNameProblems(panes: readonly MuxPane[]): string[] {
+  const problems: string[] = [];
+  for (const pane of panes) {
+    if (pane.agent.length === 0) problems.push(`pane "${pane.paneId}" reports an empty agent name`);
+    else if (pane.agent !== pane.agent.toLowerCase()) {
+      problems.push(`pane "${pane.paneId}" reports agent "${pane.agent}", which is not lower-cased`);
+    } else if (!isMuxAgentName(pane.agent)) {
+      problems.push(
+        `pane "${pane.paneId}" reports agent "${pane.agent}", which is not a Collie harness name, so no screen reader or journal reader finds it (agents.ts)`,
+      );
+    }
+  }
+  return problems;
+}
 
 const idsDoNotChurn: MuxReadCheck = {
   name: "pane ids are the same across two consecutive reads",
@@ -580,13 +645,38 @@ const gridReadAnswersTheContract: MuxReadCheck = {
     if (!Number.isFinite(stripped.value.revision) || stripped.value.revision < 0) {
       problems.push(`revision ${String(stripped.value.revision)} is not a usable race-guard token`);
     }
-    // `styling:"strip"` exists because one caller only wants words (the session-name scrape). An
-    // adapter that ignores it hands an ANSI-laced string to a consumer that will not parse it.
+    // `styling:"strip"` exists for a caller that only wants words (the session-name scrape used to
+    // be one; it now reads `preserve`). An adapter that ignores it hands an ANSI-laced string to a
+    // consumer that will not parse it.
     if (stripped.value.text.includes(ESCAPE)) {
       problems.push("a `strip` read carried escape sequences — the styling request was ignored");
     }
     const preserved = await adapter.readGrid(pane.paneId, { scope: "viewport", lines: 40, styling: "preserve" });
     if (!preserved.ok) problems.push(`a \`preserve\` read answered ${describeRefusal(preserved)}`);
+    return problems;
+  },
+};
+
+const sessionListIsWellFormed: MuxReadCheck = {
+  name: "a declared session list names this machine's instances, with an endpoint each",
+  async run(adapter) {
+    if (!declares(adapter, "listSessions")) return [];
+    const answer = await adapter.listSessions();
+    if (!answer.ok) return [`listSessions is declared but answered ${describeRefusal(answer)}`];
+    const problems: string[] = [];
+    const seen = new Set<string>();
+    for (const session of answer.value) {
+      // A name is a Map key in bridge/sessions.ts and a `?session=` value on the wire, so an empty
+      // one is a session nothing can select and a duplicate one is two herds under one key.
+      if (session.name.length === 0) problems.push("a session was reported with an empty name");
+      else if (seen.has(session.name)) problems.push(`two sessions share the name "${session.name}"`);
+      seen.add(session.name);
+      // An entry with no endpoint is the failure this capability exists to prevent: a list the
+      // bridge can read and cannot dial. An adapter in that position declares the capability absent.
+      if (session.endpoint.length === 0) {
+        problems.push(`session "${session.name}" was reported with no endpoint to dial`);
+      }
+    }
     return problems;
   },
 };
@@ -633,6 +723,12 @@ const spaceCapacityMatchesTheWorld: MuxReadCheck = {
  * The live probe (scripts/mux-probe.ts) runs exactly this list, which is the whole reason the split
  * exists: nothing here types, renames, closes or kills. Calls to undeclared verbs are in it because
  * an undeclared verb refuses before it touches anything — that is the property being tested.
+ *
+ * THERE IS A THIRD PLACE THIS LIST RUNS, and it grades less than the other two: scripts/crew-mux-probe.ts
+ * points it at a PEER's multiplexer through the lead's HTTP surface with `?host=` (M22/04). The
+ * transport there is §5's route table, not the mux port, so four of these checks cannot be graded
+ * across a link at all. Which four, and why each one, is a table in MUX_CONTRACT.md
+ * § "Conformance across a crew link" — read it before reading a crew run as covering the port.
  */
 export const MUX_READ_ONLY_CHECKS: readonly MuxReadCheck[] = [
   declarationIsWellFormed,
@@ -643,6 +739,7 @@ export const MUX_READ_ONLY_CHECKS: readonly MuxReadCheck[] = [
   undeclaredPaneFactsAreAbsent,
   gridReadAnswersTheContract,
   focusIsReportedHonestly,
+  sessionListIsWellFormed,
   spaceCapacityMatchesTheWorld,
   latencyIsDeclared,
   refreshIsHarmless,
@@ -663,7 +760,11 @@ async function inWorld(
   }
 }
 
-/** A snapshot's shape as one string — enough that any structural change is a different string. */
+/**
+ * A snapshot's shape as one string — enough that any structural change is a different string: a
+ * space or tab renamed, added or removed, and a pane added or removed. Tab labels are in it, and so
+ * is everything else, so a fixture whose multiplexer cannot rename a tab has other changes to make.
+ */
 function topologySignature(snapshot: MuxSnapshot): string {
   const spaces = snapshot.spaces.map((space) => `${space.spaceId}=${space.label}`).join("|");
   const tabs = snapshot.tabs.map((tab) => `${tab.tabId}=${tab.label}`).join("|");
@@ -683,12 +784,14 @@ const refreshSeesASilentChange: MuxWorldCheck = {
       await world.pokeTopologyOutOfBand();
       await adapter.refresh();
       const after = topologySignature(await adapter.snapshot());
-      return after === before
-        ? [
-            "the herd changed with nothing announcing it, refresh() resolved, and the next snapshot " +
-              "still showed the old shape — the contract's promise is that the very next read is current",
-          ]
-        : [];
+      if (after !== before) return [];
+      return [
+        "the herd changed with nothing announcing it, refresh() resolved, and the next snapshot " +
+          "still showed the old shape — the contract's promise is that the very next read is current" +
+          (declares(adapter, "renameTab")
+            ? ""
+            : ". This adapter declines renameTab, so its fixture must change the shape another way (open a pane)"),
+      ];
     });
   },
 };
@@ -1063,9 +1166,23 @@ const focusFollowsTheMultiplexer: MuxWorldCheck = {
           .filter((pane) => pane.focused && pane.spaceId === target.spaceId)
           .map((pane) => pane.paneId);
 
+      // A world with no terminal cannot have its focus moved. It owes the opposite: nothing is ever
+      // focused, and Collie cannot focus anything either.
+      const focusOutOfBand = world.focusOutOfBand?.bind(world);
+      if (focusOutOfBand === undefined) {
+        const focused = (await adapter.snapshot()).panes.filter((pane) => pane.focused);
+        if (focused.length > 0) {
+          problems.push(`the world has no terminal to focus, and the snapshot still focuses ${focused.map((pane) => pane.paneId).join(", ")}`);
+        }
+        if (declares(adapter, "setFocus")) problems.push("the world has no terminal to focus, and setFocus is declared");
+        const moved = await adapter.setFocus(other.paneId);
+        if (moved.ok) problems.push("the world has no terminal to focus, and setFocus SUCCEEDED");
+        return problems;
+      }
+
       // Half one: the OPERATOR moves focus. This holds for every adapter, declared capability or not
       // — reporting focus is on the floor, and only changing it is a capability.
-      await world.focusOutOfBand(target.paneId);
+      await focusOutOfBand(target.paneId);
       if (!(await focusedNow()).includes(target.paneId)) {
         problems.push(`focus moved to "${target.paneId}" in the multiplexer and the snapshot did not report it`);
       }

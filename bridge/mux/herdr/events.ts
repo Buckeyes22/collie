@@ -9,13 +9,10 @@ import { eventPaneId, type EventData } from "../../wire.ts";
 /** A subscription request entry: global (just `type`) or pane-scoped (needs `pane_id`). */
 export type Subscription = { type: string; pane_id?: string };
 
-// Global events that change what Collie's snapshot renders. We deliberately DROP layout.*,
-// worktree.*, pane.scroll_changed and pane.output_matched — none of them alter the herd view we
-// poll for, so subscribing would only add pokes that re-fetch identical state. Also NO
-// workspace.moved / tab.moved: they're new in herdr 0.7.2, and one unknown subscription type
-// rejects the whole subscribe — which would keep the stream permanently down on exactly the older
-// servers the session.snapshot fallback supports. Moves are rare and the safety-net poll covers
-// them within one COLLIE_POLL_IDLE_MS.
+// Global events that change what Collie's snapshot renders. Layout updates are added only after a
+// compatible Herdr handshake; the static list remains safe for older runtimes where one unknown
+// subscription type would reject the whole stream. Other high-volume layout-adjacent events stay
+// excluded because the bounded topology poll remains their safety net.
 const GLOBAL_SUBSCRIPTIONS: readonly string[] = [
   "workspace.created",
   "workspace.updated",
@@ -38,8 +35,10 @@ const GLOBAL_SUBSCRIPTIONS: readonly string[] = [
  * The full subscription list for the current set of agent panes: every global above, plus one
  * pane-scoped `pane.agent_status_changed` per agent pane (the status flips that drive triage).
  */
-export function buildSubscriptions(agentPaneIds: readonly string[]): Subscription[] {
+export function buildSubscriptions(agentPaneIds: readonly string[], layoutUpdates = false, metadataUpdates = false): Subscription[] {
   const subs: Subscription[] = GLOBAL_SUBSCRIPTIONS.map((type) => ({ type }));
+  if (layoutUpdates) subs.push({ type: "layout.updated" });
+  if (metadataUpdates) subs.push({ type: "workspace.metadata_updated" });
   for (const id of agentPaneIds) subs.push({ type: "pane.agent_status_changed", pane_id: id });
   return subs;
 }

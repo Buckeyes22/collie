@@ -1,50 +1,80 @@
-import { Fragment, memo, useEffect, useMemo, useRef } from "react";
-import type { CSSProperties, ReactNode } from "react";
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
-import { parseAnsi, type AnsiSegment } from "@/lib/ansi";
-import { buildBlocks } from "@/lib/harness";
+import { parseAnsi } from "@/lib/ansi";
+import { adapterFor, buildBlocks, rendersNativeMirror } from "@/lib/harness";
 import {
+  dropLeadingLines,
   lineText,
   splitLines,
   type Block,
-  type MenuModel,
-  type MultiSelectModel,
-  type PreviewSelectModel,
-  type PromptModel,
   type StyledLine,
-  type WizardModel,
 } from "@/lib/blocks";
 import { tableRuns, type TableRun } from "@/lib/table-run";
-import { MIRROR_SPACE, MIRROR_INVERT, styleFor } from "@/components/mirror-space";
+import {
+  alignImagesFromEnd,
+  blankPlaceholders,
+  imageClusters,
+  isPlaceholderOnlyLine,
+  type ImageCluster,
+} from "@/lib/mirror-images";
+import { t } from "@/lib/i18n";
+import { useLocale } from "@/hooks/use-locale";
+import {
+  MIRROR_SPACE,
+  MIRROR_INVERT,
+  MUSE_MIRROR,
+  segmentClassName,
+  segmentStyle,
+} from "@/components/mirror-space";
+import { renderCells } from "@/components/painted-cells";
+import { AuthedImageCard } from "@/components/authed-image-card";
 import { findMatches, splitSegment, type FindMatch } from "@/lib/find";
-import { findLinks } from "@/lib/links";
-import { PromptSelectBlock, type PromptBlockAction } from "@/components/prompt-select-block";
-import { WizardBlock } from "@/components/wizard-block";
-import { PreviewSelectBlock, type PreviewBlockAction } from "@/components/preview-select-block";
-import { MultiSelectBlock } from "@/components/multi-select-block";
-import { MenuBlock, type MenuBlockAction } from "@/components/menu-block";
-import { AutocompleteBlock } from "@/components/autocomplete-block";
-import type { MultiSelectIntent } from "@/lib/multi-select-action";
+import { findLinks, type LinkMatch } from "@/lib/links";
+import { findFilePaths } from "@/lib/file-paths";
+import { isPlainClick, useFileLinks, type FileLinkOpener } from "@/components/file-links";
+
+/**
+ * A link in the mirror: an autolinked URL (opens a new tab), or a path the agent printed that
+ * resolves under the Changes root and exists there (`onOpen`, ADR 0088), which opens Files inside
+ * the app.
+ */
+type MirrorLink = LinkMatch & { onOpen?: () => void };
+
+/**
+ * The URL links plus the file paths, in one sorted list over the same haystack. Paths are found per
+ * mirror ROW: a path the terminal wrapped onto two rows is two pieces and is not joined this round
+ * (the URL repair through `logicalText` has no file counterpart yet). A path that overlaps a URL
+ * gives way to it. With no opener this is the URL list, unchanged.
+ */
+function mirrorLinks(haystack: string, urls: LinkMatch[], open: FileLinkOpener | null): MirrorLink[] {
+  if (open === null || !haystack.includes("/")) return urls;
+  const files: MirrorLink[] = [];
+  let base = 0;
+  for (const row of haystack.split("\n")) {
+    for (const f of findFilePaths(row)) {
+      const target = open(f);
+      if (target === null) continue;
+      const start = base + f.start;
+      const end = base + f.end;
+      if (urls.some((u) => u.start < end && start < u.end)) continue;
+      files.push({ start, end, href: target.href, onOpen: target.onOpen });
+    }
+    base += row.length + 1;
+  }
+  if (files.length === 0) return urls;
+  return [...urls, ...files].toSorted((a, b) => a.start - b.start);
+}
 
 /** A raw block, narrowed off the Block union (the highlight/offset paths only touch these). */
 type RawBlock = Extract<Block, { kind: "raw" }>;
-/** The (at most one) prompt-select block — always at the tail. */
-type PromptBlock = Extract<Block, { kind: "prompt-select" }>;
-/** The (at most one) wizard block — always at the tail, mutually exclusive with prompt-select. */
-type WizBlock = Extract<Block, { kind: "wizard" }>;
-/** The (at most one) preview-select block — tail, mutually exclusive with the other two. */
-type PrevBlock = Extract<Block, { kind: "preview-select" }>;
-/** The (at most one) multi-select block — tail, mutually exclusive with the other dialog blocks. */
-type MultiBlock = Extract<Block, { kind: "multi-select" }>;
-/** The (at most one) generic-menu block — tail, and only ever lifted when all four above declined. */
-type GenericMenuBlock = Extract<Block, { kind: "menu" }>;
-/** The (at most one) completion-popup block — tail, and the only non-raw kind that is NOT a modal:
- *  the agent's input box is live under it, so it renders with no controls and locks nothing. */
-type AutoBlock = Extract<Block, { kind: "autocomplete" }>;
-
 export interface AnsiOutputProps {
   text: string;
+  /** The same rows with soft wraps undone, when the bridge sent them: the autolinker uses it to give
+   * the fragments of one wrapped URL the href of the whole URL. Absent for every pane that needs no
+   * repair, and then links behave exactly as they did. */
+  logicalText?: string;
   className?: string;
   /** true = wrap; the block breaks at the viewport width instead of scrolling horizontally. Default
    *  true — the mirror is mostly agent prose, and a phone shows far fewer columns than the desktop
@@ -64,26 +94,52 @@ export interface AnsiOutputProps {
    *  registered adapter contributes its own: claude lifts dialogs and strips chrome, omp strips chrome
    *  only. An absent/unregistered agent renders pure raw output. */
   agent?: string;
-  /** Injected handler for a prompt-select tap (the race guard lives in AgentChat). Absent (or with a
-   *  disabled block) means the buttons render but don't act — AnsiOutput never touches the network. */
-  onPromptAction?: (
-    action: PromptBlockAction,
-    prompt: PromptModel,
-  ) => boolean | void | Promise<boolean | void>;
-  /** Injected handler for a wizard tap — one race-guarded keystroke per control (see
-   *  lib/wizard-action.ts). Same presentational contract as onPromptAction. */
-  onWizardAction?: (keys: string[], wizard: WizardModel) => void | Promise<void>;
-  /** Injected handler for a preview-dialog tap (option / note / step-nav intents — the race-guarded
-   *  choreography lives in lib/preview-action.ts). Same presentational contract as onPromptAction. */
-  onPreviewAction?: (action: PreviewBlockAction, preview: PreviewSelectModel) => void | Promise<void>;
-  /** Injected handler for a multi-select tap (toggle / submit / escape / confirm / cancel — the
-   *  race-guarded choreography lives in lib/multi-select-action.ts). Same presentational contract. */
-  onMultiSelectAction?: (action: MultiSelectIntent, multi: MultiSelectModel) => void | Promise<void>;
-  /** Injected handler for a generic-menu tap (a footer-named key, or an arrow — the race-guarded
-   *  send lives in lib/menu-action.ts). Same presentational contract as onPromptAction. */
-  onMenuAction?: (action: MenuBlockAction, menu: MenuModel) => void | Promise<void>;
-  /** Disable the prompt-select/wizard/preview/multi-select/menu buttons (read-only / gone pane). */
-  promptDisabled?: boolean;
+  /** False when the operator turned block grammars off (the raw-terminal pref): the adapter does not
+   *  run, while `agent` still picks the native-mirror rendering. Default true. */
+  grammars?: boolean;
+  /**
+   * The pane's journal images, oldest-first, for the terminal-graphics placeholders on screen.
+   *
+   * NOT fetched here and not carried by the pane read — the caller reads one page of the history
+   * route when this component reports a placeholder it cannot account for
+   * (`hooks/use-mirror-images.ts`). Matched to the clusters by ORDER, from the end, which is an
+   * approximation: the Kitty diacritics encode an image id no journal can map to a blob
+   * (`lib/mirror-images.ts` § "why the match is by order").
+   */
+  images?: readonly string[];
+  /**
+   * Reports how many placeholder clusters the mirror is showing (drives the caller's fetch). Zero
+   * on an ordinary screen, so the common case reports zero once and asks for nothing.
+   */
+  onImageClusterCount?: (count: number) => void;
+  /**
+   * Per-pane override of the light-theme inversion (lib/mirror-invert.ts), resolved by the caller
+   * because this component is presentational and never reads storage. `true` renders natively even
+   * for an inverting agent, `false` forces the inverting mirror back on, and `undefined` — the
+   * normal case — leaves the agent bit from .adr/0047 to decide.
+   */
+  nativeMirror?: boolean;
+  /**
+   * Hide this many screen rows off the TOP of the mirror. Default 0.
+   *
+   * Purely presentational and applied AFTER the grammars have run over the whole screen, so no
+   * detection, guard or draft probe can see it. Its one caller (AgentChat) uses it to drop the rows a
+   * clipped reply occupies while the full message is rendered from the journal directly above them —
+   * printing both was the same text twice. Find offsets are recomputed over what is left, which is
+   * why AgentChat sets this to 0 whenever the find bar is open.
+   */
+  hideLeadingLines?: number;
+  /**
+   * The blocks, already built from `text` by the caller. AgentChat builds them once per poll and
+   * hands the SAME array to this component (raw blocks only) and to `CardDock` (the one lifted card,
+   * .adr/0059), so the grammars never run twice for one screen. Absent, this component builds them
+   * itself from `text`, `agent`, `grammars` and `nativeMirror`, which is what a standalone mirror
+   * (and every test of this file) wants.
+   *
+   * Either way ONLY the raw blocks render here. A lifted card is never drawn inside the mirror any
+   * more: inside the scroller its bottom edge moved with the text above it.
+   */
+  blocks?: readonly Block[];
 }
 
 // Stable empty result so the "not searching" path keeps the same `matches` reference across polls
@@ -93,6 +149,13 @@ const NO_MATCHES: FindMatch[] = [];
  *  `NO_BLOCK_RUNS` is the wrap-off answer for EVERY block at once: that path computes nothing, and
  *  the lookup below falls through to NO_RUNS for each block it asks about. */
 const NO_RUNS = tableRuns([]);
+/** Stable empty set of failed image URLs, so "nothing has failed" is one identity. */
+const NO_FAILED: ReadonlySet<string> = new Set();
+
+/** Stable empty image list, so "this pane has no journal images" is one identity across polls. */
+const NO_IMAGES: readonly string[] = Object.freeze([]);
+/** The frozen empty cluster list, for a block the grammar produced no clusters for. */
+const NO_CLUSTERS: readonly ImageCluster[] = Object.freeze([]);
 const NO_BLOCK_RUNS: readonly (readonly TableRun[])[] = Object.freeze([]);
 
 // The mirror's dark colour space and its light-theme inversion live in mirror-space.ts — the
@@ -118,28 +181,41 @@ const NO_BLOCK_RUNS: readonly (readonly TableRun[])[] = Object.freeze([]);
 const LINK_CLASS =
   "underline decoration-1 underline-offset-2 break-all cursor-pointer py-[0.35em]";
 
-// A segment marked `mobileTransparentBg` hands its ANSI fill to a custom property instead of the
-// inline `background-color`, and `.terminal-mobile-transparent-bg` in index.css paints it: on a
-// desktop from the property, on a phone not at all. Inline styles beat a class, so the alternative
-// spelling is `!important` in the stylesheet. Every other segment takes the plain inline style, and
-// the other mirror surface (the statusline strip) calls styleFor directly and is unaffected.
-function segmentStyle(s: AnsiSegment): CSSProperties {
-  const style = styleFor(s);
-  if (!s.mobileTransparentBg) return style;
-  const { backgroundColor, ...rest } = style;
-  // SAFETY: a CSS custom property is a valid style key at runtime; React passes any `--*` key
-  // straight to the CSSOM. CSSProperties has no index signature for it, so the cast is the only
-  // spelling. The value is the backgroundColor just removed from the same object.
-  return { ...rest, "--terminal-seg-bg": backgroundColor } as CSSProperties;
-}
-
-function preClass(wrap: boolean, className?: string): string {
+function preClass(
+  wrap: boolean,
+  className?: string,
+  agent?: string,
+  nativeMirror?: boolean,
+): string {
+  const native = rendersNativeMirror(agent, nativeMirror);
   return cn(
     "m-0 font-mono leading-[1.25] tracking-normal text-foreground [font-variant-ligatures:none]",
-    MIRROR_SPACE,
-    MIRROR_INVERT,
+    // Opt the mirror back INTO text selection, so an operator can long-press a line and Copy it
+    // straight off the phone. An installed iOS PWA (display:standalone, which Collie is) suppresses
+    // long-press selection app-wide unless the element sets -webkit-user-select:text — the exact
+    // inverse of the `select-none [-webkit-touch-callout:none]` the strip pills carry to STOP the
+    // loupe. Both spellings, like those pills, so the -webkit prefix is present whatever the build
+    // does. The pane menu's "Copy output" is the one-tap path (robust while output keeps arriving);
+    // this is the direct-selection one, best on a pane you have scrolled up to freeze.
+    "select-text [-webkit-user-select:text]",
+    native ? MUSE_MIRROR : MIRROR_SPACE,
+    native ? null : MIRROR_INVERT,
     wrap
-      ? "whitespace-pre-wrap break-words"
+      ? // `text-pretty` (#302): a 133-column agent row rewraps at phone width, and greedy breaking
+        // strands one word on its last line ("form." alone under a bullet). Pretty pulls a word
+        // down instead. Line breaking only: the text nodes, find offsets, link hrefs and copied
+        // text are untouched, and no capture screen gained or lost a line, so the mirror's height
+        // and the tail-follow hold.
+        //
+        // WHERE IT ACTS, measured on 2026-09-27 at 390px over the 212 Claude, Codex, Muse and Grok
+        // screens in `fixtures/panes`: Chromium changes the breaks on 35, WebKit 26.5 on 12, and
+        // the stranded words drop from 220 to 141 and to 217. WebKit drops `pretty` for the whole
+        // <pre> once any row in it cannot break to fit (a rule wider than the phone, a status line
+        // padded with spaces, a table run), and nearly every screen holds one. Safari before 26
+        // ignores the value and breaks greedily. `web/e2e/issue-302.spec.ts` pins the prose case in
+        // both engines. Don't add `hyphens-none` for "multi-" / "session": `hyphens` governs soft
+        // and automatic hyphenation, never the break a printed hyphen allows.
+        "whitespace-pre-wrap break-words text-pretty"
       : // Horizontal pan for wide TUI tables. `overflow-x-auto` forces `overflow-y` to compute to
         // `auto` (CSS overflow quirk), and a flex item with non-visible overflow may shrink below its
         // content height — the <pre> then becomes the vertical scroller and ChatMessageList's
@@ -186,7 +262,8 @@ const TABLE_RUN_CLASS =
 // For a Claude pane the AST may lift the tail into a `prompt-select` block (native buttons) and strip
 // the agent's own input-box chrome; everything else stays a `raw` block that reproduces exactly what
 // the flat renderer produced (one <span> per segment, "\n" text nodes between lines). Raw blocks go
-// inside the <pre>; the prompt-select block renders after it as its own button group.
+// inside the <pre>. The lifted card does NOT render here: it docks above the actions belt, in
+// `CardDock` (card-dock.tsx, .adr/0059), from the same blocks array.
 //
 // Find-in-output highlights matches over the RAW blocks only — the prompt-select block's text is
 // rendered as buttons, not searchable mirror text. The haystack is the concatenation of the raw
@@ -195,15 +272,57 @@ const TABLE_RUN_CLASS =
 // can't contain a newline, so no match straddles the inter-line separators.)
 //
 // Autolinked URLs (lib/links.ts) live in that SAME coordinate space and are applied over the raw
-// blocks too, as anchors wrapping the find-highlighted runs. Only `http(s)://` text becomes a link,
-// and the href is the matched text itself — no scheme can appear that wasn't printed by the agent.
+// blocks too, as anchors wrapping the find-highlighted runs. Only `http(s)://` text becomes a web
+// link, and the href is the matched text itself — no scheme can appear that wasn't printed by the agent.
+// The one other link is a file path the agent printed (ADR 0088): its href is an in-app Files
+// address the screen's opener built from a root-relative path, never the printed text.
 //
 // Performance: parseAnsi + block-building run once per unique `text` (and `agent`) value (useMemo),
 // as does the link scan; React.memo prevents re-renders when props are unchanged — critical for the
 // polling cadence on mobile. With no query and no links the render skips splitSegment entirely and
-// emits the segment's own string, exactly as the pre-find flat renderer did.
+// emits the segment's own string, exactly as the pre-find flat renderer did — unless the segment
+// holds a Block or Powerline character, which is wrapped in a painted span
+// (components/painted-cells.tsx).
+
+// One terminal-graphics image: the picture when the caller has one for this cluster, and the
+// "[Image]" badge when it does not. The badge is not a failure state — a cluster the ordering
+// could not match, or a journal read that has not answered yet, still has to say "a picture is
+// here", which is the whole difference from the black box this replaces.
+//
+// The picture is the shared `ImageCard` (ui/image-card.tsx), loaded with the pairing token through
+// `AuthedImageCard`. Its source is a URL `imageSrc` already vetted (`lib/api.ts`) — a blob path on
+// the owning host, or inline bytes. Never a URL the agent's log supplied.
+const renderImageCluster = (
+  url: string | null,
+  key: string,
+  onImageError: (url: string) => void,
+): ReactNode =>
+  url === null ? (
+    <span
+      key={key}
+      className="my-1 inline-flex items-center gap-1.5 rounded border border-border/40 bg-muted/30 px-2 py-1 text-xs"
+    >
+      {t("mirror.imageBadge")}
+    </span>
+  ) : (
+    // THE CARD SAYS IT IS A GUESS. The placeholder carries a Kitty image id no journal maps to a
+    // blob, so the picture is matched by ORDER (`lib/mirror-images.ts` § "why the match is by
+    // order"). The operator is told that on the card itself, and pointed at History, which reads
+    // the journal turn by turn and is exact. A load that fails falls back to the badge (see FAILED
+    // IMAGES in the component); the handler reports the URL, not the cluster, because the same blob
+    // can sit under two clusters.
+    <AuthedImageCard
+      key={key}
+      src={url}
+      alt={t("mirror.imageAlt")}
+      caption={t("mirror.imageMatchedByOrder")}
+      onError={() => onImageError(url)}
+    />
+  );
+
 export const AnsiOutput = memo(function AnsiOutput({
   text,
+  logicalText,
   className,
   wrap = true,
   fontSize = 11,
@@ -211,51 +330,70 @@ export const AnsiOutput = memo(function AnsiOutput({
   currentMatch = -1,
   onMatchCount,
   agent,
-  onPromptAction,
-  onWizardAction,
-  onPreviewAction,
-  onMultiSelectAction,
-  onMenuAction,
-  promptDisabled,
+  grammars = true,
+  nativeMirror,
+  hideLeadingLines = 0,
+  blocks: builtBlocks,
+  images,
+  onImageClusterCount,
 }: AnsiOutputProps) {
-  const segments = useMemo(() => parseAnsi(text), [text]);
-  const blocks = useMemo(() => buildBlocks(splitLines(segments), { agent }), [segments, agent]);
-
-  const rawBlocks = useMemo(
-    () => blocks.filter((b): b is RawBlock => b.kind === "raw"),
-    [blocks],
-  );
-  const promptBlock = useMemo(
-    () => blocks.find((b): b is PromptBlock => b.kind === "prompt-select") ?? null,
-    [blocks],
-  );
-  const wizardBlock = useMemo(
-    () => blocks.find((b): b is WizBlock => b.kind === "wizard") ?? null,
-    [blocks],
-  );
-  const previewBlock = useMemo(
-    () => blocks.find((b): b is PrevBlock => b.kind === "preview-select") ?? null,
-    [blocks],
-  );
-  const multiBlock = useMemo(
-    () => blocks.find((b): b is MultiBlock => b.kind === "multi-select") ?? null,
-    [blocks],
-  );
-  const menuBlock = useMemo(
-    () => blocks.find((b): b is GenericMenuBlock => b.kind === "menu") ?? null,
-    [blocks],
-  );
-  const autoBlock = useMemo(
-    () => blocks.find((b): b is AutoBlock => b.kind === "autocomplete") ?? null,
-    [blocks],
+  // The mirror is agent output and is not translated — but the two strings the image cluster
+  // renders are Collie's own words, so this subscribes for the same reason every t() caller does.
+  useLocale();
+  // Built here only when the caller did not already build them (see the prop). Skipping the parse
+  // too is the point: AgentChat's polling path pays for one parse per screen, not two.
+  const blocks = useMemo(
+    () =>
+      builtBlocks ?? buildBlocks(splitLines(parseAnsi(text)), { agent, grammars, nativeMirror }),
+    [builtBlocks, text, agent, grammars, nativeMirror],
   );
 
+  const rawBlocks = useMemo(() => {
+    const visible = dropLeadingLines(
+      blocks.filter((b): b is RawBlock => b.kind === "raw"),
+      hideLeadingLines,
+    );
+    // Hide the replaced reply by the raw row coordinates first, then tidy for display, so Find and
+    // the links read one and the same text.
+    const prepareDisplay = adapterFor(agent)?.prepareDisplay;
+    if (!prepareDisplay || !grammars || !wrap) return visible;
+    return visible.map((block) => ({ kind: block.kind, lines: prepareDisplay(block.lines) }));
+  }, [blocks, hideLeadingLines, agent, grammars, wrap]);
   // The table runs of each raw block, by block index. Only while wrapping: with Wrap off the whole
   // <pre> already pans column-faithfully, and a nested scroller would just trap the gesture — so
   // that branch computes nothing at all and every block falls through to NO_RUNS below.
   const runsByBlock = useMemo(
     () => (wrap ? rawBlocks.map((b) => tableRuns(b.lines)) : NO_BLOCK_RUNS),
     [rawBlocks, wrap],
+  );
+
+  // The terminal-graphics placeholder clusters of each raw block, by block index — one cluster per
+  // image, however many cells it covers. Computed here rather than inside the render loop because
+  // the TOTAL is what the caller needs before a single node is emitted.
+  const clustersByBlock = useMemo(() => rawBlocks.map((b) => imageClusters(b.lines)), [rawBlocks]);
+  const clusterCount = useMemo(
+    () => clustersByBlock.reduce((sum, c) => sum + c.length, 0),
+    [clustersByBlock],
+  );
+  // ── FAILED IMAGES ARE BADGES ────────────────────────────────────────────────
+  // A blob read can answer 404: the machine that owns the bytes may be a peer running a build that
+  // has no `blobs/<hash>` route, and that route is additive-optional by design (CREW_PROTOCOL.md
+  // §9.1 — a lead or a peer without it answers 404). A file can also be gone. Either way the
+  // operator must not be shown a broken-image glyph, so the URL that failed is remembered and the
+  // cluster falls back to the "[Image]" badge it would have had with no image at all.
+  const [failedImages, setFailedImages] = useState<ReadonlySet<string>>(NO_FAILED);
+  const onImageError = useCallback((url: string) => {
+    setFailedImages((prev) => (prev.has(url) ? prev : new Set(prev).add(url)));
+  }, []);
+
+  // Which image each cluster gets, aligned from the END — see the prop's doc and mirror-images.ts.
+  // A URL whose load already failed counts as no image, so the badge takes its place.
+  const clusterImages = useMemo(
+    () =>
+      alignImagesFromEnd(clusterCount, images ?? NO_IMAGES).map((url) =>
+        url !== null && failedImages.has(url) ? null : url,
+      ),
+    [clusterCount, images, failedImages],
   );
 
   // Find offsets live over the *raw* mirror text (raw blocks joined by "\n", lines joined by "\n").
@@ -270,12 +408,22 @@ export const AnsiOutput = memo(function AnsiOutput({
   }, [haystack, query]);
 
   // Autolinked URLs, in the SAME offset space as find matches — both are ranges over `haystack`, so
-  // one running offset serves both splits. Recomputed only when the mirror text changes.
-  const links = useMemo(() => findLinks(haystack), [haystack]);
+  // one running offset serves both splits. Recomputed only when the mirror text changes. `logicalText`
+  // (when the bridge sent it) lets a URL the pane wrapped be linked as the single URL it was.
+  const urls = useMemo(() => findLinks(haystack, logicalText), [haystack, logicalText]);
+  // Paths the agent printed, opened in Files (ADR 0088), in that same offset space. The opener is
+  // stable across polls (components/file-links.tsx), so this re-runs when the text does, and when a
+  // path it asked about turns out to exist.
+  const openFile = useFileLinks();
+  const links = useMemo(() => mirrorLinks(haystack, urls, openFile), [haystack, urls, openFile]);
 
   useEffect(() => {
     onMatchCount?.(matches.length);
   }, [matches, onMatchCount]);
+
+  useEffect(() => {
+    onImageClusterCount?.(clusterCount);
+  }, [clusterCount, onImageClusterCount]);
 
   const currentRef = useRef<HTMLSpanElement | null>(null);
   useEffect(() => {
@@ -286,49 +434,12 @@ export const AnsiOutput = memo(function AnsiOutput({
   // Muted = box-drawing / rule glyphs. Drop ANSI dim opacity so table borders stay visible —
   // var(--border) + dim made them nearly invisible on mobile. See styleFor in mirror-space.ts.
 
-  const prompt = promptBlock ? (
-    <PromptSelectBlock
-      prompt={promptBlock.prompt}
-      disabled={promptDisabled || !onPromptAction}
-      onAction={(action) => onPromptAction?.(action, promptBlock.prompt) ?? false}
-    />
-  ) : wizardBlock ? (
-    <WizardBlock
-      wizard={wizardBlock.wizard}
-      disabled={promptDisabled || !onWizardAction}
-      onAction={(keys) => onWizardAction?.(keys, wizardBlock.wizard)}
-    />
-  ) : previewBlock ? (
-    <PreviewSelectBlock
-      preview={previewBlock.preview}
-      disabled={promptDisabled || !onPreviewAction}
-      onAction={(action) => onPreviewAction?.(action, previewBlock.preview)}
-    />
-  ) : multiBlock ? (
-    <MultiSelectBlock
-      multi={multiBlock.multi}
-      disabled={promptDisabled || !onMultiSelectAction}
-      onAction={(action) => onMultiSelectAction?.(action, multiBlock.multi)}
-    />
-  ) : menuBlock ? (
-    <MenuBlock
-      menu={menuBlock.menu}
-      lines={menuBlock.lines}
-      disabled={promptDisabled || !onMenuAction}
-      onAction={(action) => onMenuAction?.(action, menuBlock.menu)}
-    />
-  ) : autoBlock ? (
-    // No handler and no `disabled`: the completion popup emits no keystroke, so there is nothing for
-    // a read-only device to be refused. It is last in the chain only because it is the least
-    // specific tail shape; the grammars above are mutually exclusive with it anyway (a popup means an
-    // input box, and every dialog above means there isn't one).
-    <AutocompleteBlock autocomplete={autoBlock.autocomplete} />
-  ) : null;
-
   // Thread a running global offset through raw blocks → lines → segments (advancing by 1 for each
   // inter-line/inter-block "\n" separator) so both splits below can map a segment's slices back to
   // the haystack. With no query and no links this costs one addition per segment and allocates
-  // nothing beyond the spans — the polling path stays as cheap as the old flat render.
+  // nothing beyond the spans — the polling path stays as cheap as the old flat render. A segment
+  // holding a Block or Powerline character is the one exception: it allocates its pieces and one
+  // span per painted run, with no style object (components/painted-cells.tsx).
   let offset = 0;
   let currentAssigned = false;
 
@@ -336,9 +447,9 @@ export const AnsiOutput = memo(function AnsiOutput({
   // highlighted. `currentAssigned` refs only the first slice of the focused match (a match can span
   // segments on a colour change) so scrollIntoView targets one stable node.
   const renderFind = (run: string, start: number): ReactNode => {
-    if (matches.length === 0) return run;
+    if (matches.length === 0) return renderCells(run);
     return splitSegment(run, start, matches).map((p, j) => {
-      if (p.matchIndex === null) return p.text;
+      if (p.matchIndex === null) return <Fragment key={j}>{renderCells(p.text)}</Fragment>;
       const isCurrent = p.matchIndex === currentMatch;
       const attach = isCurrent && !currentAssigned;
       if (attach) currentAssigned = true;
@@ -362,10 +473,16 @@ export const AnsiOutput = memo(function AnsiOutput({
             // single inversion, which renders them as a pale tan wash with the mapped text on top.
             // See .adr/0002 — "cancel the filter only on an element that fully specifies both its
             // foreground and its background".
-            isCurrent ? cn(MIRROR_INVERT, "bg-yellow-400 text-black") : "bg-yellow-400/30",
+            //
+            // Native mirrors (Muse, .adr/0047) invert nothing, so the current match takes its
+            // fully-specified yellow as-is: re-applying the filter there would blue-shift it in
+            // light and no-op in dark. Correct in both themes without a theme branch.
+            isCurrent
+              ? cn(rendersNativeMirror(agent, nativeMirror) ? null : MIRROR_INVERT, "bg-yellow-400 text-black")
+              : "bg-yellow-400/30",
           )}
         >
-          {p.text}
+          {renderCells(p.text)}
         </span>
       );
     });
@@ -381,8 +498,27 @@ export const AnsiOutput = memo(function AnsiOutput({
       const pieceStart = at;
       at += p.text.length;
       if (p.matchIndex === null) return <Fragment key={i}>{renderFind(p.text, pieceStart)}</Fragment>;
+      const link = links[p.matchIndex]!;
+      const onOpen = link.onOpen;
+      if (onOpen !== undefined) {
+        // A file path stays in the app: a plain tap opens Files, a modified click is the browser's.
+        return (
+          <a
+            key={i}
+            href={link.href}
+            onClick={(e) => {
+              if (e.defaultPrevented || !isPlainClick(e)) return;
+              e.preventDefault();
+              onOpen();
+            }}
+            className={LINK_CLASS}
+          >
+            {renderFind(p.text, pieceStart)}
+          </a>
+        );
+      }
       return (
-        <a key={i} href={links[p.matchIndex]!.href} target="_blank" rel="noopener noreferrer" className={LINK_CLASS}>
+        <a key={i} href={link.href} target="_blank" rel="noopener noreferrer" className={LINK_CLASS}>
           {renderFind(p.text, pieceStart)}
         </a>
       );
@@ -408,11 +544,7 @@ export const AnsiOutput = memo(function AnsiOutput({
       const segStart = offset;
       offset += s.text.length;
       return (
-        <span
-          key={si}
-          style={segmentStyle(s)}
-          className={s.mobileTransparentBg ? "terminal-mobile-transparent-bg" : undefined}
-        >
+        <span key={si} style={segmentStyle(s)} className={segmentClassName(s)}>
           {renderSegment(s.text, segStart)}
         </span>
       );
@@ -420,7 +552,7 @@ export const AnsiOutput = memo(function AnsiOutput({
     // A run's own rows are never clipped; see `inRun` above. Outside a run this is unchanged: a
     // repeated rule, or a framed menu row, keeps the single-row clip it has always had.
     const content = line.noWrap && wrap && !inRun ? (
-      <span className="inline-block max-w-full overflow-hidden align-bottom whitespace-pre break-normal">{segNodes}</span>
+      <span className="inline-block max-w-full overflow-hidden align-bottom whitespace-pre break-normal [&_a]:break-normal">{segNodes}</span>
     ) : (
       segNodes
     );
@@ -431,13 +563,40 @@ export const AnsiOutput = memo(function AnsiOutput({
       </Fragment>
     );
   };
-
+  // The running index into `clusterImages`, across every block — the alignment is over the whole
+  // screen, not per block.
+  let clusterIndex = 0;
   const renderBlock = (block: RawBlock, bi: number) => {
     if (bi > 0) offset += 1; // the "\n" separating this block from the previous
     const runs = runsByBlock[bi] ?? NO_RUNS;
+    const clusters = clustersByBlock[bi] ?? NO_CLUSTERS;
     const nodes: ReactNode[] = [];
     let ri = 0;
+    let ci = 0;
     for (let li = 0; li < block.lines.length; ) {
+      const cluster: ImageCluster | undefined = clusters[ci];
+      if (cluster && cluster.start === li) {
+        ci++;
+        const url = clusterImages[clusterIndex] ?? null;
+        clusterIndex++;
+        for (let k = cluster.start; k <= cluster.end; k++) {
+          const line = block.lines[k]!;
+          if (isPlaceholderOnlyLine(line)) {
+            // NOT rendered — the card below stands in for it — but its characters still EXIST in
+            // the find/link coordinate space, so the shared offset walks over them. Skipping that
+            // was the bug: every match and every autolink below an image landed a screenful early.
+            if (k > 0) offset += 1; // the "\n" separating this line from the previous
+            offset += lineText(line).length;
+            continue;
+          }
+          // A row carrying an image AND text keeps its text. The placeholder cells are blanked to
+          // spaces of the same character count, so the row reads as written and no offset moves.
+          nodes.push(renderLine(blankPlaceholders(line), k, true, false));
+        }
+        nodes.push(renderImageCluster(url, `image:${bi}:${cluster.start}`, onImageError));
+        li = cluster.end + 1;
+        continue;
+      }
       const run: TableRun | undefined = runs[ri];
       if (!run || run.start !== li) {
         nodes.push(renderLine(block.lines[li]!, li, true, false));
@@ -470,14 +629,10 @@ export const AnsiOutput = memo(function AnsiOutput({
     );
   };
 
+  if (rawBlocks.length === 0) return null;
   return (
-    <>
-      {rawBlocks.length > 0 && (
-        <pre className={preClass(wrap, className)} style={{ fontSize: `${fontSize}px` }}>
-          {rawBlocks.map(renderBlock)}
-        </pre>
-      )}
-      {prompt}
-    </>
+    <pre className={preClass(wrap, className, agent, nativeMirror)} style={{ fontSize: `${fontSize}px` }}>
+      {rawBlocks.map(renderBlock)}
+    </pre>
   );
 });

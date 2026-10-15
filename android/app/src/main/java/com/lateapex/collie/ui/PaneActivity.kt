@@ -36,6 +36,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import android.widget.PopupMenu
 import androidx.appcompat.app.AppCompatActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.PickVisualMediaRequest
@@ -58,6 +59,8 @@ import com.lateapex.collie.CollieApplication
 import com.lateapex.collie.R
 import com.lateapex.collie.databinding.ActivityPaneBinding
 import com.lateapex.collie.domain.PaneAddress
+import com.lateapex.collie.domain.MuxKeyGrammar
+import com.lateapex.collie.network.AgentStatus
 import com.lateapex.collie.domain.Scope
 import com.lateapex.collie.network.ActionResponse
 import com.lateapex.collie.network.ApiFailure
@@ -88,9 +91,61 @@ import java.util.Locale
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.job
 import kotlinx.coroutines.withContext
 
 class PaneActivity : AppCompatActivity() {
+    private var layoutLaunchContext: com.lateapex.collie.data.ScopedReadContext? = null
+    private val layoutLauncher = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()) { result ->
+        val moved = result.data?.getStringExtra(LayoutActivity.EXTRA_MOVED_PANE_ID)
+        val captured = layoutLaunchContext
+        layoutLaunchContext = null
+        if (result.resultCode == RESULT_OK && !moved.isNullOrBlank() && moved != address.paneId && captured != null && repository.isCurrent(captured)) {
+            lifecycleScope.launch {
+                if (!repository.isCurrent(captured)) return@launch
+                val fresh = repository.snapshot(address.scope, captured)
+                if (!repository.isCurrent(captured)) return@launch
+                val matches = (fresh as? ApiResult.Success)?.value?.let { snapshot ->
+                    (snapshot.agents + snapshot.shellPanes).filter { it.paneId == moved && it.host == address.scope.host && it.session == address.scope.session }
+                }.orEmpty()
+                if (matches.size != 1) {
+                    Toast.makeText(this@PaneActivity, getString(R.string.pane_layout_moved_refresh), Toast.LENGTH_LONG).show()
+                    finish()
+                    return@launch
+                }
+                val pane = matches.single()
+                // The new pane ID has a different owner-bound draft and key target. Drop old
+                // composition state before opening it so no old-pane input follows the move.
+                persistPaneDraft("")
+                binding.replyInput.text?.clear()
+                paneKeyQueue.clear()
+                stableTerminalDraft = null
+                takenOverTerminalDraft = null
+                analyzedTerminalDraft = null
+                noEchoPrompt = null
+                analyzedNoEchoPrompt = null
+                semanticSurface = null
+                analyzedSemanticSurface = null
+                val next = Intent(this@PaneActivity, PaneActivity::class.java).apply {
+                    putExtra(EXTRA_PANE_ID, pane.paneId)
+                    putExtra(EXTRA_HOST, address.scope.host)
+                    putExtra(EXTRA_SESSION, address.scope.session)
+                    putExtra(EXTRA_TITLE, pane.paneLabel ?: pane.workspaceLabel)
+                    putExtra(EXTRA_AGENT, pane.agent)
+                    putExtra(EXTRA_CWD, pane.cwd)
+                    putExtra(EXTRA_TAB_LABEL, pane.tabLabel ?: pane.tabId)
+                    putExtra(EXTRA_STATUS, pane.status.name.lowercase(Locale.ROOT))
+                }
+                startActivity(next)
+                finish()
+            }
+        }
+    }
+    private var authorityRegistration: AutoCloseable? = null
+    private var draftClearRegistration: AutoCloseable? = null
+    private var passwordDraftRegistration: AutoCloseable? = null
     private lateinit var binding: ActivityPaneBinding
     private lateinit var viewModel: PaneViewModel
     private lateinit var address: PaneAddress
@@ -126,6 +181,10 @@ class PaneActivity : AppCompatActivity() {
     private var showingTranscriptBody = false
     private var lastRenderedState: PaneUiState? = null
     private var pendingAttachment: String? = null
+    private var pendingAttachmentLabel: String? = null
+    private var pendingAttachmentMime: String? = null
+    private var pendingAttachmentBytes: Long? = null
+    @Volatile private var documentJob: Job? = null
     /** A thumbnail of the picked image; the chip shows it and the word "Image", never a file name. */
     private var pendingAttachmentThumb: android.graphics.Bitmap? = null
     private var pickedImageThumb: android.graphics.Bitmap? = null
@@ -133,7 +192,11 @@ class PaneActivity : AppCompatActivity() {
         androidx.core.content.res.ResourcesCompat.getFont(this, R.font.collie_mono) ?: Typeface.MONOSPACE
     }
     private var terminalRenderJob: Job? = null
-    private var terminalRenderGeneration = 0L
+    /** Instance-owned preparation dependency. Default is the actual Android text factory; its
+     * captured result still requires the original render-generation/owner checks before drawing. */
+    internal var precomputeTerminalText: (CharSequence, PrecomputedTextCompat.Params) -> PrecomputedTextCompat =
+        { text, metrics -> PrecomputedTextCompat.create(text, metrics) }
+    @Volatile private var terminalRenderGeneration = 0L
     private var pendingTerminalRevision: Long? = null
     // Herdr 0.7.x reports revision 0 for every pane (HERDR_API.md), so revision alone can never
     // tell a changed grid from a repeated one. The rendered/pending TEXT is the change key; the
@@ -142,6 +205,21 @@ class PaneActivity : AppCompatActivity() {
     private var pendingKeyboardFocus: View? = null
     private var findMatches = emptyList<OutputFind.Match>()
     private var findCursor = -1
+    private var lastFilesDiscoveryAllowed = false
+    private var lastFilesAdmissionReady = false
+    private var filesAdmissionGeneration = 0L
+    private var printedLinkText: String? = null
+    private var printedLinkContext: com.lateapex.collie.data.ScopedReadContext? = null
+    private var printedLinkRefs: List<PrintedFileReference> = emptyList()
+    private var printedLinkConfirmed: Set<String> = emptySet()
+    private var printedLinkGeneration = 0L
+    private var printedLinkRoot: String? = null
+    private var printedLinkExpiresAt = 0L
+    private var terminalOutputContext: com.lateapex.collie.data.ScopedReadContext? = null
+    private var retiredOutputFingerprint: Pair<Long?, String>? = null
+    private val transcriptLinkBudgetLock = Any()
+    private val transcriptLinkPathsConfirmed = linkedSetOf<String>()
+    private var transcriptLinkBudgetGeneration = 0L
     private var renderedTerminalBlocks = emptyList<RenderedTerminalBlock>()
     private var zenMode = false
     private var paneActionInFlight = false
@@ -149,6 +227,8 @@ class PaneActivity : AppCompatActivity() {
     private val sendConfirmation = TimedConfirmation<String>(now = SystemClock::uptimeMillis)
     private var pendingDestructiveSend: PendingDestructiveSend? = null
     private var paneDraftKey = ""
+    private var paneContentContext: com.lateapex.collie.data.ScopedReadContext? = null
+    private var localDraftCustody: com.lateapex.collie.data.LocalDraftCustody? = null
     private var restoringDraft = false
     private var pendingQuickReply: String? = null
     private var pendingReplyAttempt: PendingReplyAttempt? = null
@@ -193,6 +273,7 @@ class PaneActivity : AppCompatActivity() {
     }
     private val displayPreferences by lazy { getSharedPreferences(DISPLAY_PREFERENCES, MODE_PRIVATE) }
     private val nativePreferences by lazy { NativePreferences(this) }
+    private val panePins by lazy { NativePanePins(this) }
     private val repository get() = (application as CollieApplication).container.repository
     private lateinit var composerMediaActions: ComposerMediaActions
     private lateinit var composerMediaText: ComposerMediaText
@@ -206,15 +287,25 @@ class PaneActivity : AppCompatActivity() {
     private var keyboardStripFold: Boolean? = null
     private lateinit var panePresenceTracker: PanePresenceTracker
     private var closedPaneRedirected = false
-    private val imagePicker = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        uri?.let(::handleSelectedImage)
-    }
-    private val microphonePermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) startSpeechRecording() else showComposerMediaMessage(getString(R.string.pane_microphone_denied))
-    }
+    private var imagePickerContext: com.lateapex.collie.data.ScopedReadContext? = null
+    private var microphonePermissionContext: com.lateapex.collie.data.ScopedReadContext? = null
+    // External callbacks have one slot each. Keep this nonsecret ownership until the old result drains,
+    // even when its sensitive actor context retires, so it cannot consume a replacement actor.
+    private var imagePickerOutstanding = false
+    private var documentPickerContext: com.lateapex.collie.data.ScopedReadContext? = null
+    private var documentPickerOutstanding = false
+    private var microphonePermissionOutstanding = false
+    private var recordingContext: com.lateapex.collie.data.ScopedReadContext? = null
+    private val imagePicker = registerForActivityResult(ActivityResultContracts.PickVisualMedia(), ::onImagePicked)
+    private val documentPicker = registerForActivityResult(ActivityResultContracts.OpenDocument(), ::onDocumentPicked)
+    private val microphonePermission = registerForActivityResult(ActivityResultContracts.RequestPermission(), ::onMicrophonePermissionResult)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // A restored pending result is discarded: no credential/content context is restored with it.
+        imagePickerOutstanding = savedInstanceState?.getBoolean(STATE_IMAGE_PICKER_OUTSTANDING) == true
+        documentPickerOutstanding = savedInstanceState?.getBoolean(STATE_DOCUMENT_PICKER_OUTSTANDING) == true
+        microphonePermissionOutstanding = savedInstanceState?.getBoolean(STATE_MICROPHONE_PERMISSION_OUTSTANDING) == true
         window.prepareEdgeToEdgeContent()
         binding = ActivityPaneBinding.inflate(layoutInflater)
         setContentView(binding.root)
@@ -234,6 +325,12 @@ class PaneActivity : AppCompatActivity() {
             ),
             paneId,
         )
+        binding.filesButton.isEnabled = false
+        binding.filesButton.setOnClickListener {
+            val original = currentState.paneReadContext ?: return@setOnClickListener
+            if (currentState.savedCopy != null || !filesDiscoveryAllowed(original)) return@setOnClickListener
+            startActivity(FilesActivity.intent(this, com.lateapex.collie.network.FilesTarget.Pane(paneId), address.scope))
+        }
         panePresenceTracker = PanePresenceTracker(
             fresh = intent.getBooleanExtra(EXTRA_FRESH_PANE, false),
             seen = savedInstanceState?.getBoolean(STATE_FRESH_PANE_SEEN) == true,
@@ -245,7 +342,14 @@ class PaneActivity : AppCompatActivity() {
             this,
             PaneViewModel.Factory(application, address, intent.getStringExtra(EXTRA_AGENT)),
         )[PaneViewModel::class.java]
+        paneContentContext = repository.readContext(address.scope, paneId)
+        localDraftCustody = repository.localDraftCustody(address)
+        paneDraftKey = localDraftCustody?.key ?: listOf(origin, paneContentContext?.key?.pairedDeviceIdentity.orEmpty(), address.scope.host.orEmpty(), address.scope.session.orEmpty(), paneId).joinToString("|")
         binding.transcriptBody.onLoadOlder = viewModel::loadOlderTranscript
+        binding.transcriptBody.onSendQueuedNow = viewModel::sendQueuedNow
+        binding.transcriptBody.onDisplayedFileReferences = ::decorateTranscriptFileReferences
+        binding.transcriptBody.onFileReferenceBatchStarted = ::resetTranscriptLinkBudget
+        binding.pendingCodexDismiss.setOnClickListener { viewModel.dismissAcceptedCodexReplies() }
         binding.transcriptBody.onPlaced = { fields ->
             (application as CollieApplication).container.diagnostics.record("transcriptPlacement", fields)
         }
@@ -256,7 +360,7 @@ class PaneActivity : AppCompatActivity() {
         composerMediaActions = ComposerMediaActions(
             config = repository::config,
             upload = { repository.upload(address, it) },
-            transcribe = repository::transcribe,
+            transcribe = { repository.transcribe(it) },
             handsFreeEnabled = { nativePreferences.handsFreeEnabled },
             text = composerMediaText,
         )
@@ -286,13 +390,139 @@ class PaneActivity : AppCompatActivity() {
         binding.replyInput.onDirectKeys = viewModel::sendDirectKeys
         binding.replyInput.onSendShortcut = ::sendReplyDraft
         restoringDraft = true
-        binding.replyInput.setText(nativePreferences.paneDraft(paneDraftKey))
+        passwordDraftRegistration = nativePreferences.onPasswordDraftsRetired { event ->
+            val original = localDraftCustody ?: return@onPasswordDraftsRetired
+            if (original.scope != event.scope) return@onPasswordDraftsRetired
+            val key = paneDraftKey
+            withMainCustodyAck {
+                if (localDraftCustody !== original || paneDraftKey != key || nativePreferences.draftRevision(key) > event.cutoff) return@withMainCustodyAck
+                sendConfirmation.reset(); pendingDestructiveSend = null; pendingReplyAttempt = null; pendingQuickReply = null; pendingSent = null
+                restoringDraft = true; binding.replyInput.setText(""); restoringDraft = false
+            }
+        }
+        draftClearRegistration = nativePreferences.onDraftsCleared { cutoff ->
+            val original = paneContentContext
+            val key = paneDraftKey
+            val savedVersion = lastRenderedState?.savedCopyVersion
+            withMainCustodyAck {
+                if (paneContentContext !== original || paneDraftKey != key ||
+                    lastRenderedState?.savedCopyVersion != savedVersion || nativePreferences.draftRevision(key) > cutoff) return@withMainCustodyAck
+                sendConfirmation.reset(); pendingDestructiveSend = null
+                pendingReplyAttempt = null; pendingQuickReply = null; pendingSent = null
+                restoringDraft = true; binding.replyInput.setText(""); restoringDraft = false
+            }
+        }
+        authorityRegistration = repository.onAuthorityRetired { event ->
+            val editingAtEntry = localDraftCustody
+            if (editingAtEntry != null && !repository.isLocalDraftOwnerCurrent(editingAtEntry)) {
+                withMainCustodyAck {
+                    if (localDraftCustody === editingAtEntry && !repository.isLocalDraftOwnerCurrent(editingAtEntry)) {
+                        localDraftCustody = null
+                        sendConfirmation.reset(); pendingDestructiveSend = null; pendingReplyAttempt = null; pendingQuickReply = null; pendingSent = null
+                        restoringDraft = true; binding.replyInput.setText(""); restoringDraft = false
+                    }
+                }
+            }
+            withOfflineRetirementOnMain(event, { lastRenderedState?.savedCopyVersion }) {
+                retireSensitiveCustody()
+                restoringDraft = true; binding.replyInput.setText(""); restoringDraft = false
+                binding.terminalText.text = ""; binding.terminalStatusline.text = ""
+                binding.terminalBlockContent.removeAllViews()
+                binding.transcriptBody.bind(agentName, emptyList(), false)
+                binding.semanticActions.removeAllViews(); binding.semanticPanel.isVisible = false
+                binding.errorText.text = ""
+            }
+            withRetirementOnMain(event, { paneContentContext }) {
+                val reason = event.reason
+                // This callback only removes authority; it must never initiate another Files read.
+                if (terminalOutputContext?.let(repository::isActorRetired) != false) {
+                    retirePrintedPathCustody()
+                    terminalOutputContext = null
+                    retiredOutputFingerprint = outputFingerprint(renderedRevision, lastRawText)
+                    resetTranscriptLinkBudget()
+                } else {
+                    // A temporary admission fence removes tappable confirmations without retiring
+                    // the in-flight lookup actor. Its refused reply can install the inert retry lease.
+                    printedLinkRefs = emptyList()
+                    printedLinkConfirmed = emptySet()
+                    printedLinkRoot = null
+                }
+                val savedRender = lastRenderedState?.savedCopyVersion
+                if (savedRender == null || event.retiresReadActor && event.affectsCustody(savedRender)) {
+                    ++terminalRenderGeneration
+                    terminalRenderJob?.cancel()
+                    terminalRenderJob = null
+                    pendingTerminalRevision = null
+                    pendingTerminalText = null
+                }
+                // A supporting write/admission freeze does not cancel an unaffected saved-copy
+                // draw. Links/media/actions are still disarmed below; real retirement wipes it.
+                paneActionInFlight = false
+                tabCreateInFlight = false
+                composerMediaBusy = false
+                pickedImageThumb = null
+                imagePickerContext = null
+                microphonePermissionContext = null
+                documentPickerContext = null
+                val retiredDocumentJob = documentJob
+                documentJob = null
+                retiredDocumentJob?.cancel()
+                recordingContext = null
+                if (::speechRecorder.isInitialized) speechRecorder.cancel()
+                if (reason in setOf(com.lateapex.collie.data.AuthorityInvalidation.PAIRING_RETIRED,
+                    com.lateapex.collie.data.AuthorityInvalidation.CONNECTION_CHANGED, com.lateapex.collie.data.AuthorityInvalidation.DISCONNECTED)) {
+                    event.owner?.let(nativePreferences::retireSensitiveContent)
+                    retireSensitiveCustody()
+                    val retirementGeneration = terminalRenderGeneration
+                    runOnUiThread {
+                        if (retirementGeneration != terminalRenderGeneration) return@runOnUiThread
+                        restoringDraft = true
+                        binding.replyInput.setText("")
+                        restoringDraft = false
+                        pickedImageThumb = null
+                        pendingDestructiveSend = null
+                        pendingQuickReply = null
+                        pendingReplyAttempt = null
+                        pendingSent = null
+                        paneKeyQueue.clear()
+                        binding.terminalText.text = ""
+                        binding.terminalBlockContent.removeAllViews()
+                        binding.terminalStatusline.text = ""
+                        binding.composerMediaStatus.text = ""
+                        binding.composerMediaStatus.isVisible = false
+                        binding.transcriptBody.bind(agentName, emptyList(), false)
+                        binding.semanticActions.removeAllViews()
+                        binding.semanticPanel.isVisible = false
+                        renderAttachmentChip()
+                        if (::speechRecorder.isInitialized) speechRecorder.cancel()
+                    }
+                } else {
+                    runOnUiThread {
+                        // Strip path spans immediately while preserving whatever content policy G2
+                        // allows. The retained mirror alone cannot acquire a replacement actor.
+                        renderTerminalContent(renderedTerminalText, confirmPrintedPaths = false)
+                    }
+                }
+            }
+        }
+        val draftAtOpen = localDraftCustody
+        binding.replyInput.setText(draftAtOpen?.let {
+            nativePreferences.paneDraft(it.key, it.owner, it.scope, it.localIdentity)
+        }.orEmpty())
         binding.replyInput.setSelection(binding.replyInput.text?.length ?: 0)
+        if (savedInstanceState?.getString(STATE_ATTACHMENT_ORIGIN) == origin &&
+            savedInstanceState.getString(STATE_ATTACHMENT_CUSTODY) == attachmentCustody()) {
+            pendingAttachment = savedInstanceState.getString(STATE_ATTACHMENT_PATH)
+            pendingAttachmentLabel = savedInstanceState.getString(STATE_ATTACHMENT_LABEL)
+            pendingAttachmentMime = savedInstanceState.getString(STATE_ATTACHMENT_MIME)
+            pendingAttachmentBytes = savedInstanceState.getLong(STATE_ATTACHMENT_BYTES).takeIf { it in 1..DocumentAttachment.NATIVE_MAX_BYTES }
+            renderAttachmentChip()
+        }
         restoringDraft = false
         binding.replyInput.addTextChangedListener(simpleTextWatcher { draft ->
             if (pendingDestructiveSend?.draft != draft) resetDestructiveConfirm()
             if (!restoringDraft && !directTyping && noEchoPrompt == null) {
-                nativePreferences.savePaneDraft(paneDraftKey, draft)
+                persistPaneDraft(draft)
             }
             binding.draftPersistenceWarning.isVisible =
                 draft.isNotEmpty() && !nativePreferences.fitsPaneDraftStore(draft)
@@ -356,6 +586,15 @@ class PaneActivity : AppCompatActivity() {
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString(STATE_ATTACHMENT_PATH, pendingAttachment)
+        outState.putString(STATE_ATTACHMENT_LABEL, pendingAttachmentLabel)
+        outState.putString(STATE_ATTACHMENT_MIME, pendingAttachmentMime)
+        pendingAttachmentBytes?.let { outState.putLong(STATE_ATTACHMENT_BYTES, it) }
+        outState.putBoolean(STATE_DOCUMENT_PICKER_OUTSTANDING, documentPickerOutstanding)
+        outState.putString(STATE_ATTACHMENT_ORIGIN, paneDraftKey.substringBefore('|'))
+        outState.putString(STATE_ATTACHMENT_CUSTODY, attachmentCustody())
+        outState.putBoolean(STATE_IMAGE_PICKER_OUTSTANDING, imagePickerOutstanding)
+        outState.putBoolean(STATE_MICROPHONE_PERMISSION_OUTSTANDING, microphonePermissionOutstanding)
         if (::panePresenceTracker.isInitialized) {
             outState.putBoolean(STATE_FRESH_PANE_SEEN, panePresenceTracker.wasSeen)
         }
@@ -369,9 +608,11 @@ class PaneActivity : AppCompatActivity() {
     }
 
     override fun onStop() {
+        cancelActiveKeyRepeat?.invoke()
+        cancelActiveKeyRepeat = null
         resetDestructiveConfirm(render = false)
         if (!directTyping && noEchoPrompt == null) {
-            nativePreferences.savePaneDraft(paneDraftKey, binding.replyInput.text?.toString().orEmpty())
+            persistPaneDraft(binding.replyInput.text?.toString().orEmpty())
         }
         viewModel.endDirectTyping()
         setDirectTyping(false, announce = false)
@@ -385,6 +626,13 @@ class PaneActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        val retiredDocumentJob = documentJob
+        documentJob = null
+        retiredDocumentJob?.cancel()
+        authorityRegistration?.close()
+        authorityRegistration = null
+        draftClearRegistration?.close(); draftClearRegistration = null
+        passwordDraftRegistration?.close(); passwordDraftRegistration = null
         binding.root.viewTreeObserver.removeOnPreDrawListener(keysViewportListener)
         terminalRenderJob?.cancel()
         confirmHandler.removeCallbacksAndMessages(null)
@@ -447,7 +695,7 @@ class PaneActivity : AppCompatActivity() {
      */
     private fun applyHomeToHeader(cwd: String) {
         lifecycleScope.launch {
-            val result = repository.launchers(address.scope)
+            val result = currentActorResult { repository.launchers(address.scope) } ?: return@launch
             if (result is ApiResult.Success && !isFinishing && binding.paneCwd.text.toString() == cwd) {
                 binding.paneCwd.text = DisplayText.abbreviateHome(cwd, result.value.home)
             }
@@ -463,7 +711,18 @@ class PaneActivity : AppCompatActivity() {
     }
 
     private fun renderIdentity(state: PaneUiState) {
-        val pane = currentPaneSummary() ?: return
+        state.savedCopy?.let {
+            binding.paneStatus.setText(R.string.offline_saved_copy_status)
+            binding.paneStatus.setTextColor(getColor(R.color.collie_muted))
+            binding.paneStatusDot.isVisible = false
+            return
+        }
+        val pane = currentPaneSummary() ?: run {
+            binding.paneStatus.text = PaneStatusVocabulary.label(resources, agentName, STATUS_UNKNOWN)
+            binding.paneStatus.setTextColor(PaneStatusVocabulary.colour(this, STATUS_UNKNOWN))
+            binding.paneStatusDot.isVisible = false
+            return
+        }
         val tabPaneCount = state.panes.count {
             it.host == pane.host && it.session == pane.session &&
                 it.workspaceId == pane.workspaceId && it.tabId == pane.tabId
@@ -478,6 +737,25 @@ class PaneActivity : AppCompatActivity() {
         binding.paneDiscriminator.isVisible = presentation.discriminator != null
         binding.paneCwd.text = presentation.cwd.orEmpty()
         binding.paneCwd.isVisible = presentation.cwd != null
+        val contextFacts = buildList {
+            pane.cache?.let { cache ->
+                val stateLabel = cache.state?.takeIf { it in setOf("warm", "expiring", "cold", "unknown") }
+                    ?.let { when (it) {
+                        "warm" -> getString(R.string.cache_state_warm)
+                        "expiring" -> getString(R.string.cache_state_expiring)
+                        "cold" -> getString(R.string.cache_state_cold)
+                        else -> getString(R.string.cache_state_unknown)
+                    } } ?: getString(R.string.cache_state_unknown)
+                add(getString(R.string.cache_chip_cache, stateLabel))
+            }
+            pane.model?.takeIf(String::isNotBlank)?.let { add(getString(R.string.cache_chip_model, it)) }
+            pane.gitHead?.let(CacheContextPresenter::gitFact)?.let { fact ->
+                add(getString(if (fact.kind == "branch") R.string.cache_git_branch else R.string.cache_git_detached, fact.value))
+            }
+        }
+        binding.paneContextChip.text = contextFacts.joinToString(" · ")
+        binding.paneContextChip.contentDescription = getString(R.string.cache_chip_description)
+        binding.paneContextChip.isVisible = contextFacts.isNotEmpty()
         binding.paneStatusDot.isVisible = !presentation.shell
         binding.paneStatusDot.backgroundTintList = ColorStateList.valueOf(PaneStatusVocabulary.colour(this, presentation.status))
         binding.paneStatus.text = PaneStatusVocabulary.label(resources, agentName, presentation.status)
@@ -490,6 +768,7 @@ class PaneActivity : AppCompatActivity() {
     }
 
     private fun bindActions() = with(binding) {
+        paneContextChip.setOnClickListener { startActivity(CacheWatchActivity.intent(this@PaneActivity, address)) }
         backButton.setOnClickListener {
             if (drawer != ComposerDrawer.NONE) showDrawer(ComposerDrawer.NONE) else finish()
         }
@@ -505,7 +784,7 @@ class PaneActivity : AppCompatActivity() {
         noEchoType.setOnClickListener {
             if (noEchoPrompt == null || semanticSurface?.ownsKeyboard == true) return@setOnClickListener
             replyInput.text?.clear()
-            nativePreferences.savePaneDraft(paneDraftKey, "")
+            persistPaneDraft("")
             if (!showDrawer(ComposerDrawer.NONE)) return@setOnClickListener
             setDirectTyping(true)
         }
@@ -515,9 +794,7 @@ class PaneActivity : AppCompatActivity() {
             render(currentState)
             replyInput.requestFocus()
         }
-        attachImageButton.setOnClickListener {
-            imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-        }
+        attachImageButton.setOnClickListener { showAttachmentMenu() }
         speechButton.setOnClickListener { toggleSpeechRecording() }
         keysModeButton.setOnClickListener { toggleDrawer(ComposerDrawer.KEYS) }
         quickModeButton.setOnClickListener { toggleDrawer(ComposerDrawer.QUICK) }
@@ -554,9 +831,83 @@ class PaneActivity : AppCompatActivity() {
         }
     }
 
+    private fun persistPaneDraft(value: String) {
+        val original = localDraftCustody ?: return
+        val key = paneDraftKey
+        // RAM continuity is independent of accepted reads. This witness never reaches transport.
+        nativePreferences.savePaneDraft(key, value, original.owner, original.scope, original.localIdentity) {
+            localDraftCustody === original && paneDraftKey == key && repository.isLocalDraftCurrent(original)
+        }
+    }
+
+    private fun attachmentCustody(): String = listOf(
+        repository.readContext(address.scope, address.paneId)?.key?.pairedDeviceIdentity.orEmpty(),
+        address.scope.host.orEmpty(), address.scope.session.orEmpty(), address.paneId,
+    ).joinToString("|")
+
+    private suspend fun <T> currentActorResult(action: suspend () -> T): T? {
+        val context = repository.readContext(address.scope, address.paneId) ?: return null
+        val result = action()
+        return result.takeIf { repository.isCurrent(context) }
+    }
+
+    /** Retire copied content before the next Flow/render dispatch can run. */
+    private fun retireSensitiveCustody() {
+        binding.filesButton.isEnabled = false
+        retirePrintedPathCustody()
+        resetTranscriptLinkBudget()
+        terminalOutputContext = null
+        ++terminalRenderGeneration
+        terminalRenderJob?.cancel()
+        terminalRenderJob = null
+        pendingTerminalRevision = null
+        pendingTerminalText = null
+        lastRawText = ""
+        latestRawText = ""
+        latestRevision = null
+        renderedRevision = null
+        renderedTerminalText = ""
+        renderedStatusRows = emptyList()
+        renderedTerminalBlocks = emptyList()
+        findMatches = emptyList()
+        findCursor = -1
+        currentState = PaneUiState()
+        lastRenderedState = null
+        analyzedPaneRevision = null
+        analyzedPaneText = null
+        analyzedSemanticSurface = null
+        analyzedNoEchoPrompt = null
+        analyzedTerminalDraft = null
+        semanticSurface = null
+        noEchoPrompt = null
+        dismissedNoEchoSignature = null
+        stableTerminalDraft = null
+        takenOverTerminalDraft = null
+        terminalDraftTracker.observe(null)
+        pendingAttachment = null
+        pendingAttachmentLabel = null
+        pendingAttachmentMime = null
+        pendingAttachmentBytes = null
+        pendingAttachmentThumb = null
+        pickedImageThumb = null
+        pendingDestructiveSend = null
+        pendingQuickReply = null
+        pendingReplyAttempt = null
+        pendingSent = null
+        composerMediaBusy = false
+        composerMediaMessage = null
+        paneActionInFlight = false
+        tabCreateInFlight = false
+        speechAvailability = SpeechAvailability.Hidden
+        paneKeyQueue.clear()
+    }
+
     private fun refreshSpeechAvailability() {
         lifecycleScope.launch {
-            speechAvailability = composerMediaActions.speechAvailability()
+            val context = repository.readContext(address.scope, address.paneId) ?: return@launch
+            val availability = composerMediaActions.speechAvailability()
+            if (!repository.isCurrent(context)) return@launch
+            speechAvailability = availability
             if (speechAvailability is SpeechAvailability.Unavailable) {
                 showComposerMediaMessage((speechAvailability as SpeechAvailability.Unavailable).reason)
             } else {
@@ -565,21 +916,169 @@ class PaneActivity : AppCompatActivity() {
         }
     }
 
-    private fun handleSelectedImage(uri: android.net.Uri) {
+    private fun launchImagePicker() {
+        if (imagePickerOutstanding) return
+        val context = repository.readContext(address.scope, address.paneId) ?: return
+        imagePickerContext = context
+        imagePickerOutstanding = true
+        try {
+            imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+        } catch (_: RuntimeException) {
+            imagePickerContext = null
+            imagePickerOutstanding = false
+            if (repository.isCurrent(context)) showComposerMediaMessage(composerMediaText.imageUnreadable)
+        }
+    }
+
+    private fun showAttachmentMenu() {
+        if (!binding.attachImageButton.isEnabled) return
+        PopupMenu(this, binding.attachImageButton).apply {
+            menu.add(R.string.pane_attachment_choose_photo).setOnMenuItemClickListener { launchImagePicker(); true }
+            menu.add(R.string.pane_attachment_choose_file).setOnMenuItemClickListener { launchDocumentPicker(); true }
+            show()
+        }
+    }
+
+    private fun launchDocumentPicker() {
+        if (documentPickerOutstanding) return
+        val context = repository.readContext(address.scope, address.paneId) ?: return
+        documentPickerContext = context
+        documentPickerOutstanding = true
+        try {
+            documentPicker.launch(arrayOf("*/*"))
+        } catch (_: RuntimeException) {
+            documentPickerContext = null
+            documentPickerOutstanding = false
+            if (repository.isCurrent(context)) showComposerMediaMessage(getString(R.string.pane_attachment_unreadable))
+        }
+    }
+
+    private fun onDocumentPicked(uri: android.net.Uri?) {
+        val context = documentPickerContext
+        documentPickerContext = null
+        documentPickerOutstanding = false
+        if (uri != null && context != null && repository.isCurrent(context)) handleSelectedDocument(uri, context)
+    }
+
+    private fun handleSelectedDocument(uri: android.net.Uri, context: com.lateapex.collie.data.ScopedReadContext) {
+        if (composerMediaBusy || directTyping || terminalWriteBlock() != null || semanticSurface?.ownsKeyboard == true || noEchoPrompt != null) return
+        val job = lifecycleScope.launch(start = CoroutineStart.LAZY) {
+            val owner = currentCoroutineContext().job
+            try {
+                if (!repository.isCurrent(context)) return@launch
+                setComposerMediaBusy(true)
+                showComposerMediaMessage(getString(R.string.pane_attachment_preparing))
+                val config = repository.config(address.scope, context)
+                if (!repository.isCurrent(context)) return@launch
+                val capability = (config as? ApiResult.Success)?.value?.upload
+                if (capability == null) {
+                    showComposerMediaMessage(getString(R.string.pane_attachment_policy_unavailable))
+                    return@launch
+                }
+                DocumentAttachment.withSelection(read = {
+                    DocumentAttachment.import(
+                        contentResolver, uri, cacheDir, capability, "attachment",
+                        getString(R.string.pane_attachment_unreadable),
+                        getString(R.string.pane_attachment_unsupported),
+                        getString(R.string.pane_attachment_too_large),
+                        { sent, total -> runOnUiThread {
+                            if (!isFinishing && !isDestroyed && lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED) && repository.isCurrent(context)) {
+                                showComposerMediaMessage(getString(R.string.pane_attachment_progress, sent, total))
+                            }
+                        } },
+                    )
+                }, consume = consume@{ selection ->
+                    if (!repository.isCurrent(context)) return@consume
+                    when (selection) {
+                        is DocumentSelection.Rejected -> showComposerMediaMessage(selection.reason)
+                        is DocumentSelection.Ready -> {
+                            showComposerMediaMessage(getString(R.string.pane_attachment_uploading, selection.source.fileName))
+                            val result = composerMediaActions.uploadDocument(selection.source) { repository.upload(address, it, context) }
+                            if (!repository.isCurrent(context)) return@consume
+                            when (result) {
+                                is ComposerMediaResult.Draft -> {
+                                    acceptDocumentUpload(result.insertion, selection.source.fileName, selection.source.contentType, selection.source.contentLength)
+                                    showComposerMediaMessage(getString(R.string.pane_attachment_added, selection.source.fileName))
+                                }
+                                is ComposerMediaResult.Failure -> showComposerMediaMessage(result.message)
+                                else -> showComposerMediaMessage(getString(R.string.pane_attachment_upload_failed))
+                            }
+                        }
+                    }
+                })
+            } finally {
+                if (documentJob === owner) {
+                    documentJob = null
+                    if (repository.isCurrent(context)) setComposerMediaBusy(false)
+                }
+            }
+        }
+        documentJob = job
+        job.start()
+    }
+
+    @VisibleForTesting
+    internal fun acceptDocumentUpload(path: String, filename: String, mime: String, bytes: Long) {
+        require(bytes in 1..DocumentAttachment.NATIVE_MAX_BYTES && mime.length <= 128 && mime.none { it.code < 32 })
+        pendingAttachment = path
+        pendingAttachmentLabel = DocumentAttachment.safeName(filename)
+        pendingAttachmentMime = mime
+        pendingAttachmentBytes = bytes
+        pendingAttachmentThumb = null
+        renderAttachmentChip()
+    }
+
+    private fun onImagePicked(uri: android.net.Uri?) {
+        if (!imagePickerOutstanding) return
+        imagePickerOutstanding = false
+        val context = imagePickerContext
+        imagePickerContext = null
+        if (uri != null && context != null && repository.isCurrent(context)) handleSelectedImage(uri, context)
+    }
+
+    private fun requestMicrophonePermission() {
+        if (microphonePermissionOutstanding) return
+        val context = repository.readContext(address.scope, address.paneId) ?: return
+        microphonePermissionContext = context
+        microphonePermissionOutstanding = true
+        try {
+            microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
+        } catch (_: RuntimeException) {
+            microphonePermissionContext = null
+            microphonePermissionOutstanding = false
+            if (repository.isCurrent(context)) showComposerMediaMessage(getString(R.string.pane_microphone_denied))
+        }
+    }
+
+    private fun onMicrophonePermissionResult(granted: Boolean) {
+        if (!microphonePermissionOutstanding) return
+        microphonePermissionOutstanding = false
+        val context = microphonePermissionContext
+        microphonePermissionContext = null
+        if (context != null && repository.isCurrent(context)) {
+            if (granted) startSpeechRecording() else showComposerMediaMessage(getString(R.string.pane_microphone_denied))
+        }
+    }
+
+    private fun handleSelectedImage(uri: android.net.Uri, context: com.lateapex.collie.data.ScopedReadContext) {
         if (composerMediaBusy || directTyping || terminalWriteBlock() != null || semanticSurface?.ownsKeyboard == true ||
             noEchoPrompt != null) return
         lifecycleScope.launch {
+            if (!repository.isCurrent(context)) return@launch
             setComposerMediaBusy(true)
             val selection = ComposerMedia.imageUpload(contentResolver, uri, composerMediaText)
-            pickedImageThumb = (selection as? ImageSelectionResult.Ready)?.upload?.bytes?.let {
+            if (!repository.isCurrent(context)) return@launch
+            val thumbnail = (selection as? ImageSelectionResult.Ready)?.upload?.bytes?.let {
                 withContext(Dispatchers.Default) { ComposerMedia.thumbnail(it, dp(32)) }
             }
+            if (!repository.isCurrent(context)) return@launch
+            pickedImageThumb = thumbnail
             val result = when (selection) {
-                is ImageSelectionResult.Ready -> composerMediaActions.uploadImage(selection.upload)
+                is ImageSelectionResult.Ready -> composerMediaActions.uploadImage(selection.upload) { repository.upload(address, it, context) }
                 is ImageSelectionResult.Rejected -> ComposerMediaResult.Failure(selection.reason)
             }
-            applyComposerMediaResult(result)
-            setComposerMediaBusy(false)
+            if (!repository.isCurrent(context)) return@launch
+            completeComposerMediaResult(result)
         }
     }
 
@@ -598,14 +1097,17 @@ class PaneActivity : AppCompatActivity() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
             startSpeechRecording()
         } else {
-            microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
+            requestMicrophonePermission()
         }
     }
 
     private fun startSpeechRecording() {
         if (speechAvailability !is SpeechAvailability.Available || composerMediaBusy || speechRecorder.isRecording ||
+            currentState.sending || directTyping || semanticSurface?.ownsKeyboard == true || noEchoPrompt != null ||
             terminalWriteBlock() != null
         ) return
+        val context = repository.readContext(address.scope, address.paneId) ?: return
+        recordingContext = context
         speechRecorder.start().fold(
             onSuccess = {
                 showComposerMediaMessage(getString(R.string.pane_recording))
@@ -624,18 +1126,30 @@ class PaneActivity : AppCompatActivity() {
 
     private fun stopSpeechRecording() {
         if (!speechRecorder.isRecording || composerMediaBusy) return
+        val context = recordingContext ?: return
+        if (!repository.isCurrent(context)) { speechRecorder.cancel(); return }
+        recordingContext = null
         val audio = speechRecorder.stop().getOrElse {
             showComposerMediaMessage(getString(R.string.pane_recording_unreadable))
             renderComposerMediaControls()
             return
         }
         lifecycleScope.launch {
+            if (!repository.isCurrent(context)) return@launch
             setComposerMediaBusy(true)
-            applyComposerMediaResult(
-                composerMediaActions.transcribe(audio),
-            )
-            setComposerMediaBusy(false)
+            val result = try {
+                composerMediaActions.transcribe(audio) { repository.transcribe(it, context) }
+            } finally {
+                if (repository.isCurrent(context)) setComposerMediaBusy(false)
+            }
+            if (!repository.isCurrent(context)) return@launch
+            completeComposerMediaResult(result)
         }
+    }
+
+    private fun completeComposerMediaResult(result: ComposerMediaResult) {
+        setComposerMediaBusy(false)
+        applyComposerMediaResult(result)
     }
 
     private fun applyComposerMediaResult(result: ComposerMediaResult) {
@@ -659,6 +1173,9 @@ class PaneActivity : AppCompatActivity() {
                     // The upload path is what the bridge needs on send; it is shown as a chip and
                     // never written into the draft (B.2).
                     pendingAttachment = guarded.insertion
+                    pendingAttachmentLabel = null
+                    pendingAttachmentMime = null
+                    pendingAttachmentBytes = null
                     pendingAttachmentThumb = pickedImageThumb
                     pickedImageThumb = null
                     renderAttachmentChip()
@@ -708,12 +1225,16 @@ class PaneActivity : AppCompatActivity() {
         val terminalWritable = terminalWriteBlock() == null
         val dialogPresent = semanticSurface?.ownsKeyboard == true
         val noEcho = noEchoPrompt != null
-        val micPrimary = speechAvailability !is SpeechAvailability.Hidden && !directTyping &&
+        val micPrimary = pendingAttachment == null && speechAvailability !is SpeechAvailability.Hidden && !directTyping &&
             replyInput.text?.toString().orEmpty().trim().isEmpty()
         attachImageButton.isEnabled = terminalWritable && hasPane && !currentState.sending && !composerMediaBusy &&
             !directTyping && !dialogPresent && !noEcho
         speechButton.isVisible = micPrimary
         sendButton.isVisible = !micPrimary
+        if (!directTyping) {
+            sendButton.isEnabled = terminalWritable && hasPane && !currentState.sending && !composerMediaBusy &&
+                (currentState.composerReady || takenOverTerminalDraft != null) && !dialogPresent && !noEcho
+        }
         speechButton.isEnabled = speechRecorder.isRecording ||
             (speechAvailability is SpeechAvailability.Available && terminalWritable && hasPane &&
                 !currentState.sending && !composerMediaBusy && !directTyping && !dialogPresent && !noEcho)
@@ -757,12 +1278,12 @@ class PaneActivity : AppCompatActivity() {
         keyFunctionToggle = null
         renderedKeyPresets = presets
 
-        fun rowParams(button: View) = LinearLayout.LayoutParams(0, dp(44), 1f).apply {
+        fun rowParams(button: View) = LinearLayout.LayoutParams(0, dp(48), 1f).apply {
             marginStart = dp(2)
             marginEnd = dp(2)
         }.also { button.layoutParams = it }
 
-        fun gridParams(button: View, row: Int, column: Int, height: Int = 44) =
+        fun gridParams(button: View, row: Int, column: Int, height: Int = 48) =
             GridLayout.LayoutParams(GridLayout.spec(row), GridLayout.spec(column, 1f)).apply {
                 width = 0
                 this.height = dp(height)
@@ -823,9 +1344,9 @@ class PaneActivity : AppCompatActivity() {
         }
         chipScroll.addView(
             keyQueueChips,
-            ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)),
+            ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)),
         )
-        queuePanel.addView(chipScroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)))
+        queuePanel.addView(chipScroll, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)))
         val queueActions = LinearLayout(this).apply {
             gravity = Gravity.END or Gravity.CENTER_VERTICAL
             orientation = LinearLayout.HORIZONTAL
@@ -846,7 +1367,7 @@ class PaneActivity : AppCompatActivity() {
             minimumWidth = dp(92)
             queueActions.addView(
                 this,
-                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)).apply { marginEnd = dp(4) },
+                LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)).apply { marginEnd = dp(4) },
             )
         }
         outlinedButton(getString(R.string.pane_key_clear)).apply {
@@ -860,20 +1381,18 @@ class PaneActivity : AppCompatActivity() {
             tag = KEY_QUEUE_CLEAR_TAG
             isSingleLine = true
             minimumWidth = dp(68)
-            queueActions.addView(this, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)))
+            queueActions.addView(this, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)))
         }
-        queuePanel.addView(queueActions, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(44)))
+        queuePanel.addView(queueActions, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)))
         container.addView(
             queuePanel,
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
         )
 
-        // A.4/B.2: the Keys drawer is one compact row plus a modifiers row and a More sheet,
-        // so with the drawer open at most three rows sit above the composer.
-        val keysContent = LinearLayout(this).apply {
+        // Keep the primary keys and modifiers compact, wrapping on narrow phones so every
+        // control retains Android's 48dp touch target. Presets and F-keys stay in More.
+        val keysContent = CollieKeyRow(this).apply {
             id = R.id.pane_keys_primary
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
         }
         primaryButtons.forEachIndexed { index, button ->
             (button.parent as? ViewGroup)?.removeView(button)
@@ -882,12 +1401,11 @@ class PaneActivity : AppCompatActivity() {
         }
         container.addView(
             keysContent,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)),
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
         )
 
-        val modifiers = LinearLayout(this).apply {
+        val modifiers = CollieKeyRow(this).apply {
             id = R.id.pane_keys_modifiers
-            orientation = LinearLayout.HORIZONTAL
         }
         rowTwoKeys.forEach { key ->
             (key.parent as? ViewGroup)?.removeView(key)
@@ -929,7 +1447,7 @@ class PaneActivity : AppCompatActivity() {
         modifiers.addView(moreButton, rowParams(moreButton))
         container.addView(
             modifiers,
-            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)),
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT),
         )
 
         val digits = GridLayout(this).apply {
@@ -969,7 +1487,7 @@ class PaneActivity : AppCompatActivity() {
                 button,
                 GridLayout.LayoutParams(GridLayout.spec(index / 3), GridLayout.spec(index % 3, 1f)).apply {
                     width = 0
-                    height = dp(44)
+                    height = dp(48)
                     setMargins(dp(2), dp(2), dp(2), dp(2))
                 },
             )
@@ -994,7 +1512,7 @@ class PaneActivity : AppCompatActivity() {
                 button,
                 GridLayout.LayoutParams(GridLayout.spec((number - 1) / 4), GridLayout.spec((number - 1) % 4, 1f)).apply {
                     width = 0
-                    height = dp(44)
+                    height = dp(48)
                     setMargins(dp(2), dp(2), dp(2), dp(2))
                 },
             )
@@ -1163,7 +1681,7 @@ class PaneActivity : AppCompatActivity() {
             staged.forEachIndexed { index, key ->
                 val label = keyChipLabel(key)
                 val chip = outlinedButton("$label  ×").apply {
-                    minWidth = dp(44)
+                    minWidth = dp(48)
                     contentDescription = getString(R.string.pane_key_remove_staged, label)
                     if (isDangerKey(key)) setTextColor(getColor(R.color.collie_destructive))
                     setOnClickListener {
@@ -1174,7 +1692,7 @@ class PaneActivity : AppCompatActivity() {
                 }
                 chips.addView(
                     chip,
-                    LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)).apply { marginEnd = dp(4) },
+                    LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)).apply { marginEnd = dp(4) },
                 )
             }
 
@@ -1183,18 +1701,18 @@ class PaneActivity : AppCompatActivity() {
                 chips.addView(TextView(this).apply {
                     text = "$modifiers + …"
                     gravity = Gravity.CENTER
-                    minHeight = dp(44)
+                    minHeight = dp(48)
                     setTextColor(getColor(R.color.collie_muted))
                     setPadding(dp(10), 0, dp(10), 0)
                     setBackgroundResource(R.drawable.bg_collie_control_off)
-                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(44)).apply { marginEnd = dp(4) })
+                }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, dp(48)).apply { marginEnd = dp(4) })
                 var handlingInput = false
                 val input = EditText(this).apply {
                     id = R.id.pane_keys_base_input
                     hint = getString(R.string.pane_key_base_placeholder)
                     contentDescription = getString(R.string.pane_key_base_description)
                     isSingleLine = true
-                    minHeight = dp(44)
+                    minHeight = dp(48)
                     inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
                     setTextColor(getColor(R.color.collie_foreground))
                     setHintTextColor(getColor(R.color.collie_muted))
@@ -1213,7 +1731,7 @@ class PaneActivity : AppCompatActivity() {
                     })
                 }
                 keyBaseInput = input
-                chips.addView(input, LinearLayout.LayoutParams(dp(64), dp(44)))
+                chips.addView(input, LinearLayout.LayoutParams(dp(64), dp(48)))
             }
         }
 
@@ -1279,7 +1797,10 @@ class PaneActivity : AppCompatActivity() {
         repeat(childCount) { yield(getChildAt(it)) }
     }
 
+    private var cancelActiveKeyRepeat: (() -> Unit)? = null
+
     private fun bindKeyRepeat(button: MaterialButton, key: String) {
+        var active = false
         var engaged = false
         var repeats = 0
         var tick: Runnable? = null
@@ -1301,13 +1822,27 @@ class PaneActivity : AppCompatActivity() {
             if (paneKeyQueue.composing) return@setOnTouchListener false
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    cancelActiveKeyRepeat?.invoke()
+                    active = true
                     engaged = false
                     repeats = 0
+                    cancelActiveKeyRepeat = {
+                        active = false
+                        engaged = false
+                        repeats = 0
+                        confirmHandler.removeCallbacks(engage)
+                        tick?.let(confirmHandler::removeCallbacks)
+                        button.isPressed = false
+                        button.text = keyDisplayLabel(key)
+                    }
                     confirmHandler.postDelayed(engage, REPEAT_HOLD_MS)
                     view.isPressed = true
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    if (!active) return@setOnTouchListener true
+                    active = false
+                    cancelActiveKeyRepeat = null
                     confirmHandler.removeCallbacks(engage)
                     tick?.let(confirmHandler::removeCallbacks)
                     view.isPressed = false
@@ -1330,8 +1865,48 @@ class PaneActivity : AppCompatActivity() {
     }
 
     private fun render(state: PaneUiState) = with(binding) {
+        if (lastRenderedState?.savedCopyVersion != null && lastRenderedState?.savedCopyVersion != state.savedCopyVersion) {
+            retireSensitiveCustody()
+            terminalText.text = ""; terminalStatusline.text = ""; terminalBlockContent.removeAllViews()
+            transcriptBody.bind(agentName, emptyList(), false)
+        }
+        val copied = state.paneReadContext ?: state.transcriptReadContext ?: state.filesConfigContext
+        if (copied != null && repository.isCurrent(copied)) {
+            if (paneContentContext != null && (paneContentContext?.connection !== copied.connection || paneContentContext?.connectionIncarnation != copied.connectionIncarnation)) {
+                retireSensitiveCustody()
+                restoringDraft = true
+                replyInput.setText("")
+                restoringDraft = false
+            }
+            paneContentContext = copied
+            repository.localDraftCustody(address, copied)?.let { local -> localDraftCustody = local; paneDraftKey = local.key }
+        }
+        if (state.mux?.name == "durable") {
+            startActivity(DurableChatActivity.intent(this@PaneActivity, address, binding.paneTitle.text.toString()))
+            finish()
+            return@with
+        }
         currentState = state
         lastRenderedState = state
+        val paneActor = state.paneReadContext?.takeIf(repository::isCurrent)
+        val paneBody = state.pane
+        if (paneActor != null && paneBody != null && renderedRevision == paneBody.revision && lastRawText == paneBody.text &&
+            terminalOutputContext?.let(repository::isCurrent) != true
+        ) {
+            // PaneViewModel attaches this actor only to a successful fresh pane read. That is the
+            // sole event allowed to restore link admission after an authority retirement.
+            terminalOutputContext = paneActor
+            retiredOutputFingerprint = null
+        }
+        val filesAllowed = terminalOutputContext?.let(::filesDiscoveryAllowed) == true
+        val filesAdmissionChanged = filesAllowed != lastFilesDiscoveryAllowed
+        // Transcript admission follows the accepted pane/config facts. Installing the first
+        // mirror body must not retire callbacks already installed for an accepted transcript.
+        val filesAdmissionReady = paneActor?.let(::filesDiscoveryAllowed) == true
+        if (filesAdmissionReady != lastFilesAdmissionReady) filesAdmissionGeneration++
+        lastFilesAdmissionReady = filesAdmissionReady
+        filesButton.isEnabled = state.savedCopy == null && filesAdmissionReady
+        lastFilesDiscoveryAllowed = filesAllowed
         if (recoverFromClosedPane(state)) return@with
         pendingSent?.let { sent ->
             state.pane?.let { pane ->
@@ -1375,7 +1950,7 @@ class PaneActivity : AppCompatActivity() {
         if (effectiveNoEchoPrompt != null && noEchoPrompt == null) {
             // The local field remains available for an explicit Type handoff, but a value refused
             // at a no-echo prompt must never survive activity/process recreation on disk.
-            nativePreferences.savePaneDraft(paneDraftKey, "")
+            persistPaneDraft("")
         }
         noEchoPrompt = effectiveNoEchoPrompt
         val observedTerminalDraft = analyzedTerminalDraft.takeIf {
@@ -1423,7 +1998,7 @@ class PaneActivity : AppCompatActivity() {
         val unsupportedKeys = state.unsupportedKeys.map { it.lowercase(Locale.ROOT) }.toSet()
         keyButtons.forEach { (button, keys) ->
             button.isEnabled = terminalWritable && !state.sending && hasPane &&
-                keys.all { key -> key.substringAfterLast('+').lowercase(Locale.ROOT) !in unsupportedKeys }
+                keys.all { key -> MuxKeyGrammar.isSupported(key, unsupportedKeys) }
         }
         renderKeyQueue()
         renderKeyEcho(state)
@@ -1433,7 +2008,7 @@ class PaneActivity : AppCompatActivity() {
             setDirectTyping(false, announce = false)
         }
         if (state.clearReplyDraft) {
-            pendingReplyAttempt?.let { attempt ->
+            pendingReplyAttempt?.takeIf { agentName != "codex" }?.let { attempt ->
                 pendingSent = PendingSent(
                     text = attempt.text,
                     revision = state.pane?.revision ?: attempt.revision,
@@ -1444,8 +2019,14 @@ class PaneActivity : AppCompatActivity() {
             }
             pendingReplyAttempt = null
             takenOverTerminalDraft = null
+            pendingAttachment = null
+            pendingAttachmentLabel = null
+            pendingAttachmentMime = null
+            pendingAttachmentBytes = null
+            pendingAttachmentThumb = null
+            renderAttachmentChip()
             replyInput.text?.clear()
-            nativePreferences.savePaneDraft(paneDraftKey, "")
+            persistPaneDraft("")
             viewModel.onReplyDraftCleared()
         }
         renderPendingSent()
@@ -1469,19 +2050,34 @@ class PaneActivity : AppCompatActivity() {
                         restoreScrollbackAnchor()
                         setNewOutputAvailable(false)
                     },
+                    acceptedContext = state.paneReadContext,
                 )
-            } else if (grownTarget != null && !state.loadingOlder && state.requestedLines < grownTarget) {
+            } else if (grownTarget != null && !state.loadingOlder) {
                 pendingScrollbackTarget = null
-                pendingScrollbackAnchor = null
+                if (state.loadedLines > 0) {
+                    showTerminalRevision(
+                        pane.text,
+                        pane.revision,
+                        scrollToBottom = false,
+                        afterRender = { restoreScrollbackAnchor(); setNewOutputAvailable(false) },
+                        acceptedContext = state.paneReadContext,
+                    )
+                } else pendingScrollbackAnchor = null
             } else if (changed && renderedRevision == null) {
-                showTerminalRevision(pane.text, pane.revision, scrollToBottom = true)
+                showTerminalRevision(pane.text, pane.revision, scrollToBottom = true, acceptedContext = state.paneReadContext)
             } else if (changed && !findBar.isVisible && followingOutput) {
-                showTerminalRevision(pane.text, pane.revision, scrollToBottom = true)
+                showTerminalRevision(pane.text, pane.revision, scrollToBottom = true, acceptedContext = state.paneReadContext)
             } else if (changed) {
                 // Freeze the actual visible snapshot. Restoring only scrollY lets inserted/reflowed
                 // rows move underneath the reader and is not the web route's freeze contract.
                 setNewOutputAvailable(true)
             }
+        }
+        // Supporting config can arrive after the accepted unchanged body. Revisit only this
+        // admission transition, using the body's original actor; never mint replacement custody.
+        if (filesAdmissionChanged && renderedTerminalText.isNotEmpty()) {
+            if (!filesAllowed) retirePrintedPathCustody()
+            renderTerminalContent(renderedTerminalText, confirmPrintedPaths = filesAllowed)
         }
     }
 
@@ -1492,7 +2088,9 @@ class PaneActivity : AppCompatActivity() {
         // Keep the action in-place as a disabled Loading row until the grown response lands. The
         // requested target advances immediately, but the screen still represents the loaded window.
         val representedLines = state.loadedLines.takeIf { state.loadingOlder && it > 0 } ?: state.requestedLines
-        bufferAffordance = PaneBufferPolicy.resolve(paneSummary, state.mux, representedLines)
+        bufferAffordance = PaneBufferPolicy.resolve(
+            paneSummary, state.mux, representedLines, state.pane.takeUnless { state.loadingOlder },
+        )
         paneBufferAction.isVisible = bufferAffordance.action != PaneBufferAction.NONE
         paneBufferAction.isEnabled = bufferAffordance.action != PaneBufferAction.LOAD_OLDER || !state.loadingOlder
         when (bufferAffordance.action) {
@@ -1508,9 +2106,16 @@ class PaneActivity : AppCompatActivity() {
             }
             PaneBufferAction.NONE -> paneBufferAction.icon = null
         }
-        val explanation = bufferAffordance.muxExplanation ?: bufferAffordance.missingSessionAgent?.let {
+        val capabilityExplanation = bufferAffordance.muxExplanation ?: bufferAffordance.missingSessionAgent?.let {
             getString(R.string.pane_scrollback_no_session, it)
         }
+        val depthExplanation = PaneReadDepthPresentation.explanation(
+            state.pane,
+            state.desiredLines,
+            PaneScrollbackWindow.maxLines(state.mux),
+            adapterLimitDeclared = state.mux?.readLimits?.verifiedMaximum() != null,
+        )
+        val explanation = listOfNotNull(capabilityExplanation, depthExplanation).joinToString(" ").ifBlank { null }
         paneBufferExplanation.text = explanation.orEmpty()
         paneBufferExplanation.isVisible = explanation != null
     }
@@ -1545,11 +2150,13 @@ class PaneActivity : AppCompatActivity() {
         revision: Long,
         scrollToBottom: Boolean,
         afterRender: (() -> Unit)? = null,
+        acceptedContext: com.lateapex.collie.data.ScopedReadContext? = lastRenderedState?.paneReadContext,
     ) {
         if (pendingTerminalRevision == revision && pendingTerminalText == text) return
         pendingTerminalRevision = revision
         pendingTerminalText = text
         val generation = ++terminalRenderGeneration
+        val context = acceptedContext?.takeIf(repository::isCurrent)
         val lightTheme = isLightTheme()
         val rawMode = displayPreferences.getBoolean(PREF_RAW, false)
         val claudePane = isClaudePane
@@ -1562,47 +2169,54 @@ class PaneActivity : AppCompatActivity() {
                 prepareTerminalText(text, revision, lightTheme, rawMode, claudePane, displayAgent, omittedMarker),
                 scrollToBottom,
                 afterRender,
+                context,
             )
             return
         }
         val textMetrics = TextViewCompat.getTextMetricsParams(binding.terminalText)
+        val precompute = precomputeTerminalText
         terminalRenderJob?.cancel()
         terminalRenderJob = lifecycleScope.launch {
             val prepared = withContext(Dispatchers.Default) {
-                PrecomputedTextCompat.create(
-                    prepareTerminalText(
-                        text,
-                        revision,
-                        lightTheme,
-                        rawMode,
-                        claudePane,
-                        displayAgent,
-                        omittedMarker,
-                    ),
-                    textMetrics,
+                val projection = prepareTerminalText(
+                    text,
+                    revision,
+                    lightTheme,
+                    rawMode,
+                    claudePane,
+                    displayAgent,
+                    omittedMarker,
                 )
+                projection.copy(text = precompute(projection.text, textMetrics))
             }
-            if (generation != terminalRenderGeneration || pendingTerminalRevision != revision ||
+            if (generation != terminalRenderGeneration || (context != null && !repository.isCurrent(context)) || pendingTerminalRevision != revision ||
                 pendingTerminalText != text
             ) {
                 return@launch
             }
-            commitTerminalRender(text, revision, prepared, scrollToBottom, afterRender)
+            commitTerminalRender(text, revision, prepared, scrollToBottom, afterRender, context)
         }
     }
 
     private fun commitTerminalRender(
         text: String,
         revision: Long,
-        prepared: CharSequence,
+        prepared: PreparedTerminalText,
         scrollToBottom: Boolean,
         afterRender: (() -> Unit)?,
+        context: com.lateapex.collie.data.ScopedReadContext?,
     ) {
         pendingTerminalRevision = null
         pendingTerminalText = null
         lastRawText = text
         renderedRevision = revision
-        renderedTerminalText = prepared
+        renderedTerminalText = prepared.text
+        val fingerprint = outputFingerprint(revision, text)
+        terminalOutputContext = context?.takeIf(repository::isCurrent)
+        // A current actor is supplied only by PaneViewModel for a successful fresh pane read. It
+        // can safely admit the exact same text after reconnection; an old redraw has no actor.
+        if (terminalOutputContext != null || fingerprint != retiredOutputFingerprint) retiredOutputFingerprint = null
+        renderedStatusRows = prepared.statusRows
         applyFindHighlights(resetCursor = false)
         afterRender?.invoke()
         if (!scrollToBottom) return
@@ -1672,6 +2286,8 @@ class PaneActivity : AppCompatActivity() {
         }
     }
 
+    private data class PreparedTerminalText(val text: CharSequence, val statusRows: List<String>)
+
     private fun prepareTerminalText(
         text: String,
         revision: Long,
@@ -1680,7 +2296,7 @@ class PaneActivity : AppCompatActivity() {
         claudePane: Boolean,
         displayAgent: String,
         omittedMarker: String,
-    ): CharSequence {
+    ): PreparedTerminalText {
         val boundedText = TerminalRenderWindow.limit(text, omittedMarker)
         val parsed = AnsiParser().parse(
             boundedText,
@@ -1694,23 +2310,21 @@ class PaneActivity : AppCompatActivity() {
             AgentSemanticParser.detect(displayAgent, boundedText, revision)?.takeIf(::hasNativeSemanticPresentation),
             rawMode,
         )
-        val projectedChrome: CharSequence = if (claudePane && !rawMode) {
+        val prepared = if (claudePane && !rawMode) {
             val chrome = ClaudeChromeFilter().split(
                 projected,
                 reflow = displayPreferences.getBoolean(PREF_WRAP, true),
             )
-            renderedStatusRows = chrome.statusRows.map { it.toString() }
-            chrome.body
+            PreparedTerminalText(TerminalLinks.apply(chrome.body), chrome.statusRows.map { it.toString() })
         } else {
-            renderedStatusRows = emptyList()
-            projected
+            PreparedTerminalText(TerminalLinks.apply(projected), emptyList())
         }
-        return TerminalLinks.apply(projectedChrome)
+        return prepared
     }
 
     /** Synchronous one-shot path for display toggles and deterministic view tests. */
     private fun renderTerminal(text: String) {
-        renderedTerminalText = prepareTerminalText(
+        val prepared = prepareTerminalText(
             text,
             renderedRevision ?: latestRevision ?: 0L,
             isLightTheme(),
@@ -1719,6 +2333,8 @@ class PaneActivity : AppCompatActivity() {
             agentName,
             getString(R.string.pane_terminal_output_omitted),
         )
+        renderedTerminalText = prepared.text
+        renderedStatusRows = prepared.statusRows
         applyFindHighlights(resetCursor = false)
     }
 
@@ -1756,7 +2372,7 @@ class PaneActivity : AppCompatActivity() {
     }
 
     private fun hasNativeSemanticPresentation(surface: SemanticSurface): Boolean = when (val model = surface.nativeModel) {
-        is NativeSemanticModel.Prompt -> model.options.isNotEmpty()
+        is NativeSemanticModel.Prompt -> model.options.isNotEmpty() || model.feedback?.focused == true
         is NativeSemanticModel.Wizard -> model.review || model.options.isNotEmpty()
         is NativeSemanticModel.Preview -> model.options.isNotEmpty()
         is NativeSemanticModel.Multi -> model.review || model.options.isNotEmpty()
@@ -1768,11 +2384,32 @@ class PaneActivity : AppCompatActivity() {
     private fun renderNativePrompt(surface: SemanticSurface, model: NativeSemanticModel.Prompt) {
         binding.semanticDetail.text = model.family
         binding.semanticDetail.isVisible = true
+        if (model.family == "omp-note-editor") {
+            val note = model.feedback
+            if (note?.focused == true && note.text.isEmpty()) {
+                addSemanticEditorOffer(
+                    getString(R.string.semantic_add_note),
+                    getString(R.string.semantic_note_title),
+                    "",
+                    240,
+                    getString(R.string.semantic_save),
+                ) { viewModel.sendSemanticIntent(surface, SemanticIntent.OmpNoteSubmit(it)) }
+            } else {
+                binding.semanticActions.addView(messageText(note?.text.orEmpty()))
+            }
+            addSemanticStaticAction(surface, "cancel", getString(R.string.semantic_cancel))
+            return
+        }
         model.options.forEach { option ->
             option.actionId?.let { id ->
                 surface.actions.firstOrNull { it.id == id }?.let { action ->
                     addSemanticOption(option.numberedLabel(), option.description, option.pointed, option.chosen) {
-                        viewModel.sendSemanticIntent(surface, SemanticIntent.Static(action))
+                        val pointerWalk = action.keys.lastOrNull() == "Enter" &&
+                            action.keys.dropLast(1).all { it == "Up" || it == "Down" }
+                        viewModel.sendSemanticIntent(
+                            surface,
+                            if (pointerWalk) SemanticIntent.PointerSelect(action) else SemanticIntent.Static(action),
+                        )
                     }
                 }
             }
@@ -1861,18 +2498,46 @@ class PaneActivity : AppCompatActivity() {
         addSemanticStepper(model.steps, surface)
         if (surface.interactionLocked) {
             binding.semanticActions.addView(messageText(getString(R.string.semantic_controls_locked)))
+            return
         }
         if (model.review) {
             if (model.incomplete) binding.semanticActions.addView(messageText(getString(R.string.semantic_incomplete)))
-            addSemanticStaticAction(surface, "submit", getString(R.string.semantic_submit_answers))
-            addSemanticStaticAction(surface, "cancel", getString(R.string.semantic_cancel))
+            if (surface.detail != "muse-checkbox-review") {
+                addSemanticStaticAction(surface, "submit", getString(R.string.semantic_submit_answers))
+                addSemanticStaticAction(surface, "cancel", getString(R.string.semantic_cancel))
+                return
+            }
+            model.reviewSummaries.forEach { summary -> binding.semanticActions.addView(messageText(summary)) }
+            surface.actions.firstOrNull { it.id == "review-submit" }?.let { action ->
+                addSemanticButton(getString(R.string.semantic_submit_answers), emphasized = true) {
+                    viewModel.sendSemanticIntent(surface, SemanticIntent.MultiReviewSelect(action))
+                }
+            }
+            surface.actions.firstOrNull { it.id == "review-interrupt" }?.let { action ->
+                addSemanticButton(getString(R.string.semantic_interrupt_turn)) {
+                    viewModel.sendSemanticIntent(surface, SemanticIntent.MultiReviewSelect(action))
+                }
+            }
+            addSemanticStaticAction(surface, "review-back", getString(R.string.semantic_edit_answers))
             return
         }
         model.options.forEach { option ->
-            val action = option.actionId?.let { id -> surface.actions.firstOrNull { it.id == id } } ?: return@forEach
             val mark = if (option.checked == true) "☑" else "☐"
+            val action = option.actionId?.let { id -> surface.actions.firstOrNull { it.id == id } }
+            if (action == null && surface.detail == "omp-multi") {
+                binding.semanticActions.addView(messageText("$mark  ${option.label} — ${option.description.orEmpty()}"))
+                return@forEach
+            }
+            action ?: return@forEach
             addSemanticOption("$mark  ${option.numberedLabel()}", option.description, option.pointed, false) {
-                viewModel.sendSemanticIntent(surface, SemanticIntent.Static(action))
+                val intent = if (surface.detail == "muse-pointer-checkbox") {
+                    SemanticIntent.MultiToggle(action)
+                } else if (surface.detail == "omp-multi") {
+                    SemanticIntent.OmpMultiToggle(action)
+                } else {
+                    SemanticIntent.Static(action)
+                }
+                viewModel.sendSemanticIntent(surface, intent)
             }
         }
         model.advanceLabel?.let { label ->
@@ -1996,14 +2661,14 @@ class PaneActivity : AppCompatActivity() {
                     binding.semanticActions.removeView(controls)
                     offerButton.isVisible = true
                 }
-            }, LinearLayout.LayoutParams(0, dp(44), 1f))
+            }, LinearLayout.LayoutParams(0, dp(48), 1f))
             controls.addView(outlinedButton(submitLabel).apply {
                 tag = SEMANTIC_CONTROL_TAG
                 setOnClickListener {
                     val value = editor.text?.toString()?.trim().orEmpty()
                     if (value.isNotEmpty()) onSubmit(value)
                 }
-            }, LinearLayout.LayoutParams(0, dp(44), 1f))
+            }, LinearLayout.LayoutParams(0, dp(48), 1f))
             binding.semanticActions.addView(controls)
             editor.requestFocus()
         }
@@ -2050,6 +2715,9 @@ class PaneActivity : AppCompatActivity() {
     }
 
     private fun sendReplyWithConfirmation(draft: String) {
+        // Media results are rebased into this draft. Do not submit an earlier draft while a
+        // pending upload or transcription can still add content that success would clear.
+        if (composerMediaBusy) return
         if (semanticSurface?.ownsKeyboard == true) {
             showTransientMessage(getString(R.string.pane_dialog_owns_input))
             return
@@ -2077,7 +2745,7 @@ class PaneActivity : AppCompatActivity() {
 
     private fun sendReplyDraft() {
         val draft = binding.replyInput.text?.toString().orEmpty()
-        if (draft.isNotBlank()) sendReplyWithConfirmation(draft)
+        if (draft.isNotBlank() || pendingAttachment != null) sendReplyWithConfirmation(draft)
     }
 
     private fun beginReplySend(text: String) {
@@ -2085,11 +2753,6 @@ class PaneActivity : AppCompatActivity() {
         val outgoing = outgoingReply(text)
         pendingReplyAttempt = PendingReplyAttempt(outgoing, pane?.revision, pane?.text)
         viewModel.sendReply(outgoing, takenOverTerminalDraft)
-        if (pendingAttachment != null) {
-            pendingAttachment = null
-            pendingAttachmentThumb = null
-            renderAttachmentChip()
-        }
     }
 
     private fun outgoingReply(text: String): String =
@@ -2103,21 +2766,42 @@ class PaneActivity : AppCompatActivity() {
             // The photo picker names a pick by its media id and the bridge renames the copy, so no
             // file name here means anything to the operator (S25 Ultra, 2026-09-10).
             composerAttachmentChip.text = getString(R.string.pane_attachment_image)
+            val filename = pendingAttachmentLabel
+            val mime = pendingAttachmentMime
+            val bytes = pendingAttachmentBytes
+            if (filename != null && mime != null && bytes != null) {
+                composerAttachmentChip.text = getString(R.string.pane_attachment_details, filename, mime, bytes)
+            }
+            composerAttachmentChip.contentDescription = composerAttachmentChip.text
+            composerAttachmentChip.closeIconContentDescription = getString(R.string.pane_attachment_remove, composerAttachmentChip.text)
             composerAttachmentChip.chipIcon = pendingAttachmentThumb
                 ?.let { android.graphics.drawable.BitmapDrawable(resources, it) }
                 ?: ContextCompat.getDrawable(this@PaneActivity, R.drawable.ic_pane_attach)
             composerAttachmentChip.isChipIconVisible = true
             composerAttachmentChip.setOnCloseIconClickListener {
                 pendingAttachment = null
+                pendingAttachmentLabel = null
+                pendingAttachmentMime = null
+                pendingAttachmentBytes = null
                 pendingAttachmentThumb = null
                 renderAttachmentChip()
             }
+        } else {
+            composerAttachmentChip.text = ""
+            composerAttachmentChip.contentDescription = null
+            composerAttachmentChip.closeIconContentDescription = null
+            composerAttachmentChip.chipIcon = null
+            composerAttachmentChip.setOnCloseIconClickListener(null)
         }
+        renderComposerMediaControls()
     }
 
     @VisibleForTesting
     internal fun acceptUploadForTest(path: String, thumbnail: android.graphics.Bitmap? = null) {
         pendingAttachment = path
+        pendingAttachmentLabel = null
+        pendingAttachmentMime = null
+        pendingAttachmentBytes = null
         pendingAttachmentThumb = thumbnail
         renderAttachmentChip()
     }
@@ -2130,8 +2814,14 @@ class PaneActivity : AppCompatActivity() {
 
     private fun renderPendingSent() {
         if (!::binding.isInitialized) return
-        binding.pendingSendNotice.text = pendingSent?.text?.let { getString(R.string.pane_pending_sent, it) }.orEmpty()
-        binding.pendingSendNotice.isVisible = pendingSent != null && !directTyping
+        val accepted = currentState.codexAcceptedReplies
+        binding.pendingSendNotice.maxLines = if (accepted.isNotEmpty()) 5 else 1
+        binding.pendingSendNotice.setTextIsSelectable(accepted.isNotEmpty())
+        binding.pendingSendNotice.text = if (accepted.isNotEmpty()) {
+            getString(R.string.pane_codex_waiting_history, accepted.joinToString("\n\n"))
+        } else pendingSent?.text?.let { getString(R.string.pane_pending_sent, it) }.orEmpty()
+        binding.pendingSendNotice.isVisible = (accepted.isNotEmpty() || pendingSent != null) && !directTyping
+        binding.pendingCodexDismiss.isVisible = accepted.isNotEmpty() && !directTyping
     }
 
     private fun resetDestructiveConfirm(render: Boolean = true) {
@@ -2155,8 +2845,10 @@ class PaneActivity : AppCompatActivity() {
             setTextColor(getColor(R.color.collie_muted))
             return@with
         }
-        text = state.mutationError ?: state.error ?: state.status.orEmpty()
-        isVisible = state.mutationError != null || state.error != null || state.status != null
+        val saved = state.savedCopy?.let(::savedCopyCaption)
+        maxLines = if (saved != null) Int.MAX_VALUE else 4
+        text = listOfNotNull(saved, state.mutationError ?: state.error ?: state.status).joinToString("\n")
+        isVisible = saved != null || state.mutationError != null || state.error != null || state.status != null
         setTextColor(getColor(if (state.mutationError != null || state.error != null) R.color.collie_error else R.color.collie_muted))
     }
 
@@ -2211,7 +2903,7 @@ class PaneActivity : AppCompatActivity() {
         LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            minimumHeight = dp(44)
+            minimumHeight = dp(48)
             setPadding(dp(12), 0, 0, 0)
             addView(TextView(this@PaneActivity).apply {
                 id = R.id.composer_dock_title
@@ -2224,14 +2916,14 @@ class PaneActivity : AppCompatActivity() {
                 id = R.id.composer_dock_close
                 background = null
                 contentDescription = getString(R.string.pane_dock_close)
-                minWidth = dp(44)
-                minimumHeight = dp(44)
+                minWidth = dp(48)
+                minimumHeight = dp(48)
                 text = getString(R.string.pane_close_symbol)
                 setTextColor(getColor(R.color.collie_muted))
                 textSize = 22f
                 isAllCaps = false
                 setOnClickListener { onClose() }
-            }, LinearLayout.LayoutParams(dp(44), dp(44)))
+            }, LinearLayout.LayoutParams(dp(48), dp(48)))
         }
 
     private fun resetKeyQueueDiscardConfirm(render: Boolean = true) {
@@ -2480,7 +3172,7 @@ class PaneActivity : AppCompatActivity() {
         paneScroll.isVisible = model.panes.size > 1
         paneItems.removeAllViews()
         model.panes.forEach { item ->
-            val name = displayAgentTitle(item.pane.agent, item.pane.paneLabel ?: item.pane.sessionName)
+            val name = displayAgentTitle(item.pane.agent, item.pane.paneLabel ?: item.pane.sessionName ?: item.pane.soleTabName)
                 ?: item.pane.agent.ifBlank { item.pane.paneId }
             val tag = item.pane.paneId.substringAfterLast(':')
             val label = "$name  $tag"
@@ -2573,7 +3265,7 @@ class PaneActivity : AppCompatActivity() {
         val target = item.pane.address()
         val rename = structuralGate("renamePane", target)
         val close = structuralGate("closePane", target)
-        val title = displayAgentTitle(item.pane.agent, item.pane.paneLabel ?: item.pane.sessionName)
+        val title = displayAgentTitle(item.pane.agent, item.pane.paneLabel ?: item.pane.sessionName ?: item.pane.soleTabName)
             ?: item.pane.agent.ifBlank { item.pane.paneId }
         if (!rename.visibleAndEnabled && !close.visibleAndEnabled) {
             showUnavailableStructuralActions(title, listOf(rename, close), R.string.pane_changes_unsupported)
@@ -2774,7 +3466,7 @@ class PaneActivity : AppCompatActivity() {
         tabCreateInFlight = true
         binding.newTabButton.isEnabled = false
         lifecycleScope.launch {
-            when (val result = repository.createTab(address.scope, pane.workspaceId)) {
+            when (val result = currentActorResult { repository.createTab(address.scope, pane.workspaceId) } ?: return@launch) {
                 is ApiResult.Success -> if (result.value.ok) {
                     result.value.pane?.let(::openCreatedPane)
                         ?: showTransientMessage(getString(R.string.pane_new_tab_failed))
@@ -2808,6 +3500,10 @@ class PaneActivity : AppCompatActivity() {
             )
             sections.forEach { section ->
                 when (section) {
+                    is PaneSwitcherSection.Pinned -> {
+                        list.addView(switcherSectionLabel(getString(R.string.pane_pinned_title)))
+                        section.rows.forEach { addSwitcherPaneRow(list, dialog, it) }
+                    }
                     is PaneSwitcherSection.Agents -> {
                         val title = switcherBucketLabel(section.bucket)
                         // Recent keeps the plain heading Working has (A.6) but stays foldable: its
@@ -2850,9 +3546,13 @@ class PaneActivity : AppCompatActivity() {
                                 setOnClickListener {
                                     if (!launchDuplicateLock.tryStart(launcher.command)) return@setOnClickListener
                                     rebuild()
+                                    val launchConnection = repository.connection.value
+                                    val launchContext = repository.readContext(address.scope, address.paneId) ?: return@setOnClickListener
                                     lifecycleScope.launch {
                                         try {
-                                            when (val result = repository.launch(launcher.command, address.scope, address.paneId)) {
+                                            if (!confirmLauncher(this@PaneActivity, launcher, address.scope.host ?: launchConnection?.origin?.value.orEmpty())) return@launch
+                                            if (!repository.isCurrent(launchContext)) return@launch
+                                            when (val result = currentActorResult { repository.launch(launcher.command, address.scope, address.paneId) } ?: return@launch) {
                                                 is ApiResult.Success -> if (result.value.ok) {
                                                     result.value.pane?.let {
                                                         dialog.dismiss()
@@ -2870,7 +3570,7 @@ class PaneActivity : AppCompatActivity() {
                                             }
                                         } finally {
                                             launchDuplicateLock.finish(launcher.command)
-                                            if (!isFinishing) rebuild()
+                                            if (!isFinishing && repository.isCurrent(launchContext)) rebuild()
                                         }
                                     }
                                 }
@@ -2886,7 +3586,7 @@ class PaneActivity : AppCompatActivity() {
         dialog.setOnDismissListener { restorePaneFocus() }
         dialog.show()
         lifecycleScope.launch {
-            when (val result = repository.launchers(address.scope)) {
+            when (val result = currentActorResult { repository.launchers(address.scope) } ?: return@launch) {
                 is ApiResult.Success -> {
                     launchers = result.value.launchers
                     launcherHome = result.value.home
@@ -2917,6 +3617,7 @@ class PaneActivity : AppCompatActivity() {
         mux = currentState.mux,
         servers = currentState.servers,
         launching = launching,
+        pinned = currentState.paneReadContext?.let { panePins.matcher(it, repository::isCurrent) } ?: { false },
     )
 
     private fun addSwitcherPaneRow(list: LinearLayout, dialog: CollieBottomSheetDialog, row: SwitcherPaneRow) {
@@ -2956,7 +3657,7 @@ class PaneActivity : AppCompatActivity() {
     }
 
     private fun switcherPaneLabel(row: SwitcherPaneRow): String {
-        val title = displayAgentTitle(row.pane.agent, row.pane.paneLabel ?: row.pane.sessionName)
+        val title = displayAgentTitle(row.pane.agent, row.pane.paneLabel ?: row.pane.sessionName ?: row.pane.soleTabName)
             ?: row.pane.agent.ifBlank { row.pane.paneId }
         val secondary = displayAgentTitle(row.pane.agent, row.secondary)
         return buildString {
@@ -2972,6 +3673,10 @@ class PaneActivity : AppCompatActivity() {
         removeAllViews()
         paneSwitcherSections().forEach { section ->
             when (section) {
+                is PaneSwitcherSection.Pinned -> {
+                    addView(switcherPreviewSection(getString(R.string.pane_pinned_title), false, true))
+                    section.rows.forEach { addView(switcherPreviewPaneRow(it)) }
+                }
                 is PaneSwitcherSection.Agents -> {
                     val title = switcherBucketLabel(section.bucket)
                     addView(switcherPreviewSection(title, section.bucket == TriageBucket.RECENT, section.open))
@@ -2998,7 +3703,7 @@ class PaneActivity : AppCompatActivity() {
                 ),
             ).apply {
                 gravity = Gravity.START or Gravity.CENTER_VERTICAL
-                minHeight = dp(44)
+                minHeight = dp(48)
                 isClickable = false
                 isFocusable = false
             }
@@ -3028,7 +3733,7 @@ class PaneActivity : AppCompatActivity() {
     private fun switcherToggleLabel(label: String, open: Boolean, onClick: () -> Unit) = LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
         gravity = Gravity.CENTER_VERTICAL
-        minimumHeight = dp(44)
+        minimumHeight = dp(48)
         isClickable = true
         isFocusable = true
         background = ContextCompat.getDrawable(this@PaneActivity, android.R.drawable.list_selector_background)
@@ -3050,7 +3755,7 @@ class PaneActivity : AppCompatActivity() {
             ),
         ).apply {
             gravity = Gravity.START or Gravity.CENTER_VERTICAL
-            minHeight = dp(44)
+            minHeight = dp(48)
             contentDescription = getString(
                 if (open) R.string.pane_switcher_collapse else R.string.pane_switcher_expand,
                 label,
@@ -3143,7 +3848,7 @@ class PaneActivity : AppCompatActivity() {
     private fun openPane(pane: PaneSummary) {
         if (!showDrawer(ComposerDrawer.NONE)) return
         val fallback = listOf(pane.workspaceLabel, pane.tabLabel).filterNotNull().filter(String::isNotBlank).joinToString(" › ")
-        val title = displayAgentTitle(pane.agent, pane.paneLabel ?: pane.sessionName) ?: fallback.ifBlank { pane.paneId }
+        val title = displayAgentTitle(pane.agent, pane.paneLabel ?: pane.sessionName ?: pane.soleTabName) ?: fallback.ifBlank { pane.paneId }
         startActivity(Intent(this, PaneActivity::class.java).apply {
             putExtra(EXTRA_PANE_ID, pane.paneId)
             putExtra(EXTRA_HOST, pane.host)
@@ -3186,6 +3891,9 @@ class PaneActivity : AppCompatActivity() {
         lateinit var renderActions: () -> Unit
         renderActions = {
             val content = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            content.addView(messageText(
+                TopologyStatus.describe(currentState.mux, currentState.lastSuccessAt, System.currentTimeMillis()),
+            ).apply { contentDescription = text })
 
             fun closingRow(label: String, enabled: Boolean = true, action: () -> Unit) {
                 content.addView(sheetActionButton(label) {
@@ -3194,48 +3902,23 @@ class PaneActivity : AppCompatActivity() {
                 }.apply { isEnabled = enabled })
             }
 
-            fun switchRow(label: String, id: Int, checked: Boolean, onToggle: (Boolean) -> Unit) {
-                content.addView(
-                    com.google.android.material.materialswitch.MaterialSwitch(this).apply {
-                        this.id = id
-                        text = label
-                        isChecked = checked
-                        minHeight = dp(44)
-                        setPadding(dp(12), 0, dp(12), 0)
-                        setOnCheckedChangeListener { _, value -> onToggle(value) }
-                    },
-                )
+            closingRow(getString(R.string.pane_refresh)) { viewModel.refresh() }
+            val pinActor = currentState.paneReadContext
+            if (paneSummary != null && pinActor != null && pinActor.connection.isPaired && currentState.savedCopy == null && repository.isCurrent(pinActor)) {
+                val pinned = panePins.isPinned(paneSummary, pinActor, repository::isCurrent)
+                closingRow(getString(if (pinned) R.string.pane_unpin else R.string.pane_pin)) {
+                    val current = currentPaneSummary() ?: return@closingRow
+                    if (currentState.savedCopy != null || !repository.isCurrent(pinActor) ||
+                        current.paneId != paneSummary.paneId || current.host != paneSummary.host ||
+                        current.session != paneSummary.session || current.workspaceId != paneSummary.workspaceId ||
+                        current.workspaceLabel != paneSummary.workspaceLabel) return@closingRow
+                    if (panePins.setPinned(current, !pinned, currentState.panes, pinActor, repository::isCurrent)) {
+                        populateSwitcherPeek()
+                        showTransientMessage(getString(if (pinned) R.string.pane_unpin_saved else R.string.pane_pin_saved))
+                    }
+                }
             }
 
-            switchRow(
-                getString(R.string.pane_action_wrap),
-                R.id.pane_action_wrap,
-                displayPreferences.getBoolean(PREF_WRAP, true),
-            ) { checked ->
-                displayPreferences.edit().putBoolean(PREF_WRAP, checked).apply()
-                applyTerminalPreferences()
-            }
-            switchRow(
-                getString(R.string.pane_action_raw),
-                R.id.pane_action_raw,
-                displayPreferences.getBoolean(PREF_RAW, false),
-            ) { checked ->
-                displayPreferences.edit().putBoolean(PREF_RAW, checked).apply()
-                renderSemanticSurface(semanticSurface, currentState)
-                renderTerminal(lastRawText.ifEmpty { latestRawText })
-            }
-            closingRow(getString(R.string.pane_action_find), action = ::openFind)
-            if (historyAvailable) {
-                closingRow(getString(R.string.pane_action_history), action = ::openHistory)
-            }
-            run {
-                val zenLabel = if (zenMode) {
-                    "✓ ${getString(R.string.pane_action_zen)}"
-                } else {
-                    getString(R.string.pane_action_zen)
-                }
-                closingRow(zenLabel) { setZenMode(!zenMode) }
-            }
             if (currentState.canWrite) {
                 val focus = PaneStructuralGate.action(
                     "setFocus", address, true, currentState.mux, currentState.servers, paneActionInFlight,
@@ -3272,6 +3955,103 @@ class PaneActivity : AppCompatActivity() {
                 content.addView(
                     sheetActionButton(getString(R.string.pane_action_read_only)) {}.apply { isEnabled = false },
                 )
+            }
+
+            fun switchRow(label: String, id: Int, checked: Boolean, onToggle: (Boolean) -> Unit) {
+                content.addView(
+                    com.google.android.material.materialswitch.MaterialSwitch(this).apply {
+                        this.id = id
+                        text = label
+                        isChecked = checked
+                        minHeight = dp(48)
+                        setPadding(dp(12), 0, dp(12), 0)
+                        setOnCheckedChangeListener { _, value -> onToggle(value) }
+                    },
+                )
+            }
+
+            switchRow(
+                getString(R.string.pane_action_wrap),
+                R.id.pane_action_wrap,
+                displayPreferences.getBoolean(PREF_WRAP, true),
+            ) { checked ->
+                displayPreferences.edit().putBoolean(PREF_WRAP, checked).apply()
+                applyTerminalPreferences()
+            }
+            switchRow(
+                getString(R.string.pane_action_raw),
+                R.id.pane_action_raw,
+                displayPreferences.getBoolean(PREF_RAW, false),
+            ) { checked ->
+                displayPreferences.edit().putBoolean(PREF_RAW, checked).apply()
+                renderSemanticSurface(semanticSurface, currentState)
+                renderTerminal(lastRawText.ifEmpty { latestRawText })
+            }
+            closingRow(getString(R.string.pane_action_find), action = ::openFind)
+            if (historyAvailable) {
+                closingRow(getString(R.string.pane_action_history), action = ::openHistory)
+            }
+            closingRow(getString(R.string.pane_action_processes)) {
+                startActivity(PaneProcessesActivity.intent(this, address))
+            }
+            closingRow(getString(R.string.pane_action_cache)) {
+                startActivity(CacheWatchActivity.intent(this@PaneActivity, address))
+            }
+            if (currentState.mux?.supportsNew("agentAutomation") == true) {
+                closingRow(getString(R.string.agent_control_title)) { startActivity(AgentControlActivity.intent(this, address)) }
+            }
+            if (currentState.mux?.supportsNew("agentWaits") == true) {
+                closingRow(getString(R.string.agent_waits_title)) { startActivity(WaitsActivity.intent(this, address)) }
+            }
+            closingRow(getString(R.string.pane_action_agent_identity)) {
+                startActivity(AgentIdentityActivity.intent(this, address))
+            }
+
+
+            closingRow(getString(R.string.pane_action_changes)) {
+                startActivity(ChangesActivity.intentForPane(
+                    this,
+                    address.paneId,
+                    address.scope,
+                    binding.paneTitle.text?.toString(),
+                ))
+            }
+            run {
+                val zenLabel = if (zenMode) {
+                    "✓ ${getString(R.string.pane_action_zen)}"
+                } else {
+                    getString(R.string.pane_action_zen)
+                }
+                closingRow(zenLabel) { setZenMode(!zenMode) }
+            }
+            if (currentState.mux?.supportsNew("paneLayout") == true) {
+                closingRow(getString(R.string.pane_layout_controls), action = {
+                    val captured = repository.readContext(address.scope, address.paneId)
+                    if (captured == null || !repository.isCurrent(captured)) {
+                        Toast.makeText(this, getString(R.string.pane_layout_stale), Toast.LENGTH_LONG).show()
+                        return@closingRow
+                    }
+                    layoutLaunchContext = captured
+                    layoutLauncher.launch(Intent(this, LayoutActivity::class.java).apply {
+                        putExtra(LayoutActivity.EXTRA_PANE_ID, address.paneId)
+                        putExtra(LayoutActivity.EXTRA_HOST, address.scope.host)
+                        putExtra(LayoutActivity.EXTRA_SESSION, address.scope.session)
+                    })
+                })
+            }
+            if (currentState.mux?.supportsNew("portableLayouts") == true) {
+                closingRow(getString(R.string.portable_layout_title), action = {
+                    val captured = repository.readContext(address.scope, address.paneId)
+                    if (captured == null || !repository.isCurrent(captured)) {
+                        Toast.makeText(this, getString(R.string.portable_layout_stale), Toast.LENGTH_LONG).show()
+                        return@closingRow
+                    }
+                    startActivity(Intent(this, LayoutRecipesActivity::class.java).apply {
+                        putExtra(LayoutRecipesActivity.EXTRA_PANE_ID, address.paneId)
+                        putExtra(LayoutRecipesActivity.EXTRA_HOST, address.scope.host)
+                        putExtra(LayoutRecipesActivity.EXTRA_SESSION, address.scope.session)
+                    })
+                })
             }
             dialog.setSheetContent(content)
         }
@@ -3416,12 +4196,40 @@ class PaneActivity : AppCompatActivity() {
         val body = bodyOverride ?: decided.body
         showingTranscriptBody = body == PaneBody.TRANSCRIPT
         renderBodyModeRow(decided, body)
+        chatPromptContext.showPrompt(state.lastPrompt.takeIf { showingTranscriptBody && state.transcriptAvailable == true && state.savedCopy == null && state.transcriptReadContext?.let((application as CollieApplication).container.repository::isCurrent) == true })
         transcriptBody.isVisible = showingTranscriptBody
         terminalScroll.isVisible = body == PaneBody.MIRROR
         terminalStatusline.isVisible = body == PaneBody.MIRROR &&
             renderedStatusRows.isNotEmpty() && !displayPreferences.getBoolean(PREF_RAW, false)
         if (showingTranscriptBody) {
-            transcriptBody.bind(agentName, state.transcript, state.transcriptHasMore)
+            val container = (application as CollieApplication).container
+            val queueAction = state.transcriptSendNow
+            val occupant = state.panes.firstOrNull {
+                it.paneId == address.paneId && it.host == address.scope.host && it.session == address.scope.session
+            }
+            val queueKeysSupported = queueAction?.keys?.let { keys ->
+                keys.isNotEmpty() && keys.size <= 12 && keys.all { MuxKeyGrammar.isSupported(it, state.unsupportedKeys) }
+            } == true
+            // TranscriptBody owns the actual turn batch. Supporting-state renders and tool
+            // rebuilds preserve its quota while every rebuilt path still needs fresh confirmation.
+            transcriptBody.bind(
+                agent = agentName,
+                entries = state.transcript,
+                hasMore = state.transcriptHasMore,
+                queued = state.transcriptQueued,
+                sendNow = queueAction,
+                sendNowEnabled = queueAction != null && queueKeysSupported &&
+                    state.mux?.supportsNew("guardedQueuedSend") == true && occupant?.status == AgentStatus.WORKING &&
+                    terminalWriteBlock() == null && !state.sending && !state.transcriptSendPending &&
+                    state.transcriptSendAttempt?.sameQueue(queueAction) != true &&
+                    semanticSurface == null && noEchoPrompt == null,
+                sendNowPending = state.transcriptSendPending,
+                sendNowAttempted = queueAction?.let { action -> state.transcriptSendAttempt?.sameQueue(action) } == true,
+                imageLoader = container.imageLoader,
+                readContext = state.transcriptReadContext,
+                filesAdmissionReady = state.transcriptReadContext?.let(::filesDiscoveryAllowed) == true,
+                filesAdmissionGeneration = filesAdmissionGeneration,
+            )
             terminalScroll.updatePadding(bottom = 0)
         } else {
             // The pinned statusline overlaps the mirror's last row unless the scroller reserves
@@ -3468,16 +4276,228 @@ class PaneActivity : AppCompatActivity() {
         bodyModeLabel.setOnClickListener { if (body == PaneBody.TRANSCRIPT) openHistory() }
     }
 
-    private fun renderTerminalContent(highlighted: CharSequence) = with(binding) {
+    private fun renderTerminalContent(highlighted: CharSequence, confirmPrintedPaths: Boolean = true) = with(binding) {
         // The mirror is text-selectable, so replacing its text pulls focus onto it: every keystroke
         // in Type mode re-rendered the mirror and the operator had to tap the field again for the
         // next letter (S25 Ultra, 2026-09-10). Whatever owned focus before the render keeps it.
         val focusedBefore = currentFocus?.takeIf { it !== terminalText && it !== terminalBlockContent }
-        renderTerminalBlocks(highlighted)
+        if (confirmPrintedPaths) updatePrintedPathLinks(highlighted)
+        val spanActor = printedLinkContext
+        val spanGeneration = printedLinkGeneration
+        val spanRoot = printedLinkRoot
+        val spanExpiry = printedLinkExpiresAt
+        val linked = PrintedPathLinks.confirmedText(highlighted, printedLinkRefs, printedLinkConfirmed) { reference ->
+            openPrintedPath(reference, spanActor, spanGeneration, spanRoot, spanExpiry)
+        }
+        renderTerminalBlocks(linked)
         terminalStatusline.text = renderedStatusRows.joinToString(" · ")
         terminalStatusline.isVisible = !showingTranscriptBody && renderedStatusRows.isNotEmpty() &&
             !displayPreferences.getBoolean(PREF_RAW, false)
         if (focusedBefore != null && !focusedBefore.hasFocus()) focusedBefore.requestFocus()
+    }
+
+    private fun retirePrintedPathCustody() {
+        printedLinkGeneration++
+        printedLinkText = null
+        printedLinkContext = null
+        printedLinkRefs = emptyList()
+        printedLinkConfirmed = emptySet()
+        printedLinkRoot = null
+        printedLinkExpiresAt = 0L
+    }
+
+    private fun resetTranscriptLinkBudget() {
+        synchronized(transcriptLinkBudgetLock) {
+            ++transcriptLinkBudgetGeneration
+            transcriptLinkPathsConfirmed.clear()
+        }
+    }
+
+    /** Opaque comparison only: never retain another plaintext copy after authority retirement. */
+    private fun outputFingerprint(revision: Long?, text: String): Pair<Long?, String> {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+            .digest(text.toByteArray(Charsets.UTF_8))
+        return revision to digest.joinToString("") { "%02x".format(it.toInt() and 0xff) }
+    }
+
+    /** A candidate becomes tappable only after a scoped Files/exist read confirms it. */
+    private fun filesDiscoveryAllowed(context: com.lateapex.collie.data.ScopedReadContext): Boolean {
+        val configActor = currentState.filesConfigContext ?: return false
+        val paneActor = currentState.paneReadContext ?: return false
+        return currentState.pane?.filesReadReady == true && repository.isCurrent(context) &&
+            repository.isCurrent(configActor) && repository.isCurrent(paneActor) &&
+            configActor.connection === context.connection && paneActor.connection === context.connection &&
+            configActor.key == context.key && paneActor.key == context.key &&
+            configActor.navigationGeneration == context.navigationGeneration &&
+            paneActor.navigationGeneration == context.navigationGeneration
+    }
+
+    private fun updatePrintedPathLinks(displayed: CharSequence) {
+        val source = displayed.toString()
+        val context = terminalOutputContext?.takeIf(repository::isCurrent)
+        if (context == null || !filesDiscoveryAllowed(context)) {
+            retirePrintedPathCustody()
+            return
+        }
+        if (source == printedLinkText && context == printedLinkContext && android.os.SystemClock.uptimeMillis() < printedLinkExpiresAt) return
+        printedLinkText = source
+        printedLinkContext = context
+        printedLinkRefs = emptyList()
+        printedLinkConfirmed = emptySet()
+        printedLinkRoot = null
+        printedLinkExpiresAt = 0L
+        val generation = ++printedLinkGeneration
+        if (context == null) return
+        lifecycleScope.launch {
+            if (!filesDiscoveryAllowed(context)) return@launch
+            val target = com.lateapex.collie.network.FilesTarget.Pane(address.paneId)
+            val root = when (val answer = repository.files(
+                target,
+                address.scope,
+                dir = com.lateapex.collie.network.RelativeFilePath.parse("", allowRoot = true)!!,
+                expectedContext = context,
+            )) {
+                is com.lateapex.collie.network.ApiResult.Success -> (answer.value as? com.lateapex.collie.network.FilesAnswer.Listing)?.root
+                else -> null
+            }
+            if (generation != printedLinkGeneration || printedLinkText != source || !filesDiscoveryAllowed(context)) return@launch
+            if (root == null) {
+                // Missing/refused Files support leaves plain text. Retain only a bounded inert
+                // lookup lease so a redraw cannot turn a failed request into an immediate retry.
+                printedLinkExpiresAt = android.os.SystemClock.uptimeMillis() + PRINTED_LINK_TTL_MS
+                renderTerminalContent(renderedTerminalText, confirmPrintedPaths = false)
+                return@launch
+            }
+            val refs = PrintedPathLinks.extract(source, root)
+            printedLinkRefs = refs
+            printedLinkRoot = root
+            val paths = refs.map { it.path }.distinct()
+            if (paths.isEmpty()) { printedLinkExpiresAt = android.os.SystemClock.uptimeMillis() + PRINTED_LINK_TTL_MS; renderTerminalContent(renderedTerminalText); return@launch }
+            val result = repository.filesExist(target, address.scope, paths, context)
+            if (generation != printedLinkGeneration || printedLinkText != source || !filesDiscoveryAllowed(context)) return@launch
+            if (result is com.lateapex.collie.network.ApiResult.Success) {
+                printedLinkConfirmed = result.value.exists
+                printedLinkExpiresAt = android.os.SystemClock.uptimeMillis() + PRINTED_LINK_TTL_MS
+                renderTerminalContent(renderedTerminalText)
+            }
+        }
+    }
+
+    private fun openPrintedPath(
+        reference: PrintedFileReference,
+        context: com.lateapex.collie.data.ScopedReadContext?,
+        capturedGeneration: Long,
+        expectedRoot: String?,
+        capturedExpiry: Long,
+    ) {
+        if (context == null || expectedRoot == null || capturedGeneration != printedLinkGeneration ||
+            context !== printedLinkContext || context !== terminalOutputContext || expectedRoot != printedLinkRoot ||
+            capturedExpiry != printedLinkExpiresAt || !filesDiscoveryAllowed(context)
+        ) return
+        if (android.os.SystemClock.uptimeMillis() >= capturedExpiry) {
+            updatePrintedPathLinks(renderedTerminalText)
+            return
+        }
+        lifecycleScope.launch {
+            if (capturedGeneration != printedLinkGeneration || !filesDiscoveryAllowed(context) || context !== printedLinkContext || context !== terminalOutputContext || expectedRoot != printedLinkRoot || capturedExpiry != printedLinkExpiresAt) return@launch
+            val answer = repository.files(
+                com.lateapex.collie.network.FilesTarget.Pane(address.paneId), address.scope,
+                dir = com.lateapex.collie.network.RelativeFilePath.parse("", allowRoot = true)!!,
+                expectedContext = context,
+            )
+            val currentRoot = (answer as? com.lateapex.collie.network.ApiResult.Success)?.value
+                .let { it as? com.lateapex.collie.network.FilesAnswer.Listing }?.root
+            // Old awaited callbacks must not clear or refresh a replacement body's confirmation.
+            if (capturedGeneration != printedLinkGeneration || !filesDiscoveryAllowed(context) || context !== printedLinkContext || context !== terminalOutputContext || expectedRoot != printedLinkRoot || capturedExpiry != printedLinkExpiresAt) return@launch
+            if (currentRoot != expectedRoot) {
+                printedLinkRoot = null
+                printedLinkConfirmed = emptySet()
+                printedLinkExpiresAt = 0L
+                updatePrintedPathLinks(renderedTerminalText)
+                return@launch
+            }
+            startActivity(FilesActivity.intent(
+                this@PaneActivity,
+                com.lateapex.collie.network.FilesTarget.Pane(address.paneId),
+                address.scope,
+                path = reference.path.value,
+                line = reference.line,
+                openReference = true,
+            ))
+        }
+    }
+
+    private fun decorateTranscriptFileReferences(
+        view: android.widget.TextView,
+        displayed: CharSequence,
+        context: com.lateapex.collie.data.ScopedReadContext,
+    ) {
+        val source = displayed.toString().take(PrintedPathLinks.MAX_SOURCE_CHARS)
+        if (!filesDiscoveryAllowed(context)) {
+            view.text = PrintedPathLinks.withoutConfirmedPaths(displayed)
+            return
+        }
+        val batchGeneration = synchronized(transcriptLinkBudgetLock) { transcriptLinkBudgetGeneration }
+        val admissionGeneration = filesAdmissionGeneration
+        val unconfirmed = PrintedPathLinks.withoutConfirmedPaths(displayed)
+        view.text = unconfirmed
+        lifecycleScope.launch {
+            if (admissionGeneration != filesAdmissionGeneration || !filesDiscoveryAllowed(context)) return@launch
+            val target = com.lateapex.collie.network.FilesTarget.Pane(address.paneId)
+            val rootAnswer = repository.files(
+                target, address.scope,
+                dir = com.lateapex.collie.network.RelativeFilePath.parse("", allowRoot = true)!!,
+                expectedContext = context,
+            )
+            val root = (rootAnswer as? com.lateapex.collie.network.ApiResult.Success)?.value
+                .let { it as? com.lateapex.collie.network.FilesAnswer.Listing }?.root ?: return@launch
+            if (admissionGeneration != filesAdmissionGeneration || !filesDiscoveryAllowed(context) || view.parent == null || view.text.toString() != source) return@launch
+            val refs = PrintedPathLinks.extract(source, root)
+            val paths = synchronized(transcriptLinkBudgetLock) {
+                if (batchGeneration != transcriptLinkBudgetGeneration || admissionGeneration != filesAdmissionGeneration || !filesDiscoveryAllowed(context)) return@launch
+                refs.map { it.path }.distinct().filter { path ->
+                    if (path.value in transcriptLinkPathsConfirmed) true
+                    else if (transcriptLinkPathsConfirmed.size < 64) {
+                        transcriptLinkPathsConfirmed += path.value
+                        true
+                    } else false
+                }
+            }
+            if (paths.isEmpty()) return@launch
+            val answer = repository.filesExist(target, address.scope, paths, context)
+            val existing = (answer as? com.lateapex.collie.network.ApiResult.Success)?.value?.exists ?: return@launch
+            val batchCurrent = synchronized(transcriptLinkBudgetLock) { batchGeneration == transcriptLinkBudgetGeneration }
+            if (!batchCurrent || admissionGeneration != filesAdmissionGeneration || !filesDiscoveryAllowed(context) || view.parent == null || view.text.toString() != source) return@launch
+            view.text = PrintedPathLinks.confirmedText(unconfirmed, refs, existing) { reference ->
+                openTranscriptFile(reference, context, root, admissionGeneration)
+            }
+            view.movementMethod = android.text.method.LinkMovementMethod.getInstance()
+        }
+    }
+
+    private fun openTranscriptFile(
+        reference: PrintedFileReference,
+        context: com.lateapex.collie.data.ScopedReadContext,
+        expectedRoot: String,
+        admissionGeneration: Long,
+    ) {
+        if (admissionGeneration != filesAdmissionGeneration || !filesDiscoveryAllowed(context)) return
+        lifecycleScope.launch {
+            if (admissionGeneration != filesAdmissionGeneration || !filesDiscoveryAllowed(context)) return@launch
+            val target = com.lateapex.collie.network.FilesTarget.Pane(address.paneId)
+            val listing = repository.files(
+                target, address.scope,
+                dir = com.lateapex.collie.network.RelativeFilePath.parse("", allowRoot = true)!!,
+                expectedContext = context,
+            ) as? com.lateapex.collie.network.ApiResult.Success ?: return@launch
+            if ((listing.value as? com.lateapex.collie.network.FilesAnswer.Listing)?.root != expectedRoot || admissionGeneration != filesAdmissionGeneration || !filesDiscoveryAllowed(context)) return@launch
+            val confirmed = repository.filesExist(target, address.scope, listOf(reference.path), context)
+            if ((confirmed as? com.lateapex.collie.network.ApiResult.Success)?.value?.exists?.contains(reference.path.value) != true || admissionGeneration != filesAdmissionGeneration || !filesDiscoveryAllowed(context)) return@launch
+            startActivity(FilesActivity.intent(
+                this@PaneActivity, target, address.scope,
+                path = reference.path.value, line = reference.line, openReference = true,
+            ))
+        }
     }
 
     private fun renderTerminalBlocks(highlighted: CharSequence) = with(binding) {
@@ -3500,6 +4520,9 @@ class PaneActivity : AppCompatActivity() {
                 // view re-lays it out rather than throwing.
                 terminalText.text = if (highlighted is PrecomputedTextCompat) SpannableString(highlighted) else highlighted
             }
+            terminalText.movementMethod = if (terminalText.text is Spanned && (terminalText.text as Spanned).getSpans(0, terminalText.text.length, android.text.style.ClickableSpan::class.java).isNotEmpty()) {
+                LinkMovementMethod.getInstance()
+            } else android.text.method.ArrowKeyMovementMethod.getInstance()
             return@with
         }
         // Visible split blocks own accessibility in this mode; avoid measuring the same full text
@@ -3544,6 +4567,7 @@ class PaneActivity : AppCompatActivity() {
             ViewGroup.LayoutParams.WRAP_CONTENT,
         )
         includeFontPadding = false
+        // The constant is inlined; this does not load the API-29 class on older Android.
         breakStrategy = android.graphics.text.LineBreaker.BREAK_STRATEGY_SIMPLE
         hyphenationFrequency = android.text.Layout.HYPHENATION_FREQUENCY_NONE
         setLineSpacing(0f, 1.25f)
@@ -3557,6 +4581,7 @@ class PaneActivity : AppCompatActivity() {
         movementMethod = LinkMovementMethod.getInstance()
         highlightColor = Color.TRANSPARENT
         this.text = text
+        movementMethod = if (text is Spanned && text.getSpans(0, text.length, android.text.style.ClickableSpan::class.java).isNotEmpty()) LinkMovementMethod.getInstance() else android.text.method.ArrowKeyMovementMethod.getInstance()
         bindTerminalTap(this)
     }
 
@@ -3585,7 +4610,7 @@ class PaneActivity : AppCompatActivity() {
                     // long-press timer), then open the composer; a focused mirror still clicks.
                     if (tap && !terminalTapBlocked && !view.isFocused) {
                         view.onTouchEvent(event)
-                        tapToType(view)
+                        view.performClick()
                         return@setOnTouchListener true
                     }
                 }
@@ -3742,11 +4767,18 @@ class PaneActivity : AppCompatActivity() {
         {},
     )
 
-    private fun closeCurrentPane() = mutatePane(
-        "closePane",
-        getString(R.string.pane_action_close),
-        { repository.closePane(address) },
-    ) { finish() }
+    private fun closeCurrentPane() {
+        val pane = currentPaneSummary()
+        val actor = currentState.paneReadContext
+        mutatePane(
+            "closePane",
+            getString(R.string.pane_action_close),
+            { repository.closePane(address) },
+        ) {
+            if (pane != null && actor != null) panePins.dropAfterConfirmedClose(pane, actor, repository::isCurrent)
+            finish()
+        }
+    }
 
     /** B.3: the destructive confirm is its own sheet — one message, one red button. */
     private fun showCloseConfirmSheet() {
@@ -3802,7 +4834,7 @@ class PaneActivity : AppCompatActivity() {
         if (!canMutatePane(capability, target)) return
         paneActionInFlight = true
         lifecycleScope.launch {
-            when (val result = request()) {
+            when (val result = currentActorResult { request() } ?: return@launch) {
                 is ApiResult.Success -> if (result.value.ok) {
                     onSuccess()
                 } else {
@@ -3810,9 +4842,6 @@ class PaneActivity : AppCompatActivity() {
                 }
                 is ApiResult.NotModified -> showTransientMessage(getString(R.string.pane_action_failed))
                 is ApiResult.Failure -> {
-                    if (result.error is ApiFailure.Http && result.error.message == "device not paired") {
-                        repository.demoteToReadOnly()
-                    }
                     val uncertain = result.error is ApiFailure.Timeout || result.error is ApiFailure.Network ||
                         result.error is ApiFailure.Protocol
                     showTransientMessage(
@@ -3896,7 +4925,7 @@ class PaneActivity : AppCompatActivity() {
     private fun outlinedButton(label: String) = MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle).apply {
         text = label
         isAllCaps = false
-        minHeight = dp(44)
+        minHeight = dp(48)
         setTextColor(getColor(R.color.collie_foreground))
     }
 
@@ -3997,6 +5026,7 @@ class PaneActivity : AppCompatActivity() {
 
     companion object {
         private const val MAX_PANNABLE_TABLE_RUNS = 1
+        private const val PRINTED_LINK_TTL_MS = 60_000L
         private const val STATUS_UNKNOWN = "unknown"
         private const val DISPLAY_PREFERENCES = "collie_pane_display"
         private const val PREF_WRAP = "wrap_lines"
@@ -4036,6 +5066,15 @@ class PaneActivity : AppCompatActivity() {
         const val EXTRA_TAB_LABEL = "tab_label"
         const val EXTRA_STATUS = "status"
         const val EXTRA_FRESH_PANE = "fresh_pane"
+        private const val STATE_ATTACHMENT_PATH = "attachment_path"
+        private const val STATE_ATTACHMENT_LABEL = "attachment_label"
+        private const val STATE_ATTACHMENT_MIME = "attachment_mime"
+        private const val STATE_ATTACHMENT_BYTES = "attachment_bytes"
+        private const val STATE_DOCUMENT_PICKER_OUTSTANDING = "document_picker_outstanding"
+        private const val STATE_ATTACHMENT_ORIGIN = "attachment_origin"
+        private const val STATE_ATTACHMENT_CUSTODY = "attachment_custody"
+        private const val STATE_IMAGE_PICKER_OUTSTANDING = "image_picker_outstanding"
+        private const val STATE_MICROPHONE_PERMISSION_OUTSTANDING = "microphone_permission_outstanding"
         private const val STATE_FRESH_PANE_SEEN = "fresh_pane_seen"
 
         internal fun filterAgentCommands(commands: List<AgentCommand>, query: String): List<AgentCommand> {

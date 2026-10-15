@@ -39,7 +39,8 @@
 
             <LinearLayout
                 android:layout_width="match_parent"
-                android:layout_height="20dp"
+                android:layout_height="wrap_content"
+                android:minHeight="20dp"
                 android:gravity="center_vertical"
                 android:orientation="horizontal">
 
@@ -93,7 +94,29 @@
                 android:maxLines="1"
                 android:textColor="@color/collie_muted"
                 android:textSize="11sp" />
+
+            <TextView
+                android:id="@+id/pane_context_chip"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:minHeight="48dp"
+                android:ellipsize="end"
+                android:gravity="center_vertical"
+                android:maxLines="1"
+                android:textColor="@color/collie_primary"
+                android:textSize="12sp"
+                android:visibility="gone" />
         </LinearLayout>
+
+        <androidx.appcompat.widget.AppCompatButton
+            android:id="@+id/files_button"
+            style="@style/Widget.AppCompat.Button.Borderless"
+            android:layout_width="wrap_content"
+            android:layout_height="@dimen/collie_touch_target"
+            android:contentDescription="@string/files_open"
+            android:minWidth="48dp"
+            android:text="@string/files_open"
+            android:textAllCaps="false" />
 
         <androidx.appcompat.widget.AppCompatImageButton
             android:id="@+id/refresh_button"
@@ -194,6 +217,7 @@
 
         <EditText
             android:id="@+id/find_query"
+            android:importantForAutofill="no"
             android:layout_width="0dp"
             android:layout_height="@dimen/collie_touch_target"
             android:layout_weight="1"
@@ -244,6 +268,12 @@
             android:text="@string/pane_close_symbol"
             android:textAllCaps="false" />
     </LinearLayout>
+
+    <com.lateapex.collie.ui.ChatPromptContextView
+        android:id="@+id/chat_prompt_context"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:visibility="gone" />
 
     <FrameLayout
         android:id="@+id/terminal_surface"
@@ -377,7 +407,7 @@
                 style="@style/Widget.MaterialComponents.Button.TextButton"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:minHeight="36dp"
+                android:minHeight="@dimen/collie_touch_target"
                 android:textSize="12sp" />
         </LinearLayout>
 
@@ -568,6 +598,17 @@
             android:paddingVertical="7dp"
             android:textColor="@color/collie_muted"
             android:textSize="12sp"
+            android:accessibilityLiveRegion="polite"
+            android:visibility="gone" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/pending_codex_dismiss"
+            style="@style/Widget.MaterialComponents.Button.TextButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:minHeight="@dimen/collie_touch_target"
+            android:text="@string/pane_codex_dismiss_preview"
+            android:textAllCaps="false"
             android:visibility="gone" />
 
         <LinearLayout
@@ -672,10 +713,10 @@
 
                     <com.google.android.material.button.MaterialButton android:id="@+id/escape_button" style="@style/Widget.Collie.PaneKey" android:layout_width="52dp" android:text="@string/pane_key_escape" />
                     <com.google.android.material.button.MaterialButton android:id="@+id/tab_button" style="@style/Widget.Collie.PaneKey" android:layout_width="52dp" android:text="@string/pane_key_tab" />
-                    <com.google.android.material.button.MaterialButton android:id="@+id/up_button" style="@style/Widget.Collie.PaneKey" android:layout_width="44dp" android:contentDescription="@string/pane_key_up_description" android:text="@string/pane_key_up" />
-                    <com.google.android.material.button.MaterialButton android:id="@+id/down_button" style="@style/Widget.Collie.PaneKey" android:layout_width="44dp" android:contentDescription="@string/pane_key_down_description" android:text="@string/pane_key_down" />
-                    <com.google.android.material.button.MaterialButton android:id="@+id/left_button" style="@style/Widget.Collie.PaneKey" android:layout_width="44dp" android:contentDescription="@string/pane_key_left_description" android:text="@string/pane_key_left" />
-                    <com.google.android.material.button.MaterialButton android:id="@+id/right_button" style="@style/Widget.Collie.PaneKey" android:layout_width="44dp" android:contentDescription="@string/pane_key_right_description" android:text="@string/pane_key_right" />
+                    <com.google.android.material.button.MaterialButton android:id="@+id/up_button" style="@style/Widget.Collie.PaneKey" android:layout_width="@dimen/collie_touch_target" android:contentDescription="@string/pane_key_up_description" android:text="@string/pane_key_up" />
+                    <com.google.android.material.button.MaterialButton android:id="@+id/down_button" style="@style/Widget.Collie.PaneKey" android:layout_width="@dimen/collie_touch_target" android:contentDescription="@string/pane_key_down_description" android:text="@string/pane_key_down" />
+                    <com.google.android.material.button.MaterialButton android:id="@+id/left_button" style="@style/Widget.Collie.PaneKey" android:layout_width="@dimen/collie_touch_target" android:contentDescription="@string/pane_key_left_description" android:text="@string/pane_key_left" />
+                    <com.google.android.material.button.MaterialButton android:id="@+id/right_button" style="@style/Widget.Collie.PaneKey" android:layout_width="@dimen/collie_touch_target" android:contentDescription="@string/pane_key_right_description" android:text="@string/pane_key_right" />
                     <com.google.android.material.button.MaterialButton android:id="@+id/ctrl_c_button" style="@style/Widget.Collie.PaneKey" android:layout_width="64dp" android:text="@string/pane_key_interrupt" />
                     <com.google.android.material.button.MaterialButton android:id="@+id/space_button" style="@style/Widget.Collie.PaneKey" android:layout_width="64dp" android:contentDescription="@string/pane_key_space" android:text="@string/pane_key_space" />
                     <com.google.android.material.button.MaterialButton android:id="@+id/enter_button" style="@style/Widget.Collie.PaneKey" android:layout_width="60dp" android:text="@string/pane_key_enter" />
@@ -756,6 +797,7 @@
                     android:layout_height="wrap_content"
                     android:background="@drawable/bg_pane_reply"
                     android:fontFamily="monospace"
+                    app:fontFamily="monospace"
                     android:gravity="top|start"
                     android:hint="@string/pane_reply_hint"
                     android:inputType="textMultiLine|textNoSuggestions"
@@ -828,10 +870,12 @@
             android:layout_height="wrap_content"
             android:layout_marginHorizontal="12dp"
             android:textSize="12sp"
+            app:ensureMinTouchTargetSize="true"
             android:visibility="gone" />
 
         <TextView
             android:id="@+id/composer_media_status"
+            android:accessibilityLiveRegion="polite"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:paddingHorizontal="12dp"

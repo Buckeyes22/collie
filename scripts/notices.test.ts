@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { execSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -18,10 +18,14 @@ describe("notices", () => {
   test("Android sources and fixtures carry no maintainer path, tailnet host or LAN address", () => {
     // The account name is joined at run time so this file does not match the repo-wide guard.
     const user = "chris";
-    const hits = execSync(
-      `git grep -nE '/home/${user}|${user}@ed8|\\.tail[0-9a-f]{6}\\.ts\\.net|192\\.168\\.[0-9]+\\.[0-9]+' -- android/app/src || true`,
+    const result = spawnSync(
+      "git",
+      ["grep", "-nE", `/home/${user}|${user}@ed8|\\.tail[0-9a-f]{6}\\.ts\\.net|192\\.168\\.[0-9]+\\.[0-9]+`, "--", "android/app/src"],
       { cwd: root, encoding: "utf8" },
     );
-    expect(hits).toBe("");
+    expect(result.error).toBeUndefined();
+    expect(result.status).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toBe("");
   });
 });

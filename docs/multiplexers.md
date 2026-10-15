@@ -1,17 +1,19 @@
 # Multiplexers
 
-Collie drives one multiplexer per install: Herdr, tmux or zellij. Herdr is the default. This page
-covers pointing Collie at any of the three, what each backend can answer, and the beacons Collie
+Collie drives one multiplexer per install: Herdr, tmux, zellij, tuios or tern. Herdr is the default. This
+page covers pointing Collie at any of them, what each backend can answer, and the beacons Collie
 uses to detect an agent in a pane.
 
 ## Pointing Collie at a multiplexer
 
 Name the backend in `COLLIE_MUX`, point it at an endpoint, restart, and install the beacon hooks.
 
-> **Experimental in 1.0.** tmux and zellij were tested on **tmux 3.6b** and **zellij 0.44.2**, on a
-> single host. Herdr is the default and the primary supported backend. **Testers wanted:** open an
-> issue on [AltanS/collie](https://github.com/AltanS/collie/issues/new) titled `tmux: …` or
-> `zellij: …`, with your multiplexer, version, OS, and what you saw.
+> **Experimental.** tmux and zellij (since 1.0) were tested on **tmux 3.6b** and **zellij 0.44.2**,
+> on a single host. tuios (since 1.15.0) was tested on **tuios 0.8.4**. Tern was probed by its
+> contributor on **tern 0.4.5**, a closed beta that the maintainers cannot run.
+> Herdr is the default and the primary supported backend. **Testers wanted:** open an issue on
+> [AltanS/collie](https://github.com/AltanS/collie/issues/new) titled `tmux: …`, `zellij: …`,
+> `tuios: …` or `tern: …`, with your multiplexer, version, OS, and what you saw.
 
 Name the multiplexer on the command line:
 
@@ -19,6 +21,8 @@ Name the multiplexer on the command line:
 COLLIE_MUX=herdr collie start
 COLLIE_MUX=tmux collie start
 COLLIE_MUX=zellij collie start
+COLLIE_MUX=tuios collie start
+COLLIE_MUX=tern collie start
 ```
 
 Set the endpoint when the default target is not the one you want:
@@ -37,23 +41,32 @@ COLLIE_MUX_ENDPOINT_ZELLIJ=collie-zellij
 
 | variable | value | what it means |
 | --- | --- | --- |
-| `COLLIE_MUX` | `herdr`, `tmux` or `zellij` | which backend this install drives |
+| `COLLIE_MUX` | `herdr`, `tern`, `tmux`, `zellij` or `tuios` | which backend this install drives |
 | `COLLIE_MUX_ENDPOINT_TMUX` | `/run/user/1000/collie-tmux.sock` | a socket PATH (`tmux -S`), because it has a `/` |
 | `COLLIE_MUX_ENDPOINT_TMUX` | `work` | a socket NAME (`tmux -L work`), no `/` |
 | `COLLIE_MUX_ENDPOINT_TMUX` | empty | tmux's own default server |
 | `COLLIE_MUX_ENDPOINT_ZELLIJ` | `collie-zellij` | a session NAME, not a path |
 | `COLLIE_MUX_ENDPOINT_ZELLIJ` | empty | the single running session |
+| `COLLIE_MUX_ENDPOINT_TUIOS` | `/run/user/1000/tuios/tuios.sock` | the tuios daemon's socket PATH |
+| `COLLIE_MUX_ENDPOINT_TUIOS` | empty | `$XDG_RUNTIME_DIR/tuios/tuios.sock`, else `/tmp/tuios-<uid>/tuios.sock` |
+| `COLLIE_MUX_ENDPOINT_TERN` | `/run/user/1000/tern/daemon.sock` | the Tern daemon's socket PATH |
+| `COLLIE_MUX_ENDPOINT_TERN` | empty | `$XDG_RUNTIME_DIR/tern/daemon.sock`, else `/tmp/tern-<uid>/daemon.sock` |
+| `COLLIE_TERN_BIN` | `/home/you/.local/opt/tern/tern` | only if tern sits somewhere unusual |
 | `COLLIE_TMUX_BIN` | `/usr/bin/tmux` | only if tmux sits somewhere unusual |
 | `COLLIE_ZELLIJ_BIN` | `/home/you/.local/bin/zellij` | only if zellij sits somewhere unusual |
 
 Herdr has no endpoint variable here: its socket is `HERDR_SOCKET_PATH`, not a
 `COLLIE_MUX_ENDPOINT_` name.
 
+That socket is the local one and no other. A machine saved in Herdr is not a crew member, and only
+a Collie crew brings another machine's sessions to the phone. What each list is, and why one is not
+the other, is in [Herdr machines and the crew](crew.md#herdr-machines-and-the-crew).
+
 Then restart, install the beacon hooks, and start an agent where the phone can see it:
 
 ```bash
 collie restart                 # after every .env edit
-collie hooks install claude    # once per host, tmux and zellij only
+collie hooks install claude    # once per host, tmux, zellij and tern only
 
 # open a window or a tab for the agent
 tmux -S /run/user/1000/collie-tmux.sock new-window -n claude
@@ -72,7 +85,7 @@ writes the answer to `.env`. For the full configuration reference, see
 [`MUX_CONTRACT.md` → Pointing a collie at a multiplexer](../MUX_CONTRACT.md#pointing-a-collie-at-a-multiplexer).
 
 `collie hooks install claude` installs Collie's [beacon](#agent-beacons-optional-linux) hooks, which
-tmux and zellij require. They expose panes as generic shells, so without hooks every pane appears as
+tmux, zellij and tern require. They expose panes as generic shells, so without hooks every pane appears as
 `bash`.
 
 The command updates `~/.claude/settings.json` and leaves project configs untouched
@@ -98,6 +111,10 @@ server. Collie blocks window creation in this state and tells you to run
 `tmux set -g window-size latest`; [Requirements](install.md#requirements) lists the tested
 versions.
 
+With `automatic-rename` on, tmux renames a window after whatever program is running in it; Collie
+shows the last folder of that window's active pane instead, since a screenful of tabs named `bash`
+says nothing — a window you named yourself keeps that name.
+
 ### zellij notes
 
 If your distribution lacks zellij packages, download a binary from
@@ -119,6 +136,60 @@ zellij 0.44.2).
 
 > **Note.** Collie manages active sessions, but it does not create or restart them.
 
+Zellij 0.44 and later reports each pane's folder, so zellij panes get the Files button and show
+their branch. An older zellij reports no folder, and its panes have neither.
+
+### tern notes
+
+Point Collie at Tern:
+
+```bash
+COLLIE_MUX=tern collie start
+collie hooks install claude   # beacon hooks for agent detection
+```
+
+Collie reads Tern sessions as spaces, tabs as tabs, and blocks as panes. The endpoint is the Tern daemon's socket, defaulting to `$XDG_RUNTIME_DIR/tern/daemon.sock` (or `/tmp/tern-<uid>/daemon.sock`). Inside a Tern pane, `$TERN_PANE` identifies the block and `$TERN_PANE_SOCKET` points at the daemon socket.
+
+Tern reports lifecycle events via `tern events`, enabling immediate topology change notifications.
+
+"Show in terminal" moves your Tern window to the pane's session and tab and focuses its block. A tab or a session that Collie creates opens in the background and does not move your window.
+
+Collie does not detect Tern on its own, as it does not detect tuios: name it with `COLLIE_MUX=tern`. Typed text longer than 128 KiB is refused, because it travels as one command-line argument.
+
+### tuios notes
+
+tuios reports agents itself, so it needs no beacon hooks:
+
+```bash
+COLLIE_MUX=tuios collie start
+tuios integration install claude-code   # once, so tuios hears the agent's hooks
+```
+
+Collie reads the agent, its state and its conversation from the tuios daemon. A pane that waits
+for you shows as blocked, and a pane's history opens when the agent reported its conversation. An
+agent that Collie has no harness for shows as a shell.
+
+Collie shows each tuios session as a space, each workspace as a tab, and each window as a pane. A
+workspace shows as a tab while it holds a pane. A pane that runs on another machine is not shown.
+Point a Collie on that machine at its own tuios.
+
+The endpoint is the daemon's socket. Leave it empty to use the socket that `tuios` itself uses.
+Collie reads `XDG_RUNTIME_DIR` to find it, so make sure the service has that variable. Inside a
+tuios pane, `echo $TUIOS_SOCKET` prints the path.
+
+Collie needs **tuios 0.8.3 or newer**: the daemon must announce the `workspace-renamed` event,
+which 0.8.2 does not. With an older daemon, Collie
+shows the bridge as disconnected and the log says what to update.
+
+Some things work differently on tuios:
+
+- A new tab opens on the lowest empty workspace. A session has nine workspaces by default, so
+  Collie refuses a tenth tab.
+- Show in terminal moves every terminal that shows the pane's session, a tuios-web tab included.
+  tuios cannot move a terminal to another session. If no terminal shows the pane's session, Collie
+  refuses and names the session the terminal shows.
+- The **New worktree** switch on the New page stays, off, and says it needs Herdr.
+
 ### Did it work?
 
 ```bash
@@ -129,13 +200,15 @@ collie doctor   # the `mux` check names the multiplexer, its endpoint,
 # startup; a multiplexer it cannot reach is one warning line more
 collie logs
 
-# the herd, as the phone is given it
-curl -s http://127.0.0.1:8787/api/snapshot | head -c 400
+# the herd, as the phone is given it; reads need the pairing token
+curl -s -H "Authorization: Bearer $COLLIE_TOKEN" http://127.0.0.1:8787/api/snapshot | head -c 400
 ```
 
-This `curl` call works without auth headers. Read requests bypass device validation even when
-`COLLIE_DEVICE_HEADER` is enabled ([Configure](configure.md#configure)). Only write actions require
-the configured header.
+Every read needs a paired device's token, so this `curl` call sends one. Without it, the bridge
+answers `403 device not paired`. To get a token for a script, see
+[Upgrading to 1.18.0](upgrading.md#upgrading-to-1180). `collie doctor` needs no token on the host.
+`COLLIE_DEVICE_HEADER` still gates only writes and the Files view
+([Pair a device](security.md#pair-a-device--the-write-credential)).
 
 Check the phone UI: the dashboard should display your **tmux windows** or **zellij tabs**, and the
 Claude pane should identify as an agent instead of `bash`. If panes still display as standard
@@ -150,7 +223,7 @@ would install: /home/you/collie/bin/collie beacon emit  (this checkout)
 /home/you/.claude/settings.json: installed (v1)
 ```
 
-Because tmux and zellij expose panes as generic shells, agents must announce themselves. This
+Because tmux, zellij and tern expose panes as generic shells, agents must announce themselves. This
 requires installing Collie's [beacon](#agent-beacons-optional-linux) hooks into Claude Code's
 configuration.
 
@@ -195,7 +268,7 @@ exact specification.
 | [open a space](../MUX_CONTRACT.md#capabilities) | yes | yes | **no** — a session it made would be invisible to it |
 | [pane history](../MUX_CONTRACT.md#capabilities) | from Herdr's own pane record | from the beacon's session key | from the beacon's session key |
 
-Without active beacons, tmux and zellij present panes as raw shells, and pane history is marked
+Without active beacons, tmux, zellij and tern present panes as raw shells, and pane history is marked
 unavailable rather than returning empty content.
 
 ### Two things that feel different on the phone
@@ -215,37 +288,39 @@ unavailable rather than returning empty content.
 
 ### tmux tips — getting your windows back after a reboot
 
-Collie does not store multiplexer state. Restarting a tmux server destroys its windows, leaving the
-dashboard empty.
+```bash
+claude --resume      # reconnects the conversation, not the window
+```
 
-You can manage state restoration using standard tmux plugins:
+Collie does not store multiplexer state. Restarting a tmux server destroys its windows, leaving the
+dashboard empty. Standard tmux plugins restore the window layouts and working directories:
 [tpm](https://github.com/tmux-plugins/tpm) for plugin management,
 [tmux-resurrect](https://github.com/tmux-plugins/tmux-resurrect) for saving session trees, and
 [tmux-continuum](https://github.com/tmux-plugins/tmux-continuum) for automated snapshots.
-
-These tools restore **window layouts** and working directories. To restore conversation context, use
-Claude's built-in flags: `claude --resume` or `claude --continue`.
 
 > **Note.** Running agent processes are not preserved. Restart Claude Code manually after recovery.
 
 ### zellij tips — after a reboot there is nothing to restore
 
+```bash
+zellij -s collie-zellij                                  # start the session
+zellij attach --create-background collie-zellij          # headless: start it detached
+claude --resume                                           # reconnects the agent
+```
+
 Zellij does not provide an equivalent to tmux-resurrect. Sessions persisted after terminal
 detachment show as `(EXITED - attach to resurrect)`, and attaching triggers re-execution of session
-commands.
+commands, so a reboot means starting the session fresh with one of the commands above and launching
+agents inside it, reconnecting each with `claude --resume` or `claude --continue`.
 
 > **Note.** Because attaching produces side effects, Collie does not attach to or resurrect
 > sessions. Exited sessions appear as *unreachable*, and the UI displays a disconnection banner
 > instead of an empty session list.
 
-Following a reboot, start the session manually (`zellij -s collie-zellij` or
-`zellij attach --create-background collie-zellij` for headless systems) and launch agents inside it.
-Reconnect to prior agent sessions using `claude --resume` or `claude --continue`.
-
 
 ## Agent beacons (optional, Linux)
 
-A **beacon** is how an agent identifies itself to Collie, on tmux and zellij, where a pane otherwise
+A **beacon** is how an agent identifies itself to Collie, on tmux, zellij and tern, where a pane otherwise
 appears as a generic shell.
 
 ```console
@@ -291,4 +366,4 @@ on the beacon to supply the session key used by the journal.
 
 ---
 
-[← back to the server README](../UPSTREAM_README.md)
+[← back to the README](../README.md)

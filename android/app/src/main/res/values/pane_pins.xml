@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="pane_pin">Pin to the top</string>
+    <string name="pane_unpin">Unpin</string>
+    <string name="pane_pinned_title">Pinned</string>
+    <string name="pane_pin_saved">Pinned to the top</string>
+    <string name="pane_unpin_saved">Unpinned</string>
+</resources>

@@ -1,10 +1,32 @@
 # Collie for Android changelog
 
 Android app releases use `android-vX.Y.Z` tags. The inherited server/PWA history remains in
-[CHANGELOG.md](CHANGELOG.md). The current app is version 1.5.2, versionCode 3,
-the first Android release from this fork.
+[CHANGELOG.md](CHANGELOG.md). The current app is version 1.6.0, versionCode 4.
 
 ## Unreleased
+
+## 1.6.0 - 2026-10-14
+
+- Reconcile the native client with official Collie v1.21.0 and unmodified Herdr v0.9.4. Required workflows use Collie HTTP without private Herdr protocol extensions.
+- Add durable-agent Chat, structured asks and answers, guarded send/steer/stop, declared starters and expandable reply context. Screenless conversations do not offer terminal keys.
+- Deliver native UnifiedPush notifications through operator-configured self-hosted ntfy, with encrypted signed payloads, enrollment retirement, preference/snooze controls, Android permission/channel settings and exact-pane taps.
+- Add native New, declared launchers, recent/favourite folders, worktrees, recipes and Run controls. Preserve uncertain launch intents and require deliberate same-request recovery where the owning server supports it.
+- Complete native mirror scroll, Find, Android text selection/Copy, confirmed Files links and external HTTPS links. Keep navigation bound to its original host, session and pane.
+- Browse Files and Changes with Unicode source, inert native previews, authenticated raster images, current source handoff and Last commit details. Preserve the owning host's device-read authorization.
+- Render supported Chat/History journals, tool details and authenticated images. Cancel retired reads and prevent unadmitted content from appearing after navigation or pairing retirement.
+- Add Crew host/session navigation, machine resource charts and alert settings, deputy health and one-shot confirmed takeover with honest uncertainty recovery.
+- Import pasted HTTPS links, Android text shares and QR images through a native preview. Continue admits navigation; pairing links only prefill the form until the operator selects Pair.
+- Add opted encrypted offline Dashboard, pane and Chat reads with clear provenance, retention and removal controls. Saved content never grants terminal-write authority.
+- Add System, Space Grotesk, Aldrich and admitted operator fonts; preserve the monospace reply composer, themes, Zen, pins, configurable keys and large-text/IME insets.
+- Retain bounded non-speech attachments, output masking, scoped cache watches and opt-in diagnostics that exclude pairing bodies.
+- Add independent Android release discovery, signed metadata, verified APK downloads and Android-confirmed installation with package, signer and increasing-version checks.
+- Keep explicit Android update checks in control while download state arrives. Screen restart permits a fresh check without retrying automatically, and retired lookups cannot unlock a newer check.
+
+The interface remains English only and requires Android 17 / API 37. Speech-to-text and full
+Herdr administration are outside this release. Their existing source and unfinished branches remain
+preserved; unavailable custom controls stay hidden or explicitly unavailable. Journals and actions
+are limited to the current owning backend's declared support. Live host acceptance uses Linux;
+Windows host behavior is not certified by the Pixel checks.
 
 ## 1.5.2 - 2026-10-08
 

@@ -1,4 +1,4 @@
-// Layout primitives and the router harnesses the playground needs to mount REAL components in a
+// The router harnesses the playground needs to mount REAL components in a
 // state the page cannot otherwise reach. DEV-ONLY (see `playground.html`).
 //
 // Copy is plain English and does not go through `t()`. That is the one deliberate departure from the
@@ -6,80 +6,81 @@
 // and absent from `dist`. The components it mounts do their own translating, so switching the app's
 // catalog state still repaints every state below.
 
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useContext, useState, type ReactNode } from "react";
 import { createMemoryRouter, Outlet, RouterProvider } from "react-router";
 
 import { AgentChat } from "@/components/agent-chat";
 import { AppHeaderHost } from "@/components/app-header";
 import { ConnectionBanner } from "@/components/connection-banner";
-import { PackProvider } from "@/components/pack-provider";
+import { CrewProvider } from "@/components/crew-provider";
+import { StripHost } from "@/components/ui/strip-host";
 import { UpdateRibbon } from "@/components/update-ribbon";
-import { CONNECTION_LOST_MS, TROUBLE_MS } from "@/hooks/use-connection-lost";
-import { __resetConnectionHealth, markLive } from "@/lib/connection-health";
+import type { MachineHistoryState } from "@/hooks/use-machine-history";
+import { __resetConnectionHealth } from "@/lib/connection-health";
 import { saveDraft } from "@/lib/drafts";
-import { ROOT_ROUTE_ID, type DevicesData, type HomeData, type PackData } from "@/lib/loaders";
+import {
+  PANE_ROUTE_ID,
+  ROOT_ROUTE_ID,
+  type DevicesData,
+  type HistoryData,
+  type HomeData,
+  type CrewData,
+  type MachinesData,
+  type PaneData,
+} from "@/lib/loaders";
+import { internScope, scopeFromUrl, scopeKey } from "@/lib/scope";
 import type { DeviceAuth } from "@/lib/types";
-import { cn } from "@/lib/utils";
-import { PackRoute } from "@/routes/pack";
+import { CrewRoute } from "@/routes/crew";
+import { DetailRoute } from "@/routes/detail";
+import { HistoryRoute } from "@/routes/history";
+import { HomeRoute } from "@/routes/home";
+import { MachineRoute } from "@/routes/machine";
+import { MachinesRoute } from "@/routes/machines";
+import { NewRoute } from "@/routes/new";
+import { NewAddRoute } from "@/routes/new-add";
+import { BootSplash, RootError, RootLayout } from "@/routes/root";
 import { SettingsRoute } from "@/routes/settings";
+import { SpaceRoute } from "@/routes/space";
 import { UpdatesRoute } from "@/routes/updates";
 import type { PaneFixture } from "./fixtures";
 
-// ── The shared connection clock ──────────────────────────────────────────────
-//
-// `lib/connection-health.ts` is ONE module-scoped clock on purpose: the banner, the header dog and
-// the boot splash all derive from it so they can never disagree. That is also why this page cannot
-// show "troubled" and "lost" side by side — there is a single anchor, and two different answers to
-// "how long since the last live poll" cannot both be true at once. Forking the components to take
-// the state as a prop would break the very property the clock exists to guarantee.
-//
-// So the playground drives the real store instead, with the real exported mutators, and every
-// clock-fed state on the page moves together. Flipping the control in the sidebar is exactly what a
-// real outage does — which makes "do the bar and the dog agree?" the easy thing to check.
-//
-// THE CONTROL IS GLOBAL, NOT SECTION-LOCAL, and that follows from the same fact: there is one store,
-// so a control parked inside "Boot & connection" would silently be repainting the header dog three
-// sections further down as well. A sidebar control tells the truth about its own reach.
-
-export type ClockMode = "live" | "trouble" | "lost";
-
-export const CLOCK_OPTIONS = [
-  { value: "live", label: "Live" },
-  { value: "trouble", label: "Trouble" },
-  { value: "lost", label: "Lost" },
-] as const satisfies readonly { value: ClockMode; label: string }[];
-
-/**
- * Hold the shared health anchor at the chosen age. Re-stamped every second so "trouble" cannot drift
- * on into "lost" while you look at it, and so a real `/api/config` probe or a visibility change
- * cannot quietly recover the page underneath you.
- */
-export function useConnectionClock(mode: ClockMode): void {
-  useEffect(() => {
-    // Every mode re-stamps, including "live". Nothing polls on this page, so a single markLive()
-    // would age past 15s while you were reading and quietly escalate the whole page — the healthy
-    // state has to be held open exactly as deliberately as the broken ones.
-    const behind =
-      mode === "live" ? 0 : mode === "trouble" ? TROUBLE_MS + 750 : CONNECTION_LOST_MS + 1_000;
-    const stamp = () => (behind === 0 ? markLive() : __resetConnectionHealth(Date.now() - behind));
-    stamp();
-    const id = window.setInterval(stamp, 1_000);
-    return () => window.clearInterval(id);
-  }, [mode]);
-}
+// The light half (layout, the tab and sub-page routes, the connection clock) lives in ./layout.tsx so
+// the page chrome and a section with no router never load the app's routes. Re-exported here for
+// the importers that predate the split (the website's app screens import the routers from here).
+export * from "./layout";
 
 // ── Router harnesses ─────────────────────────────────────────────────────────
 
 /**
  * A data router carrying the root snapshot under the real `ROOT_ROUTE_ID`, which is what
- * `useOptionalRootData()` reads — the update chip, the header's freshness stamp and the pack census
+ * `useOptionalRootData()` reads — the update chip, the header's freshness stamp and the crew census
  * all need it. Built once (`useState`'s lazy initialiser) so the route element is stable; the
  * components inside subscribe to their own module stores and re-render without it.
+ *
+ * IT CARRIES THE BAND, exactly as `routes/root.tsx` does. `UpdateRibbon` and `ConnectionBanner`
+ * render nothing where they sit — they register a `StripSlot` with `ui/strip-host.tsx` and the band
+ * paints the winner — so a card that mounts one of them without a host would show an empty stage and
+ * report a bug that is not there. It costs the cards that mount no strip nothing: the band collapses
+ * to no height, and a header inside it reserves the safe-area inset itself, as it always does.
+ *
+ * IN FLOW, NOT AN OVERLAY (`flow`). The app hangs the band over the top of the route since
+ * 2026-10-07, but most cards here mount a strip and nothing else, so there is no route for it to
+ * cover: an overlay on a zero-height anchor would hang outside the Stage's clipped box and the card
+ * would show nothing. So this router paints the band as a plain row ABOVE the card's content, a
+ * header included, which is not the app's composition. {@link PaneStackRouter} and
+ * {@link createFullAppRouter} carry the app's composition, overlay and all.
  */
 export function RootRouter({ data, children }: { data: HomeData; children: ReactNode }) {
   const [router] = useState(() =>
     createMemoryRouter(
-      [{ id: ROOT_ROUTE_ID, path: "/", loader: () => data, element: <>{children}</> }],
+      [
+        {
+          id: ROOT_ROUTE_ID,
+          path: "/",
+          loader: () => data,
+          element: <StripHost flow>{children}</StripHost>,
+        },
+      ],
       { initialEntries: ["/"] },
     ),
   );
@@ -87,7 +88,7 @@ export function RootRouter({ data, children }: { data: HomeData; children: React
 }
 
 /**
- * The same root, plus the `PackProvider` the host-aware surfaces read. Tier-2 health is derived
+ * The same root, plus the `CrewProvider` the host-aware surfaces read. Tier-2 health is derived
  * there, against the LEAD's clock (`home.ts`) — never the phone's — so anything mounted inside gets
  * the same host health the real app would have derived for the same snapshot.
  */
@@ -100,14 +101,14 @@ export function PackedRootRouter({ data, children }: { data: HomeData; children:
           path: "/",
           loader: () => data,
           element: (
-            <PackProvider
+            <CrewProvider
               servers={data.servers}
               sessions={data.sessions}
               ts={data.ts}
               pollMs={3_000}
             >
               {children}
-            </PackProvider>
+            </CrewProvider>
           ),
         },
       ],
@@ -118,11 +119,11 @@ export function PackedRootRouter({ data, children }: { data: HomeData; children:
 }
 
 /**
- * The pack census on its own router, assembled the way `routes/pack.test.tsx` assembles it: the root
- * route publishes the snapshot AND the `PackProvider`, and `/pack` carries the census. A `pack` of
+ * The crew census on its own router, assembled the way `routes/crew.test.tsx` assembles it: the root
+ * route publishes the snapshot AND the `CrewProvider`, and `/crew` carries the census. A `crew` of
  * `{ status: null }` is the solo/empty card — the real 404 answer, not a stub.
  */
-export function PackRouter({ home, pack }: { home: HomeData; pack: PackData }) {
+export function CrewRouter({ home, crew }: { home: HomeData; crew: CrewData }) {
   const [router] = useState(() =>
     createMemoryRouter(
       [
@@ -131,7 +132,7 @@ export function PackRouter({ home, pack }: { home: HomeData; pack: PackData }) {
           path: "/",
           loader: () => home,
           element: (
-            <PackProvider
+            <CrewProvider
               servers={home.servers}
               sessions={home.sessions}
               ts={home.ts}
@@ -140,15 +141,63 @@ export function PackRouter({ home, pack }: { home: HomeData; pack: PackData }) {
               <AppHeaderHost bridge={home.bridge} error={false}>
                 <Outlet />
               </AppHeaderHost>
-            </PackProvider>
+            </CrewProvider>
           ),
           children: [
             { index: true, element: <div className="p-4 text-sm text-muted-foreground">home</div> },
-            { path: "pack", loader: () => pack, element: <PackRoute /> },
+            { path: "crew", loader: () => crew, element: <CrewRoute /> },
           ],
         },
       ],
-      { initialEntries: ["/pack"] },
+      { initialEntries: ["/crew"] },
+    ),
+  );
+  return <RouterProvider router={router} />;
+}
+
+/**
+ * The Machines list, or one machine's page, on a memory router whose loader hands the census in: the
+ * same `MachinesData` shape `machinesLoader` returns, so the page renders its real cards. `start` is
+ * `/machines` or `/machines/<id>`.
+ *
+ * `history` is the detail page's one escape from the network: a page that stubs nothing cannot fetch a
+ * day of points, so the card hands the answer in and the live read is switched off (`MachineRoute`'s
+ * `history` prop says why it exists). The alert card still posts for real, and with no bridge behind
+ * the page that shows its "could not save" line, which is a state worth seeing.
+ */
+export function MachinesRouter({
+  home,
+  machines,
+  start,
+  history,
+}: {
+  home: HomeData;
+  machines: MachinesData;
+  start: string;
+  history?: MachineHistoryState;
+}) {
+  const [router] = useState(() =>
+    createMemoryRouter(
+      [
+        {
+          id: ROOT_ROUTE_ID,
+          path: "/",
+          loader: () => home,
+          element: (
+            <CrewProvider servers={home.servers} sessions={home.sessions} ts={home.ts} pollMs={3_000}>
+              <AppHeaderHost bridge={home.bridge} error={false}>
+                <Outlet />
+              </AppHeaderHost>
+            </CrewProvider>
+          ),
+          children: [
+            { index: true, element: <div className="p-4 text-sm text-muted-foreground">home</div> },
+            { path: "machines", loader: () => machines, element: <MachinesRoute /> },
+            { path: "machines/:id", loader: () => machines, element: <MachineRoute history={history} /> },
+          ],
+        },
+      ],
+      { initialEntries: [start] },
     ),
   );
   return <RouterProvider router={router} />;
@@ -183,7 +232,7 @@ export function SettingsRouter({
           path: "/",
           loader: () => home,
           element: (
-            <PackProvider
+            <CrewProvider
               servers={home.servers}
               sessions={home.sessions}
               ts={home.ts}
@@ -192,12 +241,46 @@ export function SettingsRouter({
               <AppHeaderHost bridge={home.bridge} error={false}>
                 <Outlet />
               </AppHeaderHost>
-            </PackProvider>
+            </CrewProvider>
           ),
           children: [
             { index: true, element: <div className="p-4 text-sm text-muted-foreground">home</div> },
             { path: "settings", loader: () => devices, element: <SettingsRoute /> },
             { path: "settings/updates", element: <UpdatesRoute /> },
+          ],
+        },
+      ],
+      { initialEntries: [start] },
+    ),
+  );
+  return <RouterProvider router={router} />;
+}
+
+/**
+ * The New page (`/new`) and the page below it, Add your own (`/new/add`), on a memory router, inside
+ * the app header and the crew context they read. The routes read the root snapshot (for a pane's folder
+ * and branch) and ask the bridge behind the playground for its agent and command lists, so a card shows
+ * what that bridge reports.
+ */
+export function NewRouter({ home, start = "/new" }: { home: HomeData; start?: string }) {
+  const [router] = useState(() =>
+    createMemoryRouter(
+      [
+        {
+          id: ROOT_ROUTE_ID,
+          path: "/",
+          loader: () => home,
+          element: (
+            <CrewProvider servers={home.servers} sessions={home.sessions} ts={home.ts} pollMs={3_000}>
+              <AppHeaderHost bridge={home.bridge} error={false}>
+                <Outlet />
+              </AppHeaderHost>
+            </CrewProvider>
+          ),
+          children: [
+            { index: true, element: <div className="p-4 text-sm text-muted-foreground">home</div> },
+            { path: "new", element: <NewRoute /> },
+            { path: "new/add", element: <NewAddRoute /> },
           ],
         },
       ],
@@ -255,7 +338,7 @@ export function PaneRouter({
           path: "/",
           loader: () => data,
           element: (
-            <PackProvider
+            <CrewProvider
               servers={data.servers}
               sessions={data.sessions}
               ts={data.ts}
@@ -268,7 +351,6 @@ export function PaneRouter({
                   agents={data.agents}
                   shellPanes={data.shellPanes}
                   tabs={data.tabs}
-                  tabLabel={fixture.pane.tabLabel}
                   text={fixture.text}
                   requestedLines={400}
                   revision={fixture.revision}
@@ -279,7 +361,7 @@ export function PaneRouter({
                   onSelect={() => {}}
                 />
               </AppHeaderHost>
-            </PackProvider>
+            </CrewProvider>
           ),
         },
       ],
@@ -302,10 +384,18 @@ export function PaneRouter({
 const StackDeviceContext = createContext<DeviceAuth | null>(null);
 
 /**
- * {@link PaneRouter}'s pane, PLUS the two tier-1 banners RootLayout mounts as its in-flow siblings —
- * `<UpdateRibbon/>` and `<ConnectionBanner/>` — so the worst-case stack (gap 4) can be judged
- * as one screen instead of summed from cards measured apart. Same real components, same nesting order
- * as `routes/root.tsx`: banners first, pane second.
+ * {@link PaneRouter}'s pane, PLUS the band RootLayout hangs under the header, the real `<StripHost>`
+ * with the real `<UpdateRibbon/>` and `<ConnectionBanner/>` registering into it, so the worst-case
+ * stack (gap 4) can be judged as one screen instead of summed from cards measured apart. Same real
+ * components, same nesting as `routes/root.tsx`: the header host wraps the band host, which wraps the
+ * two features AND the pane, so the bar comes first, the band's zero-height anchor second and the
+ * pane last. The band is the app's OVERLAY here (no `flow`): it covers the top of the pane, the tab
+ * and pane strips, and the pane below it starts at the same pixel with or without a strip.
+ *
+ * BOTH FEATURES ARE MOUNTED AND ONE OF THEM SHOWS. That is not the harness being lazy: it is the
+ * app's rule made visible. The band takes one strip at a time, and `AUTH` (the refusal below) beats
+ * `UPDATE` (the offer). The worst case at the top of this app is the header plus ONE strip floating
+ * over the pane's first rows, never two strips, and never a pane pushed down.
  *
  * The red `ConnectionBanner` here is deliberately the AUTH-ERROR branch (`bridge=undefined,
  * authError`), not the trouble→lost escalation — that branch paints red off its props alone, with no
@@ -324,7 +414,7 @@ export function PaneStackRouter({
 }: {
   home: HomeData;
   fixture: PaneFixture;
-  /** The OTHER composer lock — the device gate, independent of the pack host gate the pane derives
+  /** The OTHER composer lock — the device gate, independent of the crew host gate the pane derives
    *  from `home.servers`. Both are driven at once so the stack shows every lock at the same time. */
   device: DeviceAuth;
 }) {
@@ -337,20 +427,22 @@ export function PaneStackRouter({
           path: "/",
           loader: () => data,
           element: (
-            <PackProvider
+            <CrewProvider
               servers={data.servers}
               sessions={data.sessions}
               ts={data.ts}
               pollMs={3_000}
             >
               <div className="flex h-full flex-col">
-                <UpdateRibbon />
-                <ConnectionBanner bridge={undefined} error authError />
                 <AppHeaderHost bridge={data.bridge} error={false}>
-                  <StackPane data={data} fixture={fixture} />
+                  <StripHost>
+                    <UpdateRibbon />
+                    <ConnectionBanner bridge={undefined} error authError />
+                    <StackPane data={data} fixture={fixture} />
+                  </StripHost>
                 </AppHeaderHost>
               </div>
-            </PackProvider>
+            </CrewProvider>
           ),
         },
       ],
@@ -374,7 +466,6 @@ function StackPane({ data, fixture }: { data: HomeData; fixture: PaneFixture }) 
       agents={data.agents}
       shellPanes={data.shellPanes}
       tabs={data.tabs}
-      tabLabel={fixture.pane.tabLabel}
       text={fixture.text}
       requestedLines={400}
       revision={fixture.revision}
@@ -387,221 +478,138 @@ function StackPane({ data, fixture }: { data: HomeData; fixture: PaneFixture }) 
   );
 }
 
-// ── Layout ───────────────────────────────────────────────────────────────────
+// ── The whole app, on one memory router ──────────────────────────────────────
+//
+// Every harness above mounts ONE screen. This one mounts the app: the real `RootLayout` with the
+// real route table under it, so a move between two screens runs everything a move runs in the app —
+// the loaders, the route components, the header portals, the poll loop, the transition. It exists
+// because a card built out of placeholder screens moves more smoothly than the app does, which made
+// it useless for the one question a motion card is asked: does this stutter?
+//
+// WHAT IS REAL: the shell (`AppHeaderHost` → `StripHost` → `UpdateRibbon` + `ConnectionBanner` +
+// `ScreenTransition` → `Outlet`), every route component, the route ids the app reads its data by,
+// the loader RESULT SHAPES, and the `shouldRevalidate: false` history opts out with.
+//
+// WHAT IS NOT: the loaders themselves. They return fixtures rather than fetching, because the
+// playground has no bridge behind it. The route table is otherwise the same shape as `router.tsx`,
+// minus the `/pack` redirect, which is a rewrite rather than a screen and has nothing to show.
 
-/** One top-level section of the page, as both the nav and the body know it. */
-export interface SectionDef {
-  readonly id: string;
-  readonly title: string;
-  /** One line: what this section is for. Printed under the heading. */
-  readonly intent: string;
+/** The fixtures {@link createFullAppRouter} hands each stubbed loader, in loader order. */
+export interface FullAppFixtures {
+  /** The root snapshot, as `rootLoader` returns it. */
+  home: HomeData;
+  /**
+   * The mirror for the pane a `/pane/:paneId` address names. A FUNCTION, not one fixture with the
+   * id swapped: every pane in the snapshot is openable, so every pane needs a screen, and a pane
+   * view built out of another pane's id is the thing that made the walk bounce home.
+   */
+  screenFor: (paneId: string) => { text: string; revision: number };
+  /** The census `/crew` renders. */
+  crew: CrewData;
+  /** The paired-device registry `/settings` renders. */
+  devices: DevicesData;
+  /** The transcript `/pane/:paneId/history` renders. */
+  history: HistoryData;
 }
 
-export function Section({ def, children }: { def: SectionDef; children: ReactNode }) {
-  return (
-    <section id={def.id} className="scroll-mt-4 border-t border-rule pt-6">
-      <h2 className="text-base font-semibold tracking-tight">{def.title}</h2>
-      <p className="mt-1 max-w-3xl text-xs leading-relaxed text-muted-foreground">{def.intent}</p>
-      <div className="pg-grid mt-4">{children}</div>
-    </section>
-  );
-}
-
-/**
- * One labelled state. `reach` is the line that keeps this page honest — it says how an operator
- * arrives at this state on a real collie, so a card is never just a pretty picture of a component.
- */
-export function Card({
-  label,
-  reach,
-  note,
-  span = 1,
-  children,
-}: {
-  label: string;
-  /** How you reach this state for real. Rendered after "reach it for real:". */
-  reach: string;
-  /** An honesty note — what is approximated here, or which control drives it. */
-  note?: string;
-  /** Two columns for anything route-sized. Collapses to one under the phone-width toggle. */
-  span?: 1 | 2;
-  children: ReactNode;
-}) {
-  return (
-    <div className={cn("min-w-0", span === 2 && "pg-span-2")}>
-      <p className="font-mono text-[11px] uppercase tracking-wide text-foreground">{label}</p>
-      <p className="mb-2 mt-0.5 text-[11px] leading-relaxed text-muted-foreground">
-        <span className="text-status-idle">reach it for real:</span> {reach}
-      </p>
-      {note !== undefined && (
-        <p className="mb-2 text-[11px] leading-relaxed text-status-working">{note}</p>
-      )}
-      {children}
-    </div>
-  );
-}
+/** The router {@link FullAppRouter} drives — built by the caller so a card can also navigate it. */
+export type FullAppRouterInstance = ReturnType<typeof createMemoryRouter>;
 
 /**
- * The box a component paints inside. `transform` on it makes it the containing block for any
- * `position: fixed` descendant, so the idle cover renders at its true size in a card rather than
- * over the whole page; `dvh` pulls a `h-[100dvh]` root down to the box (see playground.css).
+ * Build the app's own route table over fixture loaders. Call it once (a `useState` initialiser), so
+ * the router keeps its location and history across the card's re-renders, exactly as the app's
+ * module-scoped router does.
  */
-export function Stage({
-  height,
-  dvh = false,
-  children,
-}: {
-  height?: number;
-  dvh?: boolean;
-  children: ReactNode;
-}) {
-  return (
-    <div
-      className={cn(
-        "relative isolate overflow-hidden rounded-xl border border-border bg-background",
-        dvh && "pg-stage-dvh",
-      )}
-      style={{ height, transform: "translate(0)" }}
-    >
-      {children}
-    </div>
+export function createFullAppRouter(fixtures: FullAppFixtures): FullAppRouterInstance {
+  const { home, screenFor, crew, devices, history } = fixtures;
+
+  // THE SCOPE FOLLOWS THE URL, exactly as `rootLoader` makes it. A host or session switch is a
+  // navigation to `/?h=…` / `/?s=…` and nothing else: everything downstream reads the machine and
+  // the session off the SNAPSHOT's `scope`, so a stub that pinned `scope` to the fixture's own value
+  // left the whole app addressing the lead while the URL said otherwise. The visible cost was a pane
+  // on another machine failing its snapshot lookup and bouncing the operator to the dashboard.
+  //
+  // Memoised per scope, because the poll loop re-runs this loader every cadence tick and a fresh
+  // object each time would re-render the whole tree on every poll.
+  const homeByScope = new Map<string, HomeData>();
+  const homeFor = (request: Request): HomeData => {
+    const scope = internScope(scopeFromUrl(request.url));
+    const key = scopeKey(scope);
+    const cached = homeByScope.get(key);
+    if (cached) return cached;
+    const data: HomeData = { ...home, scope };
+    homeByScope.set(key, data);
+    return data;
+  };
+
+  return createMemoryRouter(
+    [
+      {
+        id: ROOT_ROUTE_ID,
+        path: "/",
+        loader: ({ request }: { request: Request }) => homeFor(request),
+        element: <RootLayout />,
+        errorElement: <RootError />,
+        HydrateFallback: BootSplash,
+        children: [
+          { index: true, element: <HomeRoute /> },
+          { path: "space/:spaceId", element: <SpaceRoute /> },
+          { path: "settings", loader: () => devices, element: <SettingsRoute /> },
+          { path: "settings/updates", element: <UpdatesRoute /> },
+          { path: "crew", loader: () => crew, element: <CrewRoute /> },
+          {
+            id: PANE_ROUTE_ID,
+            path: "pane/:paneId",
+            // Both halves of the address come off the URL — the pane id from the path, the machine
+            // and session from the query — so `DetailRoute` looks the pane up in the snapshot the
+            // same way the app does, and a pane opened on any machine in the roster is found.
+            loader: ({
+              params,
+              request,
+            }: {
+              params: { paneId?: string };
+              request: Request;
+            }): PaneData => {
+              const paneId = params.paneId ?? "";
+              const screen = screenFor(paneId);
+              return {
+                paneId,
+                scope: internScope(scopeFromUrl(request.url)),
+                text: screen.text,
+                truncated: false,
+                requestedLines: 600,
+                revision: screen.revision,
+                error: false,
+                authError: false,
+              };
+            },
+            element: <DetailRoute />,
+          },
+          {
+            path: "pane/:paneId/history",
+            loader: ({
+              params,
+              request,
+            }: {
+              params: { paneId?: string };
+              request: Request;
+            }): HistoryData => ({
+              ...history,
+              paneId: params.paneId ?? history.paneId,
+              scope: internScope(scopeFromUrl(request.url)),
+            }),
+            element: <HistoryRoute />,
+            shouldRevalidate: () => false,
+          },
+        ],
+      },
+    ],
+    { initialEntries: ["/"] },
   );
 }
 
-/**
- * A phone-shaped frame for a route-level mount: 390px of viewport (an iPhone 14's CSS width), a
- * fixed height, and its own internal scroll. Route components are written for a screen, not for a
- * card — given a card's width they read as a widget, and given the page's height they merge into the
- * page. The frame gives them back both, and its scrollbar is the component's own, not the page's.
- *
- * Same `transform` trick as `Stage`: a `position: fixed` header or sheet inside resolves against the
- * frame instead of escaping to the viewport.
- */
-export function PhoneFrame({ height = 720, children }: { height?: number; children: ReactNode }) {
-  return (
-    <div
-      className="relative isolate w-[390px] max-w-full overflow-hidden rounded-[1.75rem] border-[6px] border-zinc-800 bg-background shadow-xl dark:border-zinc-700"
-      style={{ height, transform: "translate(0)" }}
-    >
-      <div className="pg-phone-scroll flex h-full flex-col overflow-y-auto">{children}</div>
-    </div>
-  );
+/** Mount a router from {@link createFullAppRouter}. */
+export function FullAppRouter({ router }: { router: FullAppRouterInstance }) {
+  return <RouterProvider router={router} />;
 }
 
-/** A segmented control. Plain buttons — the playground borrows no app chrome it isn't showing. */
-export function Segmented<T extends string>({
-  value,
-  options,
-  onChange,
-}: {
-  value: T;
-  options: readonly { value: T; label: string }[];
-  onChange: (next: T) => void;
-}) {
-  return (
-    <div className="inline-flex overflow-hidden rounded-lg border border-border">
-      {options.map((option) => (
-        <button
-          key={option.value}
-          type="button"
-          onClick={() => onChange(option.value)}
-          aria-pressed={option.value === value}
-          className={cn(
-            "px-2 py-1 text-[11px] font-medium transition-colors",
-            option.value === value
-              ? "bg-foreground text-background"
-              : "bg-transparent text-muted-foreground hover:bg-muted",
-          )}
-        >
-          {option.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-/**
- * Which section is currently under the top of the viewport. Plain scroll arithmetic rather than an
- * IntersectionObserver: the sections are wildly different heights (a row of marks vs. three phone
- * frames), so "most visible" picks the tall one almost always, while "the last heading you scrolled
- * past" is what a reader means by where they are.
- */
-export function useActiveSection(sections: readonly SectionDef[]): string {
-  const [active, setActive] = useState(sections[0]?.id ?? "");
-  useEffect(() => {
-    const pick = () => {
-      let current = sections[0]?.id ?? "";
-      for (const s of sections) {
-        const el = document.getElementById(s.id);
-        if (el && el.getBoundingClientRect().top <= 96) current = s.id;
-      }
-      setActive(current);
-    };
-    pick();
-    window.addEventListener("scroll", pick, { passive: true });
-    window.addEventListener("resize", pick);
-    return () => {
-      window.removeEventListener("scroll", pick);
-      window.removeEventListener("resize", pick);
-    };
-  }, [sections]);
-  return active;
-}
-
-/** The desktop sidebar's section list. */
-export function SideNav({
-  sections,
-  active,
-}: {
-  sections: readonly SectionDef[];
-  active: string;
-}) {
-  return (
-    <nav className="flex flex-col gap-0.5" aria-label="Sections">
-      {sections.map((s) => (
-        <a
-          key={s.id}
-          href={`#${s.id}`}
-          aria-current={s.id === active ? "true" : undefined}
-          className={cn(
-            "rounded-md px-2 py-1.5 text-xs transition-colors",
-            s.id === active
-              ? "bg-muted font-medium text-foreground"
-              : "text-muted-foreground hover:bg-muted/60 hover:text-foreground",
-          )}
-        >
-          {s.title}
-        </a>
-      ))}
-    </nav>
-  );
-}
-
-/** The narrow-viewport equivalent: one scrolling row of chips. */
-export function ChipNav({
-  sections,
-  active,
-}: {
-  sections: readonly SectionDef[];
-  active: string;
-}) {
-  return (
-    <nav className="-mx-4 flex gap-1.5 overflow-x-auto px-4 pb-1" aria-label="Sections">
-      {sections.map((s) => (
-        <a
-          key={s.id}
-          href={`#${s.id}`}
-          aria-current={s.id === active ? "true" : undefined}
-          className={cn(
-            "shrink-0 rounded-md border px-2.5 py-1 text-[11px] transition-colors",
-            s.id === active
-              ? "border-foreground bg-foreground text-background"
-              : "border-border text-muted-foreground",
-          )}
-        >
-          {s.title}
-        </a>
-      ))}
-    </nav>
-  );
-}

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item name="link_import_input" type="id" />
+    <item name="link_import_status" type="id" />
+    <item name="link_import_review" type="id" />
+    <item name="link_import_qr" type="id" />
+    <item name="link_import_continue" type="id" />
+    <item name="settings_import_link" type="id" />
+    <string name="link_import_title">Import a Collie link</string>
+    <string name="link_import_input_hint">HTTPS Collie link</string>
+    <string name="link_import_paste_review">Review link</string>
+    <string name="link_import_choose_qr">Choose QR image</string>
+    <string name="link_import_continue">Continue</string>
+    <string name="link_import_cancel">Cancel</string>
+    <string name="link_import_refused">This link is unavailable or belongs to another server. Configure and pair with the intended server first.</string>
+    <string name="link_import_ready_navigation">Open on %1$s after checking the current pairing.</string>
+    <string name="link_import_ready_pairing">Pairing code ready for %1$s. Continue to the pairing form; nothing is submitted automatically.</string>
+    <string name="link_import_expired">This import expired or its owner changed. Review the link again.</string>
+    <string name="link_import_loading_qr">Reading QR image…</string>
+</resources>

@@ -1,3 +1,4 @@
+import type { AgentAction, AgentControlInfo, AgentExplain, AgentOccupant, AgentWaitCondition } from "../control/agent-models.ts";
 // THE MUX PORT — everything Collie needs from a multiplexer, in Collie's words.
 //
 // A *multiplexer* is what owns the pane. A *harness* is what runs inside it (claude, codex, pi, omp).
@@ -25,16 +26,19 @@
 // (ADR 0008). An adapter whose multiplexer will not hand over a rendered screen declines the
 // capability — it does not get a VT parser written for it.
 
-import type { AgentSessionRef } from "../journal/types.ts";
-import type { AgentStatus } from "../types.ts";
+import type { AgentSessionRef, ForegroundProcess } from "../journal/types.ts";
+import type { AgentStatus, AnswerRequest, Ask, ControlRequest } from "../types.ts";
 import type { MuxCapability, MuxCapabilityDeclaration } from "./capabilities.ts";
+import type { HostControlPort } from "../host-control/types.ts";
 import type { MuxIdentity } from "./identity.ts";
+import type { PaneMetadataRequest, WorkspaceMetadataRequest } from "../control/metadata.ts";
 
 export type {
   MuxCapability,
   MuxCapabilityDeclaration,
   MuxSpaceCapacity,
   MuxTopologyLatency,
+  MuxReadLimits,
 } from "./capabilities.ts";
 export { declareCapabilities, MUX_CAPABILITIES, supportsCapability } from "./capabilities.ts";
 export type { MuxIdentity, MuxIdentityProblem } from "./identity.ts";
@@ -127,6 +131,8 @@ export function isUnsupported<T>(outcome: MuxOutcome<T>): boolean {
  */
 export interface MuxPane extends MuxIdentity {
   readonly paneId: string;
+  /** Opaque, server-only terminal-process incarnation; never a phone-visible identifier. */
+  readonly terminalIncarnation?: string;
   readonly spaceId: string;
   readonly spaceLabel: string;
   /** The space's position, as the multiplexer orders them. 1-based; 0 when it has no ordering. */
@@ -134,8 +140,18 @@ export interface MuxPane extends MuxIdentity {
   readonly tabId: string;
   /** The tab's label, when it carries information. Absent for a positional default. */
   readonly tabLabel?: string;
+  /**
+   * True when `tabLabel` is a name the OPERATOR set, not the multiplexer's own: never a positional
+   * default, and never tmux's automatic window name (which the adapter reports as the pane's folder).
+   * Only such a name may name a pane (bridge/state-engine.ts, `soleTabName`). Absent otherwise.
+   */
+  readonly tabNamed?: true;
   /** The pane's working directory. Empty when the multiplexer does not report one. */
   readonly cwd: string;
+  /** Herdr's optional PTY foreground cwd. This never replaces the stable pane/workspace `cwd`. */
+  readonly foregroundCwd?: string;
+  /** Restore diagnostic reported by the owning multiplexer, when present. */
+  readonly restoreError?: string;
   /**
    * **The pane the operator's own terminal is showing.** Not "the pane Collie is showing", and not a
    * pane Collie chose — it is a FACT about the multiplexer, read every snapshot.
@@ -211,7 +227,7 @@ export interface MuxPane extends MuxIdentity {
    *
    * It is the RAW FACT the adapter already holds, reported as a raw fact. Exactly TWO modules in the
    * tree read it, and both spend it on presentation only — it never reaches {@link agent}, {@link
-   * status}, the session ref or the triage sort:
+   * status}, the session ref or triage:
    *
    *  • `bridge/beacon/hint.ts`, where it may become a sentence for the operator.
    *  • `bridge/state-engine.ts`, where "a shell in the foreground under a non-empty {@link
@@ -236,6 +252,12 @@ export interface MuxPane extends MuxIdentity {
    * capability, no grammar and no sort. See the module that composes it, beside the decorator.
    */
   readonly hint?: string;
+  /**
+   * Content revision from the multiplexer's snapshot — changes when the pane's screen changes.
+   * Herdr provides this natively; tmux and zellij can only derive it per-read, so it is absent
+   * from their snapshot and optional here.
+   */
+  readonly revision?: number;
 }
 
 /** One space — a project-scoped container of tabs. Collie's word; the port never uses another. */
@@ -264,6 +286,13 @@ export interface MuxSpace {
    * always a bug. `false` means "this is the repo itself", which is what a worktree row nests under.
    */
   readonly isWorktree?: boolean;
+  /**
+   * The space's own folder, when the multiplexer keeps one: herdr reports the checkout of the
+   * worktree a workspace sits in, tmux reports `session_path` (the folder a session was started
+   * in). zellij keeps none, and omits it. A FACT the adapter reads, never a guess from the panes:
+   * the Changes view derives its fallback from the panes itself (bridge/changes-root.ts).
+   */
+  readonly folder?: string;
 }
 
 /** One tab within a space — a layout holding one or more panes. */
@@ -288,6 +317,99 @@ export interface MuxSnapshot {
   readonly tabs: readonly MuxTab[];
 }
 
+/** Neutral, bounded pane geometry. Coordinates are terminal cells, as supplied by the mux. */
+export interface MuxLayoutRect {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+}
+export interface MuxLayoutSnapshot {
+  readonly workspaceId: string;
+  readonly tabId: string;
+  readonly zoomed: boolean;
+  readonly area: MuxLayoutRect;
+  readonly focusedPaneId: string;
+  readonly panes: readonly { readonly paneId: string; readonly focused: boolean; readonly rect: MuxLayoutRect }[];
+  readonly splits: readonly { readonly id: string; readonly direction: "right" | "down"; readonly ratio: number; readonly rect: MuxLayoutRect }[];
+}
+/** Portable, process-free layout data. Pane IDs are observations and are stripped on export. */
+export type MuxPortableLayoutNode =
+  | { readonly type: "pane"; readonly label: string | null; readonly cwd: string | null; readonly paneId: string | null; readonly command: readonly string[] | null; readonly env: Readonly<Record<string, string>> }
+  | { readonly type: "split"; readonly direction: MuxSplitDirection; readonly ratio: number; readonly first: MuxPortableLayoutNode; readonly second: MuxPortableLayoutNode };
+export interface MuxPortableLayout {
+  readonly workspaceId: string;
+  readonly tabId: string;
+  readonly focusedPaneId: string;
+  readonly zoomed: boolean;
+  readonly root: MuxPortableLayoutNode;
+}
+export interface MuxLayoutApplyRequest {
+  readonly root: MuxPortableLayoutNode;
+  readonly workspaceId: string | null;
+  readonly tabId: string | null;
+  readonly tabLabel: string | null;
+  readonly focus: false;
+}
+export interface MuxLayoutCreated {
+  readonly workspaceId: string;
+  readonly tabId: string;
+  readonly paneIds: readonly string[];
+  readonly focusedPaneId: string;
+}
+export interface MuxSplitRatioRequest {
+  readonly tabId: string;
+  readonly paneId: string | null;
+  /** Herdr's boolean-path direction bits: false follows first, true follows second. */
+  readonly path: readonly boolean[];
+  readonly ratio: number;
+}
+export type MuxPaneDirection = "left" | "right" | "up" | "down";
+export type MuxSplitDirection = "right" | "down";
+export type MuxSplitCwdChoice = null | { readonly kind: "source-pane" } | { readonly kind: "workspace"; readonly workspaceId: string } | { readonly kind: "advertised-folder"; readonly path: string };
+export type MuxLayoutRead =
+  | { readonly kind: "layout"; readonly layout: MuxLayoutSnapshot }
+  | { readonly kind: "neighbor"; readonly paneId: string; readonly direction: MuxPaneDirection; readonly neighborPaneId: string | null; readonly layout: MuxLayoutSnapshot }
+  | { readonly kind: "edges"; readonly paneId: string; readonly left: boolean; readonly right: boolean; readonly up: boolean; readonly down: boolean; readonly layout: MuxLayoutSnapshot };
+export type MuxLayoutReadRequest = { readonly kind: "layout" } | { readonly kind: "neighbor"; readonly direction: MuxPaneDirection } | { readonly kind: "edges" };
+/** Internal evidence read after adapter preflight and checked synchronously before one mutation. */
+export interface MuxLayoutFinalEvidence {
+  readonly sourceLayout: MuxLayoutRead;
+  /** Fresh same-window opaque occupant and owner-selected cwd evidence, never serialized. */
+  readonly snapshot: MuxSnapshot;
+  readonly destinationLayout?: MuxLayoutRead;
+  readonly neighborLayout?: MuxLayoutRead;
+}
+/** Internal synchronous admission fence. It is never serialized or accepted from a phone request. */
+export type MuxLayoutFinalAdmission = (prepared: MuxLayoutAction, runtimeIdentity: string, evidence: MuxLayoutFinalEvidence) => boolean;
+export interface MuxTransferMember { readonly paneId: string; readonly witness: string }
+export interface MuxTransferGuard {
+  readonly schema: 1;
+  readonly transferId: string;
+  readonly sourceWorkspaceId: string;
+  readonly sourceTabId: string;
+  readonly remainingSource: readonly MuxTransferMember[];
+  readonly destination: null | { readonly workspaceId: string; readonly tabId: string; readonly members: readonly MuxTransferMember[] };
+}
+export type MuxLayoutAction =
+  | { readonly kind: "split"; readonly paneId: string; readonly direction: MuxSplitDirection; readonly ratio: number | null; readonly targetPaneId: string | null; readonly workspaceId: string | null; readonly resolvedTargetPaneId?: string; readonly resolvedWorkspaceId?: string; readonly resolvedSourceTabId?: string; readonly resolvedSourceWorkspaceId?: string; readonly resolvedSourceCwd?: string | null; readonly cwdDevice?: string | null; readonly cwdInode?: string | null; readonly cwdCatalogPath?: string | null; readonly cwdSelectedPath?: string | null; readonly cwdChoice?: MuxSplitCwdChoice; readonly cwd?: string | null; readonly env?: Readonly<Record<string, string>>; readonly focus: false }
+  | { readonly kind: "resize"; readonly paneId: string; readonly direction: MuxPaneDirection; readonly amount: number | null }
+  | { readonly kind: "zoom"; readonly paneId: string; readonly mode: "toggle" | "on" | "off" }
+  | { readonly kind: "swap"; readonly paneId: string; readonly direction: MuxPaneDirection | null; readonly sourcePaneId: string | null; readonly targetPaneId: string | null; readonly resolvedTargetPaneId?: string }
+  | { readonly kind: "move"; readonly paneId: string; readonly destination: MuxMoveDestination; readonly focus: false; readonly transfer?: MuxTransferGuard; readonly resolvedSourceTabId?: string; readonly resolvedSourceWorkspaceId?: string; readonly resolvedTargetPaneId?: string; readonly resolvedTargetTabId?: string; readonly resolvedTargetWorkspaceId?: string }
+  | { readonly kind: "focus-direction"; readonly paneId: string; readonly direction: MuxPaneDirection; readonly resolvedTargetPaneId?: string };
+export type MuxMoveDestination =
+  | { readonly type: "tab"; readonly tabId: string; readonly split: MuxSplitDirection; readonly targetPaneId: string; readonly ratio: number | null }
+  | { readonly type: "new_tab"; readonly workspaceId: string; readonly label: string | null }
+  | { readonly type: "new_workspace"; readonly label: string | null; readonly tabLabel: string | null };
+export type MuxLayoutMutation =
+  | { readonly kind: "split"; readonly layout: MuxLayoutSnapshot; readonly paneId: string }
+  | { readonly kind: "resize"; readonly changed: boolean; readonly layout: MuxLayoutSnapshot }
+  | { readonly kind: "zoom"; readonly changed: boolean; readonly zoomed: boolean; readonly layout: MuxLayoutSnapshot }
+  | { readonly kind: "swap"; readonly changed: boolean; readonly layout: MuxLayoutSnapshot }
+  | { readonly kind: "move"; readonly changed: boolean; readonly paneId: string; readonly previousPaneId: string; readonly previousTabId: string; readonly previousWorkspaceId: string; readonly layout: MuxLayoutSnapshot; readonly createdTabId?: string; readonly createdWorkspaceId?: string; readonly closedTabId?: string; readonly closedWorkspaceId?: string }
+  | { readonly kind: "focus-direction"; readonly changed: boolean; readonly paneId: string; readonly layout: MuxLayoutSnapshot };
+
 // ── Reading a pane ────────────────────────────────────────────────────────────
 
 /**
@@ -300,7 +422,8 @@ export interface MuxSnapshot {
  * `styling` is on the contract because it is BEHAVIOURAL, not cosmetic: on at least one multiplexer
  * the two formats take different paths through the terminal core, and one of them can move the
  * operator's own screen (see the note above the read in bridge/server.ts). A caller that only wants
- * words — the session-name scrape in state-engine.ts — must be able to say so.
+ * words must be able to say so. The session-name scrape in state-engine.ts reads `preserve`, because
+ * colour is what tells a `/rename` name from a mode badge.
  */
 export interface MuxGridRequest {
   readonly scope: "viewport" | "recent";
@@ -331,6 +454,51 @@ export interface MuxGrid {
   readonly revision: number;
 }
 
+/** One foreground process as reported by the owning runtime. Missing OS fields stay absent. */
+export interface MuxPaneProcess {
+  readonly pid: number;
+  readonly name: string;
+  readonly argv?: readonly string[];
+  readonly argv0?: string;
+  readonly cmdline?: string;
+  readonly cwd?: string;
+}
+
+/** Process census for an explicitly resolved pane; missing individual OS fields stay absent. */
+export interface MuxPaneProcessInfo {
+  readonly paneId: string;
+  /** Same occupant snapshot taken after the process RPC, never copied from an earlier census. */
+  readonly foregroundCwd?: string;
+  readonly restoreError?: string;
+  readonly shellPid?: number;
+  readonly foregroundProcessGroupId?: number;
+  readonly processes: readonly MuxPaneProcess[];
+  readonly truncated: boolean;
+  readonly tty?: string;
+}
+
+/** Read-only identity facts returned by an owning runtime for one current pane. */
+export interface MuxAgentIdentity {
+  readonly paneId: string;
+  /** Name the runtime currently associates with this pane, if any. */
+  readonly agent: string | null;
+  readonly status: AgentStatus;
+  /** Session provenance is independent of lifecycle authority. */
+  readonly session?: {
+    readonly source: string;
+    readonly agent: string;
+    readonly kind: "id" | "path";
+    readonly value: string;
+  };
+  /** Herdr does not expose the active lifecycle authority source in AgentInfo. */
+  readonly stateAuthority: { readonly observed: false; readonly source: null };
+  readonly interactiveReady: boolean | null;
+  readonly launchPending: boolean | null;
+  /** Decimal strings preserve uint64 values without JS precision loss. */
+  readonly stateChangeSeq: string | null;
+  readonly completionSeq: string | null;
+}
+
 /** A freshly-created shell pane — enough to navigate into it before the next snapshot. */
 export interface MuxCreatedPane {
   readonly paneId: string;
@@ -344,13 +512,34 @@ export interface MuxCreatedPane {
 export interface MuxTabRequest {
   readonly spaceId: string;
   readonly label?: string;
+  /**
+   * Where to open it, or nothing.
+   *
+   * A BLANK STRING IS NOTHING, and it is not a defensive nicety: {@link MuxPane.cwd} is empty when
+   * the multiplexer reports no working directory, and the launch route hands a neighbouring pane's
+   * `cwd` straight through here. So "unknown" arrives spelled `""`, and an adapter that turned that
+   * into a flag asked its multiplexer to open a tab in a directory called nothing (measured on
+   * zellij, M22/04: `--cwd ` with no value, and zellij refused the whole launch).
+   * MUX_CONTRACT.md § Contract-owned rules, *A blank cwd*.
+   */
   readonly cwd?: string;
 }
 
-/** What a new space asks for. */
+/** What a new space asks for. `cwd` follows {@link MuxTabRequest.cwd}: blank is nothing. */
 export interface MuxSpaceRequest {
   readonly cwd: string;
   readonly label?: string;
+}
+
+/**
+ * The directory a create request actually asked for, or `undefined` when it asked for none.
+ *
+ * One function rather than three `!== undefined && !== ""` tests, because the rule is the
+ * contract's and a per-adapter spelling of it is how it comes to be spelled three ways
+ * (MUX_CONTRACT.md § Contract-owned rules, *A blank cwd*).
+ */
+export function requestedCwd(cwd: string | undefined): string | undefined {
+  return cwd === undefined || cwd.trim().length === 0 ? undefined : cwd;
 }
 
 // ── Worktrees ─────────────────────────────────────────────────────────────────
@@ -382,11 +571,36 @@ export interface MuxWorktreeScope {
 /** What a new worktree asks for. */
 export interface MuxWorktreeCreateRequest extends MuxWorktreeScope {
   readonly branch: string;
+  /**
+   * The ref the new branch is cut from. Absent means the multiplexer's own choice, which for Herdr
+   * is the HEAD of `repoRoot`. Already checked by the bridge (bridge/worktree-base.ts); an adapter
+   * that cannot honour it ignores it, as tmux, zellij, tuios and tern do with the whole call.
+   */
+  readonly base?: string;
+  /**
+   * The absolute folder the checkout is made in. Absent means the multiplexer's own place, which for
+   * Herdr is `<worktrees directory>/<repo>/<slug>`. Already checked by the bridge on every use
+   * (bridge/worktree-folder.ts, ADR 0093); an adapter that cannot honour it ignores the whole call.
+   */
+  readonly path?: string;
 }
 
 /** Which existing worktree to show. */
 export interface MuxWorktreeOpenRequest extends MuxWorktreeScope {
   readonly path: string;
+}
+
+/** Remove only a discovered, currently open linked checkout by its owner workspace ID. */
+export interface MuxWorktreeRemoveRequest {
+  readonly workspaceId: string;
+  /** Defaults false. True is a separate operator confirmation that discards reported changes. */
+  readonly force: boolean;
+}
+
+export interface MuxWorktreeRemoved {
+  readonly workspaceId: string;
+  readonly path: string;
+  readonly forced: boolean;
 }
 
 /**
@@ -453,10 +667,63 @@ export interface MuxWatchOptions {
   onDown(reason: string): void;
 }
 
+/**
+ * ONE OTHER INSTANCE OF THIS MULTIPLEXER, ON THIS MACHINE.
+ *
+ * What "instance" means is the multiplexer's own answer, and it is the thing a second Collie session
+ * would be built against: a Herdr session's socket, and nothing at all on a multiplexer that keeps no
+ * such list. `endpoint` is opaque here exactly as {@link MuxTarget.endpoint} is opaque in the
+ * registry, and for the same reason: one adapter's address is meaningless to another.
+ *
+ * `name` is what the operator's phone will call it, so it is short, stable, and the multiplexer's own
+ * word for the thing. It is a Map key in `bridge/sessions.ts` and NEVER used to build a path.
+ *
+ * IT CARRIES NO HOST, and it may never grow one: everything listed here runs on this machine, which
+ * is the whole of what a mux adapter can see (ADR 0011, ADR 0022, ADR 0036). Another machine is
+ * reached by talking to the Collie on it.
+ */
+export interface MuxSession {
+  readonly name: string;
+  readonly endpoint: string;
+}
+
 /** The handle a watch hands back. `close()` is idempotent. */
 export interface MuxSubscription {
   close(): void;
 }
+
+// ── Starters ──────────────────────────────────────────────────────────────────
+
+/** One named way to begin a conversation, as the program offers it (ADR 0102). Cleaned text. */
+export interface MuxStarter {
+  readonly id: string;
+  readonly label: string;
+}
+
+/**
+ * What a program offers to start, and the name it gave its own machine. Empty while it is
+ * unreachable, and `reachable` says which kind of empty it is: a program with nothing to start, or a
+ * program that could not be asked.
+ */
+export interface MuxStarters {
+  readonly hostName: string;
+  readonly starters: readonly MuxStarter[];
+  readonly reachable: boolean;
+}
+
+/**
+ * What a start came to (ADR 0102). The phone treats each kind differently: `started` opens the pane;
+ * `failed` and `refused` show a reason, and the same request id may run again; `unsupported` never
+ * will work; `unreachable` means nothing reached the program; `unknown` means it may have run, so the
+ * caller keeps its receipt and "Try again" sends the same request id.
+ */
+export type MuxStarterOutcome =
+  | { readonly kind: "started"; readonly paneId: string; readonly replayed: boolean }
+  | { readonly kind: "failed"; readonly message: string }
+  | { readonly kind: "unsupported"; readonly detail: string }
+  | { readonly kind: "refused"; readonly detail: string }
+  | { readonly kind: "unreachable"; readonly detail: string }
+  | { readonly kind: "unknown"; readonly detail: string };
 
 // ── The port ──────────────────────────────────────────────────────────────────
 
@@ -471,11 +738,16 @@ export interface MuxSubscription {
  * remote machine is reached by talking to the Collie that runs on it, never by dialling its
  * multiplexer across a machine boundary (ADR 0011).
  */
+/** Synchronous authority check after adapter preflight and immediately before its named RPC. */
+export type MuxOrganizationFinalAdmission = () => boolean;
+
 export interface MuxAdapter {
   /** Registry key of the multiplexer behind this adapter. For display and support, never a branch. */
   readonly mux: string;
   /** What this adapter can do. Declared, never inferred from {@link mux}. */
   readonly capabilities: MuxCapabilityDeclaration;
+  /** Optional explicit declaration of this runtime's host-management provider. */
+  readonly hostControl?: HostControlPort;
 
   /**
    * This multiplexer's mark, as SVG source — the bytes served at `/api/mux/logo.svg`.
@@ -520,8 +792,116 @@ export interface MuxAdapter {
   /** One pane's rendered screen. Needs `paneGrid`; `recent` past the viewport needs `gridScrollback`. */
   readGrid(paneId: string, request: MuxGridRequest): Promise<MuxOutcome<MuxGrid>>;
 
+  /** Read foreground process metadata from the owning runtime. Needs `paneProcesses`; optional for older adapters. */
+  processInfo?(paneId: string): Promise<MuxOutcome<MuxPaneProcessInfo>>;
+
+  /** Read owner-supplied agent/session diagnostics without inferring a state authority source. */
+  agentIdentity?(paneId: string): Promise<MuxOutcome<MuxAgentIdentity>>;
+  /** Optional closed orchestration methods; every original witness is retained through awaits. */
+  agentList?(): Promise<MuxOutcome<readonly AgentControlInfo[]>>;
+  agentRead?(expected: AgentOccupant, source: "visible" | "recent" | "recent_unwrapped" | "detection", lines: number, finalAdmission: (runtime: string) => boolean): Promise<MuxOutcome<MuxGrid>>;
+  agentControl?(paneId: string): Promise<MuxOutcome<AgentControlInfo>>;
+  agentExplain?(expected: AgentOccupant): Promise<MuxOutcome<AgentExplain>>;
+  agentAction?(action: AgentAction, expected: AgentOccupant, finalAdmission: (runtimeIdentity: string) => boolean, signal?: AbortSignal, beforeFirstBytes?: () => Promise<boolean>): Promise<import("../control/agent-models.ts").AgentActionOutcome>;
+  agentWait?(condition: AgentWaitCondition, expected: AgentOccupant, timeoutMs: number, finalAdmission: (runtimeIdentity: string) => boolean, signal: AbortSignal, observationOwner?: import("../control/agent-models.ts").AgentObservationOwner): Promise<import("../control/agent-models.ts").AgentWaitOutcome>;
+  agentObservedTransition?(original: AgentOccupant, observed: import("../control/agent-models.ts").AgentObservedTransition, owner: import("../control/agent-models.ts").AgentObservationOwner): Promise<MuxOutcome<void>>;
+  agentObservedMove?(original: AgentOccupant, observed: import("../control/agent-models.ts").AgentObservedMove, owner: import("../control/agent-models.ts").AgentObservationOwner): Promise<MuxOutcome<AgentControlInfo>>;
+
+
+  /** Report source-owned display metadata; never writes lifecycle authority. */
+  reportPaneMetadata?(paneId: string, request: PaneMetadataRequest): Promise<MuxAck>;
+  reportPaneMetadataOriginal?(paneId: string, request: PaneMetadataRequest, original: import("../control/agent-models.ts").AgentControlInfo, finalAdmission: (runtime: string) => boolean): Promise<MuxAck>;
+  reportWorkspaceMetadata?(workspaceId: string, request: WorkspaceMetadataRequest): Promise<MuxAck>;
+
+  /**
+   * The same rows with soft wraps undone, when the multiplexer can produce them.
+   *
+   * The mirror renders the grid, so a URL longer than the pane arrives in fragments and the web app
+   * can only make an anchor out of the first one — a truncated href (`web/src/lib/links.ts`). This
+   * read is what says what the whole URL was. OPTIONAL by design: a multiplexer without it (or one
+   * whose panes never soft-wrap) simply yields no repair, exactly as today.
+   *
+   * Read in the same escape-carrying form as `readGrid`, and the caller strips the styling: this is
+   * only ever read for the URLs in it. Not `text`, which is the format Herdr was observed to harvest
+   * an idle alt-screen pane with, scrolling the operator's terminal; `ansi` never was
+   * (HERDR_API.md → `pane.read`).
+   */
+  readLogicalText?(paneId: string, lines: number): Promise<MuxOutcome<string>>;
+
+  /** Optional layout facts and operations; each is backed by its own fail-closed capability. */
+  readLayout?(paneId: string, request?: MuxLayoutReadRequest): Promise<MuxOutcome<MuxLayoutRead>>;
+  applyLayout?(action: MuxLayoutAction, finalAdmission: MuxLayoutFinalAdmission): Promise<MuxOutcome<MuxLayoutMutation>>;
+  exportPortableLayout?(target: { readonly tabId: string } | { readonly paneId: string }): Promise<MuxOutcome<MuxPortableLayout>>;
+  applyPortableLayout?(request: MuxLayoutApplyRequest, finalAdmission: (runtimeIdentity: string, snapshot: MuxSnapshot) => boolean | Promise<boolean>): Promise<MuxOutcome<MuxLayoutCreated>>;
+  setSplitRatio?(request: MuxSplitRatioRequest, finalAdmission: (runtimeIdentity: string, snapshot: MuxSnapshot) => boolean | Promise<boolean>): Promise<MuxOutcome<MuxPortableLayout>>;
+  /** Opaque current mux process incarnation; absent means planned mutations fail closed. */
+  layoutRuntimeIdentity?(): Promise<string | null> | string | null;
+  /**
+   * The named ways this multiplexer can begin a conversation (ADR 0102). OPTIONAL: only a durable
+   * program has starters, and every other adapter simply has none. A program that cannot be reached
+   * lists none, rather than failing.
+   */
+  listStarters?(): Promise<MuxStarters>;
+
+  /**
+   * Run one starter with the phone's request id, passed through unchanged so a repeat is the
+   * program's own replay (ADR 0102). Never retried here: an outcome that may have run is `unknown`.
+   * `finalAdmission` is a host-local caller predicate, checked before POST after any preflight;
+   * it changes no vendor payload or Crew field.
+   */
+  startStarter?(starterId: string, requestId: string, finalAdmission?: () => boolean): Promise<MuxStarterOutcome>;
+
+  /**
+   * The open asks of one pane, as data (ADR 0100), oldest first, cleaned. OPTIONAL: only an adapter
+   * whose panes raise asks as data has it (`durable`). `undefined` for a pane that carries no asks
+   * field, which is every pane of every other adapter. It reads the adapter's last listing and asks
+   * nothing new, because `localSnapshot` calls it at serialise time.
+   */
+  openAsks?(paneId: string): readonly Ask[] | undefined;
+
+  /**
+   * Answer one ask by its id (ADR 0100). OPTIONAL, with {@link openAsks}: absent is the refusal the
+   * answer route renders. ONE CALLER: `POST /api/pane/:id/answer`, which runs for a person's tap and
+   * has written its receipt first. Nothing else in the bridge may call it, and an adapter never
+   * answers on its own, not on a restart and not after a timeout.
+   *
+   * A definite answer is a value (`taken`, `too-late`, `stale`). An answer that may or may not have
+   * reached the program is `unknown`, also a value, because the caller keeps its receipt for it. A
+   * refusal says nothing ran: `gone` (no such pane), `refused` (a bad option, a reused request id,
+   * a program that takes no answers) or `unreachable` (nothing was sent).
+   */
+  answerAsk?(paneId: string, answer: AnswerRequest, finalAdmission?: () => boolean): Promise<MuxOutcome<MuxAnswerResult>>;
+
+  /**
+   * The newest turn id of one pane, from the adapter's last listing (ADR 0101). OPTIONAL, with
+   * {@link controlTurn}: only an adapter whose panes take guarded controls has it (`durable`).
+   * `undefined` for a pane that carries no `turnId` field. Asks nothing new: it is called at
+   * serialise time.
+   */
+  paneTurn?(paneId: string): string | undefined;
+
+  /**
+   * Send text to, or stop, the turn the phone named (ADR 0101). OPTIONAL, with {@link paneTurn}:
+   * absent is the refusal the send and abort routes render, and the reason the reply and keys routes
+   * refuse such a pane. ONE CALLER: `POST /api/pane/:id/send` and `/abort`, which have written their
+   * receipt first. The adapter checks the name against its latest listing before anything leaves
+   * (`bridge/durable/control.ts`), and never retries.
+   */
+  controlTurn?(paneId: string, request: ControlRequest, finalAdmission?: () => boolean): Promise<MuxControlOutcome>;
+
+  /**
+   * The pane's foreground processes, as argv. OPTIONAL by design: a multiplexer without the
+   * call simply yields no hint, exactly as today.
+   *
+   * Read for ONE purpose — telling live sessions apart when several share a folder. A journal
+   * adapter that can read its session out of its own command line (Muse's `resume <uuid>`)
+   * answers the pane's own session from this; without it, discovery can only guess newest,
+   * and every pane in the folder shows the same transcript.
+   */
+  foregroundProcesses?(paneId: string): Promise<MuxOutcome<readonly ForegroundProcess[]>>;
+
   /** Type literal text into a pane, submitting nothing. Needs `typeText`. */
-  typeText(paneId: string, text: string): Promise<MuxAck>;
+  typeText(paneId: string, text: string, finalAdmission?: (runtimeIdentity: string) => boolean): Promise<MuxAck>;
 
   /**
    * Send keys in the contract's neutral spelling (keys.ts), applied in order. Needs `sendKeys`.
@@ -529,7 +909,7 @@ export interface MuxAdapter {
    * A key the multiplexer cannot send is `refused` and is listed in `unsupportedKeys` — the whole
    * door is not closed because one key is missing.
    */
-  sendKeys(paneId: string, keys: readonly string[]): Promise<MuxAck>;
+  sendKeys(paneId: string, keys: readonly string[], finalAdmission?: (runtimeIdentity: string) => boolean): Promise<MuxAck>;
 
   /** Set or clear a pane's operator label (`null` clears). Needs `renamePane`. */
   renamePane(paneId: string, label: string | null): Promise<MuxAck>;
@@ -558,10 +938,20 @@ export interface MuxAdapter {
   createTab(request: MuxTabRequest): Promise<MuxOutcome<MuxCreatedPane>>;
 
   /** Set a tab's label. Needs `renameTab`. */
-  renameTab(tabId: string, label: string): Promise<MuxAck>;
+  renameTab(tabId: string, label: string, finalAdmission?: MuxOrganizationFinalAdmission): Promise<MuxAck>;
 
   /** Close a tab and every pane in it. Needs `closeTab`. */
-  closeTab(tabId: string): Promise<MuxAck>;
+  closeTab(tabId: string, finalAdmission?: MuxOrganizationFinalAdmission): Promise<MuxAck>;
+
+  /** Explicit workspace/tab organization. Every operation is independently capability-gated. */
+  renameSpace?(spaceId: string, label: string, finalAdmission: MuxOrganizationFinalAdmission): Promise<MuxAck>;
+  closeSpace?(spaceId: string, closeGroup: boolean, finalAdmission: MuxOrganizationFinalAdmission): Promise<MuxAck>;
+  moveSpace?(spaceId: string, insertIndex: number, finalAdmission: MuxOrganizationFinalAdmission): Promise<MuxAck>;
+  moveSpaceBlock?(spaceIds: readonly string[], beforeSpaceId: string | null, finalAdmission: MuxOrganizationFinalAdmission): Promise<MuxAck>;
+  focusSpace?(spaceId: string, finalAdmission: MuxOrganizationFinalAdmission): Promise<MuxAck>;
+  /** Herdr tab.move is scoped to its existing workspace; it never transfers a tab across spaces. */
+  moveTab?(tabId: string, insertIndex: number, finalAdmission: MuxOrganizationFinalAdmission): Promise<MuxAck>;
+  focusTab?(tabId: string, finalAdmission: MuxOrganizationFinalAdmission): Promise<MuxAck>;
 
   /** New space, opening a fresh shell. Needs `createSpace`. */
   createSpace(request: MuxSpaceRequest): Promise<MuxOutcome<MuxCreatedPane>>;
@@ -570,10 +960,34 @@ export interface MuxAdapter {
   listWorktrees(scope: MuxWorktreeScope): Promise<MuxOutcome<readonly MuxWorktree[]>>;
 
   /** New worktree on a new branch, opened as a space. Needs `createWorktree`. */
-  createWorktree(request: MuxWorktreeCreateRequest): Promise<MuxOutcome<MuxCreatedPane>>;
+  createWorktree(request: MuxWorktreeCreateRequest, finalAdmission?: (runtimeIdentity: string) => boolean, beforeDispatch?: () => Promise<boolean>): Promise<MuxOutcome<MuxCreatedPane>>;
 
   /** Show an existing worktree as a space. Needs `openWorktree`. */
-  openWorktree(request: MuxWorktreeOpenRequest): Promise<MuxOutcome<MuxWorktreeOpened>>;
+  openWorktree(request: MuxWorktreeOpenRequest, finalAdmission?: (runtimeIdentity: string) => boolean, beforeDispatch?: () => Promise<boolean>): Promise<MuxOutcome<MuxWorktreeOpened>>;
+
+  /** Remove one discovered linked checkout, never its branch or the main checkout. */
+  removeWorktree?(request: MuxWorktreeRemoveRequest, finalAdmission?: (runtimeIdentity: string) => boolean, beforeDispatch?: () => Promise<boolean>): Promise<MuxOutcome<MuxWorktreeRemoved>>;
+
+  /**
+   * The OTHER instances of this multiplexer on this machine, each with the endpoint to dial it.
+   * Needs `listSessions`.
+   *
+   * One bridge can front several of them: `bridge/sessions.ts` starts a runtime per answer, and the
+   * phone selects one with `?session=<name>`. The primary is the one the operator configured, and it
+   * is listed like any other when the multiplexer lists it.
+   *
+   * THE DECLARED-FALSE ANSWER IS `unsupported`, naming this capability, not a throw, and not an
+   * empty list. An empty list is a real answer with a different meaning ("this multiplexer keeps
+   * such a list, and right now it holds nothing else"), and the two must stay tellable apart: the
+   * first pins the registry to the primary for good, the second is a state that changes by itself.
+   *
+   * A read, and a cheap one: it is called on the registry's rescan timer, so an adapter that has to
+   * shell out to answer says so in its own note (MUX_CONTRACT.md).
+   *
+   * Host-local like every other method here. A session is on THIS machine or it is not this
+   * adapter's to report (ADR 0036).
+   */
+  listSessions(): Promise<MuxOutcome<readonly MuxSession[]>>;
 
   /** Watch for change. Always available — an adapter with no push satisfies it by polling. */
   watch(options: MuxWatchOptions): MuxSubscription;
@@ -599,6 +1013,130 @@ export interface MuxAdapter {
  * The field is OMITTED rather than set to `undefined` when the adapter has none, so
  * `"logo" in adapter` keeps answering the same question after wrapping as before it.
  */
-export function muxDataFields(adapter: MuxAdapter): Pick<MuxAdapter, "logo"> {
-  return adapter.logo === undefined ? {} : { logo: adapter.logo };
+type MutableMuxDataFields = { -readonly [K in keyof Pick<MuxAdapter, "logo" | "hostControl">]: Pick<MuxAdapter, "logo" | "hostControl">[K] };
+
+export function muxDataFields(adapter: MuxAdapter): Pick<MuxAdapter, "logo" | "hostControl"> {
+  const fields: MutableMuxDataFields = {};
+  if (adapter.logo !== undefined) fields.logo = adapter.logo;
+  if (adapter.hostControl !== undefined) fields.hostControl = adapter.hostControl;
+  return fields;
 }
+
+/** The OPTIONAL methods a decorator carries through, each only when the adapter has it. */
+export type MuxOptionalMethod = "readLogicalText" | "listStarters" | "startStarter" | "openAsks" | "answerAsk" | "paneTurn" | "controlTurn" | "foregroundProcesses";
+
+/**
+ * The OPTIONAL methods, gathered the way {@link muxDataFields} gathers the optional data fields.
+ *
+ * A decorator spreads this rather than conditionally spreading inline, so a multiplexer that cannot
+ * unwrap (tmux) never comes out of a decorator appearing to offer the read: absent stays absent.
+ */
+type MuxOptionalMethodFields = Pick<MuxAdapter,
+  | MuxOptionalMethod | "processInfo" | "readLayout" | "applyLayout" | "exportPortableLayout" | "applyPortableLayout" | "setSplitRatio" | "layoutRuntimeIdentity" | "agentIdentity" | "agentList" | "agentRead" | "agentControl" | "agentExplain" | "agentAction" | "agentWait" | "agentObservedMove" | "agentObservedTransition"
+  | "reportPaneMetadata" | "reportPaneMetadataOriginal" | "reportWorkspaceMetadata"
+  | "removeWorktree"
+  | "renameSpace" | "closeSpace" | "moveSpace" | "moveSpaceBlock" | "focusSpace" | "moveTab" | "focusTab"
+>;
+export function muxOptionalMethods(adapter: MuxAdapter): MuxOptionalMethodFields {
+  const readLogicalText = adapter.readLogicalText?.bind(adapter);
+  const processInfo = adapter.processInfo?.bind(adapter);
+  const readLayout = adapter.readLayout?.bind(adapter);
+  const applyLayout = adapter.applyLayout?.bind(adapter);
+  const exportPortableLayout = adapter.exportPortableLayout?.bind(adapter);
+  const applyPortableLayout = adapter.applyPortableLayout?.bind(adapter);
+  const setSplitRatio = adapter.setSplitRatio?.bind(adapter);
+  const layoutRuntimeIdentity = adapter.layoutRuntimeIdentity?.bind(adapter);
+  const removeWorktree = adapter.removeWorktree?.bind(adapter);
+  const renameSpace = adapter.renameSpace?.bind(adapter);
+  const closeSpace = adapter.closeSpace?.bind(adapter);
+  const moveSpace = adapter.moveSpace?.bind(adapter);
+  const moveSpaceBlock = adapter.moveSpaceBlock?.bind(adapter);
+  const focusSpace = adapter.focusSpace?.bind(adapter);
+  const moveTab = adapter.moveTab?.bind(adapter);
+  const focusTab = adapter.focusTab?.bind(adapter);
+  const agentIdentity = adapter.agentIdentity?.bind(adapter);
+  const agentList = adapter.agentList?.bind(adapter);
+  const agentRead = adapter.agentRead?.bind(adapter);
+  const agentControl = adapter.agentControl?.bind(adapter);
+  const agentExplain = adapter.agentExplain?.bind(adapter);
+  const agentAction = adapter.agentAction?.bind(adapter);
+  const agentWait = adapter.agentWait?.bind(adapter);
+  const agentObservedTransition = adapter.agentObservedTransition?.bind(adapter);
+  const agentObservedMove = adapter.agentObservedMove?.bind(adapter);
+  const reportPaneMetadata = adapter.reportPaneMetadata?.bind(adapter);
+  const reportPaneMetadataOriginal = adapter.reportPaneMetadataOriginal?.bind(adapter);
+  const reportWorkspaceMetadata = adapter.reportWorkspaceMetadata?.bind(adapter);
+  const methods: MuxOptionalMethodFields = {};
+  if (readLogicalText !== undefined) methods.readLogicalText = readLogicalText;
+  if (processInfo !== undefined) methods.processInfo = processInfo;
+  if (readLayout !== undefined) methods.readLayout = readLayout;
+  if (applyLayout !== undefined) methods.applyLayout = applyLayout;
+  if (exportPortableLayout !== undefined) methods.exportPortableLayout = exportPortableLayout;
+  if (applyPortableLayout !== undefined) methods.applyPortableLayout = applyPortableLayout;
+  if (setSplitRatio !== undefined) methods.setSplitRatio = setSplitRatio;
+  if (layoutRuntimeIdentity !== undefined) methods.layoutRuntimeIdentity = layoutRuntimeIdentity;
+  if (removeWorktree !== undefined) methods.removeWorktree = removeWorktree;
+  if (renameSpace !== undefined) methods.renameSpace = renameSpace;
+  if (closeSpace !== undefined) methods.closeSpace = closeSpace;
+  if (moveSpace !== undefined) methods.moveSpace = moveSpace;
+  if (moveSpaceBlock !== undefined) methods.moveSpaceBlock = moveSpaceBlock;
+  if (focusSpace !== undefined) methods.focusSpace = focusSpace;
+  if (moveTab !== undefined) methods.moveTab = moveTab;
+  if (focusTab !== undefined) methods.focusTab = focusTab;
+  if (agentIdentity !== undefined) methods.agentIdentity = agentIdentity;
+  if (agentList !== undefined) methods.agentList = agentList;
+  if (agentRead !== undefined) methods.agentRead = agentRead;
+  if (agentControl !== undefined) methods.agentControl = agentControl;
+  if (agentExplain !== undefined) methods.agentExplain = agentExplain;
+  if (agentAction !== undefined) methods.agentAction = agentAction;
+  if (agentWait !== undefined) methods.agentWait = agentWait;
+  if (agentObservedTransition !== undefined) methods.agentObservedTransition = agentObservedTransition;
+  if (agentObservedMove !== undefined) methods.agentObservedMove = agentObservedMove;
+  if (reportPaneMetadata !== undefined) methods.reportPaneMetadata = reportPaneMetadata;
+  if (reportPaneMetadataOriginal !== undefined) methods.reportPaneMetadataOriginal = reportPaneMetadataOriginal;
+  if (reportWorkspaceMetadata !== undefined) methods.reportWorkspaceMetadata = reportWorkspaceMetadata;
+  const listStarters = adapter.listStarters?.bind(adapter);
+  if (listStarters !== undefined) methods.listStarters = listStarters;
+  const startStarter = adapter.startStarter?.bind(adapter);
+  if (startStarter !== undefined) methods.startStarter = startStarter;
+  // The two ask methods travel together (ADR 0100): an adapter that lists asks answers them.
+  const openAsks = adapter.openAsks?.bind(adapter);
+  if (openAsks !== undefined) methods.openAsks = openAsks;
+  const answerAsk = adapter.answerAsk?.bind(adapter);
+  if (answerAsk !== undefined) methods.answerAsk = answerAsk;
+  // The two control methods travel together too (ADR 0101): an adapter that names turns takes controls.
+  const paneTurn = adapter.paneTurn?.bind(adapter);
+  if (paneTurn !== undefined) methods.paneTurn = paneTurn;
+  const controlTurn = adapter.controlTurn?.bind(adapter);
+  if (controlTurn !== undefined) methods.controlTurn = controlTurn;
+  const foregroundProcesses = adapter.foregroundProcesses?.bind(adapter);
+  if (foregroundProcesses !== undefined) methods.foregroundProcesses = foregroundProcesses;
+  return methods;
+}
+
+/**
+ * What a program said to one send or abort (ADR 0101). `ok` is final. `stale` carries what is current
+ * (the pane's newest turn and its open asks), and nothing ran. `unknown` may or may not have landed:
+ * a timeout, a dropped connection or a 5xx after the request left. The rest say nothing ran:
+ * `unsupported` (the program cannot take this act), `refused` (a bad body, a reused request id),
+ * `gone` (no such pane) and `unreachable` (nothing was sent).
+ */
+export type MuxControlOutcome =
+  | { readonly kind: "ok"; readonly replayed: boolean }
+  | { readonly kind: "stale"; readonly turnId: string; readonly askIds: readonly string[] }
+  | { readonly kind: "unknown"; readonly detail: string }
+  | { readonly kind: "unsupported"; readonly detail: string }
+  | { readonly kind: "refused"; readonly detail: string }
+  | { readonly kind: "gone"; readonly detail: string }
+  | { readonly kind: "unreachable"; readonly detail: string };
+
+/**
+ * What a program said to one answer (ADR 0100). `taken` and `too-late` are final. `stale` carries
+ * the ask's current form when the program sent one. `unknown` is an answer that may or may not have
+ * landed: a timeout, a dropped connection or a 5xx after the request left.
+ */
+export type MuxAnswerResult =
+  | { readonly kind: "taken"; readonly replayed: boolean }
+  | { readonly kind: "too-late"; readonly replayed: boolean }
+  | { readonly kind: "stale"; readonly ask: Ask | null }
+  | { readonly kind: "unknown"; readonly detail: string };

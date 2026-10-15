@@ -1,3 +1,5 @@
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { parseAnsi } from "../../ansi";
@@ -10,6 +12,8 @@ import {
   isInputBoxTopBorder,
   isMultiStepHeader,
   lineText,
+  namesPlanDialog,
+  namesTrustDialog,
 } from "./markers";
 
 // The shared lexing primitives every Claude-Code grammar leans on (chrome, prompt-select, and — in
@@ -221,19 +225,102 @@ describe("labelled borders below the shared total-width floor", () => {
   });
 });
 
+const PANES_DIR = join(import.meta.dirname, "..", "..", "..", "fixtures", "panes");
+function fixtureTexts(name: string): string[] {
+  return splitLines(parseAnsi(readFileSync(join(PANES_DIR, name), "utf8"))).map(lineText);
+}
+
+describe("namesTrustDialog", () => {
+  it("finds the folder-trust dialog's own words on the real capture", () => {
+    expect(namesTrustDialog(fixtureTexts("claude--trust-prompt.txt"))).toBe(true);
+  });
+
+  it("does not find them on a screen that merely prints 'Enter to confirm'", () => {
+    expect(namesTrustDialog(fixtureTexts("claude--menu-effort-slider.txt"))).toBe(false);
+  });
+});
+
+describe("namesPlanDialog", () => {
+  const PLAN_FIXTURES = readdirSync(PANES_DIR).filter((n) =>
+    /^claude(?:-lab)?--plan-approval.*\.txt$/.test(n),
+  );
+
+  it("finds the plan dialog's question and menu on every plan-approval capture", () => {
+    expect(PLAN_FIXTURES.length).toBeGreaterThanOrEqual(12);
+    for (const name of PLAN_FIXTURES) expect(namesPlanDialog(fixtureTexts(name)), name).toBe(true);
+  });
+
+  it("reads the question wrapped onto three rows at 40 columns", () => {
+    expect(namesPlanDialog(fixtureTexts("claude-lab--plan-approval--w40.txt"))).toBe(true);
+  });
+
+  it("does not find it under a multi-line draft that prints the ctrl+g hint and a numbered list", () => {
+    for (const name of [
+      "claude-lab--draft-adversarial--w40.txt",
+      "claude-lab--draft-adversarial--w82.txt",
+      "claude-lab--draft-adversarial--w120.txt",
+    ]) {
+      expect(namesPlanDialog(fixtureTexts(name)), name).toBe(false);
+    }
+  });
+
+  it("needs the question and a 1., 2. menu below it, not either alone", () => {
+    const question = " Claude has written up a plan and is ready to execute. Would you like to proceed?";
+    expect(namesPlanDialog([question, "", " ❯ 1. Yes, and use auto mode", "   2. Yes, manually approve edits"])).toBe(
+      true,
+    );
+    expect(namesPlanDialog([question, "", " ctrl+g to edit in nano"])).toBe(false);
+    expect(namesPlanDialog([" ❯ 1. Yes", "   2. No", "", " ctrl+g to edit in nano"])).toBe(false);
+    // The menu must follow the question; a list above it is some other text.
+    expect(namesPlanDialog([" 1. one", " 2. two", question])).toBe(false);
+  });
+});
+
 describe("classifyFooter", () => {
   it("maps each dialog family off its footer hint bar", () => {
-    expect(classifyFooter("Enter to select · ↑/↓ to navigate · Esc to cancel")).toBe("select");
-    expect(classifyFooter("Enter to confirm · Esc to cancel")).toBe("trust");
-    expect(classifyFooter("Esc to cancel · Tab to amend")).toBe("permission");
-    expect(classifyFooter("Esc to cancel · Tab to amend · ctrl+e to explain")).toBe("permission");
-    expect(classifyFooter("ctrl+g to edit in  nano  · ~/.claude/plans/velvet-toasting-turtle.md")).toBe("plan");
+    expect(classifyFooter("Enter to select · ↑/↓ to navigate · Esc to cancel", [])).toBe("select");
+    expect(classifyFooter("Esc to cancel · Tab to amend", [])).toBe("permission");
+    expect(classifyFooter("Esc to cancel · Tab to amend · ctrl+e to explain", [])).toBe("permission");
+    const plan = fixtureTexts("claude--plan-approval.txt");
+    expect(classifyFooter("ctrl+g to edit in  nano  · ~/.claude/plans/velvet-toasting-turtle.md", plan)).toBe("plan");
+  });
+
+  // The plan arm needs the dialog too: Claude Code 2.1.291 prints "ctrl+g to edit in nano" under any
+  // multi-line draft, and a `plan` claim there took the input box away from every send (ADR 0053).
+  it("refuses plan for the ctrl+g hint or a plan path with no plan dialog around it", () => {
+    expect(classifyFooter("ctrl+g to edit in  nano  · ~/.claude/plans/velvet-toasting-turtle.md", [])).toBeNull();
+    for (const name of [
+      "claude-lab--draft-adversarial--w40.txt",
+      "claude-lab--draft-adversarial--w82.txt",
+      "claude-lab--draft-adversarial--w120.txt",
+    ]) {
+      const texts = fixtureTexts(name);
+      const hintRow = texts.find((t) => t.includes("ctrl+g to edit"))!;
+      expect(classifyFooter(hintRow, texts), name).toBeNull();
+    }
+  });
+
+  // The trust arm is the one family a footer line cannot settle on its own: "Enter to confirm" is
+  // ordinary Claude wording, and `menu.ts` reads a family claim as "a specific grammar owns this
+  // screen" (ADR 0053). So the claim needs the dialog, not the phrase.
+  it("claims trust when the trust dialog's own words are on screen", () => {
+    const texts = fixtureTexts("claude--trust-prompt.txt");
+    expect(classifyFooter("Enter to confirm · Esc to cancel", texts)).toBe("trust");
+  });
+
+  it("refuses trust for the same footer with no trust dialog around it", () => {
+    expect(classifyFooter("Enter to confirm · Esc to cancel", [])).not.toBe("trust");
+    const slider = fixtureTexts("claude--menu-effort-slider.txt");
+    expect(classifyFooter(slider.at(-1)!, slider)).not.toBe("trust");
+    expect(classifyFooter("Enter to confirm · Esc to cancel", ["some prose", "❯ 1. Yes", "  2. No"])).not.toBe(
+      "trust",
+    );
   });
 
   it("returns null for a non-footer line (statusline / hint / prose)", () => {
-    expect(classifyFooter("⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents")).toBeNull();
-    expect(classifyFooter("← for agents")).toBeNull();
-    expect(classifyFooter("Do you want to proceed?")).toBeNull();
+    expect(classifyFooter("⏵⏵ bypass permissions on (shift+tab to cycle) · ← for agents", [])).toBeNull();
+    expect(classifyFooter("← for agents", [])).toBeNull();
+    expect(classifyFooter("Do you want to proceed?", [])).toBeNull();
   });
 });
 

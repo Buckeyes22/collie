@@ -2,6 +2,8 @@ package com.lateapex.collie.ui
 
 import android.net.Uri
 import com.lateapex.collie.domain.Scope
+import com.lateapex.collie.domain.CollieOrigin
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.util.Locale
 
 sealed interface CollieDeepLink {
@@ -17,9 +19,18 @@ sealed interface CollieDeepLink {
     data class Home(val scope: Scope) : CollieDeepLink
 
     companion object {
-        fun parse(uri: Uri?, allowedHost: String): CollieDeepLink? {
-            if (uri == null || uri.scheme != "https" || !uri.host.equals(allowedHost, ignoreCase = true)) return null
-            val segments = uri.pathSegments
+        fun parse(uri: Uri?, allowedHost: String): CollieDeepLink? =
+            parse(uri, CollieOrigin("https://$allowedHost/"))
+
+        fun parse(uri: Uri?, origin: CollieOrigin): CollieDeepLink? {
+            val base = origin.value.toHttpUrlOrNull() ?: return null
+            val link = uri?.toString()?.toHttpUrlOrNull() ?: return null
+            if (link.scheme != base.scheme || link.host != base.host || link.port != base.port ||
+                link.username.isNotEmpty() || link.password.isNotEmpty()
+            ) return null
+            val mount = base.encodedPath.trimEnd('/')
+            if (mount.isNotEmpty() && link.encodedPath != mount && !link.encodedPath.startsWith("$mount/")) return null
+            val segments = uri.pathSegments.drop(base.pathSegments.count { it.isNotEmpty() })
             val scope = runCatching {
                 Scope(
                     host = uri.getQueryParameter("h")?.takeIf(String::isNotBlank),

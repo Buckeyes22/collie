@@ -49,6 +49,7 @@
 
 import { declareCapabilities } from "../capabilities.ts";
 import { TMUX_LOGO_SVG } from "./logo.ts";
+import { isUnnamedTab } from "../../pane-name.ts";
 import type { MuxAdapterFactory, MuxTarget } from "../registry.ts";
 import {
   muxAck,
@@ -57,6 +58,7 @@ import {
   muxRefused,
   muxUnsupported,
   muxUnreachable,
+  requestedCwd,
   type MuxAck,
   type MuxAdapter,
   type MuxCreatedPane,
@@ -65,6 +67,7 @@ import {
   type MuxOutcome,
   type MuxPane,
   type MuxRefusalOutcome,
+  type MuxSession,
   type MuxSnapshot,
   type MuxSpace,
   type MuxSpaceRequest,
@@ -86,6 +89,7 @@ import {
   type TmuxExec,
   type TmuxRunResult,
 } from "./exec.ts";
+import { EXTENDED_ONLY_CHORDS } from "../keys.ts";
 import { toTmuxKey, TMUX_UNSENDABLE_KEYS } from "./keys.ts";
 import { tmuxBeaconMatcher } from "./markers.ts";
 import {
@@ -164,9 +168,10 @@ const REVISION_VARIANTS = 32;
  * Everything else is claimed because a probe ran it on tmux 3.6b: `capture-pane -p -e` returned SGR
  * and nothing else, `-S -N` reached 51 lines behind a 24-line viewport, `send-keys` typed and
  * chorded, `select-pane -T` set and cleared a label, `kill-pane` / `kill-window` / `new-window -P` /
- * `new-session -P` / `rename-window` all answered, and control mode streamed. `unsupportedKeys` is
- * EMPTY and that is a finding, not an omission: tmux sends every key in the contract's alphabet,
- * including the six Herdr refuses (keys.ts).
+ * `new-session -P` / `rename-window` all answered, and control mode streamed. `unsupportedKeys` holds
+ * no NAMED key, and that is a finding, not an omission: tmux sends every key in the contract's
+ * alphabet, including the six Herdr refuses (keys.ts). It holds `ctrl+Enter`, which tmux delivers
+ * as a plain Enter (keys.ts header).
  */
 const TMUX_CAPABILITIES = declareCapabilities({
   supports: [
@@ -184,12 +189,13 @@ const TMUX_CAPABILITIES = declareCapabilities({
     "pushTopologyEvents",
     "pushPaneEvents",
   ],
-  unsupportedKeys: TMUX_UNSENDABLE_KEYS,
+  unsupportedKeys: [...TMUX_UNSENDABLE_KEYS, ...EXTENDED_ONLY_CHORDS],
   // `push`, and the 5-second resync behind it is a BACKSTOP rather than the bound: control mode
   // announces windows and sessions appearing, closing and being renamed (watch.ts § the two ways).
   // The census exists for the sessions no control client is attached to and for a tmux too old to
   // have control mode at all — stating 5 s here would describe the fallback rather than the promise.
   topologyLatency: { kind: "push" },
+  readLimits: { maxRequestedLines: 10_000 },
   notes: {
     agentDetection:
       "tmux does not know what an agent is. It can say which command is in the foreground, and that is not the same question — so every pane reads as a shell rather than as a guess that would pick the wrong grammar.",
@@ -199,11 +205,13 @@ const TMUX_CAPABILITIES = declareCapabilities({
       "`capture-pane -S` reaches behind the viewport as far as the pane's history-limit allows; a pane on the alternate screen has no history to reach, exactly as on Herdr.",
     createSpace: "A new space is a new tmux session on the same server. It is created detached, so nothing the operator is looking at moves.",
     sendKeys:
-      "tmux sends every key in Collie's alphabet. It has no Super/Command key, so a `meta` chord is refused — tmux's `M-` is Alt, which Collie already spells `alt`.",
+      "tmux sends every key in Collie's alphabet. It has no Super/Command key, so a `meta` chord is refused — tmux's `M-` is Alt, which Collie already spells `alt`. Ctrl+Enter is refused too: tmux delivers it as a plain Enter.",
     pushTopologyEvents:
       "Control mode pushes window and session changes. A bounded 5-second listing backs it up, which is also what keeps the promise on a tmux with no control mode.",
     pushPaneEvents:
       "Control mode pushes `%output` for the panes of each attached session, up to eight sessions; beyond that the same 5-second listing is the floor.",
+    listSessions:
+      "Every session of this tmux server is already a space in this collie, so the only other instance there could be is another SERVER, and tmux has no command that lists servers. Reading the socket directory instead would miss every server started with `-S`, and tmux leaves the socket file behind when a server dies, so a list built that way would front dead servers. A second tmux server is reached by pointing a second collie at it.",
   },
   // One tmux server holds as many sessions as the operator makes, and each one is a Collie space.
   spaces: "many",
@@ -410,9 +418,12 @@ export class TmuxMux implements MuxAdapter {
     for (const key of keys) {
       const result = toTmuxKey(key);
       if (!result.ok) {
+        if (result.reason === "meta") {
+          return muxRefused(`tmux has no Super/Command key, so it cannot send ${key} — its own \`M-\` is Alt, which Collie spells \`alt\``);
+        }
         return muxRefused(
-          result.reason === "meta"
-            ? `tmux has no Super/Command key, so it cannot send ${key} — its own \`M-\` is Alt, which Collie spells \`alt\``
+          result.reason === "extended"
+            ? `tmux delivers ${key} as the plain key without its modifier, so it is refused rather than mis-sent`
             : `not a key: ${key}`,
         );
       }
@@ -488,7 +499,11 @@ export class TmuxMux implements MuxAdapter {
    */
   async createTab(request: MuxTabRequest): Promise<MuxOutcome<MuxCreatedPane>> {
     const args = ["new-window", "-d", "-t", request.spaceId, "-P", "-F", CREATED_FORMAT];
-    if (request.cwd !== undefined) args.push("-c", request.cwd);
+    // A blank `cwd` is "none asked for", never a directory called nothing — the contract's rule,
+    // and tmux would take `-c ""` as a real (and failing) chdir. MUX_CONTRACT.md § Contract-owned
+    // rules, *A blank cwd*.
+    const asked = requestedCwd(request.cwd);
+    if (asked !== undefined) args.push("-c", asked);
     if (request.label !== undefined) args.push("-n", request.label);
     return this.created(args);
   }
@@ -514,7 +529,9 @@ export class TmuxMux implements MuxAdapter {
    * the contract's `refused` with tmux's own sentence.
    */
   async createSpace(request: MuxSpaceRequest): Promise<MuxOutcome<MuxCreatedPane>> {
-    const args = ["new-session", "-d", "-P", "-F", CREATED_FORMAT, "-c", request.cwd];
+    const args = ["new-session", "-d", "-P", "-F", CREATED_FORMAT];
+    const asked = requestedCwd(request.cwd);
+    if (asked !== undefined) args.push("-c", asked);
     if (request.label !== undefined) args.push("-s", request.label);
     return this.created(args);
   }
@@ -542,6 +559,31 @@ export class TmuxMux implements MuxAdapter {
 
 
   /** The contract's watch over control mode plus a bounded listing. All of it lives in watch.ts. */
+  /**
+   * Declined, and the reason is tmux's rather than Collie's.
+   *
+   * The mapping puts a tmux SESSION at Collie's space level (the header), so every session of the
+   * server this adapter addresses is already in one snapshot. What is left over is another tmux
+   * SERVER, and tmux 3.6b has no verb that enumerates them: `tmux list-servers` answers "unknown
+   * command", and `list-sessions` needs a server to ask in the first place. The only enumeration
+   * left is a scan of `$TMUX_TMPDIR`/`/tmp/tmux-<uid>`, and it is wrong twice over, a server
+   * started with `-S /some/path` is not in there at all, and a socket file SURVIVES its server:
+   * probed on 2026-09-08, `tmux -L probe kill-server` left the socket on disk. A list built from
+   * that directory would name dead servers, and every one of them would come up as an unreachable
+   * session on the operator's phone.
+   *
+   * So the answer is the contract's refusal rather than an empty list, because the two mean
+   * different things and only one of them is true here: tmux keeps no such list at all.
+   */
+  listSessions(): Promise<MuxOutcome<readonly MuxSession[]>> {
+    return Promise.resolve(
+      muxUnsupported(
+        "listSessions",
+        "tmux has no command that lists servers, and its socket directory outlives the servers in it, and every session of this server is already a space here",
+      ),
+    );
+  }
+
   watch(options: MuxWatchOptions): MuxSubscription {
     const subscription = new TmuxWatch(this.exec, options);
     this.watches.add(subscription);
@@ -767,22 +809,27 @@ function toSnapshot(listing: TmuxListing, ownLabels: ReadonlyMap<string, string>
   const paneCounts = new Map<string, number>();
   for (const pane of listing.panes) paneCounts.set(pane.sessionId, (paneCounts.get(pane.sessionId) ?? 0) + 1);
 
-  const spaces: MuxSpace[] = listing.sessions.map((session) => ({
-    spaceId: session.id,
-    number: numberById.get(session.id) ?? 0,
-    label: session.name.length > 0 ? session.name : session.id,
-    focused: liveliest?.id === session.id,
-    activeTabId: activeTabBySession.get(session.id) ?? "",
-    tabCount: session.windows,
-    paneCount: paneCounts.get(session.id) ?? 0,
-  }));
+  const spaces: MuxSpace[] = listing.sessions.map((session) => {
+    const space: MutableMuxSpace = {
+      spaceId: session.id,
+      number: numberById.get(session.id) ?? 0,
+      label: session.name.length > 0 ? session.name : session.id,
+      focused: liveliest?.id === session.id,
+      activeTabId: activeTabBySession.get(session.id) ?? "",
+      tabCount: session.windows,
+      paneCount: paneCounts.get(session.id) ?? 0,
+    };
+    // The folder the session was started in. Omitted, never empty, when tmux reports none.
+    if (session.path.length > 0) space.folder = session.path;
+    return space;
+  });
   const tabs: MuxTab[] = listing.windows
     .filter((window) => sessionById.has(window.sessionId))
     .map((window) => ({
       tabId: window.id,
       spaceId: window.sessionId,
       number: window.index,
-      label: window.name,
+      label: windowLabel(window, listing.panes),
       focused: window.active,
       paneCount: window.panes,
     }));
@@ -791,7 +838,7 @@ function toSnapshot(listing: TmuxListing, ownLabels: ReadonlyMap<string, string>
   // are in the snapshot, and a half-listed pane would fail the whole herd's consistency check.
   const panes: MuxPane[] = listing.panes
     .filter((pane) => sessionById.has(pane.sessionId) && windowById.has(pane.windowId))
-    .map((pane) => toMuxPane(pane, sessionById, windowById, numberById, ownLabels));
+    .map((pane) => toMuxPane(pane, sessionById, windowById, numberById, ownLabels, listing.panes));
   return { panes, spaces, tabs };
 }
 
@@ -842,12 +889,17 @@ function clientsToSwitch(listing: TmuxListing, sessionId: string): TmuxClient[] 
 type MutableMuxPane = { -readonly [K in keyof MuxPane]: MuxPane[K] };
 
 /** One tmux pane record as a {@link MuxPane}. */
+
+/** A {@link MuxSpace} while it is being built, so an optional field is set only when present. */
+type MutableMuxSpace = { -readonly [K in keyof MuxSpace]: MuxSpace[K] };
+
 function toMuxPane(
   raw: TmuxPaneRecord,
   sessionById: ReadonlyMap<string, TmuxSession>,
   windowById: ReadonlyMap<string, TmuxWindow>,
   numberById: ReadonlyMap<string, number>,
   ownLabels: ReadonlyMap<string, string>,
+  panes: readonly TmuxPaneRecord[],
 ): MuxPane {
   const session = sessionById.get(raw.sessionId);
   const window = windowById.get(raw.windowId);
@@ -883,8 +935,12 @@ function toMuxPane(
     const printed = programTitle(raw);
     if (printed !== null) pane.terminalTitle = printed;
   }
-  const tabLabel = meaningfulWindowName(window, session);
-  if (tabLabel !== null) pane.tabLabel = tabLabel;
+  const tabLabel = meaningfulWindowName(window, panes);
+  if (tabLabel !== null) {
+    pane.tabLabel = tabLabel;
+    // An automatic window name is reported as the pane's folder, which is not a name anyone chose.
+    if (window !== undefined && !window.autoNamed) pane.tabNamed = true;
+  }
   // What a `recent` read can yield: the history tmux kept, plus the viewport it sits behind. This is
   // the mirror's only reliable "is there more" signal, and tmux reports both halves exactly.
   pane.readableLines = raw.historySize + raw.height;
@@ -911,19 +967,61 @@ function programTitle(raw: TmuxPaneRecord): string | null {
 }
 
 /**
- * A window name worth putting on screen, or null.
+ * The tab strip's own answer to "what is this window called" — tmux's raw `#{window_name}`, made
+ * to say something worth reading.
  *
  * tmux renames a window after whatever runs in it unless the operator turned that off or named it —
- * `#{automatic-rename}` says which. An auto-name in a one-window session is the positional default
- * Herdr's `meaningfulTabLabel` drops for the same reason: it reads as a bug rather than a name. With
- * two or more windows it is kept, because it is the only thing telling two tabs apart.
+ * `#{automatic-rename}` says which. An auto-name is the PROGRAM's name, not a fact about the work:
+ * a screenful of tabs all reading `bash` or `claude` tells the operator nothing they did not already
+ * know, and is exactly the noise a name is supposed to cut through. So an auto-name is never shown —
+ * instead this reports the last folder of the window's ACTIVE PANE's current directory, the same
+ * information an operator reads off a desktop taskbar: not what is running, but what it is for. A
+ * window the operator named (or renamed) keeps that name outright, because it was a deliberate
+ * choice and this function never overrides one. Replaces the old "an auto-name in a one-window
+ * session says nothing" rule, which hid the program name only when there was nothing to disambiguate
+ * — this rule now applies at every window count, because the program name was never the problem;
+ * showing it at all was.
+ *
+ * A PURELY POSITIONAL name — bare digits, `isUnnamedTab`'s one other case — passes through
+ * unfiltered rather than being read as a folder request: the tab strip already shows position by
+ * position, and a name that is only a number carries no folder to substitute in the first place.
+ * The same escape covers the fallback below, when the active pane's directory is empty or unknown:
+ * the window's own index stands in, still a bare number, still read positionally by every caller of
+ * `isUnnamedTab` downstream (`meaningfulWindowName`, `web/src/lib/pane-name.ts`'s `tabTitle`).
  */
-function meaningfulWindowName(window: TmuxWindow | undefined, session: TmuxSession | undefined): string | null {
-  if (window === undefined) return null;
+function windowLabel(window: TmuxWindow, panes: readonly TmuxPaneRecord[]): string {
   const name = window.name.trim();
-  if (name.length === 0) return null;
-  if (window.autoNamed && (session?.windows ?? 0) <= 1) return null;
-  return name;
+  if (!window.autoNamed || isUnnamedTab(name)) return window.name;
+  const active = panes.find((pane) => pane.windowId === window.id && pane.active);
+  return lastFolder(active?.cwd ?? "") ?? String(window.index);
+}
+
+/**
+ * The last path segment of a pane's current directory — `/var/home/altan/playground/herdr-pouch` →
+ * `herdr-pouch`, `/var/home/altan` → `altan`, `/` → `/`. `null` when tmux reported no path at all
+ * (an empty `#{pane_current_path}`, tmux's honest "I don't know").
+ */
+function lastFolder(cwd: string): string | null {
+  const trimmed = cwd.trim();
+  if (trimmed.length === 0) return null;
+  if (trimmed === "/") return "/";
+  const segments = trimmed.split("/").filter((segment) => segment.length > 0);
+  return segments.at(-1) ?? null;
+}
+
+/**
+ * A window name worth putting on {@link MuxPane.tabLabel}, or null for a positional default.
+ *
+ * `windowLabel` above is the raw slot tmux's tab strip shows, including the bare-number fallback a
+ * folder-less auto-name falls back to; this is the filtered view the pane's own `tabLabel` carries,
+ * and the contract says a positional default is ABSENT there rather than spelled out (`../types.ts`
+ * § `MuxPane.tabLabel`) — the web side turns absence, or a raw label that is only a number, into the
+ * same `"tab N"` positional text either way, so nothing is lost by dropping it here.
+ */
+function meaningfulWindowName(window: TmuxWindow | undefined, panes: readonly TmuxPaneRecord[]): string | null {
+  if (window === undefined) return null;
+  const label = windowLabel(window, panes);
+  return isUnnamedTab(label) ? null : label;
 }
 
 /**

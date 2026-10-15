@@ -1,0 +1,151 @@
+import { createHash } from "node:crypto";
+import type { JsonValue } from "../json.ts";
+import type { GateLevel } from "../crew/peer-gate.ts";
+
+/** Closed HTTP vocabulary. Feature owners add concrete entries; no vendor RPC crosses this seam. */
+export const CONTROL_ROUTES = [
+  { name: "host-integrations", method: "GET", pattern: /^\/api\/host\/integrations$/, gate: "read", scope: "host", capability: "integrations", maxBodyBytes: 0 },
+  { name: "host-integration-status", method: "GET", pattern: /^\/api\/host\/integrations\/status$/, gate: "device-read", scope: "host", capability: "integrations", maxBodyBytes: 0 },
+  { name: "host-agent-manifests", method: "GET", pattern: /^\/api\/host\/agent-manifests$/, gate: "device-read", scope: "host", capability: "agentManifests", maxBodyBytes: 0 },
+  { name: "host-plugins", method: "GET", pattern: /^\/api\/host\/plugins$/, gate: "device-read", scope: "host", capability: "plugins", maxBodyBytes: 0 },
+  { name: "host-plugin-actions", method: "GET", pattern: /^\/api\/host\/plugins\/[^/]{1,120}\/actions$/, gate: "device-read", scope: "host", capability: "plugins", maxBodyBytes: 0 },
+  { name: "host-plugin-logs", method: "GET", pattern: /^\/api\/host\/plugins\/[^/]{1,120}\/logs$/, gate: "device-read", scope: "host", capability: "plugins", maxBodyBytes: 0 },
+  { name: "host-plugin-config", method: "GET", pattern: /^\/api\/host\/plugins\/[^/]{1,120}\/config$/, gate: "device-read", scope: "host", capability: "plugins", maxBodyBytes: 0 },
+  { name: "host-plugin-write", method: "POST", pattern: /^\/api\/host\/plugins\/[^/]{1,120}\/(?:enable|disable|unlink|actions\/[^/]{1,120}\/invoke|panes\/open|panes\/[^/]{1,128}\/focus|panes\/[^/]{1,128}\/close)$/, gate: "write", scope: "host", capability: "plugins", maxBodyBytes: 16 * 1024 },
+  { name: "host-plugin-config-prepare-plan", method: "POST", pattern: /^\/api\/host\/plugins\/[^/]{1,120}\/config\/prepare\/plan$/, gate: "device-read", scope: "host", capability: "plugins", maxBodyBytes: 0 },
+  { name: "host-plugin-config-prepare", method: "POST", pattern: /^\/api\/host\/plugins\/[^/]{1,120}\/config\/prepare$/, gate: "write", scope: "host", capability: "plugins", maxBodyBytes: 8 * 1024 },
+  { name: "host-plugin-config-plan", method: "POST", pattern: /^\/api\/host\/plugins\/[^/]{1,120}\/config\/plan$/, gate: "device-read", scope: "host", capability: "configuration", maxBodyBytes: 80 * 1024 },
+  { name: "host-plugin-config-apply", method: "POST", pattern: /^\/api\/host\/plugins\/[^/]{1,120}\/config\/apply$/, gate: "write", scope: "host", capability: "configuration", maxBodyBytes: 80 * 1024 },
+  { name: "host-plugin-link-selections", method: "GET", pattern: /^\/api\/host\/plugins\/link\/selections$/, gate: "device-read", scope: "host", capability: "pluginOwnerOperations", maxBodyBytes: 0 },
+  { name: "host-plugin-install-plan", method: "POST", pattern: /^\/api\/host\/plugins\/install\/plan$/, gate: "device-read", scope: "host", capability: "pluginOwnerOperations", maxBodyBytes: 16 * 1024 },
+  { name: "host-plugin-install", method: "POST", pattern: /^\/api\/host\/plugins\/install$/, gate: "write", scope: "host", capability: "pluginOwnerOperations", maxBodyBytes: 16 * 1024 },
+  { name: "host-plugin-link-plan", method: "POST", pattern: /^\/api\/host\/plugins\/link\/plan$/, gate: "device-read", scope: "host", capability: "pluginOwnerOperations", maxBodyBytes: 8 * 1024 },
+  { name: "host-plugin-link", method: "POST", pattern: /^\/api\/host\/plugins\/link$/, gate: "write", scope: "host", capability: "pluginOwnerOperations", maxBodyBytes: 8 * 1024 },
+  { name: "host-plugin-uninstall-plan", method: "POST", pattern: /^\/api\/host\/plugins\/[^/]{1,120}\/uninstall\/plan$/, gate: "device-read", scope: "host", capability: "pluginOwnerOperations", maxBodyBytes: 0 },
+  { name: "host-plugin-uninstall", method: "POST", pattern: /^\/api\/host\/plugins\/[^/]{1,120}\/uninstall$/, gate: "write", scope: "host", capability: "pluginOwnerOperations", maxBodyBytes: 8 * 1024 },
+  { name: "host-plugin-owner-operation", method: "GET", pattern: /^\/api\/host\/plugins\/operations\/[A-Za-z0-9_-]{1,128}$/, gate: "device-read", scope: "host", capability: "pluginOwnerOperations", maxBodyBytes: 0 },
+  { name: "host-letta-plan", method: "POST", pattern: /^\/api\/host\/integrations\/letta\/(?:install|uninstall)\/plan$/, gate: "read", scope: "host", capability: "experimentalLettaIntegration", maxBodyBytes: 0 },
+  { name: "host-letta-write", method: "POST", pattern: /^\/api\/host\/integrations\/letta\/(?:install|uninstall)$/, gate: "write", scope: "host", capability: "experimentalLettaIntegration", maxBodyBytes: 8 * 1024 },
+  { name: "host-integration-plan", method: "POST", pattern: /^\/api\/host\/integrations\/(?!letta\/)(?:[a-z_]+)\/(?:install|uninstall)\/plan$/, gate: "read", scope: "host", capability: "integrations", maxBodyBytes: 0 },
+  { name: "host-integration-write", method: "POST", pattern: /^\/api\/host\/integrations\/(?!letta\/)(?:[a-z_]+)\/(?:install|uninstall)$/, gate: "write", scope: "host", capability: "integrations", maxBodyBytes: 8 * 1024 },
+  { name: "host-manifest-reload-plan", method: "POST", pattern: /^\/api\/host\/agent-manifests\/reload\/plan$/, gate: "read", scope: "host", capability: "manifestReload", maxBodyBytes: 0 },
+  { name: "host-manifest-reload", method: "POST", pattern: /^\/api\/host\/agent-manifests\/reload$/, gate: "write", scope: "host", capability: "manifestReload", maxBodyBytes: 8 * 1024 },
+  { name: "host-manifest-refresh-plan", method: "POST", pattern: /^\/api\/host\/agent-manifests\/refresh\/plan$/, gate: "read", scope: "host", capability: "manifestRefresh", maxBodyBytes: 0 },
+  { name: "host-manifest-refresh", method: "POST", pattern: /^\/api\/host\/agent-manifests\/refresh$/, gate: "write", scope: "host", capability: "manifestRefresh", maxBodyBytes: 8 * 1024 },
+  { name: "host-agent-view-read", method: "GET", pattern: /^\/api\/host\/agent-view$/, gate: "device-read", scope: "host", capability: "agentViews", maxBodyBytes: 0 },
+  { name: "host-agent-view-set", method: "POST", pattern: /^\/api\/host\/agent-view$/, gate: "write", scope: "host", capability: "agentViews", maxBodyBytes: 16 * 1024 },
+  { name: "host-agent-view-clear", method: "DELETE", pattern: /^\/api\/host\/agent-view$/, gate: "write", scope: "host", capability: "agentViews", maxBodyBytes: 16 * 1024 },
+  { name: "pane-metadata-read", method: "GET", pattern: /^\/api\/pane\/[^/]{1,128}\/metadata$/, gate: "device-read", scope: "session", capability: "agentMetadata", maxBodyBytes: 0 },
+  { name: "pane-metadata-report", method: "POST", pattern: /^\/api\/pane\/[^/]{1,128}\/metadata$/, gate: "write", scope: "session", capability: "agentMetadata", maxBodyBytes: 16 * 1024 },
+  { name: "workspace-metadata-read", method: "GET", pattern: /^\/api\/workspace\/[^/]{1,128}\/metadata$/, gate: "device-read", scope: "session", capability: "agentMetadata", maxBodyBytes: 0 },
+  { name: "workspace-metadata-report", method: "POST", pattern: /^\/api\/workspace\/[^/]{1,128}\/metadata$/, gate: "write", scope: "session", capability: "agentMetadata", maxBodyBytes: 16 * 1024 },
+  { name: "paneProcesses", method: "GET", pattern: /^\/api\/pane\/[^/]+\/processes$/, gate: "device-read", scope: "session", capability: "paneProcesses", maxBodyBytes: 0 },
+  { name: "agentIdentity", method: "GET", pattern: /^\/api\/pane\/[^/]+\/agent$/, gate: "device-read", scope: "session", capability: "agentIdentity", maxBodyBytes: 0 },
+  { name: "namedAgents", method: "GET", pattern: /^\/api\/agents\/named$/, gate: "device-read", scope: "session", capability: "agentAutomation", maxBodyBytes: 0 },
+  { name: "namedAgentRead", method: "GET", pattern: /^\/api\/pane\/[^/]+\/agent\/read$/, gate: "device-read", scope: "session", capability: "agentAutomation", maxBodyBytes: 0 },
+  ...(["focus", "keys", "input"] as const).map((verb) => ({ name: `namedAgent${verb}`, method: "POST" as const, pattern: new RegExp(`^/api/pane/[^/]+/agent/${verb}$`), gate: "write" as const, scope: "session" as const, capability: "agentAutomation", maxBodyBytes: 32 * 1024 })),
+  { name: "agentControl", method: "GET", pattern: /^\/api\/pane\/[^/]+\/agent\/control$/, gate: "device-read", scope: "session", capability: "agentAutomation", maxBodyBytes: 0 },
+  { name: "agentExplain", method: "GET", pattern: /^\/api\/pane\/[^/]+\/agent\/explain$/, gate: "device-read", scope: "session", capability: "agentAutomation", maxBodyBytes: 0 },
+  { name: "agentStart", method: "POST", pattern: /^\/api\/pane\/[^/]+\/agent\/start$/, gate: "write", scope: "session", capability: "agentAutomation", maxBodyBytes: 32 * 1024 },
+  { name: "agentRename", method: "POST", pattern: /^\/api\/pane\/[^/]+\/agent\/rename$/, gate: "write", scope: "session", capability: "agentAutomation", maxBodyBytes: 32 * 1024 },
+  { name: "agentPrompt", method: "POST", pattern: /^\/api\/pane\/[^/]+\/agent\/prompt$/, gate: "write", scope: "session", capability: "agentAutomation", maxBodyBytes: 32 * 1024 },
+  { name: "waitStart", method: "POST", pattern: /^\/api\/waits$/, gate: "device-read", scope: "session", capability: "agentWaits", maxBodyBytes: 32 * 1024 },
+  { name: "waitRead", method: "GET", pattern: /^\/api\/waits\/[A-Za-z0-9_-]{1,128}$/, gate: "device-read", scope: "session", capability: "agentWaits", maxBodyBytes: 0 },
+  { name: "waitCancel", method: "DELETE", pattern: /^\/api\/waits\/[A-Za-z0-9_-]{1,128}$/, gate: "device-read", scope: "session", capability: "agentWaits", maxBodyBytes: 0 },
+  { name: "agentState", method: "POST", pattern: /^\/api\/pane\/[^/]+\/agent\/state$/, gate: "write", scope: "session", capability: "agentLifecycleWrites", maxBodyBytes: 16 * 1024 },
+  { name: "agentSession", method: "POST", pattern: /^\/api\/pane\/[^/]+\/agent\/session$/, gate: "write", scope: "session", capability: "agentLifecycleWrites", maxBodyBytes: 16 * 1024 },
+  { name: "agentRelease", method: "POST", pattern: /^\/api\/pane\/[^/]+\/agent\/release$/, gate: "write", scope: "session", capability: "agentLifecycleWrites", maxBodyBytes: 16 * 1024 },
+  { name: "agentAuthorityClear", method: "POST", pattern: /^\/api\/pane\/[^/]+\/agent\/authority\/clear$/, gate: "write", scope: "session", capability: "agentLifecycleWrites", maxBodyBytes: 16 * 1024 },
+  { name: "refresh", method: "POST", pattern: /^\/api\/refresh$/, gate: "read", scope: "session", capability: null, maxBodyBytes: 0 },
+  { name: "operation", method: "GET", pattern: /^\/api\/control\/operations\/([a-zA-Z0-9_-]{1,128})$/, gate: "read", scope: "session", capability: "controlOperations", maxBodyBytes: 0 },
+  { name: "worktree-remove-plan", method: "GET", pattern: /^\/api\/workspace\/[^/]{1,256}\/worktree\/remove-plan$/, gate: "read", scope: "session", capability: "worktreeRemove", maxBodyBytes: 0 },
+  { name: "worktree-remove", method: "POST", pattern: /^\/api\/workspace\/[^/]{1,256}\/worktree\/remove$/, gate: "write", scope: "session", capability: "worktreeRemove", maxBodyBytes: 8 * 1024 },
+  { name: "pane-layout", method: "GET", pattern: /^\/api\/pane\/([^/]{1,256})\/layout$/, gate: "read", scope: "session", capability: "paneLayout", maxBodyBytes: 0 },
+  { name: "pane-neighbor", method: "GET", pattern: /^\/api\/pane\/([^/]{1,256})\/layout\/neighbor$/, gate: "read", scope: "session", capability: "paneLayout", maxBodyBytes: 0 },
+  { name: "pane-edges", method: "GET", pattern: /^\/api\/pane\/([^/]{1,256})\/layout\/edges$/, gate: "read", scope: "session", capability: "paneLayout", maxBodyBytes: 0 },
+  { name: "pane-layout-plan", method: "POST", pattern: /^\/api\/pane\/([^/]{1,256})\/layout\/plan$/, gate: "read", scope: "session", capability: "paneLayout", maxBodyBytes: 16 * 1024 },
+  { name: "tab-transfer-plan", method: "POST", pattern: /^\/api\/tab\/([^/]{1,256})\/transfer\/plan$/, gate: "read", scope: "session", capability: "tabTransfer", maxBodyBytes: 16 * 1024 },
+  { name: "layout-export", method: "GET", pattern: /^\/api\/tab\/([^/]{1,256})\/layout\/export$/, gate: "device-read", scope: "session", capability: "portableLayouts", maxBodyBytes: 0 },
+  { name: "layout-recipes-plan", method: "POST", pattern: /^\/api\/layout\/plan$/, gate: "device-read", scope: "session", capability: "portableLayouts", maxBodyBytes: 64 * 1024 },
+  { name: "layout-apply", method: "POST", pattern: /^\/api\/layout\/apply$/, gate: "write", scope: "session", capability: "portableLayouts", maxBodyBytes: 64 * 1024 },
+  { name: "layout-split-ratio", method: "POST", pattern: /^\/api\/tab\/([^/]{1,256})\/layout\/split-ratio$/, gate: "write", scope: "session", capability: "portableLayouts", maxBodyBytes: 16 * 1024 },
+  { name: "pane-layout-split", method: "POST", pattern: /^\/api\/pane\/([^/]{1,256})\/layout\/split$/, gate: "write", scope: "session", capability: "paneSplit", maxBodyBytes: 16 * 1024 },
+  { name: "pane-layout-resize", method: "POST", pattern: /^\/api\/pane\/([^/]{1,256})\/layout\/resize$/, gate: "write", scope: "session", capability: "paneResize", maxBodyBytes: 16 * 1024 },
+  { name: "pane-layout-zoom", method: "POST", pattern: /^\/api\/pane\/([^/]{1,256})\/layout\/zoom$/, gate: "write", scope: "session", capability: "paneZoom", maxBodyBytes: 16 * 1024 },
+  { name: "pane-layout-swap", method: "POST", pattern: /^\/api\/pane\/([^/]{1,256})\/layout\/swap$/, gate: "write", scope: "session", capability: "paneSwap", maxBodyBytes: 16 * 1024 },
+  { name: "pane-layout-move", method: "POST", pattern: /^\/api\/pane\/([^/]{1,256})\/layout\/move$/, gate: "write", scope: "session", capability: "paneMove", maxBodyBytes: 16 * 1024 },
+  { name: "pane-layout-focus-direction", method: "POST", pattern: /^\/api\/pane\/([^/]{1,256})\/layout\/focus-direction$/, gate: "write", scope: "session", capability: "paneDirectionalFocus", maxBodyBytes: 16 * 1024 },
+  { name: "workspace-rename", method: "POST", pattern: /^\/api\/workspace\/([^/]{1,256})\/rename$/, gate: "write", scope: "session", capability: "workspaceRename", maxBodyBytes: 8 * 1024 },
+  { name: "workspace-close-plan", method: "POST", pattern: /^\/api\/workspace\/([^/]{1,256})\/close\/plan$/, gate: "read", scope: "session", capability: "workspaceClose", maxBodyBytes: 8 * 1024 },
+  { name: "workspace-rename-plan", method: "POST", pattern: /^\/api\/workspace\/([^/]{1,256})\/rename\/plan$/, gate: "read", scope: "session", capability: "workspaceRename", maxBodyBytes: 8 * 1024 },
+  { name: "workspace-close", method: "POST", pattern: /^\/api\/workspace\/([^/]{1,256})\/close$/, gate: "write", scope: "session", capability: "workspaceClose", maxBodyBytes: 8 * 1024 },
+  { name: "workspace-move-plan", method: "POST", pattern: /^\/api\/workspace\/([^/]{1,256})\/move\/plan$/, gate: "read", scope: "session", capability: "workspaceMove", maxBodyBytes: 8 * 1024 },
+  { name: "workspace-move", method: "POST", pattern: /^\/api\/workspace\/([^/]{1,256})\/move$/, gate: "write", scope: "session", capability: "workspaceMove", maxBodyBytes: 8 * 1024 },
+  { name: "workspace-reorder-plan", method: "POST", pattern: /^\/api\/workspaces\/reorder\/plan$/, gate: "read", scope: "session", capability: "workspaceMoveBlock", maxBodyBytes: 8 * 1024 },
+  { name: "workspace-reorder", method: "POST", pattern: /^\/api\/workspaces\/reorder$/, gate: "write", scope: "session", capability: "workspaceMoveBlock", maxBodyBytes: 8 * 1024 },
+  { name: "workspace-focus-plan", method: "POST", pattern: /^\/api\/workspace\/([^/]{1,256})\/focus\/plan$/, gate: "read", scope: "session", capability: "workspaceFocus", maxBodyBytes: 8 * 1024 },
+  { name: "workspace-focus", method: "POST", pattern: /^\/api\/workspace\/([^/]{1,256})\/focus$/, gate: "write", scope: "session", capability: "workspaceFocus", maxBodyBytes: 8 * 1024 },
+  { name: "tab-move", method: "POST", pattern: /^\/api\/tab\/([^/]{1,256})\/move$/, gate: "write", scope: "session", capability: "tabMove", maxBodyBytes: 8 * 1024 },
+  { name: "tab-move-plan", method: "POST", pattern: /^\/api\/tab\/([^/]{1,256})\/move\/plan$/, gate: "read", scope: "session", capability: "tabMove", maxBodyBytes: 8 * 1024 },
+  { name: "tab-focus-plan", method: "POST", pattern: /^\/api\/tab\/([^/]{1,256})\/focus\/plan$/, gate: "read", scope: "session", capability: "tabFocus", maxBodyBytes: 8 * 1024 },
+  { name: "tab-rename-plan", method: "POST", pattern: /^\/api\/tab\/([^/]{1,256})\/rename\/plan$/, gate: "read", scope: "session", capability: "renameTab", maxBodyBytes: 8 * 1024 },
+  { name: "tab-close-plan", method: "POST", pattern: /^\/api\/tab\/([^/]{1,256})\/close\/plan$/, gate: "read", scope: "session", capability: "closeTab", maxBodyBytes: 8 * 1024 },
+  { name: "tab-rename", method: "POST", pattern: /^\/api\/tab\/([^/]{1,256})\/rename$/, gate: "write", scope: "session", capability: "renameTab", maxBodyBytes: 8 * 1024 },
+  { name: "tab-close", method: "POST", pattern: /^\/api\/tab\/([^/]{1,256})\/close$/, gate: "write", scope: "session", capability: "closeTab", maxBodyBytes: 8 * 1024 },
+  { name: "tab-focus", method: "POST", pattern: /^\/api\/tab\/([^/]{1,256})\/focus$/, gate: "write", scope: "session", capability: "tabFocus", maxBodyBytes: 8 * 1024 },
+  { name: "worktree-remove-plan", method: "GET", pattern: /^\/api\/workspace\/([^/]{1,128})\/worktree\/remove-plan$/, gate: "read", scope: "session", capability: "worktreeRemove", maxBodyBytes: 0 },
+  { name: "worktree-remove", method: "POST", pattern: /^\/api\/workspace\/([^/]{1,128})\/worktree\/remove$/, gate: "write", scope: "session", capability: "worktreeRemove", maxBodyBytes: 8 * 1024 },
+] as const;
+export type ControlRoute = (typeof CONTROL_ROUTES)[number];
+export type ControlScope = { readonly host: string | null; readonly session: string | null };
+export type FailureSource = "collie" | "gateway" | "unknown";
+export type FailureFactor = "pairing" | "identity" | "device" | "scope" | "capability" | "operation" | "unknown";
+export interface ControlRefusal {
+  readonly ok: false;
+  readonly code: string;
+  readonly error: string;
+  readonly source: FailureSource;
+  readonly factor: FailureFactor;
+}
+export const CONTROL_LIMITS = { bodyBytes: 64 * 1024, identityChars: 256, planTtlMs: 60_000, receiptCount: 2048 } as const;
+
+export function controlRoute(path: string, method: string): ControlRoute | null {
+  return CONTROL_ROUTES.find((route) => route.method === method && route.pattern.test(path)) ?? null;
+}
+export function controlGate(path: string, method: string): GateLevel | null {
+  return controlRoute(path, method)?.gate ?? null;
+}
+/** Reject duplicated/irrelevant selectors before resolving any host or runtime. */
+export function controlScope(url: URL, kind: "session" | "host"): ControlScope | null {
+  if (url.searchParams.has("sessions") || (kind === "host" && url.searchParams.has("session"))) return null;
+  for (const name of ["host", "session"]) {
+    const values = url.searchParams.getAll(name);
+    if (values.length > 1 || values.some((v) => !v.trim() || v.length > CONTROL_LIMITS.identityChars || Array.from(v).some((char) => char.charCodeAt(0) < 32))) return null;
+  }
+  return { host: url.searchParams.get("host"), session: url.searchParams.get("session") };
+}
+export function supportsNew(capabilities: Readonly<Record<string, boolean>> | null | undefined, name: string): boolean {
+  return capabilities?.[name] === true;
+}
+/** Canonical JSON; key insertion order cannot turn one intent into a different intent. */
+export function canonicalPayload(value: JsonValue): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalPayload).join(",")}]`;
+  // Canonical JSON dispatch is itself the parser boundary for this recursive union.
+  // eslint-disable-next-line anti-slop/no-runtime-typeof
+  if (value !== null && typeof value === "object") {
+    return `{${Object.keys(value).toSorted().map((key) => `${JSON.stringify(key)}:${canonicalPayload(value[key] ?? null)}`).join(",")}}`;
+  }
+  // Reject invalid JSON numbers at the hashing boundary.
+  // eslint-disable-next-line anti-slop/no-runtime-typeof
+  if (typeof value === "number" && !Number.isFinite(value)) throw new Error("non-finite payload");
+  return JSON.stringify(value);
+}
+export function payloadHash(value: JsonValue): string {
+  return createHash("sha256").update(canonicalPayload(value)).digest("hex");
+}
+export function refusal(code: string, error: string, factor: FailureFactor): ControlRefusal {
+  return { ok: false, code, error, source: "collie", factor };
+}
+export function refusalResponse(value: ControlRefusal, status: number): Response {
+  return Response.json(value, { status, headers: { "cache-control": "no-store", "x-collie-error-source": value.source, "x-collie-error-factor": value.factor, "x-collie-error-code": value.code } });
+}

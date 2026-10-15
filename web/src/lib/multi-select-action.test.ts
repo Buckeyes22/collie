@@ -9,10 +9,50 @@ vi.mock("./api", () => ({
   sendKeys: vi.fn(),
 }));
 
+// A harness that declares its submit keys as data (opencode's `question` tool shape). It re-uses
+// Claude's grammar for the screens and adds the declared plans on top, so the guard re-derives
+// through a real detector and the declared fields ride every derivation, exactly as an adapter that
+// emits them would. Every other agent resolves through the real registry.
+const keysHarness = vi.hoisted(() => {
+  const agent = "keys-harness";
+  const declare = (m: import("./blocks").MultiSelectModel): import("./blocks").MultiSelectModel =>
+    m.phase === "checkbox"
+      ? { ...m, advanceKeys: ["Tab"] }
+      : {
+          ...m,
+          submit: "keys",
+          submitKeys: ["Enter"],
+          cancelKeys: ["Escape"],
+          backKeys: ["Left"],
+          answers: [{ question: "Toppings", answer: "Cheese, Olives" }],
+        };
+  return { agent, declare };
+});
+vi.mock("./harness/registry", async (importOriginal) => {
+  const real = await importOriginal<typeof import("./harness/registry")>();
+  return {
+    ...real,
+    adapterFor: (agent: string | undefined) => {
+      if (agent !== keysHarness.agent) return real.adapterFor(agent);
+      const claude = real.adapterFor("claude")!;
+      return {
+        ...claude,
+        agent: keysHarness.agent,
+        buildBlocks: (lines: import("./blocks").StyledLine[]) => {
+          const blocks = claude.buildBlocks(lines);
+          for (const b of blocks) if (b.kind === "multi-select") b.multi = keysHarness.declare(b.multi);
+          return blocks;
+        },
+      };
+    },
+  };
+});
+
 import { fetchPane, sendKeys } from "./api";
 import { parseAnsi } from "./ansi";
 import { splitLines, type MultiSelectModel } from "./blocks";
 import { detectMultiSelect } from "./harness/claude/multi-select";
+import { detectCheckbox } from "./harness/muse/checkbox";
 import {
   multiSelectEquals,
   multiSelectIdentity,
@@ -394,8 +434,10 @@ describe("multiSelectEquals / multiSelectIdentity — wizard step identity", () 
     ],
     escape: { n: 3, label: "Chat about this" },
     pointer: "option",
+    pointerRow: null,
     steps: chips,
     advanceLabel: "Next",
+    toggle: "digit",
     // Deliberately IDENTICAL: this is what the normalisation leaves behind for two steps of one
     // wizard whose questions and options happen to read the same.
     signature: "same",
@@ -427,5 +469,359 @@ describe("multiSelectEquals / multiSelectIdentity — wizard step identity", () 
     // because a spread of a discriminated union widens the discriminant.
     const onSubmit = { ...q1, advanceLabel: "Submit" } as MultiSelectModel;
     expect(multiSelectEquals(q1, onSubmit)).toBe(false);
+  });
+});
+
+// Pointer-mode choreography (Muse): a digit merely MOVES the pointer, Enter toggles (checkbox) or
+// submits (review), and review swallows digits entirely — so toggle is digit-jump + verified Enter
+// and review submit/cancel is a verified pointer walk + a freshly-bound Enter. The buffers below are
+// synthetic plain-text screens in the verified Muse layout; the detector is the real thing.
+
+type MusePointer = number | "submit" | "none";
+
+function museCheckboxBuffer(
+  opts: { pointer?: MusePointer; checked?: number[]; question?: string } = {},
+): string {
+  const pointer = opts.pointer ?? 1;
+  const checked = new Set(opts.checked ?? []);
+  const labels = ["Cheese", "Pepperoni", "Mushrooms"];
+  const optRows = labels.map((label, i) => {
+    const n = i + 1;
+    const box = checked.has(n) ? "[x]" : "[ ]";
+    const ptr = pointer === n ? "› " : "  ";
+    return `  ${ptr}${n}. ${box} ${label}`;
+  });
+  const submitRow = `  ${pointer === "submit" ? "› " : "  "}4. Submit answer (${checked.size} checked)`;
+  return [
+    "◇ Request user input Toppings — running (3s)",
+    "",
+    opts.question ?? "Which pizza toppings do you want?",
+    "",
+    ...optRows,
+    submitRow,
+    "",
+    "  Enter to toggle · Submit row to continue · ↑/↓ to move · Tab for an optional note · Esc to",
+    "  interrupt",
+    "",
+    "── Voice input (⌥ + v to start) ──",
+    "❯",
+    "─".repeat(80),
+    "  muse-spark-1.3 · max · /tmp/x · YOLO",
+  ].join("\n");
+}
+
+function museReviewBuffer(opts: { pointer?: "submit" | "cancel" | "none" } = {}): string {
+  const pointer = opts.pointer ?? "submit";
+  const submitRow = `  ${pointer === "submit" ? "> " : "  "}Submit answers`;
+  const cancelRow = `  ${pointer === "cancel" ? "> " : "  "}Interrupt turn`;
+  return [
+    "◇ Request user input Toppings — running (3s)",
+    "",
+    "  Review answers before submit · Enter to edit or submit · ↑/↓ to move · Esc to go back",
+    "    Toppings: Cheese",
+    submitRow,
+    cancelRow,
+    "",
+    "── Voice input (⌥ + v to start) ──",
+    "❯",
+    "─".repeat(80),
+    "  muse-spark-1.3 · max · /tmp/x · YOLO",
+  ].join("\n");
+}
+
+function museIdleBuffer(): string {
+  return [
+    "  Muse Code 1.3.0",
+    "",
+    "── Voice input (⌥ + v to start) ──",
+    "❯",
+    "─".repeat(80),
+    "  muse-spark-1.3 · max · /tmp/x · YOLO",
+  ].join("\n");
+}
+
+function museModel(text: string): MultiSelectModel {
+  const m = detectCheckbox(splitLines(parseAnsi(text)));
+  if (!m) throw new Error("synthetic Muse buffer did not detect a multi-select dialog");
+  return m;
+}
+
+const museBase = { ...base, agent: "muse" };
+// SAFETY: sendKeys(paneId, keys, scope, expectedPrompt?) — the 4th mock call arg is the region
+// binding when the write carried one, undefined when unbound. The cast names that contract; the
+// tests assert bound regions where the recipe requires them, so an undefined fails loudly.
+const regionsSent = () => mockSendKeys.mock.calls.map((c) => c[3] as string | undefined);
+
+describe("pointer mode — toggle macro (digit-jump + verified Enter)", () => {
+  it("jumps the pointer with the digit, then Enters on the verified row", async () => {
+    const s1 = museCheckboxBuffer({ pointer: 1 });
+    const s2 = museCheckboxBuffer({ pointer: 2 });
+    const m = museModel(s1);
+    script(s1, s1, s2);
+    expect(
+      await submitMultiSelectIntent({ ...museBase, multi: m, intent: { kind: "toggle", n: 2 } }),
+    ).toEqual({ status: "sent" });
+    expect(keysSent()).toEqual([["2"], ["Enter"]]);
+  });
+
+  it("Enters immediately when the pointer already sits on the tapped row", async () => {
+    const s2 = museCheckboxBuffer({ pointer: 2 });
+    const m = museModel(s2);
+    script(s2, s2);
+    expect(
+      await submitMultiSelectIntent({ ...museBase, multi: m, intent: { kind: "toggle", n: 2 } }),
+    ).toEqual({ status: "sent" });
+    expect(keysSent()).toEqual([["Enter"]]);
+  });
+
+  it("aborts when a box flips mid-macro — the jump went out, the Enter never does", async () => {
+    const s1 = museCheckboxBuffer({ pointer: 1 });
+    const flipped = museCheckboxBuffer({ pointer: 2, checked: [3] });
+    const m = museModel(s1);
+    script(s1, s1, flipped);
+    expect(
+      await submitMultiSelectIntent({ ...museBase, multi: m, intent: { kind: "toggle", n: 2 } }),
+    ).toEqual({ status: "changed" });
+    // The digit already moved the pointer (harmless, verified-or-retried), but the flip reads as
+    // drift before any Enter — we never toggle a set the user didn't see.
+    expect(keysSent()).toEqual([["2"]]);
+  });
+
+  it("aborts when the dialog vanishes mid-macro", async () => {
+    const s1 = museCheckboxBuffer({ pointer: 1 });
+    const m = museModel(s1);
+    script(s1, s1, museIdleBuffer(), museIdleBuffer(), museIdleBuffer(), museIdleBuffer());
+    expect(
+      await submitMultiSelectIntent({ ...museBase, multi: m, intent: { kind: "toggle", n: 2 } }),
+    ).toEqual({ status: "changed" });
+    expect(keysSent()).toEqual([["2"]]);
+  });
+});
+
+describe("pointer mode — review macro (walk + freshly-bound Enter)", () => {
+  it("confirm walks Up from cancel, then submits with the fresh region bound", async () => {
+    const cancel = museReviewBuffer({ pointer: "cancel" });
+    const submit = museReviewBuffer({ pointer: "submit" });
+    const m = museModel(cancel);
+    script(cancel, cancel, submit);
+    expect(
+      await submitMultiSelectIntent({ ...museBase, multi: m, intent: { kind: "confirm" } }),
+    ).toEqual({ status: "sent" });
+    expect(keysSent()).toEqual([["Up"], ["Enter"]]);
+    // The irreversible Enter carries the just-read region (prompt-feedback pattern): a terminal
+    // pointer move in the final gap 409s at the bridge instead of submitting the wrong row.
+    const regions = regionsSent();
+    expect(regions[1]).toContain("Review answers before submit");
+    expect(regions[1]).toContain("> Submit answers");
+  });
+
+  it("confirm Enters immediately (bound) when already on Submit", async () => {
+    const submit = museReviewBuffer({ pointer: "submit" });
+    const m = museModel(submit);
+    script(submit, submit);
+    expect(
+      await submitMultiSelectIntent({ ...museBase, multi: m, intent: { kind: "confirm" } }),
+    ).toEqual({ status: "sent" });
+    expect(keysSent()).toEqual([["Enter"]]);
+    expect(regionsSent()[0]).toContain("> Submit answers");
+  });
+
+  it("cancel walks Down from submit, then interrupts with the fresh region bound", async () => {
+    const submit = museReviewBuffer({ pointer: "submit" });
+    const cancel = museReviewBuffer({ pointer: "cancel" });
+    const m = museModel(submit);
+    script(submit, submit, cancel);
+    expect(
+      await submitMultiSelectIntent({ ...museBase, multi: m, intent: { kind: "cancel" } }),
+    ).toEqual({ status: "sent" });
+    expect(keysSent()).toEqual([["Down"], ["Enter"]]);
+    expect(regionsSent()[1]).toContain("> Interrupt turn");
+  });
+
+  it("aborts when the review is gone mid-walk — the nudge went out, the Enter never does", async () => {
+    const submit = museReviewBuffer({ pointer: "submit" });
+    const m = museModel(submit);
+    script(submit, submit, museCheckboxBuffer({ pointer: 1 }));
+    expect(
+      await submitMultiSelectIntent({ ...museBase, multi: m, intent: { kind: "cancel" } }),
+    ).toEqual({ status: "changed" });
+    expect(keysSent()).toEqual([["Down"]]);
+  });
+});
+
+describe("advance macro on a pointer-mode checkbox (unchanged recipe)", () => {
+  it("walks Down to the Submit row and Enters", async () => {
+    const r1 = museCheckboxBuffer({ pointer: 1 });
+    const r2 = museCheckboxBuffer({ pointer: 2 });
+    const r3 = museCheckboxBuffer({ pointer: 3 });
+    const sub = museCheckboxBuffer({ pointer: "submit" });
+    const m = museModel(r1);
+    script(r1, r1, r2, r3, sub);
+    expect(
+      await submitMultiSelectIntent({ ...museBase, multi: m, intent: { kind: "advance" } }),
+    ).toEqual({ status: "sent" });
+    expect(keysSent()).toEqual([["Down"], ["Down"], ["Down"], ["Enter"]]);
+  });
+});
+
+describe("comparators — choreography is identity, pointer position is transient", () => {
+  it("a mode change is a different dialog; a pointer move is not", () => {
+    const a = museModel(museCheckboxBuffer({ pointer: 1 }));
+    // SAFETY: `a` IS a MultiSelectModel and only declared fields are overridden, so the spreads
+    // carry every other field unchanged (the discriminant widens, hence the casts).
+    const digitMode = { ...a, toggle: "digit" } as MultiSelectModel;
+    expect(multiSelectEquals(a, digitMode)).toBe(false);
+    expect(multiSelectIdentity(a, digitMode)).toBe(false);
+    const moved = museModel(museCheckboxBuffer({ pointer: 2 }));
+    expect(multiSelectEquals(a, moved)).toBe(true);
+    expect(multiSelectIdentity(a, moved)).toBe(true);
+  });
+
+  it("review: a mode change differs; submit-vs-cancel pointer does not", () => {
+    const a = museModel(museReviewBuffer({ pointer: "submit" }));
+    // SAFETY: `a` IS a MultiSelectModel and only a declared field is overridden, so the spread
+    // carries every other field unchanged (the discriminant widens, hence the cast).
+    const digitMode = { ...a, submit: "digit" } as MultiSelectModel;
+    expect(multiSelectEquals(a, digitMode)).toBe(false);
+    expect(multiSelectIdentity(a, digitMode)).toBe(false);
+    const moved = museModel(museReviewBuffer({ pointer: "cancel" }));
+    expect(multiSelectEquals(a, moved)).toBe(true);
+    expect(multiSelectIdentity(a, moved)).toBe(true);
+  });
+});
+
+// KEYS mode: a harness that declares its plans on the model (opencode's lone multi-select list has
+// no advance row, and its `Confirm` tab has no action rows). Every plan is ONE guarded write bound to
+// the entry region; no pointer walk runs and no Down/Up is ever sent.
+describe("keys mode — declared plans, one guarded write each", () => {
+  const keysBase = { ...base, agent: keysHarness.agent };
+  const keysModel = (text: string) => keysHarness.declare(model(text));
+
+  it("advance sends advanceKeys once, bound to the entry region, and never walks the pointer", async () => {
+    const m = keysModel(checkboxBuffer({ pointer: "opt1" }));
+    mockFetchPane.mockResolvedValue(paneWith(checkboxBuffer({ pointer: "opt1" })));
+    const res = await submitMultiSelectIntent({ ...keysBase, multi: m, intent: { kind: "advance" } });
+    expect(res).toEqual({ status: "sent" });
+    expect(mockSendKeys.mock.calls).toEqual([["w1:p1", ["Tab"], undefined, m.regionSignature]]);
+    expect(keysSent().flat()).not.toContain("Down");
+    expect(keysSent().flat()).not.toContain("Up");
+    // One fresh read for the entry guard, none for a walk.
+    expect(mockFetchPane).toHaveBeenCalledTimes(1);
+  });
+
+  it("confirm, cancel and back send their declared plans, each bound to the entry region", async () => {
+    const m = keysModel(reviewBuffer());
+    mockFetchPane.mockResolvedValue(paneWith(reviewBuffer()));
+    for (const kind of ["confirm", "cancel", "back"] as const) {
+      expect(await submitMultiSelectIntent({ ...keysBase, multi: m, intent: { kind } })).toEqual({
+        status: "sent",
+      });
+    }
+    expect(mockSendKeys.mock.calls).toEqual([
+      ["w1:p1", ["Enter"], undefined, m.regionSignature],
+      ["w1:p1", ["Escape"], undefined, m.regionSignature],
+      ["w1:p1", ["Left"], undefined, m.regionSignature],
+    ]);
+  });
+
+  it("back refuses when the review declares no backKeys, sending nothing", async () => {
+    const declared = keysModel(reviewBuffer());
+    if (declared.phase !== "review") throw new Error("fixture is not a review screen");
+    const { backKeys: _dropped, ...m } = declared;
+    mockFetchPane.mockResolvedValue(paneWith(reviewBuffer()));
+    const res = await submitMultiSelectIntent({ ...keysBase, multi: m, intent: { kind: "back" } });
+    expect(res).toEqual({ status: "changed" });
+    expect(mockSendKeys).not.toHaveBeenCalled();
+    expect(mockFetchPane).not.toHaveBeenCalled();
+  });
+
+  it("back refuses on the checkbox phase, sending nothing", async () => {
+    const m = keysModel(checkboxBuffer({}));
+    mockFetchPane.mockResolvedValue(paneWith(checkboxBuffer({})));
+    const res = await submitMultiSelectIntent({ ...keysBase, multi: m, intent: { kind: "back" } });
+    expect(res).toEqual({ status: "changed" });
+    expect(mockSendKeys).not.toHaveBeenCalled();
+  });
+
+  it("advance refuses a drifted checkbox at the entry guard, before any key", async () => {
+    const m = keysModel(checkboxBuffer({ checked: [] }));
+    mockFetchPane.mockResolvedValue(paneWith(checkboxBuffer({ checked: [2] }))); // a box flipped
+    const res = await submitMultiSelectIntent({ ...keysBase, multi: m, intent: { kind: "advance" } });
+    expect(res).toEqual({ status: "changed" });
+    expect(mockSendKeys).not.toHaveBeenCalled();
+  });
+
+  it("confirm, cancel and back refuse a drifted review at the entry guard, before any key", async () => {
+    const m = keysModel(reviewBuffer());
+    // The review now warns about an unanswered question: a different screen than the one tapped.
+    mockFetchPane.mockResolvedValue(paneWith(reviewBuffer({ incomplete: true })));
+    for (const kind of ["confirm", "cancel", "back"] as const) {
+      expect(await submitMultiSelectIntent({ ...keysBase, multi: m, intent: { kind } })).toEqual({
+        status: "changed",
+      });
+    }
+    expect(mockSendKeys).not.toHaveBeenCalled();
+  });
+
+  it("refuses when the fresh screen carries different plans than the tapped model", async () => {
+    // The tapped model declares Tab; the adapter now derives Tab too, but the tap carried Right.
+    // SAFETY: the spread base IS a checkbox MultiSelectModel and only the declared optional
+    // `advanceKeys` is overridden; the cast only restores the discriminant the spread widened.
+    const m = { ...keysModel(checkboxBuffer({})), advanceKeys: ["Right"] } as MultiSelectModel;
+    mockFetchPane.mockResolvedValue(paneWith(checkboxBuffer({})));
+    const res = await submitMultiSelectIntent({ ...keysBase, multi: m, intent: { kind: "advance" } });
+    expect(res).toEqual({ status: "changed" });
+    expect(mockSendKeys).not.toHaveBeenCalled();
+  });
+});
+
+// Every declared plan and the echoed answers are part of the screen's identity: a plan that changed
+// would send a key the button did not advertise, and a changed answer is a different review.
+describe("comparators — declared plans and answers", () => {
+  const checkbox = keysHarness.declare(model(checkboxBuffer({})));
+  const review = keysHarness.declare(model(reviewBuffer()));
+  // SAFETY: each spread base IS a MultiSelectModel of the phase the overridden field belongs to, and
+  // only declared fields are overridden; the casts restore the discriminant the spread widened.
+  const variants: [string, MultiSelectModel, MultiSelectModel][] = [
+    ["advanceKeys differ", checkbox, { ...checkbox, advanceKeys: ["Right"] } as MultiSelectModel],
+    ["advanceKeys absent", checkbox, { ...checkbox, advanceKeys: undefined } as MultiSelectModel],
+    ["submitKeys differ", review, { ...review, submitKeys: ["1"] } as MultiSelectModel],
+    ["cancelKeys differ", review, { ...review, cancelKeys: ["2"] } as MultiSelectModel],
+    ["backKeys differ", review, { ...review, backKeys: ["Tab"] } as MultiSelectModel],
+    ["backKeys absent", review, { ...review, backKeys: undefined } as MultiSelectModel],
+    [
+      "an answer differs",
+      review,
+      { ...review, answers: [{ question: "Toppings", answer: "Cheese" }] } as MultiSelectModel,
+    ],
+    [
+      "a question differs",
+      review,
+      { ...review, answers: [{ question: "Crust", answer: "Cheese, Olives" }] } as MultiSelectModel,
+    ],
+    ["answers absent", review, { ...review, answers: undefined } as MultiSelectModel],
+    [
+      "keys mode vs digit mode",
+      review,
+      {
+        ...review,
+        submit: "digit",
+        submitKeys: undefined,
+        cancelKeys: undefined,
+      } as MultiSelectModel,
+    ],
+  ];
+
+  for (const [label, a, b] of variants) {
+    it(`${label}: breaks both equality and identity`, () => {
+      expect(multiSelectEquals(a, b)).toBe(false);
+      expect(multiSelectIdentity(a, b)).toBe(false);
+    });
+  }
+
+  it("the same declared screen still equals itself", () => {
+    expect(multiSelectEquals(checkbox, keysHarness.declare(model(checkboxBuffer({}))))).toBe(true);
+    expect(multiSelectIdentity(review, keysHarness.declare(model(reviewBuffer())))).toBe(true);
+    expect(multiSelectEquals(review, keysHarness.declare(model(reviewBuffer())))).toBe(true);
   });
 });

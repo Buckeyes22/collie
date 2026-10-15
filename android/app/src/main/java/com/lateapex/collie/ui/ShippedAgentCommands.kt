@@ -25,7 +25,7 @@ internal object ShippedAgentCommands {
 /model	Switch the model; opens a picker if no name given	[model]	ac
 /resume	Resume a previous conversation by id, name, or picker	[session]	ac
 /init	Generate a starter CLAUDE.md for this project		c
-/review	Review a GitHub pull request by number (lists open PRs if none)	[PR]	ac
+/review	Review the current diff, or a PR, branch, or path	[target]	ac
 /status	Show version, model, account, and connectivity info		c
 /usage	Show session cost, plan limits, and activity stats		c
 /context	Visualize context-window usage with optimization hints		c
@@ -47,7 +47,7 @@ internal object ShippedAgentCommands {
 /export	Export the conversation as plain text	[filename]	a
 /fast	Toggle fast mode on or off	[on|off]	a
 /feedback	Submit feedback or report a bug to Anthropic	[report]	a
-/fork	Spawn a background subagent that inherits this conversation	<directive>	a
+/fork	Copy this conversation into a new background session	[prompt]	a
 /goal	Set a completion condition; keep working until it is met	[condition|clear]	a
 /hooks	View hook configurations for tool events		-
 /ide	Manage IDE integrations and show connection status		-
@@ -159,6 +159,7 @@ internal object ShippedAgentCommands {
 /shake	Drop heavy tool results from context without a full compact	[images]	ac
 /model	Open the provider/model picker		-
 /settings	Open the settings panel		-
+/tree	Open the session tree picker to switch turns		-
 /resume	Open the session picker		-
         """),
         "agy" to catalog("""

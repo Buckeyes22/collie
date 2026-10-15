@@ -15,12 +15,19 @@ class OriginValidatorTest {
     }
 
     @Test
+    fun acceptsAMountAndKeepsTheOriginHeaderAtTheAuthority() {
+        val origin = validator.requireValid("https://Example.com/tools/collie")
+        assertEquals("https://example.com/tools/collie/", origin.value)
+        assertEquals("https://example.com", origin.headerValue)
+    }
+
+    @Test
     fun rejectsAnythingOtherThanAnHttpsOrigin() {
         val invalid = mapOf(
             "" to OriginValidation.Reason.EMPTY,
             "http://example.com" to OriginValidation.Reason.NOT_HTTPS,
             "https://user:pass@example.com" to OriginValidation.Reason.USER_INFO,
-            "https://example.com/api" to OriginValidation.Reason.NON_ROOT_PATH,
+            "https://example.com/collie//api" to OriginValidation.Reason.NON_ROOT_PATH,
             "https://example.com/%2e" to OriginValidation.Reason.NON_ROOT_PATH,
             "https://example.com\\@elsewhere.invalid" to OriginValidation.Reason.MALFORMED,
             "https://example.com/?x=1" to OriginValidation.Reason.QUERY,

@@ -1,6 +1,6 @@
 import { Loader2 } from "lucide-react";
 
-import { usePack } from "@/components/pack-provider";
+import { useCrew } from "@/components/crew-provider";
 import { Button } from "@/components/ui/button";
 import { SectionHeader } from "@/components/section-header";
 import { openForCount } from "@/hooks/use-dash-prefs";
@@ -8,6 +8,7 @@ import { writeRefusal } from "@/lib/host-health";
 import { useLaunchers } from "@/lib/launchers";
 import type { Scope } from "@/lib/scope";
 import { shortenHome } from "@/lib/shorten-home";
+import { useNoPromptsGuard } from "@/hooks/use-no-prompts-guard";
 import { useSpaceActions } from "@/hooks/use-spaces";
 import { cn } from "@/lib/utils";
 
@@ -19,7 +20,7 @@ interface LaunchStripProps {
    */
   open: boolean | null;
   onOpenChange: (open: boolean) => void;
-  /** The ambient scope — which host's rows this strip reads and, in a pack, which one may refuse. */
+  /** The ambient scope — which host's rows this strip reads and, in a crew, which one may refuse. */
   scope?: Scope;
 }
 
@@ -36,10 +37,12 @@ interface LaunchStripProps {
 export function LaunchStrip({ open, onOpenChange, scope }: LaunchStripProps) {
   const { launchers, home } = useLaunchers(scope);
   const { launch, launching } = useSpaceActions();
-  // TIER 2 (§10.3): a pack row still shows when its host refuses writes — a departed/incompatible
+  // A row that skips permission prompts is confirmed once per device before it starts (ADR 0094).
+  const { guard, sheet } = useNoPromptsGuard();
+  // TIER 2 (§10.3): a crew row still shows when its host refuses writes — a departed/incompatible
   // member's rows are exactly as informative as its panes are — but the row itself is disabled with
   // the reason, same as any other write to that host.
-  const { health } = usePack();
+  const { health } = useCrew();
   const refusal = scope?.host === undefined ? undefined : writeRefusal(health.get(scope.host));
 
   // Nothing declared → no affordance at all, not an empty section. Worth a comment because an early
@@ -85,7 +88,14 @@ export function LaunchStrip({ open, onOpenChange, scope }: LaunchStripProps) {
                 // Undimmed while pending, like the Quick dock's tapped reply: the busy row is the
                 // one to look at, not the one to lose.
                 className={cn("h-auto flex-col items-start gap-0 py-1.5", pending && "disabled:opacity-100")}
-                onClick={() => void launch(launcher.command)}
+                onClick={() =>
+                  guard({
+                    item: launcher,
+                    machine: scope?.host ?? "",
+                    folder: suffix ?? "~",
+                    go: () => void launch(launcher.command),
+                  })
+                }
               >
                 <span className="flex items-center gap-1.5">
                   {pending && <Loader2 className="size-4 animate-spin" />}
@@ -99,6 +109,7 @@ export function LaunchStrip({ open, onOpenChange, scope }: LaunchStripProps) {
           })}
         </div>
       )}
+      {sheet}
     </section>
   );
 }

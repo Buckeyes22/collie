@@ -15,7 +15,6 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.lateapex.collie.BuildConfig
 import com.lateapex.collie.CollieApplication
 import com.lateapex.collie.R
-import com.lateapex.collie.data.EncryptedConnectionStore
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -25,19 +24,20 @@ class NativeLaunchSmokeTest {
     @Test
     fun launcherShowsNativeConnectionSurfaceWithoutWebContent() {
         val context = ApplicationProvider.getApplicationContext<Context>()
-        context.getSharedPreferences(EncryptedConnectionStore.PREFERENCES, Context.MODE_PRIVATE)
-            .edit()
-            .clear()
-            .commit()
-        (context.applicationContext as CollieApplication).container.connectionStore.clear()
-
-        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
-            scenario.onActivity { activity ->
-                assertEquals(MainActivity::class.java.name, activity.intent.component?.className)
+        val store = (context.applicationContext as CollieApplication).container.connectionStore
+        val original = store.connection.value
+        try {
+            store.clear()
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                scenario.onActivity { activity ->
+                    assertEquals(MainActivity::class.java.name, activity.intent.component?.className)
+                }
+                onView(withId(R.id.setup_panel)).check(matches(isDisplayed()))
+                onView(withId(R.id.origin_input)).check(matches(withText(BuildConfig.DEFAULT_ORIGIN)))
+                onView(isAssignableFrom(WebView::class.java)).check(doesNotExist())
             }
-            onView(withId(R.id.setup_panel)).check(matches(isDisplayed()))
-            onView(withId(R.id.origin_input)).check(matches(withText(BuildConfig.DEFAULT_ORIGIN)))
-            onView(isAssignableFrom(WebView::class.java)).check(doesNotExist())
+        } finally {
+            if (original == null) store.clear() else store.save(original)
         }
     }
 }

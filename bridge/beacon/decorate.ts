@@ -40,7 +40,13 @@ import { markersIn, readBeacons, type BeaconSweepDeps } from "./reader.ts";
 import type { BeaconReading, BeaconMarker, BeaconStatus } from "./types.ts";
 import type { AgentSessionRef } from "../journal/types.ts";
 import { declareCapabilities, MUX_CAPABILITIES, type MuxCapabilityDeclaration } from "../mux/capabilities.ts";
-import { muxDataFields, type MuxAdapter, type MuxPane, type MuxSnapshot } from "../mux/types.ts";
+import {
+  muxDataFields,
+  muxOptionalMethods,
+  type MuxAdapter,
+  type MuxPane,
+  type MuxSnapshot,
+} from "../mux/types.ts";
 import type { AgentStatus } from "../types.ts";
 
 /**
@@ -51,7 +57,7 @@ import type { AgentStatus } from "../types.ts";
  * definitive signals") after trying an LLM judge and output throughput, neither of which is adopted
  * here. Everything else is `unknown`, and that includes the case this milestone can most easily get
  * wrong: ABSENCE. "No beacon" and "the agent is resting" look identical from outside and mean
- * opposite things to a triage sort.
+ * opposite things to triage.
  */
 export type BeaconTrust = "definitive-via-hook" | "unknown";
 
@@ -64,10 +70,10 @@ export type BeaconTrust = "definitive-via-hook" | "unknown";
 const BEACON_STATUS = {
   working: "working",
   idle: "idle",
-  // `waiting` → `blocked` because `STATUS_RANK.blocked = 0` (bridge/types.ts) — the top of triage,
-  // which is exactly where an agent that has stopped and is waiting on the operator belongs. Every
-  // other Collie word ranks below it, so mapping to `idle` here would bury the one pane that needs a
-  // human at the bottom of the herd list.
+  // `waiting` → `blocked` because `STATUS_RANK.blocked = 0` (bridge/types.ts) — the most urgent
+  // mark, which is exactly what an agent that has stopped and is waiting on the operator must wear.
+  // Every other Collie word ranks below it, so mapping to `idle` here would leave the one pane that
+  // needs a human unmarked, out of the "Needs you" count and the push.
   waiting: "blocked",
 } satisfies Record<BeaconStatus, AgentStatus>;
 
@@ -193,6 +199,8 @@ function declarationFor(adapter: MuxAdapter, matcher: BeaconMatcher, lifted: boo
     // appearing is noticed. That is still the wrapped adapter's census, and claiming otherwise here
     // would be the decorator declaring a promise it makes nothing keep.
     topologyLatency: adapter.capabilities.topologyLatency,
+    // Agent identity does not change the owning adapter's pane-read budget.
+    readLimits: adapter.capabilities.readLimits,
   });
 }
 
@@ -281,6 +289,7 @@ export function withAgentBeacons(
     // than listed here, so the next field added to the contract cannot go missing at this seam
     // (bridge/mux/types.ts § muxDataFields).
     ...muxDataFields(adapter),
+    ...muxOptionalMethods(adapter),
     mux: adapter.mux,
     // A getter, so `collie hooks install claude` reaches a RUNNING bridge: the declaration is read
     // per request (`muxConfigBody`), and the seam behind `hooksInstalled` is what decides how often
@@ -313,8 +322,8 @@ export function withAgentBeacons(
     // wrapped adapter's census forward is exactly what a refresh should do either way.
     refresh: () => adapter.refresh(),
     readGrid: (paneId, request) => adapter.readGrid(paneId, request),
-    typeText: (paneId, text) => adapter.typeText(paneId, text),
-    sendKeys: (paneId, keys) => adapter.sendKeys(paneId, keys),
+    typeText: (paneId, text, finalAdmission) => adapter.typeText(paneId, text, finalAdmission),
+    sendKeys: (paneId, keys, finalAdmission) => adapter.sendKeys(paneId, keys, finalAdmission),
     renamePane: (paneId, label) => adapter.renamePane(paneId, label),
     closePane: (paneId) => adapter.closePane(paneId),
     setFocus: (paneId) => adapter.setFocus(paneId),
@@ -323,8 +332,11 @@ export function withAgentBeacons(
     closeTab: (tabId) => adapter.closeTab(tabId),
     createSpace: (request) => adapter.createSpace(request),
     listWorktrees: (scope) => adapter.listWorktrees(scope),
-    createWorktree: (request) => adapter.createWorktree(request),
-    openWorktree: (request) => adapter.openWorktree(request),
+    createWorktree: (request, finalAdmission, beforeDispatch) => adapter.createWorktree(request, finalAdmission, beforeDispatch),
+    openWorktree: (request, finalAdmission, beforeDispatch) => adapter.openWorktree(request, finalAdmission, beforeDispatch),
+    // A beacon says which agent is in a pane. It says nothing about which SESSIONS this machine has,
+    // so the wrapped adapter's answer passes through untouched.
+    listSessions: () => adapter.listSessions(),
     // Untouched, and the header says why a beacon change fires nothing here.
     watch: (options) => adapter.watch(options),
   };

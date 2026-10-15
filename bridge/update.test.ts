@@ -1,26 +1,48 @@
-import { describe, expect, it } from "bun:test";
+import { afterAll, describe, expect, it } from "bun:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { readdirSync, readFileSync } from "node:fs";
+import { join, relative } from "node:path";
+
+import { loadConfig } from "./config.ts";
 
 import {
   type ApiTag,
   compareSemver,
   followsTrain,
+  githubCredential,
+  githubHeaders,
+  GITHUB_TOKEN_ENVS,
   githubReleaseUrl,
+  githubTagsUrl,
+  readAllTags,
+  TAG_PAGE_SIZE,
+  TAG_PAGES_MAX,
+  isGithubApiUrl,
   isPrereleaseVersion,
   latestUpdateInMajor,
   latestReleaseAboveMajor,
   latestReleaseInMajor,
   latestReleaseTag,
+  LINK_CHANGE_SENTENCE,
   majorOf,
   parsePrereleaseTag,
+  newestUrgent,
   parseReleaseManifest,
+  parseReleaseReading,
   parseSemverTag,
   parseTagsResponse,
+  releaseReadingUrl,
+  restartCommandFor,
   shouldNotify,
   stampOf,
   updateDigestBody,
+  releaseFetchers,
+  updateMirror,
   updatesNewerThan,
   UpdateMonitor,
   type UpdateMonitorDeps,
+  UpdateStateStore,
   type UpdateStore,
 } from "./update.ts";
 
@@ -186,6 +208,18 @@ describe("updateDigestBody", () => {
     expect(updateDigestBody("1.3.0", ["1.3.1"])).toBe("Collie 1.3.1 is available");
     expect(updateDigestBody("1.3.0", ["1.3.1", "1.3.2"])).toBe("2 updates since 1.3.0: 1.3.1, 1.3.2");
   });
+
+  it("an urgent release opens the body with its own sentence, ahead of the link change", () => {
+    const urgent = { version: "1.3.1", reason: "The reaper deletes live entries." };
+    expect(updateDigestBody("1.3.0", ["1.3.1"], null, urgent)).toBe(
+      "The reaper deletes live entries. Collie 1.3.1 is available",
+    );
+    expect(updateDigestBody("1.3.0", ["1.3.1"], { from: 1, to: 2 }, urgent)).toBe(
+      `The reaper deletes live entries. Collie 1.3.1 is available. ${LINK_CHANGE_SENTENCE}`,
+    );
+    // Without one, the body is byte-identical to what it always was.
+    expect(updateDigestBody("1.3.0", ["1.3.1"], null, null)).toBe("Collie 1.3.1 is available");
+  });
 });
 
 describe("shouldNotify", () => {
@@ -259,6 +293,77 @@ describe("shouldNotify", () => {
     });
   });
 
+  it("an urgent patch keeps the DAILY window", () => {
+    const patches = { current: "1.3.0", latest: "1.3.1", newerVersions: ["1.3.1"] };
+    const urgent = { version: "1.3.1", reason: "The reaper deletes live entries." };
+    // Not urgent: the weekly window holds it, 30 h after the last push.
+    expect(gate({ ...patches, lastPushedAt: hoursAgo(AT_10AM, 30) })).toEqual({ send: false });
+    // Urgent: the same delta, the same clock, and it goes.
+    expect(gate({ ...patches, lastPushedAt: hoursAgo(AT_10AM, 30), urgent })).toEqual({
+      send: true,
+      versions: ["1.3.1"],
+    });
+    // The 09:00 floor is never skipped, not even by an urgent release.
+    expect(
+      gate({ ...patches, lastPushedAt: hoursAgo(AT_10AM, 30), urgent, now: new Date(2026, 0, 15, 3, 0, 0) }),
+    ).toEqual({ send: false });
+  });
+
+  it("an urgent patch pushes today even after this morning's digest", () => {
+    // THE WINDOW IS SKIPPED, NOT SHORTENED. A fix for data loss published at 11:00 must not wait for
+    // tomorrow because an ordinary digest went out at 09:00.
+    const patches = { current: "1.3.0", latest: "1.3.1", newerVersions: ["1.3.1"] };
+    const urgent = { version: "1.3.1", reason: "The reaper deletes live entries." };
+    const thisMorning = { lastPushedAt: hoursAgo(AT_10AM, 1), lastNotified: "1.3.0" };
+    // Without the marker, one hour after a push is far inside every window.
+    expect(gate({ ...patches, ...thisMorning })).toEqual({ send: false });
+    expect(gate({ ...patches, ...thisMorning, urgent })).toEqual({ send: true, versions: ["1.3.1"] });
+    // A MINOR one hour after a push still waits: the skip belongs to the urgent release, not to the
+    // clock, and nothing else was given the right to interrupt.
+    expect(
+      gate({ current: "1.3.0", latest: "1.4.0", newerVersions: ["1.4.0"], ...thisMorning }),
+    ).toEqual({ send: false });
+    // The floor still holds over the skip.
+    expect(gate({ ...patches, ...thisMorning, urgent, now: new Date(2026, 0, 15, 3, 0, 0) })).toEqual({
+      send: false,
+    });
+  });
+
+  it("an urgent version already announced does not re-push", () => {
+    // IT IS SPENT ONCE. Having been told about 1.3.1, the operator is back on the ordinary cadence:
+    // 1.3.2 lands above it and takes the DAILY window, not another interruption.
+    const urgent = { version: "1.3.1", reason: "The reaper deletes live entries." };
+    const after = {
+      current: "1.3.0",
+      latest: "1.3.2",
+      newerVersions: ["1.3.1", "1.3.2"],
+      lastNotified: "1.3.1",
+      urgent,
+    };
+    expect(gate({ ...after, lastPushedAt: hoursAgo(AT_10AM, 3) })).toEqual({ send: false });
+    expect(gate({ ...after, lastPushedAt: hoursAgo(AT_10AM, 30) })).toEqual({
+      send: true,
+      versions: ["1.3.2"],
+    });
+    // And the release itself is never announced twice: the same version, already the top of the
+    // delta, is refused before any window is looked at.
+    expect(
+      gate({ current: "1.3.0", latest: "1.3.1", newerVersions: ["1.3.1"], lastNotified: "1.3.1", urgent }),
+    ).toEqual({ send: false });
+  });
+
+  it("an urgent patch earlier in the delta makes the whole train daily", () => {
+    // 1.3.1 is urgent, 1.3.2 is an ordinary patch above it. The delta is still urgent, and the push
+    // names both — a release held back is folded, never dropped.
+    const train = { current: "1.3.0", latest: "1.3.2", newerVersions: ["1.3.1", "1.3.2"] };
+    const urgent = { version: "1.3.1", reason: "The reaper deletes live entries." };
+    expect(gate({ ...train, lastPushedAt: hoursAgo(AT_10AM, 30) })).toEqual({ send: false });
+    expect(gate({ ...train, lastPushedAt: hoursAgo(AT_10AM, 30), urgent })).toEqual({
+      send: true,
+      versions: ["1.3.1", "1.3.2"],
+    });
+  });
+
   it("before 09:00 it waits — a release published at night does not buzz a phone", () => {
     expect(gate({ now: new Date(2026, 0, 15, 3, 0, 0) })).toEqual({ send: false });
     expect(gate({ now: new Date(2026, 0, 15, 9, 0, 0) })).toEqual({ send: true, versions: ["0.12.0"] });
@@ -290,21 +395,44 @@ describe("stampOf", () => {
 function fakeStore(
   initial: string | null = null,
   pushedAt: string | null = null,
-): UpdateStore & { saved: string[]; pushes: string[] } {
+): UpdateStore & { saved: string[]; pushes: string[]; closed: string[]; writes: number } {
   let last = initial;
   let stamp = pushedAt;
+  let dismissed: string | null = null;
+  let dismissedCrew: string | null = null;
   const saved: string[] = [];
   const pushes: string[] = [];
+  const closed: string[] = [];
+  const counter = { writes: 0 };
   return {
     saved,
     pushes,
+    closed,
+    get writes() {
+      return counter.writes;
+    },
     lastNotified: () => last,
     lastPushedAt: () => stamp,
     setLastNotified: async (v, at) => {
+      counter.writes += 1;
       last = v;
       stamp = at;
       saved.push(v);
       pushes.push(at);
+    },
+    dismissedVersion: () => dismissed,
+    dismissedCrewVersion: () => dismissedCrew,
+    setDismissed: async (scope, v, notified) => {
+      counter.writes += 1;
+      if (scope === "offer") dismissed = v;
+      else dismissedCrew = v;
+      closed.push(`${scope}:${v}`);
+      if (notified !== undefined) {
+        last = notified.version;
+        stamp = notified.pushedAt;
+        saved.push(notified.version);
+        pushes.push(notified.pushedAt);
+      }
     },
   };
 }
@@ -327,9 +455,94 @@ describe("the update run record on the snapshot", () => {
     expect(monitor.status().run).toEqual(run);
   });
 
+  it("names the package command only where the host resolved one", () => {
+    // Assigned, never spread as `undefined`: an install with none must carry NO key. The phone's
+    // fallback to the preflight remedy depends on the difference between absent and empty.
+    expect("packageCommand" in makeMonitor().monitor.status()).toBe(false);
+    const packaged = makeMonitor({ installKind: "packaged", packageCommand: "sudo pacman -Syu collie-bin" });
+    expect(packaged.monitor.status().packageCommand).toBe("sudo pacman -Syu collie-bin");
+  });
+
   it("an install that has never updated carries no run key at all", () => {
     const { monitor } = makeMonitor();
     expect("run" in monitor.status()).toBe(false);
+  });
+});
+
+describe("restart needed — the files moved under a running process", () => {
+  it("is quiet while disk still names the version this process runs", () => {
+    const status = makeMonitor().monitor.status();
+    expect(status.restartNeeded).toBe(false);
+    // Nothing to restart, nothing to name: the command key is absent, not empty.
+    expect("restartCommand" in status).toBe(false);
+  });
+
+  it("is raised the moment a live read disagrees with the version captured at boot", () => {
+    // Exactly what `pacman -Syu` does: the files become 1.6.0 while this process is still 1.5.0.
+    let onDisk = "1.5.0";
+    const { monitor, tick } = makeMonitor({
+      current: "1.5.0",
+      bootVersion: "1.5.0",
+      liveVersion: () => onDisk,
+    });
+    expect(monitor.status().restartNeeded).toBe(false);
+    onDisk = "1.6.0";
+    tick(10_000); // past the throttle the read shares with `bridgeStale`
+    expect(monitor.status().restartNeeded).toBe(true);
+
+    // Not latched: a package manager that puts the old files back leaves a process that matches disk
+    // again, and asking for a restart nobody needs is worse than saying nothing.
+    onDisk = "1.5.0";
+    tick(10_000);
+    expect(monitor.status().restartNeeded).toBe(false);
+  });
+
+  it("is raised when the EXECUTABLE moved and no version string did — the same-version rebuild", () => {
+    // `pacman -U` of a new pkgrel: the files on disk still name 1.5.0, the process still runs 1.5.0,
+    // and the binary behind it is a different file. Version-only detection is blind to this.
+    let replaced = false;
+    const { monitor, tick } = makeMonitor({
+      current: "1.5.0",
+      installKind: "packaged",
+      bootVersion: "1.5.0",
+      liveVersion: () => "1.5.0",
+      exeReplaced: () => replaced,
+    });
+    expect(monitor.status().restartNeeded).toBe(false);
+    replaced = true;
+    tick(10_000); // the same throttle the version read is behind
+    const status = monitor.status();
+    expect(status.restartNeeded).toBe(true);
+    expect(status.restartCommand).toBe("collie restart");
+
+    // Not latched, exactly as the version half is not.
+    replaced = false;
+    tick(10_000);
+    expect(monitor.status().restartNeeded).toBe(false);
+  });
+
+  it("restart command for the install kind, never a hard-coded string", () => {
+    // Two spellings, and the kind is the whole of what picks one (M14/01 §5.3).
+    expect(restartCommandFor("detached-checkout", null)).toBe("herdr plugin action invoke restart --plugin herdr.collie");
+    // A named instance is registered with Herdr under its own suffixed plugin id, and the bare id is
+    // the host's FIRST Collie — so printing it would restart a service this one does not own.
+    expect(restartCommandFor("detached-checkout", "next")).toBe(
+      "herdr plugin action invoke restart --plugin herdr.collie-next",
+    );
+    // A PACKAGED install takes the `collie` verb like any other non-Herdr kind. Our package ships no
+    // unit file at all — `collie start` writes the operator's own `--user` unit — so the system-unit
+    // spelling would name a unit that does not exist and ask for a password to restart it.
+    for (const kind of ["packaged", "linked-clone", "binary", "unknown"] as const) {
+      expect(restartCommandFor(kind, "next")).toBe("collie restart");
+    }
+    expect(restartCommandFor("packaged", null)).not.toContain("sudo");
+
+    // And the snapshot names the one this machine takes, off the same function.
+    const swapped = { bootVersion: "1.5.0", liveVersion: () => "1.6.0" };
+    for (const kind of ["packaged", "detached-checkout", "binary"] as const) {
+      const status = makeMonitor({ installKind: kind, ...swapped }).monitor.status();
+      expect(status.restartCommand).toBe(restartCommandFor(kind, null));
+    }
   });
 });
 
@@ -339,6 +552,13 @@ const apiTags = (...names: string[]): ApiTag[] => names.map((name) => ({ name, s
 
 function makeMonitor(over: Partial<UpdateMonitorDeps> = {}) {
   const notified: string[] = [];
+  /** Every push, with the link change and the urgent record it carried — the digest body is built
+   *  from the three. */
+  const pushes: {
+    versions: string[];
+    linkChange: { from: number; to: number } | null;
+    urgent: { version: string; reason: string } | null;
+  }[] = [];
   const store = fakeStore();
   // 10:00 on a fixed LOCAL day: past the digest's earliest hour, so these tests exercise the monitor
   // rather than the clock. `tick` moves it forward within the same morning unless a test says otherwise.
@@ -347,18 +567,32 @@ function makeMonitor(over: Partial<UpdateMonitorDeps> = {}) {
     repo: "AltanS/collie",
     current: "0.11.0",
     installKind: "detached-checkout",
+    instance: null,
+    packageCommand: null,
+    bootVersion: "0.11.0",
+    liveVersion: () => "0.11.0",
+    // The executable is where it was unless a case moves it — the ordinary machine.
+    exeReplaced: () => false,
     startupStamp: "STAMP@boot",
     fetchTags: async () => apiTags("v0.12.0"),
+    // A CREW, and a release that says nothing about the wire — the shape of every release before
+    // 1.8.0, and the default every case that is not about the link inherits (M27/06).
+    crewProtocol: 2,
+    crewMode: () => "lead",
+    fetchReleaseReading: async () => null,
     bridgeStamp: () => "STAMP@boot",
     store,
     // No run on disk unless a case says so — the shape every install that has never updated has.
     runState: () => null,
     now: () => clock,
     updatesEnabled: () => true,
-    notify: (versions) => notified.push(...versions),
+    notify: (versions, linkChange, urgent) => {
+      notified.push(...versions);
+      pushes.push({ versions, linkChange, urgent });
+    },
     ...over,
   });
-  return { monitor, notified, store, tick: (ms: number) => (clock += ms) };
+  return { monitor, notified, pushes, store, tick: (ms: number) => (clock += ms) };
 }
 
 describe("UpdateMonitor", () => {
@@ -471,6 +705,9 @@ describe("UpdateMonitor", () => {
     const wrapped: UpdateStore = {
       lastNotified: store.lastNotified,
       lastPushedAt: store.lastPushedAt,
+      dismissedVersion: store.dismissedVersion,
+      dismissedCrewVersion: store.dismissedCrewVersion,
+      setDismissed: store.setDismissed,
       setLastNotified: async (v, at) => {
         order.push(`persist:${v}`);
         await store.setLastNotified(v, at);
@@ -676,5 +913,601 @@ describe("parseReleaseManifest", () => {
     expect(v.ok).toBe(true);
     if (!v.ok) return;
     expect(v.manifest.artifacts).toHaveLength(1);
+  });
+});
+
+// ── The band's dismissal (M17/08) ─────────────────────────────────────────────
+//
+// A dismissal is a decision about THIS MACHINE's update, so it is kept here rather than in one
+// browser's storage — and it is one act, not two: the version is recorded and the digest is snoozed
+// in the same call, because closing the band and then being pushed the same version tomorrow is the
+// app arguing with a decision already made.
+
+const dismissDirs: string[] = [];
+async function tempCfg() {
+  const stateDir = await mkdtemp(join(tmpdir(), "collie-update-dismiss-"));
+  dismissDirs.push(stateDir);
+  return { ...loadConfig(), stateDir };
+}
+
+afterAll(async () => {
+  await Promise.all(dismissDirs.map((d) => rm(d, { recursive: true, force: true })));
+});
+
+describe("the dismissed version", () => {
+  it("round-trips both scopes through the store, in one file beside the push record", async () => {
+    const cfg = await tempCfg();
+    const store = new UpdateStateStore(cfg);
+    await store.load();
+    expect(store.dismissedVersion()).toBeNull(); // nothing saved yet reads as nothing dismissed
+    expect(store.dismissedCrewVersion()).toBeNull();
+
+    await store.setDismissed("offer", "1.6.0", { version: "1.6.0", pushedAt: "2026-09-07T09:00:00.000Z" });
+    await store.setDismissed("crew", "1.5.0");
+
+    const reloaded = new UpdateStateStore(cfg);
+    await reloaded.load();
+    expect(reloaded.dismissedVersion()).toBe("1.6.0");
+    // Two decisions, two fields: the crew notice was put down at a DIFFERENT version and neither
+    // overwrote the other.
+    expect(reloaded.dismissedCrewVersion()).toBe("1.5.0");
+    // The offer's dismissal folded the snooze into the same write — a crash between two writes
+    // cannot leave a band closed with the push still armed for it.
+    expect(reloaded.lastNotified()).toBe("1.6.0");
+    expect(reloaded.lastPushedAt()).toBe("2026-09-07T09:00:00.000Z");
+  });
+
+  it("reads a record that carries neither key as nothing dismissed", async () => {
+    const cfg = await tempCfg();
+    await Bun.write(
+      join(cfg.stateDir, "update-state.json"),
+      JSON.stringify({ lastNotified: "1.5.0", lastPushedAt: "2026-09-06T09:00:00.000Z" }),
+    );
+    const store = new UpdateStateStore(cfg);
+    await store.load();
+    expect(store.dismissedVersion()).toBeNull();
+    expect(store.dismissedCrewVersion()).toBeNull();
+    expect(store.lastNotified()).toBe("1.5.0"); // and the record beside them is still believed
+  });
+
+  it("reads the crew key on its own", async () => {
+    const cfg = await tempCfg();
+    await Bun.write(join(cfg.stateDir, "update-state.json"), JSON.stringify({ dismissedCrewVersion: "1.5.0" }));
+    const store = new UpdateStateStore(cfg);
+    await store.load();
+    expect(store.dismissedCrewVersion()).toBe("1.5.0");
+  });
+
+  it("prefers the crew key when a record carries both", async () => {
+    const cfg = await tempCfg();
+    await Bun.write(
+      join(cfg.stateDir, "update-state.json"),
+      JSON.stringify({ dismissedCrewVersion: "1.5.0", [`dismissed${"Pack"}Version`]: "1.4.0" }),
+    );
+    const store = new UpdateStateStore(cfg);
+    await store.load();
+    expect(store.dismissedCrewVersion()).toBe("1.5.0");
+  });
+
+  it("a dismissed offer for the release upstream names also snoozes the digest, in one write", async () => {
+    const { monitor, store } = makeMonitor();
+    await monitor.checkRelease();
+    expect(store.saved).toEqual(["0.12.0"]); // the first push announced it
+    const before = store.writes;
+
+    await monitor.dismiss("0.12.0");
+    expect(store.closed).toEqual(["offer:0.12.0"]);
+    expect(store.lastNotified()).toBe("0.12.0");
+    expect(store.writes - before).toBe(1); // one act, one write
+    expect(monitor.status().dismissedVersion).toBe("0.12.0");
+  });
+
+  it("a dismiss with scope crew hides a notice and leaves lastNotified alone", async () => {
+    const { monitor, store } = makeMonitor();
+    await monitor.checkRelease();
+    const notified = store.lastNotified();
+
+    await monitor.dismiss("0.12.0", "crew");
+    expect(store.closed).toEqual(["crew:0.12.0"]);
+    // The push is about THIS machine; the notice was about another one. Hiding it silences nothing.
+    expect(store.lastNotified()).toBe(notified);
+    expect(monitor.status().dismissedCrewVersion).toBe("0.12.0");
+    expect(monitor.status().dismissedVersion).toBeNull(); // and the offer is untouched
+  });
+
+  it("a dismissed offer for a version that is not latest leaves lastNotified alone", async () => {
+    const { monitor, store } = makeMonitor();
+    await monitor.checkRelease();
+    const notified = store.lastNotified();
+
+    // Closing a band about 0.11.9 says nothing about the 0.12.0 the digest would push, and moving
+    // the record there would swallow the version upstream is actually naming.
+    await monitor.dismiss("0.11.9");
+    expect(monitor.status().dismissedVersion).toBe("0.11.9");
+    expect(store.lastNotified()).toBe(notified);
+  });
+
+  it("a dismiss is not a mute — a newer release is a different version and raises the band", async () => {
+    const { monitor } = makeMonitor();
+    await monitor.checkRelease();
+    await monitor.dismiss("0.12.0");
+    expect(monitor.status()).toMatchObject({ latest: "0.12.0", dismissedVersion: "0.12.0" });
+    // The snapshot keeps saying a release is available; only the BAND reads the two together, and it
+    // reads them as different facts the moment upstream moves on.
+    expect(monitor.status().releaseAvailable).toBe(true);
+  });
+});
+
+// ── The release reading and the link change (M27/06) ─────────────────────────
+
+describe("the release reading", () => {
+  it("names the asset under the release's own tag, constructed from repo and version", () => {
+    expect(releaseReadingUrl("AltanS/collie", "1.8.0")).toBe(
+      "https://github.com/AltanS/collie/releases/download/v1.8.0/collie-release.json",
+    );
+  });
+
+  it("parses the document, and refuses anything that is not one", () => {
+    expect(parseReleaseReading({ version: "1.8.0", crewProtocol: 2 })).toEqual({
+      version: "1.8.0",
+      crewProtocol: 2,
+    });
+    // Unknown fields are ignored — a later release may add to it.
+    expect(parseReleaseReading({ version: "1.8.0", crewProtocol: 2, extra: "x" })).toEqual({
+      version: "1.8.0",
+      crewProtocol: 2,
+    });
+    // MALFORMED, every way it can be: not an object, no version, no number, a fractional number.
+    expect(parseReleaseReading(null)).toBeNull();
+    expect(parseReleaseReading([1, 2])).toBeNull();
+    expect(parseReleaseReading({ crewProtocol: 2 })).toBeNull();
+    expect(parseReleaseReading({ version: "1.8.0" })).toBeNull();
+    expect(parseReleaseReading({ version: "1.8.0", crewProtocol: "2" })).toBeNull();
+    expect(parseReleaseReading({ version: "1.8.0", crewProtocol: 2.5 })).toBeNull();
+  });
+
+  it("reads the urgent marker when it is there, and ignores a malformed one (ADR 0046)", () => {
+    const reason = "The cache reaper deletes live entries, take this today.";
+    expect(parseReleaseReading({ version: "1.9.1", crewProtocol: 2, urgent: { reason } })).toEqual({
+      version: "1.9.1",
+      crewProtocol: 2,
+      urgent: { reason },
+    });
+    // ABSENT is the ordinary release, and it carries no key at all.
+    expect(parseReleaseReading({ version: "1.9.1", crewProtocol: 2 })).toEqual({
+      version: "1.9.1",
+      crewProtocol: 2,
+    });
+    // MALFORMED, every way it can be — each one reads as "not urgent", never as an unreadable
+    // document: urgency is a courtesy on the cadence, so a bad field may not lose the reading.
+    for (const urgent of [null, "today", 3, [], {}, { reason: "" }, { reason: "   " }, { reason: 7 }]) {
+      expect(parseReleaseReading({ version: "1.9.1", crewProtocol: 2, urgent })).toEqual({
+        version: "1.9.1",
+        crewProtocol: 2,
+      });
+    }
+  });
+
+  it("newestUrgent picks the NEWEST marked release in the delta, or null", () => {
+    const at = (version: string, reason: string | null) => ({
+      version,
+      reading:
+        reason === null
+          ? { version, crewProtocol: 2 }
+          : { version, crewProtocol: 2, urgent: { reason } },
+    });
+    expect(
+      newestUrgent([at("1.9.1", "first"), at("1.9.2", null), at("1.9.3", "second")]),
+    ).toEqual({ version: "1.9.3", reason: "second" });
+    // Order in is not order out: the newest marked one wins whichever way the list arrived.
+    expect(newestUrgent([at("1.9.3", "second"), at("1.9.1", "first")])).toEqual({
+      version: "1.9.3",
+      reason: "second",
+    });
+    // An urgent release BELOW an ordinary one still makes the delta urgent.
+    expect(newestUrgent([at("1.9.1", "first"), at("1.9.2", null)])).toEqual({
+      version: "1.9.1",
+      reason: "first",
+    });
+    // Nothing marked, nothing read at all, and an empty delta all answer the same way.
+    expect(newestUrgent([at("1.9.1", null), at("1.9.2", null)])).toBeNull();
+    expect(newestUrgent([{ version: "1.9.1", reading: null }])).toBeNull();
+    expect(newestUrgent([])).toBeNull();
+  });
+});
+
+describe("UpdateMonitor — the urgent marker (ADR 0046)", () => {
+  const REASON = "The cache reaper deletes live entries, take this today.";
+
+  it("reads the WHOLE delta, not only the newest release, and caches each sidecar", async () => {
+    const asked: string[] = [];
+    const { monitor, pushes, store } = makeMonitor({
+      current: "1.9.0",
+      // 1.9.1 is urgent; 1.9.2 above it is an ordinary patch. The delta is urgent either way.
+      fetchTags: async () => apiTags("v1.9.1", "v1.9.2"),
+      fetchReleaseReading: async (version) => {
+        asked.push(version);
+        return version === "1.9.1"
+          ? { version, crewProtocol: 2, urgent: { reason: REASON } }
+          : { version, crewProtocol: 2 };
+      },
+    });
+    // A push a day ago: the weekly patch window would hold this, the daily one does not.
+    await store.setLastNotified("1.9.0", new Date(new Date(2026, 0, 15, 10, 0, 0).getTime() - 30 * 3600_000).toISOString());
+    await monitor.checkRelease();
+
+    expect(monitor.status().urgent).toEqual({ version: "1.9.1", reason: REASON });
+    expect(pushes).toEqual([
+      { versions: ["1.9.1", "1.9.2"], linkChange: null, urgent: { version: "1.9.1", reason: REASON } },
+    ]);
+    // THE PUSH SAYS WHY, and says it first — the reason is what made the phone buzz today.
+    expect(updateDigestBody("1.9.0", ["1.9.1", "1.9.2"], null, { version: "1.9.1", reason: REASON })).toBe(
+      `${REASON} 2 updates since 1.9.0: 1.9.1, 1.9.2`,
+    );
+    expect(asked.toSorted()).toEqual(["1.9.1", "1.9.2"]);
+
+    // A SECOND CHECK ASKS NOTHING AGAIN: a published release's sidecar never changes.
+    asked.length = 0;
+    await monitor.checkRelease();
+    expect(asked).toEqual([]);
+    expect(monitor.status().urgent).toEqual({ version: "1.9.1", reason: REASON });
+  });
+
+  it("is absent when no release says it, and a failed read is never urgent", async () => {
+    const quiet = makeMonitor({
+      current: "1.9.0",
+      fetchTags: async () => apiTags("v1.9.1"),
+      fetchReleaseReading: async (version) => ({ version, crewProtocol: 2 }),
+    });
+    await quiet.monitor.checkRelease();
+    expect(quiet.monitor.status().urgent).toBeUndefined();
+
+    const unreadable = makeMonitor({
+      current: "1.9.0",
+      fetchTags: async () => apiTags("v1.9.1"),
+      fetchReleaseReading: async () => null, // a timeout, a 404, a foreign document
+    });
+    await unreadable.monitor.checkRelease();
+    expect(unreadable.monitor.status().urgent).toBeUndefined();
+  });
+
+  it("asks the newest ten releases and no more", async () => {
+    const asked: string[] = [];
+    const tags = Array.from({ length: 14 }, (_, i) => `v1.9.${i + 1}`);
+    const { monitor } = makeMonitor({
+      current: "1.9.0",
+      fetchTags: async () => apiTags(...tags),
+      fetchReleaseReading: async (version) => {
+        asked.push(version);
+        return { version, crewProtocol: 2 };
+      },
+    });
+    await monitor.checkRelease();
+    // The newest ten of the delta, plus nothing: 1.9.14 is the newest and is asked once, through the
+    // same cache the link-change read uses.
+    expect(asked.toSorted()).toEqual(
+      ["1.9.10", "1.9.11", "1.9.12", "1.9.13", "1.9.14", "1.9.5", "1.9.6", "1.9.7", "1.9.8", "1.9.9"],
+    );
+  });
+});
+
+describe("UpdateMonitor — reading a sidecar, and remembering the answer", () => {
+  it("asks about a 404 once, and asks again after a failure", async () => {
+    const asked: string[] = [];
+    // 1.9.1 published no sidecar (a 404, definite); 1.9.2's read fails (a timeout, this minute only).
+    const { monitor } = makeMonitor({
+      current: "1.9.0",
+      fetchTags: async () => apiTags("v1.9.1", "v1.9.2"),
+      fetchReleaseReading: async (version) => {
+        asked.push(version);
+        return version === "1.9.1" ? "absent" : null;
+      },
+    });
+    await monitor.checkRelease();
+    expect(asked.toSorted()).toEqual(["1.9.1", "1.9.2"]);
+
+    asked.length = 0;
+    await monitor.checkRelease();
+    // The absence was a fact about a published release and is remembered; the failure was not.
+    expect(asked).toEqual(["1.9.2"]);
+  });
+
+  it("survives every read failing — the delta still reports, and nothing is urgent", async () => {
+    const { monitor, pushes } = makeMonitor({
+      current: "1.9.0",
+      crewMode: () => "lead",
+      crewProtocol: 1,
+      fetchTags: async () => apiTags("v1.9.1", "v1.9.2", "v1.10.0"),
+      fetchReleaseReading: async () => null, // every one of them times out
+    });
+    await monitor.checkRelease();
+    const status = monitor.status();
+    // The tag list is the answer; the sidecar is a footnote on it, and a footnote may not fail it.
+    expect(status.latest).toBe("1.10.0");
+    expect(status.releaseAvailable).toBe(true);
+    expect(status.newerVersions).toEqual(["1.9.1", "1.9.2", "1.10.0"]);
+    expect(status.checkedAt).not.toBeNull();
+    expect(status.urgent).toBeUndefined();
+    expect(status.linkChange).toBeUndefined();
+    expect(pushes).toEqual([
+      { versions: ["1.9.1", "1.9.2", "1.10.0"], linkChange: null, urgent: null },
+    ]);
+  });
+});
+
+describe("UpdateMonitor — the link change", () => {
+  const asset = (crewProtocol: number) => async (version: string) => ({ version, crewProtocol });
+
+  it("is set when the release speaks a DIFFERENT wire, and rides the push", async () => {
+    const { monitor, pushes } = makeMonitor({
+      current: "1.7.0",
+      crewProtocol: 1,
+      crewMode: () => "lead",
+      fetchTags: async () => apiTags("v1.8.0"),
+      fetchReleaseReading: asset(2),
+    });
+    await monitor.checkRelease();
+    expect(monitor.status().linkChange).toEqual({ from: 1, to: 2 });
+    // The push says it too, appended to a body that is otherwise what it always was.
+    expect(pushes).toEqual([{ versions: ["1.8.0"], linkChange: { from: 1, to: 2 }, urgent: null }]);
+    expect(updateDigestBody("1.7.0", ["1.8.0"], { from: 1, to: 2 })).toBe(
+      "Collie 1.8.0 is available. Changes the crew link. Update the lead first, members follow.",
+    );
+  });
+
+  it("is absent when the release speaks the wire this install already speaks", async () => {
+    const { monitor, pushes } = makeMonitor({
+      current: "1.8.0",
+      crewProtocol: 2,
+      crewMode: () => "peer",
+      fetchTags: async () => apiTags("v1.8.1"),
+      fetchReleaseReading: asset(2),
+    });
+    await monitor.checkRelease();
+    expect(monitor.status().linkChange).toBeUndefined();
+    expect(pushes[0]?.linkChange).toBeNull();
+    // And the body is byte-identical to the one every release before this always produced.
+    expect(updateDigestBody("1.8.0", ["1.8.1"], null)).toBe("Collie 1.8.1 is available");
+  });
+
+  it("is absent when the release published no asset at all — every release before 1.8.0", async () => {
+    // A 404 is what the fetcher answers with null, and null is "the release says nothing".
+    const { monitor } = makeMonitor({
+      current: "1.6.0",
+      crewProtocol: 2,
+      crewMode: () => "lead",
+      fetchTags: async () => apiTags("v1.7.0"),
+      fetchReleaseReading: async () => null,
+    });
+    await monitor.checkRelease();
+    expect(monitor.status().linkChange).toBeUndefined();
+  });
+
+  it("is absent when the asset is MALFORMED, and the check still answers", async () => {
+    // The fetcher parses before it returns, so a truncated or foreign document reaches the monitor
+    // as null. What matters here is that the rest of the check is untouched by it.
+    const { monitor } = makeMonitor({
+      current: "1.7.0",
+      crewProtocol: 1,
+      crewMode: () => "lead",
+      fetchTags: async () => apiTags("v1.8.0"),
+      fetchReleaseReading: async () => parseReleaseReading({ version: "1.8.0", crewProtocol: "two" }),
+    });
+    await monitor.checkRelease();
+    expect(monitor.status()).toMatchObject({ latest: "1.8.0", releaseAvailable: true });
+    expect(monitor.status().linkChange).toBeUndefined();
+  });
+
+  it("is absent on a SOLO install — there is no link to change", async () => {
+    const { monitor } = makeMonitor({
+      current: "1.7.0",
+      crewProtocol: 1,
+      crewMode: () => "solo",
+      fetchTags: async () => apiTags("v1.8.0"),
+      fetchReleaseReading: asset(2),
+    });
+    await monitor.checkRelease();
+    expect(monitor.status().linkChange).toBeUndefined();
+  });
+});
+
+describe("the GitHub credential (#254)", () => {
+  it("reads the three names in their order, trimmed, and skips a blank one", () => {
+    expect(GITHUB_TOKEN_ENVS).toEqual(["COLLIE_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"]);
+    expect(githubCredential({})).toBeNull();
+    expect(githubCredential({ GH_TOKEN: "   " })).toBeNull();
+    expect(githubCredential({ GITHUB_TOKEN: " ghp_x " })).toEqual({ token: "ghp_x", source: "GITHUB_TOKEN" });
+    expect(githubCredential({ GH_TOKEN: "a", GITHUB_TOKEN: "b" })).toEqual({ token: "a", source: "GH_TOKEN" });
+    expect(githubCredential({ COLLIE_GITHUB_TOKEN: "c", GH_TOKEN: "a" })).toEqual({
+      token: "c",
+      source: "COLLIE_GITHUB_TOKEN",
+    });
+    // A blank first name does not shadow a set second one.
+    expect(githubCredential({ COLLIE_GITHUB_TOKEN: "", GH_TOKEN: "a" })?.source).toBe("GH_TOKEN");
+  });
+
+  it("sends the token to api.github.com alone — never to a release asset, a look-alike host, or a bad url", () => {
+    const credential = { token: "t", source: "GH_TOKEN" as const };
+    const base = { accept: "application/json" };
+    expect(githubHeaders("https://api.github.com/repos/a/b/tags?per_page=100", credential, base)).toEqual({
+      accept: "application/json",
+      authorization: "Bearer t",
+    });
+    expect(githubHeaders("https://github.com/a/b/releases/download/v1.0.0/x.json", credential, base)).toBe(base);
+    expect(githubHeaders("https://api.github.com.evil.example/x", credential, base)).toBe(base);
+    expect(githubHeaders("https://evil.example/api.github.com/x", credential, base)).toBe(base);
+    expect(githubHeaders("not a url", credential, base)).toBe(base);
+    expect(githubHeaders("https://api.github.com/x", null, base)).toBe(base);
+    expect(isGithubApiUrl("https://api.github.com:443/x")).toBe(true);
+    expect(isGithubApiUrl("http://api.github.com:8080/x")).toBe(false);
+  });
+});
+
+describe("the rehearsal mirror (COLLIE_UPDATE_MIRROR), a loopback-only test seam", () => {
+  it("is off when unset or blank, and GitHub is asked as before", () => {
+    expect(updateMirror({})).toEqual({ ok: true, base: null });
+    expect(updateMirror({ COLLIE_UPDATE_MIRROR: "  " })).toEqual({ ok: true, base: null });
+    expect(githubTagsUrl("AltanS/collie")).toBe("https://api.github.com/repos/AltanS/collie/tags?per_page=100");
+    expect(releaseReadingUrl("AltanS/collie", "1.8.0", null)).toBe(
+      "https://github.com/AltanS/collie/releases/download/v1.8.0/collie-release.json",
+    );
+  });
+
+  it("takes this machine's loopback, with a port and a path, and moves every release URL there", () => {
+    for (const [value, base] of [
+      ["http://127.0.0.1:8899/", "http://127.0.0.1:8899"],
+      ["http://localhost:8899", "http://localhost:8899"],
+      ["http://127.0.0.1/mirror/", "http://127.0.0.1/mirror"],
+    ] as const) {
+      expect(updateMirror({ COLLIE_UPDATE_MIRROR: value })).toEqual({ ok: true, base });
+    }
+    const base = "http://127.0.0.1:8899";
+    expect(githubTagsUrl("AltanS/collie", base)).toBe(`${base}/repos/AltanS/collie/tags?per_page=100`);
+    expect(releaseReadingUrl("AltanS/collie", "1.8.0", base)).toBe(
+      `${base}/AltanS/collie/releases/download/v1.8.0/collie-release.json`,
+    );
+  });
+
+  it("refuses everything else: another host, https, a folder, a look-alike, a user part, IPv6", () => {
+    for (const value of [
+      "http://10.0.0.5:8899",
+      "https://127.0.0.1:8899",
+      "file:///C:/mirror",
+      "http://127.0.0.1.example.com",
+      "http://localhost@example.com",
+      "http://[::1]:8899",
+      "http://127.0.0.1:8899/?x=1",
+      "http://127.0.0.1@evil.com",
+      "http://localhost.evil.com",
+      "http://127.0.0.1:80@evil",
+      "http://localhost:1/../x",
+      "http://localhost:1/a/./b",
+      "https://127.0.0.1",
+      "http://127.0.0.1:8899 x",
+      "http://127.0.0.1:8899#top",
+      "http://127.0.0.1:123456",
+      "http://127.0.0.1:8899/x\\y",
+    ]) {
+      expect(updateMirror({ COLLIE_UPDATE_MIRROR: value })).toEqual({ ok: false, value });
+    }
+  });
+
+  it("the bridge refuses a bad value outright: no request at all, never GitHub in its place", async () => {
+    const reads = releaseFetchers("AltanS/collie", { COLLIE_UPDATE_MIRROR: "http://10.0.0.5:8899", GH_TOKEN: "t" });
+    await expect(reads.fetchTags()).rejects.toThrow("is not an http://127.0.0.1 or http://localhost URL");
+    expect(await reads.fetchReleaseReading("1.0.0")).toBeNull();
+    expect(reads.warning).toContain("The release check is off until it is fixed or unset.");
+    expect(releaseFetchers("AltanS/collie", {}).warning).toBeNull();
+  });
+
+  it("the bridge asks the mirror with no token and refuses its redirect (a local server)", async () => {
+    const seen: (string | null)[] = [];
+    let hop = false;
+    const server = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch(req) {
+        seen.push(req.headers.get("authorization"));
+        if (hop) return new Response(null, { status: 302, headers: { location: "http://127.0.0.1:1/elsewhere" } });
+        return Response.json([{ name: "v1.2.3", commit: { sha: "abc" } }]);
+      },
+    });
+    try {
+      const reads = releaseFetchers("AltanS/collie", { COLLIE_UPDATE_MIRROR: `http://127.0.0.1:${server.port}`, GH_TOKEN: "t" });
+      expect(reads.warning).toContain("WARNING: COLLIE_UPDATE_MIRROR is set");
+      expect(await reads.fetchTags()).toEqual([{ name: "v1.2.3", sha: "abc" }]);
+      hop = true;
+      await expect(reads.fetchTags()).rejects.toThrow();
+      expect(await reads.fetchReleaseReading("1.2.3")).toBeNull();
+      expect(seen.every((h) => h === null)).toBe(true);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  it("never gets the GitHub token", () => {
+    const credential = { token: "t", source: "GH_TOKEN" as const };
+    const base = { accept: "application/json" };
+    expect(githubHeaders(githubTagsUrl("AltanS/collie", "http://127.0.0.1:8899"), credential, base)).toBe(base);
+  });
+});
+
+describe("COLLIE_UPDATE_MIRROR is read in one module, and stays out of the operator's pages", () => {
+  const ROOT = join(import.meta.dir, "..");
+  const sources = (dir: string): string[] =>
+    readdirSync(join(ROOT, dir), { recursive: true, encoding: "utf8" })
+      .filter((p) => p.endsWith(".ts") && !p.endsWith(".test.ts"))
+      .map((p) => join(ROOT, dir, p));
+
+  it("no file but bridge/update.ts names it; everything else asks `updateMirror` or `releaseFetchers`", () => {
+    const naming = [...sources("bridge"), ...sources("cli")]
+      .filter((f) => readFileSync(f, "utf8").includes("COLLIE_UPDATE_MIRROR"))
+      .map((f) => relative(ROOT, f).replaceAll("\\", "/"));
+    expect(naming).toEqual(["bridge/update.ts"]);
+  });
+
+  it("neither the CHANGELOG nor docs/ mention it: it is a test seam, not a setting", () => {
+    const pages = [join(ROOT, "CHANGELOG.md"), ...readdirSync(join(ROOT, "docs")).filter((p) => p.endsWith(".md")).map((p) => join(ROOT, "docs", p))];
+    expect(pages.filter((p) => readFileSync(p, "utf8").includes("COLLIE_UPDATE_MIRROR"))).toEqual([]);
+  });
+});
+
+describe("the tag list past one page (counsel: about 92 tags, and GitHub pages at 100)", () => {
+  /** 130 tags in the API's order: 100 older ones fill page 1, and the newest stable sits at 120. */
+  const ORDER = [
+    ...Array.from({ length: 100 }, (_, i) => `v0.${i + 1}.0`),
+    ...Array.from({ length: 19 }, (_, i) => `v0.${i + 101}.0`),
+    "v1.1.0",
+    "v1.2.0-rc.1",
+    ...Array.from({ length: 9 }, (_, i) => `v0.${i + 120}.0`),
+  ];
+  const json = (names: readonly string[]) => names.map((name) => ({ name, commit: { sha: `sha-${name}` } }));
+  const pages = (all: readonly string[]) => (url: string) => {
+    const page = Number(/[?&]page=(\d+)/.exec(url)?.[1] ?? "1");
+    return Promise.resolve({ ok: true as const, value: json(all.slice((page - 1) * TAG_PAGE_SIZE, page * TAG_PAGE_SIZE)) });
+  };
+
+  it("reads page after page until a short one, and keeps the first page's URL as it was", async () => {
+    expect(ORDER).toHaveLength(130);
+    expect(ORDER.indexOf("v1.1.0")).toBe(119);
+    const asked: string[] = [];
+    const fetchPage = pages(ORDER);
+    const all = await readAllTags("AltanS/collie", null, (url) => {
+      asked.push(url);
+      return fetchPage(url);
+    });
+    expect(asked).toEqual([
+      "https://api.github.com/repos/AltanS/collie/tags?per_page=100",
+      "https://api.github.com/repos/AltanS/collie/tags?per_page=100&page=2",
+    ]);
+    expect(all.ok && all.tags.map((t) => t.name)).toEqual(ORDER);
+    // The newest stable is the same one a single page of all 130 would give; the rc is still a prerelease.
+    const stable = (all.ok ? all.tags : []).map((t) => t.name).filter((n) => /^v\d+\.\d+\.\d+$/.test(n));
+    expect(stable.toSorted((a, b) => compareSemver(b.slice(1), a.slice(1)))[0]).toBe("v1.1.0");
+  });
+
+  it("asks once for a repository with one page, as before, and on a mirror too", async () => {
+    const asked: string[] = [];
+    const base = "http://127.0.0.1:8899";
+    const all = await readAllTags("AltanS/collie", base, (url) => {
+      asked.push(url);
+      return pages(ORDER.slice(0, 92))(url);
+    });
+    expect(asked).toEqual([`${base}/repos/AltanS/collie/tags?per_page=100`]);
+    expect(all.ok && all.tags).toHaveLength(92);
+  });
+
+  it("a failed page fails the whole read, and the reading stops at the page bound", async () => {
+    const failed = await readAllTags("o/r", null, (url) =>
+      Promise.resolve(url.includes("page=2") ? { ok: false as const, failure: "HTTP 502" } : pages(ORDER)(url)),
+    );
+    expect(failed).toEqual({ ok: false, failure: "HTTP 502" });
+    let n = 0;
+    const endless = await readAllTags("o/r", null, () => {
+      n++;
+      return Promise.resolve({ ok: true as const, value: json(Array.from({ length: TAG_PAGE_SIZE }, (_, i) => `v0.${n}.${i}`)) });
+    });
+    expect(n).toBe(TAG_PAGES_MAX);
+    expect(endless.ok && endless.tags).toHaveLength(TAG_PAGE_SIZE * TAG_PAGES_MAX);
   });
 });

@@ -1,6 +1,6 @@
 {
   "name": "collie-web",
-  "version": "1.5.1",
+  "version": "1.19.0",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -12,7 +12,9 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.worker.json",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "e2e": "vite build && playwright test",
+    "e2e:ui": "playwright test --ui"
   },
   "dependencies": {
     "class-variance-authority": "^0.7.1",
@@ -21,9 +23,11 @@
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-router": "^7.18.0",
+    "sugar-high": "2.4.1",
     "tailwind-merge": "^3.6.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.62.1",
     "@tailwindcss/vite": "^4.3.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",

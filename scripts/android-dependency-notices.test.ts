@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { nativeReleaseComponents } from "./android-sbom";
 import { dependencyNotices } from "./android-dependency-notices";
 
 const root = resolve(import.meta.dir, "..");
@@ -28,7 +29,22 @@ describe("dependencyNotices", () => {
       readFileSync(resolve(root, "android/app/gradle.lockfile"), "utf8"),
       JSON.parse(readFileSync(resolve(root, "android/dependency-licenses.json"), "utf8")),
       readFileSync(resolve(root, "android/licenses/Apache-2.0.txt"), "utf8"),
+      nativeReleaseComponents(),
     );
     expect(readFileSync(resolve(root, "android/app/src/main/res/raw/dependency_notices.txt"), "utf8")).toBe(expected);
   });
+
+  test("native notices and packaged raw assets preserve exact pinned MIT licenses", () => {
+    const native = nativeReleaseComponents();
+    const out = dependencyNotices(lock("androidx.core:core:1.0.0"), map, "APACHE TEXT", native);
+    expect(out).toContain("NATIVE DECODER SOURCE DEPENDENCIES");
+    expect(out).not.toContain("khoben");
+    for (const component of native) {
+      const original = readFileSync(resolve(root, `android/app/src/main/cpp/third_party/${component.name}/LICENSE`));
+      expect(out).toContain(original.toString("utf8"));
+      expect(readFileSync(resolve(root, `android/app/src/main/res/raw/license_${component.name}.txt`))).toEqual(original);
+      expect(out).toContain(component.licenses[0]!.license.url);
+    }
+  });
+
 });

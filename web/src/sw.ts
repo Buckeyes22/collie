@@ -1,11 +1,19 @@
 /// <reference lib="webworker" />
-import { precacheAndRoute, createHandlerBoundToURL } from "workbox-precaching";
+import { addPlugins, precacheAndRoute, createHandlerBoundToURL } from "workbox-precaching";
 import { NavigationRoute, registerRoute } from "workbox-routing";
 import { clientsClaim } from "workbox-core";
 
 import { decidePush, notificationPath, type NotifData, type PushPayload } from "./lib/push-decision";
-import { openNotificationTarget, type OpenOutcome } from "./lib/notification-open";
-import { FONT_URLS, NAVIGATION_NETWORK_ONLY } from "./lib/sw-routes";
+import { askInApp, openNotificationTarget, type OpenOutcome, type OpenTargetClient } from "./lib/notification-open";
+import { readPushTitles } from "./lib/push-title-store";
+import { FONT_URLS, navigationNetworkOnlyUnder } from "./lib/sw-routes";
+
+// Where this worker is mounted (ADR 0052): the directory it was fetched from, which is the mount
+// the app registered it under (lib/pwa.ts) — `/` at the origin root, `/collie/` behind a proxy that
+// gives Collie a path. One build serves any mount, so nothing here is a build-time constant: every
+// root-absolute path this file names is put under the mount with `under()`.
+const MOUNT = new URL("./", self.location.href).pathname;
+const under = (path: string): string => (MOUNT === "/" ? path : `${MOUNT.slice(0, -1)}${path}`);
 
 // Custom service worker (vite-plugin-pwa `injectManifest`). It does everything the old generated
 // Workbox SW did — precache the app shell + SPA-fallback navigations — PLUS the two handlers a
@@ -22,15 +30,53 @@ declare const self: ServiceWorkerGlobalScope & {
 };
 
 // ── App-shell caching (parity with the previous generateSW config) ──────────────────────────────
-precacheAndRoute(self.__WB_MANIFEST);
+//
+// ── PROGRESS IS COUNTED IN FILES, AND THAT IS THE ONLY HONEST UNIT (M28/01) ──
+// `fetchDidSucceed` fires once per COMPLETED precache asset and carries no byte count. So the worker
+// posts "n of N files" to every open client and the update screen draws its bar from that. A bar
+// weighted by bytes would need a build-time size stamp, a fetch to read it and a fallback for when it
+// is missing — and it would still move in file-sized jumps, because this is the only hook there is.
+// `total` is the manifest's own length, which is exact.
+//
+// Best-effort, and off the response path: the asset is returned whatever the postMessage does. A
+// client list that cannot be read costs the bar, never the install.
+const PRECACHE_MANIFEST = self.__WB_MANIFEST;
+let precached = 0;
+
+addPlugins([
+  {
+    fetchDidSucceed: async ({ request, response }) => {
+      precached += 1;
+      const message = {
+        type: "precache-progress",
+        done: precached,
+        total: PRECACHE_MANIFEST.length,
+        url: request.url,
+      };
+      try {
+        const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+        // `Client.postMessage(message, transfer)` — the second argument is a TRANSFER LIST, not a
+        // target origin: the recipient is a client of this worker's own scope, reached by reference,
+        // so there is no cross-origin window to address. Spelled out as empty, exactly as
+        // `lib/pwa.ts` spells its own post to the worker, because nothing is transferred.
+        for (const client of windows) client.postMessage(message, []);
+      } catch {
+        /* no clients to tell, or the list refused — the install is what matters */
+      }
+      return response;
+    },
+  },
+]);
+
+precacheAndRoute(PRECACHE_MANIFEST);
 // SPA fallback so deep links (/pane/:id) resolve offline too. The denylist is the set of paths this
 // SW must never answer from the precache — the API, and the `/auth/` namespace reserved for a
 // fronting proxy's sign-in page. Without that second entry an installed PWA, which has no address
 // bar, has no reachable path to the proxy at all: every navigation, including a reload, is answered
 // by the cached app shell. See lib/sw-routes for the contract.
 registerRoute(
-  new NavigationRoute(createHandlerBoundToURL("/index.html"), {
-    denylist: [...NAVIGATION_NETWORK_ONLY],
+  new NavigationRoute(createHandlerBoundToURL(under("/index.html")), {
+    denylist: navigationNetworkOnlyUnder(MOUNT),
   }),
 );
 
@@ -43,7 +89,9 @@ registerRoute(
 // The cost, stated plainly: a device that installs the PWA and goes offline without ever painting a
 // Nerd Font glyph shows tofu until it is online once. Precaching would fix that by charging EVERY
 // install ~1.1 MB, including the installs that never need a glyph — the wrong way round.
-const FONT_CACHE = "collie-fonts";
+// Named per mount: two collies mounted at two paths on one origin share one Cache Storage, and
+// each one's sweep below would otherwise empty the other's fonts.
+const FONT_CACHE = MOUNT === "/" ? "collie-fonts" : `collie-fonts:${MOUNT}`;
 
 // WHAT MAY BE STORED. This cache is permanent, so a wrong entry is permanent too — the same shape as
 // the 401ing proxy that once froze an installed SW, one layer down. A fronting proxy with an expired
@@ -55,7 +103,7 @@ const storable = (r: Response) =>
   r.status === 200 && !r.redirected && (r.headers.get("content-type") ?? "").includes("font");
 
 registerRoute(
-  ({ url, sameOrigin }) => sameOrigin && url.pathname.startsWith("/fonts/"),
+  ({ url, sameOrigin }) => sameOrigin && url.pathname.startsWith(under("/fonts/")),
   async ({ request }) => {
     const cache = await caches.open(FONT_CACHE);
     const hit = await cache.match(request);
@@ -75,7 +123,7 @@ self.addEventListener("activate", (event: ExtendableEvent) => {
   event.waitUntil(
     (async () => {
       const cache = await caches.open(FONT_CACHE);
-      const live = new Set<string>(FONT_URLS);
+      const live = new Set<string>(FONT_URLS.map(under));
       for (const req of await cache.keys()) {
         if (!live.has(new URL(req.url).pathname)) await cache.delete(req);
       }
@@ -104,8 +152,8 @@ self.addEventListener("message", (event: ExtendableMessageEvent) => {
 // the result, so it must be a monochrome silhouette on transparency. The maskable home-screen tile
 // (`/web-app-manifest-192x192.png`) must never be used for either — it is opaque with no alpha, so
 // Android stamps it on the icon's corner as a solid grey block.
-const ICON = "/notification-icon-192x192.png";
-const BADGE = "/badge-96x96.png";
+const ICON = under("/notification-icon-192x192.png");
+const BADGE = under("/badge-96x96.png");
 
 self.addEventListener("push", (event: PushEvent) => {
   event.waitUntil(handlePush(event));
@@ -129,7 +177,12 @@ async function handlePush(event: PushEvent): Promise<void> {
     payload = { body: event.data?.text() };
   }
 
-  const decision = decidePush(payload, await anyVisibleClient());
+  // The title in this device's language, from the table the page left (lib/push-titles.ts, ADR 0074).
+  // Read only for a push that names a code: a retraction or an operator-typed test has nothing to
+  // translate, and must not wait on storage.
+  const templates =
+    payload.titleCode === undefined ? {} : await readPushTitles(self.caches, self.location.origin, MOUNT);
+  const decision = decidePush(payload, await anyVisibleClient(), templates);
   if (decision.kind === "suppress") return; // a visible Collie tab already surfaces it in-app
   if (decision.kind === "clear") {
     // Retraction: close the slot and show nothing. Chrome's silent-push budget tolerates this.
@@ -146,6 +199,7 @@ async function handlePush(event: PushEvent): Promise<void> {
       session: decision.session,
       host: decision.host,
       target: decision.target,
+      machine: decision.machine,
     } satisfies NotifData,
     icon: ICON,
     badge: BADGE,
@@ -182,16 +236,32 @@ self.addEventListener("notificationclick", (event: NotificationEvent) => {
   );
 });
 
+// A window as lib/notification-open sees it: the WindowClient itself, plus `openInApp`, which asks
+// the running app to push the URL in its own router (ADR 0067) and waits briefly for its answer.
+function asTarget(client: WindowClient): OpenTargetClient {
+  return {
+    url: client.url,
+    visibilityState: client.visibilityState,
+    focused: client.focused,
+    navigate: (target) => client.navigate(target),
+    focus: () => client.focus(),
+    openInApp: (target) => askInApp(client, target),
+  };
+}
+
 // Focus an existing Collie tab (navigating it to `path`) or open a new one. `path` is
 // origin-relative. The choice lives in lib/notification-open, which also documents why a window is
 // opened before any discarded client is navigated (#147, and the Android regression that fix grew).
 // The `matchAll` below is deliberately the ONLY awaited call between the tap and `openWindow`.
 async function openPath(path: string): Promise<OpenOutcome> {
-  const url = new URL(path, self.location.origin).href;
+  // Resolved against the mount, not the origin: under `/collie/` an origin-relative target lands
+  // outside the manifest scope, Chrome matches no installed client and opens a browser tab at the
+  // root. At the root the two are the same address.
+  const url = new URL(path.replace(/^\/+/, ""), new URL("./", self.location.href)).href;
   const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
   return openNotificationTarget({
     url,
-    clients: windows,
+    clients: windows.map(asTarget),
     openWindow: (target) => self.clients.openWindow(target),
   });
 }

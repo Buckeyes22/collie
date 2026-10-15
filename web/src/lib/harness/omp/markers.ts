@@ -6,6 +6,7 @@
 // *between* glyphs, so a regex over the raw buffer would miss (omp paints a border's corner and the
 // statusline inside it as separate styled segments). Pure functions, no I/O, no React.
 
+import type { AnsiSegment } from "../../ansi";
 import { isBlank, lineText, type StyledLine } from "../../blocks";
 
 // `lineText` / `isBlank` are properties of a StyledLine, not of any grammar, so they live in the
@@ -23,6 +24,15 @@ export { isBlank, lineText };
 export function rstrip(text: string): string {
   return text.replace(/\s+$/, "");
 }
+
+/**
+ * `DEFAULT_PROMPT_TAIL_LINES` in bridge/prompt-binding.ts — mirrored, the way web mirrors wire types.
+ * `verifyExpectedPrompt` accepts a named region only when its match ends inside this many of the
+ * fresh read's NON-BLANK rows from the tail, so every shape that names one (`composerPrompt`) has to
+ * count the rows it leaves below itself. Here rather than in one shape module because two of them
+ * (chrome.ts's box, pi-shape.ts's pi-shaped composer) now count against it.
+ */
+export const BRIDGE_PROMPT_TAIL_LINES = 6;
 
 // The composer's TOP border: a rounded corner, at least one rule glyph, then anything (omp paints the
 // user's whole statusline INTO this border — see chrome.ts), closed by the opposite corner. Loose ON
@@ -82,6 +92,23 @@ export function isOpenComposerBottom(text: string): boolean {
   return parseComposerBottom(text)?.openEnded === true;
 }
 
+/** The row's segments clipped to `[start, end)`, trailing default-style padding dropped. */
+function spanParts(line: StyledLine, start: number, end: number): AnsiSegment[] {
+  const parts: AnsiSegment[] = [];
+  let at = 0;
+  for (const seg of line.segments) {
+    const from = Math.max(at, start);
+    const to = Math.min(at + seg.text.length, end);
+    if (to > from) parts.push({ ...seg, text: seg.text.slice(from - at, to - at) });
+    at += seg.text.length;
+    if (at >= end) break;
+  }
+  // OMP pads the row out to the terminal's width in the default style, so that padding is neither
+  // draft nor suggestion — drop it before looking for the trailing run.
+  while (parts.length > 0 && parts[parts.length - 1]!.text.trim() === "") parts.pop();
+  return parts;
+}
+
 // omp paints an INLINE COMPLETION SUGGESTION — a "ghost" — into the composer, after the operator's
 // own text: unaccepted, absent from the input buffer, and deleted by no Backspace. Live capture
 // (sandbox omp pane, 2026-08-23, omp 17) of the bottom border after typing `leftover draft here`:
@@ -104,9 +131,9 @@ export function isOpenComposerBottom(text: string): boolean {
 // does on an IDLE pane — but on a working pane omp 18 writes the same text in an explicit theme
 // foreground, that anchor vanished, and the stall came back verbatim. So a ghost is now "the trailing
 // run of segments sharing ONE foreground that DIFFERS from the text before it", which reads both
-// shapes: the draft's colour is whatever precedes the run, present or absent. It is claimed only on
-// the bottom border, which is the row the caret is on — omp windows a long draft, so the tail is
-// always the caret's row.
+// shapes: the draft's colour is whatever precedes the run, present or absent. The caller supplies the
+// exact draft span from an already-located composer row: the boxed scanner uses its bottom border;
+// the rule scanner uses its final prompt row. This helper is deliberately not a border predicate.
 //
 // Three refusals, all the fail-closed direction, because a wrongly-claimed ghost SHORTENS the draft
 // the reply guard verifies: a row painted in ONE foreground end to end claims nothing (that is the
@@ -128,29 +155,12 @@ export function isOpenComposerBottom(text: string): boolean {
 // it puts every `@mention`- or placeholder-ending draft back into the permanent stall, which is the
 // failure the operator actually feels. The previous rule was WORSE here, not better: with an unstyled
 // draft it claimed the whole gradient (`ultrathink`), where this one claims `k`.
-export function composerGhost(line: StyledLine): string {
-  const inner = parseComposerBottom(lineText(line))?.draft;
-  if (inner === undefined || inner.length === 0) return "";
-  const start = BOTTOM_OPEN.length;
-  const end = start + inner.length;
+/** The trailing inline-suggestion run inside an already-located draft span. */
+export function draftGhost(line: StyledLine, start: number, end: number): string {
+  if (end <= start) return "";
 
-  // The row's segments clipped to that inner span, so neither border corner — both coloured — can be
-  // mistaken for a suggestion.
-  const parts: { text: string; fg: string | undefined }[] = [];
-  let at = 0;
-  for (const seg of line.segments) {
-    const from = Math.max(at, start);
-    const to = Math.min(at + seg.text.length, end);
-    if (to > from) {
-      parts.push({ text: seg.text.slice(from - at, to - at), fg: seg.fg });
-    }
-    at += seg.text.length;
-    if (at >= end) break;
-  }
-
-  // omp pads the box out to the terminal's width in the default style, so that padding is neither
-  // draft nor suggestion — drop it before looking for the trailing run.
-  while (parts.length > 0 && parts[parts.length - 1]!.text.trim() === "") parts.pop();
+  // Clipped to the draft span, so surrounding chrome cannot be mistaken for a suggestion.
+  const parts = spanParts(line, start, end);
   if (parts.length === 0) return "";
 
   const ghostFg = parts[parts.length - 1]!.fg;
@@ -158,13 +168,69 @@ export function composerGhost(line: StyledLine): string {
   let cut = parts.length;
   while (cut > 0 && parts[cut - 1]!.fg === ghostFg) cut--;
   if (cut === 0) return "";
-  if (!parts.slice(0, cut).some((p) => p.text.trim() !== "")) return "";
+  if (!parts.slice(0, cut).some((part) => part.text.trim() !== "")) return "";
   return rstrip(
     parts
       .slice(cut)
-      .map((p) => p.text)
+      .map((part) => part.text)
       .join(""),
   );
+}
+
+// omp 18.4 paints a KEY HINT into an EMPTY editor, e.g. `⇧⇥ to change thinking effort` on a fresh
+// session or `← to see 2 running agents` while subagents run. The editor renders its placeholder
+// right-aligned — `" ".repeat(width - hintWidth) + hint`, and only when at least two cells of
+// padding fit — and composer-hints.ts builds the hint as `fg("accent", key) + " " +
+// fg("dim", italic(label))`. Live capture (herdr pane, 2026-09-30, omp 18.4.4, boxed composer):
+//
+//   ╰─ ESC[38;2;242;244;248m<padding>ESC[38;2;51;177;255m<shift> <tab>ESC[0mESC[38;2;242;244;248m ESC[0m
+//      ESC[3mESC[38;2;111;115;119mto change thinking effortESC[0m … ─╯
+//
+// `<shift> <tab>` are two Nerd Font glyphs. Read as text, that row is a draft of those two glyphs
+// (draftGhost claims the label, not the key), so every fresh session showed "Draft in terminal".
+// The hint is not in the input buffer and vanishes with the first typed character. The predicate
+// below names no colour and no label text, only the renderer's shape: two or more leading blank
+// cells, then a non-italic key run, then a trailing italic run with a foreground. Typed text never
+// arrives italic, and a draft only starts with two spaces when the operator typed them, so a false
+// claim needs both at once. The callers also only ask on a SINGLE-row draft, because omp paints no
+// hint once the buffer holds anything.
+const PLACEHOLDER_MIN_PAD = 2;
+
+/** Whether the draft span holds omp's empty-editor key hint rather than typed text. */
+export function draftPlaceholder(line: StyledLine, start: number, end: number): boolean {
+  if (end - start <= PLACEHOLDER_MIN_PAD) return false;
+  const parts = spanParts(line, start, end);
+  const text = parts.map((part) => part.text).join("");
+  if (!text.startsWith(" ".repeat(PLACEHOLDER_MIN_PAD))) return false;
+
+  let cut = parts.length;
+  while (cut > 0 && (parts[cut - 1]!.italic === true || parts[cut - 1]!.text.trim() === "")) cut--;
+  const label = parts.slice(cut).filter((part) => part.text.trim() !== "");
+  if (label.length === 0 || label.some((part) => part.italic !== true || part.fg === undefined)) {
+    return false;
+  }
+  const key = parts.slice(0, cut).filter((part) => part.text.trim() !== "");
+  return key.length > 0 && key.every((part) => part.italic !== true);
+}
+
+/** The boxed composer's draft span inside its bottom-border row, or null when the row is not one. */
+function composerSpan(line: StyledLine): { start: number; end: number } | null {
+  const inner = parseComposerBottom(lineText(line))?.draft;
+  if (inner === undefined || inner.length === 0) return null;
+  const start = BOTTOM_OPEN.length;
+  return { start, end: start + inner.length };
+}
+
+/** The boxed composer's specialization: locate its draft span, then apply the shared ghost rule. */
+export function composerGhost(line: StyledLine): string {
+  const span = composerSpan(line);
+  return span === null ? "" : draftGhost(line, span.start, span.end);
+}
+
+/** The boxed composer's specialization of `draftPlaceholder`. */
+export function composerPlaceholder(line: StyledLine): boolean {
+  const span = composerSpan(line);
+  return span !== null && draftPlaceholder(line, span.start, span.end);
 }
 
 // A wrapped draft's CONTINUATION row: the box's vertical sides with a two-space gutter inside each.
@@ -181,13 +247,14 @@ export function composerContText(text: string): string | null {
 }
 
 // A row that OPENS A BOX at column 0 — the single shape every widget omp can put in front of the
-// composer is built out of. Every one of the eleven modal captures in this corpus (`/model`,
-// `/settings`, `/resume` and their moved-selection twins; the five Ask-tool screens) draws a full
-// box whose every row starts here: `╭` for the header, `│` for a body row, `├` for an internal rule,
-// `╰` for the footer. So does the welcome panel, the tool-result box, and the `╭─── ✘ Error: … ───╮`
-// banner. omp indents ordinary transcript by one column and paints the slash palette's rows with a
-// `❯ ` marker or a two-space gutter, so column 0 carries a box-drawing glyph only when omp is drawing
-// a BOX there — which is why this can be a glyph predicate rather than a content match.
+// composer is built out of. Every one of the fourteen modal captures in this corpus (`/model`,
+// `/settings`, `/resume` and their moved-selection twins; the five Ask-tool screens; the three
+// tool-approval screens) draws a full box whose every row starts here: `╭` for the header, `│` for a
+// body row, `├` for an internal rule, `╰` for the footer. So does the welcome panel, the tool-result
+// box, and the `╭─── ✘ Error: … ───╮` banner. omp indents ordinary transcript by one column and
+// paints the slash palette's rows with a `❯ ` marker or a two-space gutter, so column 0 carries a
+// box-drawing glyph only when omp is drawing a BOX there — which is why this can be a glyph
+// predicate rather than a content match.
 //
 // The whole Unicode Box Drawing block is claimed, not just omp's four corners: this predicate's job
 // is to REJECT, so being generous is the fail-closed direction (a rejected row costs a null, i.e. a

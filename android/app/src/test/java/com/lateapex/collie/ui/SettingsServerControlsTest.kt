@@ -1,12 +1,17 @@
 package com.lateapex.collie.ui
 
 import android.view.View
+import android.view.ViewGroup
 import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.TextView
 import androidx.test.core.app.ApplicationProvider
 import com.google.android.material.materialswitch.MaterialSwitch
 import com.lateapex.collie.CollieApplication
 import com.lateapex.collie.R
+import com.lateapex.collie.network.ApiResult
+import com.lateapex.collie.network.CacheWatchEntry
+import com.lateapex.collie.network.CacheWatchListResponse
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -85,20 +90,66 @@ class SettingsServerControlsTest {
         assertEquals(R.id.settings_parity_pairing_card, reveals.single().first.id)
         val name = parent.findViewById<EditText>(R.id.settings_pair_label)
         assertSame(name, reveals.single().second)
-        assertEquals("AB12-CD34", parent.findViewById<EditText>(R.id.settings_pair_code).text.toString())
+        val code = parent.findViewById<EditText>(R.id.settings_pair_code)
+        assertEquals("AB12-CD34", code.text.toString())
+        assertFalse(code.isSaveEnabled)
+        assertEquals(View.IMPORTANT_FOR_AUTOFILL_NO, code.importantForAutofill)
+    }
+
+    @Test
+    fun settingsExposeSharedMachineAndCacheSwitchesAndTheLeadOwnedWatchList() {
+        val application = ApplicationProvider.getApplicationContext<CollieApplication>()
+        seedUnpairedConnection(application)
+        val activity = Robolectric.buildActivity(SettingsActivity::class.java).create().get()
+        val parent = LinearLayout(activity)
+        val controls = SettingsServerControls(activity, application.container.repository, {}, {})
+
+        controls.bind(parent)
+
+        assertTrue(parent.findViewById<View>(R.id.settings_notify_machines_switch) != null)
+        assertTrue(parent.findViewById<View>(R.id.settings_notify_cache_switch) != null)
+        assertTrue(parent.findViewById<View>(R.id.settings_cache_watch_card) != null)
+    }
+
+    @Test
+    fun orphanedWatchIsNonlinkableAndOffersOnlyForget() {
+        val application = ApplicationProvider.getApplicationContext<CollieApplication>()
+        seedUnpairedConnection(application)
+        val activity = Robolectric.buildActivity(SettingsActivity::class.java).create().get()
+        val parent = LinearLayout(activity)
+        val controls = SettingsServerControls(activity, application.container.repository, {}, {})
+        controls.bind(parent)
+
+        controls.renderCacheWatchList(ApiResult.Success(
+            CacheWatchListResponse(listOf(CacheWatchEntry(id = "opaque-id", label = "orphaned agent"))),
+            200,
+        ))
+
+        val card = parent.findViewById<ViewGroup>(R.id.settings_cache_watch_card)
+        val buttons = findButtons(card)
+        assertEquals(1, buttons.size)
+        assertEquals("Forget watch", buttons.single().text.toString())
+        assertTrue(findText(card, "orphaned agent")?.text.toString().contains("cannot be opened"))
+    }
+
+    private fun findButtons(root: View): List<com.google.android.material.button.MaterialButton> {
+        val found = mutableListOf<com.google.android.material.button.MaterialButton>()
+        if (root is com.google.android.material.button.MaterialButton) found += root
+        if (root is ViewGroup) for (index in 0 until root.childCount) found += findButtons(root.getChildAt(index))
+        return found
+    }
+
+    private fun findText(root: View, phrase: String): TextView? {
+        if (root is TextView && root.text.toString().contains(phrase)) return root
+        if (root is ViewGroup) for (index in 0 until root.childCount) findText(root.getChildAt(index), phrase)?.let { return it }
+        return null
     }
 
     private fun seedUnpairedConnection(application: CollieApplication) {
-        val store = application.container.connectionStore
-        @Suppress("UNCHECKED_CAST")
-        val flow = com.lateapex.collie.data.EncryptedConnectionStore::class.java
-            .getDeclaredField("mutableConnection")
-            .apply { isAccessible = true }
-            .get(store) as kotlinx.coroutines.flow.MutableStateFlow<com.lateapex.collie.domain.Connection?>
-        flow.value = com.lateapex.collie.domain.Connection(
+        saveFixtureConnection(application, com.lateapex.collie.domain.Connection(
             com.lateapex.collie.domain.CollieOrigin("https://collie.example.com/"),
             "S25U-native",
             token = null,
-        )
+        ))
     }
 }

@@ -18,9 +18,9 @@ import type {
 // ─────────────────────────────────────────────────────────────────────────────
 // SOLO ZERO-TAX BASELINE — the client half.
 //
-// The bridge half lives in `bridge/solo-baseline.test.ts` and owns the contract (PACK_PROTOCOL.md
+// The bridge half lives in `bridge/solo-baseline.test.ts` and owns the contract (CREW_PROTOCOL.md
 // §11). This file pins the two things only the frontend can answer: that the hand-mirrored wire
-// types here gained no pack dimension either (they would otherwise drift into accepting a `servers`
+// types here gained no crew dimension either (they would otherwise drift into accepting a `servers`
 // the bridge must then emit), and that a solo client puts NO host param on the wire — §11's `?h=`
 // row: "never emitted by the client, never present in a URL".
 //
@@ -42,7 +42,7 @@ const goldenSnapshot = JSON.parse(readFileSync(GOLDEN, "utf8")) as SnapshotRespo
 // `servers?:` (SnapshotResponse) and `host?:` (SessionSummary, AgentView) are the frontend mirrors of
 // the fields the snapshot merge added bridge-side; `bridge/solo-baseline.test.ts` recorded the same
 // three, the same way, in M4/04. Read it as the type-level guard working: the mirror cannot grow a
-// pack dimension without an author acknowledging it HERE.
+// crew dimension without an author acknowledging it HERE.
 //
 // **No golden was regenerated and no byte moved.** All three are optional-and-absent, so the bridge's
 // committed solo body still contains none of them — which the golden assertion below now states
@@ -92,20 +92,33 @@ const AGENT_VIEW_KEYS = {
   lastActiveAt: true,
   lastSeenAt: true,
   host: true,
-  // NOT a pack dimension — an ordinary optional feature field (0.29.0, panes named by their OSC
+  // NOT a crew dimension — an ordinary optional feature field (0.29.0, panes named by their OSC
   // title). Recorded here because the tripwire is exhaustive over `keyof AgentView`, not because it
   // carries a host.
   terminalTitle: true,
-  // Also not a pack dimension: a presentation flag on the field above, set only when the title
+  // Also not a crew dimension: a presentation flag on the field above, set only when the title
   // outlived the program that printed it.
   terminalTitleStale: true,
-  // Also not a pack dimension: an optional sentence the bridge composes about one kind of pane
+  // Also not a crew dimension: an optional sentence the bridge composes about one kind of pane
   // (M11/05), rendered as text and absent everywhere else.
   hint: true,
   // The OTHER half of a pane's address. Like `host` it is written by the REQUEST, not by the pane:
   // present exactly when the snapshot was widened (`?sessions=all`, the "All sessions" view), absent
   // on every other read — which is every read the app made before that view existed.
   session: true,
+  // Also not a crew dimension: the pane's prompt-cache reading (M28/02), computed on the machine the
+  // pane lives on and absent until its agent has taken one turn. A 1.8.x peer omits it.
+  cache: true,
+  // Not a crew dimension: the model the pane's agent is on, from the same probe as `cache`, and
+  // absent until that agent has taken one turn. An older bridge or peer omits it.
+  model: true,
+  // Not crew dimensions: the operator's name for this pane's one-pane tab, and the pane's position in
+  // its tab. Computed on the machine the pane lives on; an older peer omits both.
+  soleTabName: true,
+  tabPosition: true,
+  // Not a crew dimension: what the checkout holding the pane's folder is on, read off the disk of
+  // the machine the pane lives on. An older bridge or peer omits it.
+  gitHead: true,
 } satisfies Record<keyof AgentView, true>;
 
 const DEVICE_AUTH_KEYS = {
@@ -128,9 +141,35 @@ const UPDATE_INFO_KEYS = {
   // renders. Both optional — an older bridge sends neither.
   newerVersions: true,
   run: true,
+  // The package manager's own upgrade command (M17/02). Optional: only a packaged install under a
+  // prefix Collie recognises has one to name.
+  packageCommand: true,
+  // The files on disk stopped naming the version this process runs (M17/02), and the command that
+  // clears it. Both optional — a bridge older than the field sends neither.
+  restartNeeded: true,
+  restartCommand: true,
+  // The two bands the operator can close (M17/08) — the offer for this host and the quiet notice
+  // about a machine a package manager owns. The bridge's facts, so the decision holds wherever the
+  // band is read next. Optional here: a bridge older than the fields sends neither.
+  dismissedVersion: true,
+  dismissedCrewVersion: true,
+  // The peer legs of a run this machine has no record of, and that run's settle stamp (M20/09,
+  // M20/01). Both optional and both ABSENT on a solo install: a machine with no crew has no legs,
+  // so the solo payload is byte-identical to what it was.
+  peers: true,
+  settledAt: true,
+  // Where those legs' run levels the members to (M32). Optional, and absent on a solo install with
+  // the legs it travels beside.
+  peersTo: true,
+  // Whether the release ahead changes the crew wire (M27/06). Optional and ABSENT on a solo
+  // install, for the same reason: a machine with no crew has no link to change.
+  linkChange: true,
+  // The newest urgent release in the delta (ADR 0046). Optional, and absent on every ordinary
+  // release, so a solo payload is byte-identical to what it was.
+  urgent: true,
 } satisfies Record<keyof UpdateInfo, true>;
 
-describe("solo zero-tax — the client's mirror types carry no pack dimension", () => {
+describe("solo zero-tax — the client's mirror types carry no crew dimension", () => {
   it("SnapshotResponse mirrors the bridge's field set exactly", () => {
     expect(Object.keys(SNAPSHOT_KEYS).toSorted()).toEqual([
       "agents",
@@ -147,7 +186,7 @@ describe("solo zero-tax — the client's mirror types carry no pack dimension", 
     ]);
   });
 
-  it("the pack dimension is on the mirror types, and every field of it is optional", () => {
+  it("the crew dimension is on the mirror types, and every field of it is optional", () => {
     // Renegotiated in M5/02 (see the header above the key maps): `servers`/`host` EXIST here now,
     // mirroring bridge/types.ts. What must never change is that they are optional — a solo bridge
     // emits none of them, so a snapshot literal without them still satisfies the type.
@@ -164,27 +203,32 @@ describe("solo zero-tax — the client's mirror types carry no pack dimension", 
     expect(SESSION_SUMMARY_KEYS.host).toBe(true);
     expect(AGENT_VIEW_KEYS.host).toBe(true);
     // The pane's two ADDRESS fields, and the only two here a request can turn on: `host` on a merged
-    // pack body, `session` on a widened one. Neither is on a solo, un-widened read — which is what
+    // crew body, `session` on a widened one. Neither is on a solo, un-widened read — which is what
     // the golden object above pins — and this list is the tripwire against a quiet third.
     expect(AGENT_VIEW_KEYS.session).toBe(true);
     expect(Object.keys(AGENT_VIEW_KEYS).toSorted()).toEqual([
       "agent",
+      "cache",
       "cwd",
       "focused",
+      "gitHead",
       "hasSession",
       "hint",
       "host",
       "kind",
       "lastActiveAt",
       "lastSeenAt",
+      "model",
       "paneId",
       "paneLabel",
       "readableLines",
       "session",
       "sessionName",
+      "soleTabName",
       "status",
       "tabId",
       "tabLabel",
+      "tabPosition",
       "terminalTitle",
       "terminalTitleStale",
       "workspaceId",
@@ -196,14 +240,36 @@ describe("solo zero-tax — the client's mirror types carry no pack dimension", 
       "bridgeStale",
       "checkedAt",
       "current",
+      // The two bands the operator can close (M17/08) — optional here, because a bridge older than
+      // the fields sends neither.
+      "dismissedCrewVersion",
+      "dismissedVersion",
       "installKind",
       "latest",
       "latestUrl",
+      // Whether the release ahead changes the crew wire (M27/06) — optional, and absent on a solo
+      // install.
+      "linkChange",
       "majorAvailable",
       "majorUrl",
       "newerVersions",
+      // The package manager's own upgrade command (M17/02) — optional, present only on a packaged
+      // install under a prefix Collie recognises.
+      "packageCommand",
+      // The peers-only run's legs and its settle stamp (M20/09, M20/01). Optional, and a solo
+      // install never carries either.
+      "peers",
+      // Where those legs' run levels the members to (M32). Optional, absent with the legs.
+      "peersTo",
       "releaseAvailable",
+      // The command that clears the restart, optional beside the flag that raises it (M17/02).
+      "restartCommand",
+      "restartNeeded",
       "run",
+      "settledAt",
+      // The newest urgent release in the delta (ADR 0046) — optional, and absent unless a release
+      // asked for the daily cadence.
+      "urgent",
     ]);
   });
 
@@ -220,7 +286,7 @@ describe("solo zero-tax — the client's mirror types carry no pack dimension", 
     }
   });
 
-  it("the golden solo body carries NONE of the pack fields the types now allow", () => {
+  it("the golden solo body carries NONE of the crew fields the types now allow", () => {
     // The half the key maps can no longer state on their own, now that `servers`/`host` are known
     // keys: a solo BODY still has none of them. This is the byte-level claim §11 actually makes, and
     // it is why M5/02 renegotiated the key lists without regenerating a single golden.
@@ -278,7 +344,7 @@ describe("solo zero-tax — a solo client puts no host on the wire", () => {
 });
 
 // TIER 2 (lead↔peer health) is the newest thing that could tax a solo install, because it is the
-// first pack feature that DERIVES rather than merely labels — and a derivation that produces an
+// first crew feature that DERIVES rather than merely labels — and a derivation that produces an
 // entry for "here" would give a one-machine install a peer-health dimension it has no peers for.
 describe("solo runs no per-host health machinery at all", () => {
   it("derives an empty health map from the golden solo snapshot", () => {

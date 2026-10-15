@@ -8,7 +8,7 @@ import { COMMANDS } from "./program.ts";
 // ── THE REGRESSION PIN ───────────────────────────────────────────────────────
 // `collie build` is what runs `bun install`, so everything that reaches it has to run with no
 // dependencies installed at all: `scripts/collie-ctl.sh` builds the binary from source on a fresh
-// `herdr plugin install` checkout, and `pack add`'s install leg runs the same from-source build on a
+// `herdr plugin install` checkout, and `crew add`'s install leg runs the same from-source build on a
 // checkout `git fetch` has just advanced past its `node_modules`. That invariant was live but
 // unpinned, and a top-level `import { Command } from "commander"` in this module's ancestor broke it
 // in the field: every such install died with `Cannot find package 'commander'` before a line of
@@ -22,6 +22,11 @@ import { COMMANDS } from "./program.ts";
 
 const CLI = import.meta.dir;
 const REPO = resolve(CLI, "..");
+
+/** A repo file as the closure names it: relative to the repo, always `/`-separated (Windows `relative` uses `\`). */
+function repoPath(file: string): string {
+  return relative(REPO, file).replaceAll("\\", "/");
+}
 
 /** Resolve a relative specifier to a file on disk, tolerating an extensionless one. */
 function resolveFile(from: string, spec: string): string | null {
@@ -42,30 +47,34 @@ interface Closure {
 }
 
 function staticClosure(entry: string): Closure {
-  const transpiler = new Bun.Transpiler({ loader: "tsx" });
+  const typescript = new Bun.Transpiler({ loader: "ts" });
+  const jsx = new Bun.Transpiler({ loader: "tsx" });
   const files = new Set<string>();
   const packages = new Set<string>();
   const unresolved = new Set<string>();
   const walk = (file: string): void => {
     if (files.has(file)) return;
     files.add(file);
+    // Parse ordinary TypeScript as TS: generic arrows such as async <T>(...) are
+    // valid there and ambiguous under the JSX grammar. Keep actual TSX edges in TSX.
+    const transpiler = file.endsWith(".tsx") ? jsx : typescript;
     for (const imported of transpiler.scanImports(readFileSync(file, "utf8"))) {
       // `scanImports` reports dynamic imports too; only the static ones cost a resolution at load.
       if (imported.kind !== "import-statement") continue;
       const spec = imported.path;
       if (spec.startsWith("node:") || spec.startsWith("bun:")) continue;
       if (!spec.startsWith(".")) {
-        packages.add(`${relative(REPO, file)} -> ${spec}`);
+        packages.add(`${repoPath(file)} -> ${spec}`);
         continue;
       }
       const target = resolveFile(file, spec);
-      if (target === null) unresolved.add(`${relative(REPO, file)} -> ${spec}`);
+      if (target === null) unresolved.add(`${repoPath(file)} -> ${spec}`);
       else walk(target);
     }
   };
   walk(entry);
   return {
-    files: [...files].map((f) => relative(REPO, f)),
+    files: [...files].map(repoPath),
     packages: [...packages],
     unresolved: [...unresolved],
   };
@@ -110,7 +119,7 @@ describe("the pre-dispatch", () => {
   });
 
   test("routes nothing else — every other verb is the table's", () => {
-    for (const argv of [[], ["status"], ["--plain"], ["pack", "add", "nas"], ["buildx"], [""]]) {
+    for (const argv of [[], ["status"], ["--plain"], ["crew", "add", "nas"], ["pack", "add", "nas"], ["buildx"], [""]]) {
       expect(bootstrapVerb(argv)).toBeNull();
     }
   });

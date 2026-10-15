@@ -1,0 +1,2476 @@
+{
+  "archive_manifest": "/home/chris/git/collie/.project-docs/manifest.json",
+  "archive_project_commit": "8cc67d40d6195b5a5189d038ff2ec8409e0692de",
+  "source_metadata_groups": 122,
+  "actual_collections": 123,
+  "collections": [
+    {
+      "collection": "android-build",
+      "index": "/home/chris/git/collie/.project-docs/android-build/INDEX.md",
+      "manifest_entries": 8,
+      "classification": "partially applicable",
+      "reason": "Index describes Now in Android sample architecture, not AGP reference; optional comparison only.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-build-security-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "android/nowinandroid",
+        "ref": "main",
+        "revision": "a49ed253d75e61a2b6ab80a8da677b57437b08eb",
+        "selected_documents": 8,
+        "license": "Apache-2.0",
+        "version_note": "Current repository documentation, not necessarily the installed version"
+      }
+    },
+    {
+      "collection": "android-official",
+      "index": "/home/chris/git/collie/.project-docs/android-official/INDEX.md",
+      "manifest_entries": 103,
+      "classification": "applicable",
+      "reason": "Native app contracts, runtime/build API or bundled asset; assigned parent/transport/UI review.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-build-security-review.md",
+        "/home/chris/git/collie/android/acceptance/audit-resources-review.md",
+        "/home/chris/git/collie/android/acceptance/audit-ui-review.md",
+        "/home/chris/git/collie/android/acceptance/audit-transport-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "official-web",
+        "indices": [],
+        "crawl_roots": [],
+        "selected_documents": 109,
+        "scope": "Native Views, lifecycle, networking, security, privacy, resources, accessibility, distribution, build and test APIs used by this app. Includes API levels 26\u201336; not every Android/Compose page."
+      }
+    },
+    {
+      "collection": "android-test",
+      "index": "/home/chris/git/collie/.project-docs/android-test/INDEX.md",
+      "manifest_entries": 8,
+      "classification": "applicable",
+      "reason": "Pinned native test tooling; verification semantics, not shipped app runtime.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-reference-remainder-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "android/android-test",
+        "ref": "main",
+        "revision": "675b8197a3f970b1b3c0ed52baa0a304ee7ae873",
+        "selected_documents": 8,
+        "license": "Apache-2.0",
+        "version_note": "Current repository documentation, not necessarily the installed version"
+      }
+    },
+    {
+      "collection": "android-transitive-atomicfu",
+      "index": "/home/chris/git/collie/.project-docs/android-transitive-atomicfu/INDEX.md",
+      "manifest_entries": 6,
+      "classification": "partially applicable",
+      "reason": "Resolved build/test or runtime transitive dependency; placement must be checked against Gradle locks/runtime graph before requirements are selected.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-dependencies-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "Kotlin/kotlinx-atomicfu",
+        "ref": "master",
+        "revision": "063dd3c8e9b8bd8b7fc2a7e897c3f6eeb2c9a428",
+        "selected_documents": 6,
+        "license": "NOASSERTION",
+        "version_note": "Transitive Android test/build/runtime dependency; see android-lock-inventory.json for configuration-specific versions."
+      }
+    },
+    {
+      "collection": "android-transitive-checker-framework",
+      "index": "/home/chris/git/collie/.project-docs/android-transitive-checker-framework/INDEX.md",
+      "manifest_entries": 8,
+      "classification": "partially applicable",
+      "reason": "Resolved build/test or runtime transitive dependency; placement must be checked against Gradle locks/runtime graph before requirements are selected.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-dependencies-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "typetools/checker-framework",
+        "ref": "master",
+        "revision": "79f5649cd1437c42b259f1e0a72af6e50a960732",
+        "selected_documents": 8,
+        "license": "NOASSERTION",
+        "version_note": "Transitive Android test/build/runtime dependency; see android-lock-inventory.json for configuration-specific versions."
+      }
+    },
+    {
+      "collection": "android-transitive-commons-io",
+      "index": "/home/chris/git/collie/.project-docs/android-transitive-commons-io/INDEX.md",
+      "manifest_entries": 6,
+      "classification": "partially applicable",
+      "reason": "Resolved build/test or runtime transitive dependency; placement must be checked against Gradle locks/runtime graph before requirements are selected.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-dependencies-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "apache/commons-io",
+        "ref": "master",
+        "revision": "4ea3ecac926d1c15af7f3cfc0a34e218c39bae49",
+        "selected_documents": 6,
+        "license": "Apache-2.0",
+        "version_note": "Transitive Android test/build/runtime dependency; see android-lock-inventory.json for configuration-specific versions."
+      }
+    },
+    {
+      "collection": "android-transitive-conscrypt",
+      "index": "/home/chris/git/collie/.project-docs/android-transitive-conscrypt/INDEX.md",
+      "manifest_entries": 9,
+      "classification": "partially applicable",
+      "reason": "Resolved build/test or runtime transitive dependency; placement must be checked against Gradle locks/runtime graph before requirements are selected.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-dependencies-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "google/conscrypt",
+        "ref": "master",
+        "revision": "d8840cc5fee84b8b85c659f772aae0c23604fa48",
+        "selected_documents": 9,
+        "license": "Apache-2.0",
+        "version_note": "Transitive Android test/build/runtime dependency; see android-lock-inventory.json for configuration-specific versions."
+      }
+    },
+    {
+      "collection": "android-transitive-dagger",
+      "index": "/home/chris/git/collie/.project-docs/android-transitive-dagger/INDEX.md",
+      "manifest_entries": 10,
+      "classification": "partially applicable",
+      "reason": "Resolved build/test or runtime transitive dependency; placement must be checked against Gradle locks/runtime graph before requirements are selected.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-dependencies-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "google/dagger",
+        "ref": "master",
+        "revision": "5d4ee6bae339641a72399999a0ed02b3701fcd42",
+        "selected_documents": 10,
+        "license": "Apache-2.0",
+        "version_note": "Transitive Android test/build/runtime dependency; see android-lock-inventory.json for configuration-specific versions."
+      }
+    },
+    {
+      "collection": "android-transitive-error-prone",
+      "index": "/home/chris/git/collie/.project-docs/android-transitive-error-prone/INDEX.md",
+      "manifest_entries": 461,
+      "classification": "partially applicable",
+      "reason": "Resolved build/test or runtime transitive dependency; placement must be checked against Gradle locks/runtime graph before requirements are selected.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-dependencies-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "google/error-prone",
+        "ref": "master",
+        "revision": "216a1d80954c970638a9c2dc1bbe73f70835135a",
+        "selected_documents": 461,
+        "license": "Apache-2.0",
+        "version_note": "Transitive Android test/build/runtime dependency; see android-lock-inventory.json for configuration-specific versions."
+      }
+    },
+    {
+      "collection": "android-transitive-grpc-java",
+      "index": "/home/chris/git/collie/.project-docs/android-transitive-grpc-java/INDEX.md",
+      "manifest_entries": 57,
+      "classification": "partially applicable",
+      "reason": "Resolved build/test or runtime transitive dependency; placement must be checked against Gradle locks/runtime graph before requirements are selected.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-dependencies-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "grpc/grpc-java",
+        "ref": "master",
+        "revision": "38db48ef8d54ee311854e091924b00cc20539423",
+        "selected_documents": 57,
+        "license": "Apache-2.0",
+        "version_note": "Transitive Android test/build/runtime dependency; see android-lock-inventory.json for configuration-specific versions."
+      }
+    },
+    {
+      "collection": "android-transitive-gson",
+      "index": "/home/chris/git/collie/.project-docs/android-transitive-gson/INDEX.md",
+      "manifest_entries": 14,
+      "classification": "partially applicable",
+      "reason": "Resolved build/test or runtime transitive dependency; placement must be checked against Gradle locks/runtime graph before requirements are selected.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-dependencies-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "google/gson",
+        "ref": "main",
+        "revision": "845664ba1c307e6c1910d07cfed2f622e0ad8df1",
+        "selected_documents": 14,
+        "license": "Apache-2.0",
+        "version_note": "Transitive Android test/build/runtime dependency; see android-lock-inventory.json for configuration-specific versions."
+      }
+    },
+    {
+      "collection": "android-transitive-guava",
+      "index": "/home/chris/git/collie/.project-docs/android-transitive-guava/INDEX.md",
+      "manifest_entries": 5,
+      "classification": "partially applicable",
+      "reason": "Resolved build/test or runtime transitive dependency; placement must be checked against Gradle locks/runtime graph before requirements are selected.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-dependencies-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "google/guava",
+        "ref": "master",
+        "revision": "6b3a8d7498a7fde122967ba37a023ba3dcb47792",
+        "selected_documents": 5,
+        "license": "Apache-2.0",
+        "version_note": "Transitive Android test/build/runtime dependency; see android-lock-inventory.json for configuration-specific versions."
+      }
+    },
+    {
+      "collection": "android-transitive-hamcrest",
+      "index": "/home/chris/git/collie/.project-docs/android-transitive-hamcrest/INDEX.md",
+      "manifest_entries": 10,
+      "classification": "partially applicable",
+      "reason": "Resolved build/test or runtime transitive dependency; placement must be checked against Gradle locks/runtime graph before requirements are selected.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-dependencies-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "hamcrest/JavaHamcrest",
+        "ref": "master",
+        "revision": "3d58e993a5d12e65ec1309497cf8fab4bf5f3645",
+        "selected_documents": 10,
+        "license": "BSD-3-Clause",
+        "version_note": "Transitive Android test/build/runtime dependency; see android-lock-inventory.json for configuration-specific versions."
+      }
+    },
+    {
+      "collection": "android-transitive-java-annotations",
+      "index": "/home/chris/git/collie/.project-docs/android-transitive-java-annotations/INDEX.md",
+      "manifest_entries": 5,
+      "classification": "partially applicable",
+      "reason": "Resolved build/test or runtime transitive dependency; placement must be checked against Gradle locks/runtime graph before requirements are selected.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-dependencies-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "JetBrains/java-annotations",
+        "ref": "master",
+        "revision": "b5c263d764f18f491d09d46ca88f192e951f0b3d",
+        "selected_documents": 5,
+        "license": "Apache-2.0",
+        "version_note": "Transitive Android test/build/runtime dependency; see android-lock-inventory.json for configuration-specific versions."
+      }
+    },
+    {
+      "collection": "android-transitive-jna",
+      "index": "/home/chris/git/collie/.project-docs/android-transitive-jna/INDEX.md",
+      "manifest_entries": 4,
+      "classification": "partially applicable",
+      "reason": "Resolved build/test or runtime transitive dependency; placement must be checked against Gradle locks/runtime graph before requirements are selected.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-dependencies-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "java-native-access/jna",
+        "ref": "master",
+        "revision": "a800ca8313076bc0375fed8bd4efd829eb61b0b0",
+        "selected_documents": 4,
+        "license": "NOASSERTION",
+        "version_note": "Transitive Android test/build/runtime dependency; see android-lock-inventory.json for configuration-specific versions."
+      }
+    },
+    {
+      "collection": "android-transitive-jspecify",
+      "index": "/home/chris/git/collie/.project-docs/android-transitive-jspecify/INDEX.md",
+      "manifest_entries": 17,
+      "classification": "partially applicable",
+      "reason": "Resolved build/test or runtime transitive dependency; placement must be checked against Gradle locks/runtime graph before requirements are selected.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-dependencies-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "jspecify/jspecify",
+        "ref": "main",
+        "revision": "7a568867ef415a9b0097d9cb2cfc9a9509a2e177",
+        "selected_documents": 17,
+        "license": "Apache-2.0",
+        "version_note": "Transitive Android test/build/runtime dependency; see android-lock-inventory.json for configuration-specific versions."
+      }
+    },
+    {
+      "collection": "android-transitive-netty",
+      "index": "/home/chris/git/collie/.project-docs/android-transitive-netty/INDEX.md",
+      "manifest_entries": 14,
+      "classification": "partially applicable",
+      "reason": "Resolved build/test or runtime transitive dependency; placement must be checked against Gradle locks/runtime graph before requirements are selected.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-dependencies-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "netty/netty",
+        "ref": "4.2",
+        "revision": "014ef8d7031f9f1015020095421a659ced36cc8a",
+        "selected_documents": 14,
+        "license": "Apache-2.0",
+        "version_note": "Transitive Android test/build/runtime dependency; see android-lock-inventory.json for configuration-specific versions."
+      }
+    },
+    {
+      "collection": "android-transitive-protobuf",
+      "index": "/home/chris/git/collie/.project-docs/android-transitive-protobuf/INDEX.md",
+      "manifest_entries": 112,
+      "classification": "partially applicable",
+      "reason": "Resolved build/test or runtime transitive dependency; placement must be checked against Gradle locks/runtime graph before requirements are selected.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-dependencies-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "protocolbuffers/protobuf",
+        "ref": "main",
+        "revision": "db4635af9d0d3ac3c3801f3a59d7c872ed2fda6d",
+        "selected_documents": 112,
+        "license": "NOASSERTION",
+        "version_note": "Transitive Android test/build/runtime dependency; see android-lock-inventory.json for configuration-specific versions."
+      }
+    },
+    {
+      "collection": "android-transitive-releases",
+      "index": "/home/chris/git/collie/.project-docs/android-transitive-releases/INDEX.md",
+      "manifest_entries": 36,
+      "classification": "applicable",
+      "reason": "Native app contracts, runtime/build API or bundled asset; assigned parent/transport/UI review.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-dependencies-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "official-web",
+        "indices": [],
+        "crawl_roots": [],
+        "selected_documents": 36,
+        "scope": "AndroidX groups present in the actual app Gradle dependency lock, including build/test configurations."
+      }
+    },
+    {
+      "collection": "android-transitive-tink",
+      "index": "/home/chris/git/collie/.project-docs/android-transitive-tink/INDEX.md",
+      "manifest_entries": 49,
+      "classification": "partially applicable",
+      "reason": "Resolved build/test or runtime transitive dependency; placement must be checked against Gradle locks/runtime graph before requirements are selected.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-dependencies-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "tink-crypto/tink",
+        "ref": "master",
+        "revision": "1f4cd38874ec0be85f5aa55ba86d95d18c3fd965",
+        "selected_documents": 49,
+        "license": "Apache-2.0",
+        "version_note": "Transitive Android test/build/runtime dependency; see android-lock-inventory.json for configuration-specific versions."
+      }
+    },
+    {
+      "collection": "antigravity-official",
+      "index": "/home/chris/git/collie/.project-docs/antigravity-official/INDEX.md",
+      "manifest_entries": 101,
+      "classification": "partially applicable",
+      "reason": "Indirect bridge integration or agent grammar/reference; Android consumes Collie HTTP, not the entire upstream platform.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-reference-remainder-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "official-web",
+        "indices": [
+          "https://antigravity.google/llms.txt"
+        ],
+        "crawl_roots": [],
+        "selected_documents": 101,
+        "scope": "All English documentation links from official source indices"
+      }
+    },
+    {
+      "collection": "bun",
+      "index": "/home/chris/git/collie/.project-docs/bun/INDEX.md",
+      "manifest_entries": 322,
+      "classification": "partially applicable",
+      "reason": "Indirect bridge integration or agent grammar/reference; Android consumes Collie HTTP, not the entire upstream platform.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-integration-remainder-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "official-web",
+        "indices": [
+          "https://bun.sh/llms.txt"
+        ],
+        "crawl_roots": [],
+        "selected_documents": 321,
+        "scope": "All English documentation links from official source indices"
+      }
+    },
+    {
+      "collection": "claude-code-official",
+      "index": "/home/chris/git/collie/.project-docs/claude-code-official/INDEX.md",
+      "manifest_entries": 222,
+      "classification": "partially applicable",
+      "reason": "Indirect bridge integration or agent grammar/reference; Android consumes Collie HTTP, not the entire upstream platform.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-terminal-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "official-web",
+        "indices": [
+          "https://code.claude.com/docs/llms.txt"
+        ],
+        "crawl_roots": [],
+        "selected_documents": 221,
+        "scope": "All English documentation links from official source indices"
+      }
+    },
+    {
+      "collection": "claude-code-source",
+      "index": "/home/chris/git/collie/.project-docs/claude-code-source/INDEX.md",
+      "manifest_entries": 33,
+      "classification": "partially applicable",
+      "reason": "Indirect bridge integration or agent grammar/reference; Android consumes Collie HTTP, not the entire upstream platform.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-integration-remainder-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "anthropics/claude-code",
+        "ref": "main",
+        "revision": "2301018b1f61073c501a8e7a4813ef48c239163b",
+        "selected_documents": 33,
+        "license": null,
+        "version_note": "Current repository documentation, not necessarily the installed version"
+      }
+    },
+    {
+      "collection": "codex-official",
+      "index": "/home/chris/git/collie/.project-docs/codex-official/INDEX.md",
+      "manifest_entries": 181,
+      "classification": "partially applicable",
+      "reason": "Indirect bridge integration or agent grammar/reference; Android consumes Collie HTTP, not the entire upstream platform.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-codex-review.md",
+        "/home/chris/git/collie/android/acceptance/audit-codex-reconciliation.md",
+        "/home/chris/git/collie/android/acceptance/audit-terminal-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "official-web",
+        "indices": [
+          "https://learn.chatgpt.com/docs/llms.txt"
+        ],
+        "crawl_roots": [],
+        "selected_documents": 180,
+        "scope": "All English documentation links from official source indices"
+      }
+    },
+    {
+      "collection": "codex-source",
+      "index": "/home/chris/git/collie/.project-docs/codex-source/INDEX.md",
+      "manifest_entries": 164,
+      "classification": "partially applicable",
+      "reason": "Indirect bridge integration or agent grammar/reference; Android consumes Collie HTTP, not the entire upstream platform.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-codex-review.md",
+        "/home/chris/git/collie/android/acceptance/audit-codex-reconciliation.md",
+        "/home/chris/git/collie/android/acceptance/audit-terminal-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "local-git",
+        "root": "/tmp/collie-codex-upstream-20261010",
+        "revision": "c3d3b142d10f4316b46e35aad7e5317e7e506cb7",
+        "selected_documents": 164
+      }
+    },
+    {
+      "collection": "collie-fork",
+      "index": "/home/chris/git/collie/.project-docs/collie-fork/INDEX.md",
+      "manifest_entries": 180,
+      "classification": "applicable",
+      "reason": "Native app contracts, runtime/build API or bundled asset; assigned parent/transport/UI review.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-http-contracts-review.md",
+        "/home/chris/git/collie/android/acceptance/audit-terminal-review.md",
+        "/home/chris/git/collie/android/acceptance/audit-transport-review.md",
+        "/home/chris/git/collie/android/acceptance/audit-reference-remainder-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "local-git",
+        "root": "/home/chris/git/collie",
+        "revision": "8cc67d40d6195b5a5189d038ff2ec8409e0692de",
+        "selected_documents": 180
+      }
+    },
+    {
+      "collection": "collie-upstream",
+      "index": "/home/chris/git/collie/.project-docs/collie-upstream/INDEX.md",
+      "manifest_entries": 150,
+      "classification": "partially applicable",
+      "reason": "Indirect bridge integration or agent grammar/reference; Android consumes Collie HTTP, not the entire upstream platform.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-http-contracts-review.md",
+        "/home/chris/git/collie/android/acceptance/audit-terminal-review.md",
+        "/home/chris/git/collie/android/acceptance/audit-transport-review.md",
+        "/home/chris/git/collie/android/acceptance/audit-reference-remainder-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "local-git",
+        "root": "/home/chris/git/collie",
+        "revision": "632a2bf784045b1e2576da112d89ed21fecc9eeb",
+        "selected_documents": 150
+      }
+    },
+    {
+      "collection": "copilot-cli",
+      "index": "/home/chris/git/collie/.project-docs/copilot-cli/INDEX.md",
+      "manifest_entries": 3,
+      "classification": "partially applicable",
+      "reason": "Agent label/command/icon or fallback integration only; no native implementation of full vendor SDK/model APIs.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-integration-collections-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "github/copilot-cli",
+        "ref": "main",
+        "revision": "dcdc0273c0250d8b32677ca99bc0e1f5006daa89",
+        "selected_documents": 3,
+        "license": "NOASSERTION",
+        "version_note": "Current repository documentation, not necessarily the installed version"
+      }
+    },
+    {
+      "collection": "crush",
+      "index": "/home/chris/git/collie/.project-docs/crush/INDEX.md",
+      "manifest_entries": 8,
+      "classification": "partially applicable",
+      "reason": "Agent label/command/icon or fallback integration only; no native implementation of full vendor SDK/model APIs.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-integration-collections-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "charmbracelet/crush",
+        "ref": "main",
+        "revision": "8b1824282eccc78cc62c188c245cf375230a18ce",
+        "selected_documents": 8,
+        "license": "NOASSERTION",
+        "version_note": "Current repository documentation, not necessarily the installed version"
+      }
+    },
+    {
+      "collection": "cursor",
+      "index": "/home/chris/git/collie/.project-docs/cursor/INDEX.md",
+      "manifest_entries": 273,
+      "classification": "partially applicable",
+      "reason": "Agent label/command/icon or fallback integration only; no native implementation of full vendor SDK/model APIs.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-integration-collections-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "official-web",
+        "indices": [
+          "https://cursor.com/llms.txt"
+        ],
+        "crawl_roots": [],
+        "selected_documents": 272,
+        "scope": "All English documentation links from official source indices"
+      }
+    },
+    {
+      "collection": "font-aldrich",
+      "index": "/home/chris/git/collie/.project-docs/font-aldrich/INDEX.md",
+      "manifest_entries": 5,
+      "classification": "applicable",
+      "reason": "Native app contracts, runtime/build API or bundled asset; assigned parent/transport/UI review.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-resources-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "google/fonts",
+        "ref": "main",
+        "revision": "bd8f81ddb5c74d5c8897b36ad88b440266245103",
+        "selected_documents": 5,
+        "license": null,
+        "version_note": "Current repository documentation, not necessarily the installed version"
+      }
+    },
+    {
+      "collection": "gemini-cli-legacy",
+      "index": "/home/chris/git/collie/.project-docs/gemini-cli-legacy/INDEX.md",
+      "manifest_entries": 113,
+      "classification": "partially applicable",
+      "reason": "Agent label/command/icon or fallback integration only; no native implementation of full vendor SDK/model APIs.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-integration-collections-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "google-gemini/gemini-cli",
+        "ref": "main",
+        "revision": "9b6e0265d16bbd29ca51e33c9e0c01dc4cec5e83",
+        "selected_documents": 113,
+        "license": "Apache-2.0",
+        "version_note": "Current repository documentation, not necessarily the installed version"
+      }
+    },
+    {
+      "collection": "git",
+      "index": "/home/chris/git/collie/.project-docs/git/INDEX.md",
+      "manifest_entries": 9,
+      "classification": "partially applicable",
+      "reason": "Indirect bridge integration or agent grammar/reference; Android consumes Collie HTTP, not the entire upstream platform.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-integration-remainder-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "official-web",
+        "indices": [],
+        "crawl_roots": [],
+        "selected_documents": 9,
+        "scope": "All English documentation links from official source indices"
+      }
+    },
+    {
+      "collection": "goose",
+      "index": "/home/chris/git/collie/.project-docs/goose/INDEX.md",
+      "manifest_entries": 190,
+      "classification": "partially applicable",
+      "reason": "Agent label/command/icon or fallback integration only; no native implementation of full vendor SDK/model APIs.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-integration-collections-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "aaif-goose/goose",
+        "ref": "main",
+        "revision": "3bd852002903e016ff30947e973f76e2fcfcf90f",
+        "selected_documents": 190,
+        "license": "Apache-2.0",
+        "version_note": "Current repository documentation, not necessarily the installed version"
+      }
+    },
+    {
+      "collection": "gradle",
+      "index": "/home/chris/git/collie/.project-docs/gradle/INDEX.md",
+      "manifest_entries": 240,
+      "classification": "partially applicable",
+      "reason": "Unversioned source documentation; use gradle-published 8.11.1 for authoritative build contract.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-build-security-review.md",
+        "/home/chris/git/collie/android/acceptance/audit-kotlin-alignment.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "gradle/gradle",
+        "ref": "v8.11.1",
+        "revision": "481cb05a490e0ef9f8620f7873b83bd8a72e7c39",
+        "selected_documents": 240,
+        "license": "Apache-2.0",
+        "version_note": "Current repository documentation, not necessarily the installed version"
+      },
+      "toolchain_followup": "Implemented Kotlin2.2.21/AGP8.10.1/Gradle8.11.1 within current official ranges; bundled R8 8.10.24; final lock and native validation evidence."
+    },
+    {
+      "collection": "gradle-published",
+      "index": "/home/chris/git/collie/.project-docs/gradle-published/INDEX.md",
+      "manifest_entries": 8,
+      "classification": "applicable",
+      "reason": "Native app contracts, runtime/build API or bundled asset; assigned parent/transport/UI review.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-build-security-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "official-web",
+        "indices": [],
+        "crawl_roots": [],
+        "selected_documents": 8,
+        "scope": "All English documentation links from official source indices"
+      }
+    },
+    {
+      "collection": "grok-official",
+      "index": "/home/chris/git/collie/.project-docs/grok-official/INDEX.md",
+      "manifest_entries": 25,
+      "classification": "partially applicable",
+      "reason": "Indirect bridge integration or agent grammar/reference; Android consumes Collie HTTP, not the entire upstream platform.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-integration-remainder-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "official-web",
+        "indices": [
+          "https://docs.x.ai/llms.txt"
+        ],
+        "crawl_roots": [],
+        "selected_documents": 24,
+        "scope": "All English documentation links from official source indices"
+      }
+    },
+    {
+      "collection": "herdr",
+      "index": "/home/chris/git/collie/.project-docs/herdr/INDEX.md",
+      "manifest_entries": 33,
+      "classification": "partially applicable",
+      "reason": "Indirect bridge integration or agent grammar/reference; Android consumes Collie HTTP, not the entire upstream platform.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-reference-remainder-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "herdrdev/herdr",
+        "ref": "v0.9.3",
+        "revision": "7b116c05bfda646af39d2524c54e70c751f57ee8",
+        "selected_documents": 33,
+        "license": "Apache-2.0",
+        "version_note": "Matches the installed Herdr 0.9.3 baseline; next draft included and identified by source path."
+      }
+    },
+    {
+      "collection": "herdr-official",
+      "index": "/home/chris/git/collie/.project-docs/herdr-official/INDEX.md",
+      "manifest_entries": 27,
+      "classification": "partially applicable",
+      "reason": "Indirect bridge integration or agent grammar/reference; Android consumes Collie HTTP, not the entire upstream platform.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-terminal-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "official-web",
+        "indices": [
+          "https://herdr.dev/llms.txt"
+        ],
+        "crawl_roots": [],
+        "selected_documents": 26,
+        "scope": "All English documentation links from official source indices"
+      }
+    },
+    {
+      "collection": "hermes",
+      "index": "/home/chris/git/collie/.project-docs/hermes/INDEX.md",
+      "manifest_entries": 811,
+      "classification": "partially applicable",
+      "reason": "Indirect bridge integration or agent grammar/reference; Android consumes Collie HTTP, not the entire upstream platform.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-integration-remainder-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "NousResearch/hermes-agent",
+        "ref": "main",
+        "revision": "dce1e9b37581dd62e480a9064dc04a709c2940d3",
+        "selected_documents": 811,
+        "license": "MIT",
+        "version_note": "Current repository documentation, not necessarily the installed version"
+      }
+    },
+    {
+      "collection": "icons-lobe",
+      "index": "/home/chris/git/collie/.project-docs/icons-lobe/INDEX.md",
+      "manifest_entries": 14,
+      "classification": "applicable",
+      "reason": "Native app contracts, runtime/build API or bundled asset; assigned parent/transport/UI review.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-reference-remainder-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "lobehub/lobe-icons",
+        "ref": "master",
+        "revision": "c385b2b8d1f9e19aa86e628d4e23c91ee1111a47",
+        "selected_documents": 14,
+        "license": "MIT",
+        "version_note": "Current repository documentation, not necessarily the installed version"
+      }
+    },
+    {
+      "collection": "icons-simple",
+      "index": "/home/chris/git/collie/.project-docs/icons-simple/INDEX.md",
+      "manifest_entries": 7,
+      "classification": "applicable",
+      "reason": "Native app contracts, runtime/build API or bundled asset; assigned parent/transport/UI review.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-reference-remainder-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "simple-icons/simple-icons",
+        "ref": "develop",
+        "revision": "98820a4dc8c363ca72fa2c0d294ea4a0a9bba75d",
+        "selected_documents": 7,
+        "license": "CC0-1.0",
+        "version_note": "Current repository documentation, not necessarily the installed version"
+      }
+    },
+    {
+      "collection": "installed-server-packages",
+      "index": "/home/chris/git/collie/.project-docs/installed-server-packages/INDEX.md",
+      "manifest_entries": 381,
+      "classification": "partially applicable",
+      "reason": "Indirect bridge integration or agent grammar/reference; Android consumes Collie HTTP, not the entire upstream platform.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-integration-remainder-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "installed-package-docs",
+        "packages": 633,
+        "selected_documents": 1207,
+        "note": "Installed artifacts; versions in installed-packages.json. No private configuration read."
+      }
+    },
+    {
+      "collection": "installed-web-packages",
+      "index": "/home/chris/git/collie/.project-docs/installed-web-packages/INDEX.md",
+      "manifest_entries": 826,
+      "classification": "unrelated",
+      "reason": "PWA/CLI/deployment-only framework or tool; not a native production dependency or Android-facing HTTP contract.",
+      "disposition": "excluded with justification",
+      "review_reports": [],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "installed-package-docs",
+        "packages": 633,
+        "selected_documents": 1207,
+        "note": "Installed artifacts; versions in installed-packages.json. No private configuration read."
+      }
+    },
+    {
+      "collection": "java",
+      "index": "/home/chris/git/collie/.project-docs/java/INDEX.md",
+      "manifest_entries": 4,
+      "classification": "applicable",
+      "reason": "Native app contracts, runtime/build API or bundled asset; assigned parent/transport/UI review.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-reference-remainder-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "official-web",
+        "indices": [],
+        "crawl_roots": [],
+        "selected_documents": 4,
+        "scope": "All English documentation links from official source indices"
+      }
+    },
+    {
+      "collection": "junit4",
+      "index": "/home/chris/git/collie/.project-docs/junit4/INDEX.md",
+      "manifest_entries": 20,
+      "classification": "applicable",
+      "reason": "Pinned native test tooling; verification semantics, not shipped app runtime.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-reference-remainder-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "junit-team/junit4",
+        "ref": "r4.13.2",
+        "revision": "05fe2a64f59127c02135be22f416e91260d6ede6",
+        "selected_documents": 20,
+        "license": "EPL-1.0",
+        "version_note": "Current repository documentation, not necessarily the installed version"
+      }
+    },
+    {
+      "collection": "kimi",
+      "index": "/home/chris/git/collie/.project-docs/kimi/INDEX.md",
+      "manifest_entries": 79,
+      "classification": "partially applicable",
+      "reason": "Agent label/command/icon or fallback integration only; no native implementation of full vendor SDK/model APIs.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-integration-collections-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "MoonshotAI/kimi-cli",
+        "ref": "main",
+        "revision": "9ab1286b8fe4e6bcd116949a27ce5e0ac3389c82",
+        "selected_documents": 79,
+        "license": "Apache-2.0",
+        "version_note": "Current repository documentation, not necessarily the installed version"
+      }
+    },
+    {
+      "collection": "kotlin",
+      "index": "/home/chris/git/collie/.project-docs/kotlin/INDEX.md",
+      "manifest_entries": 310,
+      "classification": "applicable",
+      "reason": "Native app contracts, runtime/build API or bundled asset; assigned parent/transport/UI review.",
+      "disposition": "corrected and verified",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-reference-remainder-review.md",
+        "/home/chris/git/collie/android/acceptance/audit-kotlin-compatibility-resolution.md",
+        "/home/chris/git/collie/android/acceptance/audit-kotlin-alignment.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "JetBrains/kotlin-web-site",
+        "ref": "master",
+        "revision": "38512ffcb9be58019fdb5d9e6b3c821061445028",
+        "selected_documents": 310,
+        "license": "Apache-2.0",
+        "version_note": "Current repository documentation, not necessarily the installed version"
+      },
+      "compatibility_resolution": "Implemented compiler/serialization/BOM/application runtime alignment at 2.2.21; AGP8.10.1 and R8 8.10.24 support final toolchain. Historical metadata-only resolution is superseded.",
+      "toolchain_followup": "Implemented Kotlin2.2.21/AGP8.10.1/Gradle8.11.1 within current official ranges; bundled R8 8.10.24; final lock and native validation evidence."
+    },
+    {
+      "collection": "kotlin-coroutines",
+      "index": "/home/chris/git/collie/.project-docs/kotlin-coroutines/INDEX.md",
+      "manifest_entries": 59,
+      "classification": "applicable",
+      "reason": "Native app contracts, runtime/build API or bundled asset; assigned parent/transport/UI review.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-transport-review.md",
+        "/home/chris/git/collie/android/acceptance/audit-dependencies-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "Kotlin/kotlinx.coroutines",
+        "ref": "1.10.2",
+        "revision": "5f8900478a8e20c073145b1608fbc71fe3d7378b",
+        "selected_documents": 59,
+        "license": "Apache-2.0",
+        "version_note": "Current repository documentation, not necessarily the installed version"
+      }
+    },
+    {
+      "collection": "kotlin-serialization",
+      "index": "/home/chris/git/collie/.project-docs/kotlin-serialization/INDEX.md",
+      "manifest_entries": 21,
+      "classification": "applicable",
+      "reason": "Native app contracts, runtime/build API or bundled asset; assigned parent/transport/UI review.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-transport-review.md",
+        "/home/chris/git/collie/android/acceptance/audit-dependencies-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "Kotlin/kotlinx.serialization",
+        "ref": "v1.7.3",
+        "revision": "d4d066d72a9f92f06c640be5a36a22f75d0d7659",
+        "selected_documents": 21,
+        "license": "Apache-2.0",
+        "version_note": "Current repository documentation, not necessarily the installed version"
+      }
+    },
+    {
+      "collection": "library--oxlint-plugins",
+      "index": "/home/chris/git/collie/.project-docs/library--oxlint-plugins/INDEX.md",
+      "manifest_entries": 19,
+      "classification": "unrelated",
+      "reason": "PWA/CLI/deployment-only framework or tool; not a native production dependency or Android-facing HTTP contract.",
+      "disposition": "excluded with justification",
+      "review_reports": [],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "oxc-project/oxc",
+        "ref": "main",
+        "revision": "4b756621b65ab54c19dc66fbdcb3cd902d662c20",
+        "selected_documents": 19,
+        "license": "MIT",
+        "version_note": "Installed 1.78.0; upstream documentation is pinned independently."
+      }
+    },
+    {
+      "collection": "library--playwright-test",
+      "index": "/home/chris/git/collie/.project-docs/library--playwright-test/INDEX.md",
+      "manifest_entries": 190,
+      "classification": "unrelated",
+      "reason": "PWA/CLI/deployment-only framework or tool; not a native production dependency or Android-facing HTTP contract.",
+      "disposition": "excluded with justification",
+      "review_reports": [],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "microsoft/playwright",
+        "ref": "main",
+        "revision": "d9f2fd3e2232ace8e317a84eda6cb86e25bcf49c",
+        "selected_documents": 190,
+        "license": "Apache-2.0",
+        "version_note": "Installed 1.62.1; upstream documentation is pinned independently."
+      }
+    },
+    {
+      "collection": "library--tailwindcss-vite",
+      "index": "/home/chris/git/collie/.project-docs/library--tailwindcss-vite/INDEX.md",
+      "manifest_entries": 12,
+      "classification": "unrelated",
+      "reason": "PWA/CLI/deployment-only framework or tool; not a native production dependency or Android-facing HTTP contract.",
+      "disposition": "excluded with justification",
+      "review_reports": [],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "tailwindlabs/tailwindcss",
+        "ref": "main",
+        "revision": "de2255ba3f3a9bbcfb2955711bcf8dece43db14e",
+        "selected_documents": 12,
+        "license": "MIT",
+        "version_note": "Installed 4.3.1; upstream documentation is pinned independently."
+      }
+    },
+    {
+      "collection": "library--testing-library-jest-dom",
+      "index": "/home/chris/git/collie/.project-docs/library--testing-library-jest-dom/INDEX.md",
+      "manifest_entries": 4,
+      "classification": "unrelated",
+      "reason": "PWA/CLI/deployment-only framework or tool; not a native production dependency or Android-facing HTTP contract.",
+      "disposition": "excluded with justification",
+      "review_reports": [],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "testing-library/jest-dom",
+        "ref": "main",
+        "revision": "3782c78b3dc9824675afe0cb8f1722f8c96f494d",
+        "selected_documents": 4,
+        "license": "MIT",
+        "version_note": "Installed 6.9.1; upstream documentation is pinned independently."
+      }
+    },
+    {
+      "collection": "library--testing-library-react",
+      "index": "/home/chris/git/collie/.project-docs/library--testing-library-react/INDEX.md",
+      "manifest_entries": 5,
+      "classification": "unrelated",
+      "reason": "PWA/CLI/deployment-only framework or tool; not a native production dependency or Android-facing HTTP contract.",
+      "disposition": "excluded with justification",
+      "review_reports": [],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "testing-library/react-testing-library",
+        "ref": "main",
+        "revision": "20ce75f2907ca0e5c5a8ae595c0e9a4e368c7800",
+        "selected_documents": 5,
+        "license": "MIT",
+        "version_note": "Installed 16.3.2; upstream documentation is pinned independently."
+      }
+    },
+    {
+      "collection": "library--testing-library-user-event",
+      "index": "/home/chris/git/collie/.project-docs/library--testing-library-user-event/INDEX.md",
+      "manifest_entries": 5,
+      "classification": "unrelated",
+      "reason": "PWA/CLI/deployment-only framework or tool; not a native production dependency or Android-facing HTTP contract.",
+      "disposition": "excluded with justification",
+      "review_reports": [],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "testing-library/user-event",
+        "ref": "main",
+        "revision": "1e0020ba75e3b348b69888161495b6be5392b796",
+        "selected_documents": 5,
+        "license": "MIT",
+        "version_note": "Installed 14.6.1; upstream documentation is pinned independently."
+      }
+    },
+    {
+      "collection": "library--vitejs-plugin-react",
+      "index": "/home/chris/git/collie/.project-docs/library--vitejs-plugin-react/INDEX.md",
+      "manifest_entries": 29,
+      "classification": "unrelated",
+      "reason": "PWA/CLI/deployment-only framework or tool; not a native production dependency or Android-facing HTTP contract.",
+      "disposition": "excluded with justification",
+      "review_reports": [],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "vitejs/vite-plugin-react",
+        "ref": "main",
+        "revision": "1bed9c48c6e7f8a5b1d3f6c63438a1fb6e4bd0db",
+        "selected_documents": 29,
+        "license": "MIT",
+        "version_note": "Installed 6.0.3; upstream documentation is pinned independently."
+      }
+    },
+    {
+      "collection": "library-class-variance-authority",
+      "index": "/home/chris/git/collie/.project-docs/library-class-variance-authority/INDEX.md",
+      "manifest_entries": 59,
+      "classification": "unrelated",
+      "reason": "PWA/CLI/deployment-only framework or tool; not a native production dependency or Android-facing HTTP contract.",
+      "disposition": "excluded with justification",
+      "review_reports": [],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "joe-bell/cva",
+        "ref": "main",
+        "revision": "8571512e9e2bd40cd509dab49c411c878b368679",
+        "selected_documents": 59,
+        "license": "Apache-2.0",
+        "version_note": "Installed 0.7.1; upstream documentation is pinned independently."
+      }
+    },
+    {
+      "collection": "library-clsx",
+      "index": "/home/chris/git/collie/.project-docs/library-clsx/INDEX.md",
+      "manifest_entries": 3,
+      "classification": "unrelated",
+      "reason": "PWA/CLI/deployment-only framework or tool; not a native production dependency or Android-facing HTTP contract.",
+      "disposition": "excluded with justification",
+      "review_reports": [],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "lukeed/clsx",
+        "ref": "master",
+        "revision": "925494cf31bcd97d3337aacd34e659e80cae7fe2",
+        "selected_documents": 3,
+        "license": "MIT",
+        "version_note": "Installed 2.1.1; upstream documentation is pinned independently."
+      }
+    },
+    {
+      "collection": "library-commander",
+      "index": "/home/chris/git/collie/.project-docs/library-commander/INDEX.md",
+      "manifest_entries": 11,
+      "classification": "unrelated",
+      "reason": "PWA/CLI/deployment-only framework or tool; not a native production dependency or Android-facing HTTP contract.",
+      "disposition": "excluded with justification",
+      "review_reports": [],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "tj/commander.js",
+        "ref": "master",
+        "revision": "ba6d13ddb4243e5913367734f8c159089ffe7834",
+        "selected_documents": 11,
+        "license": "MIT",
+        "version_note": "Installed 15.0.0; upstream documentation is pinned independently."
+      }
+    },
+    {
+      "collection": "library-ink",
+      "index": "/home/chris/git/collie/.project-docs/library-ink/INDEX.md",
+      "manifest_entries": 2,
+      "classification": "unrelated",
+      "reason": "PWA/CLI/deployment-only framework or tool; not a native production dependency or Android-facing HTTP contract.",
+      "disposition": "excluded with justification",
+      "review_reports": [],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "vadimdemedes/ink",
+        "ref": "master",
+        "revision": "26d2c3f83008142061c22267482489588cc3823c",
+        "selected_documents": 2,
+        "license": "MIT",
+        "version_note": "Installed 7.1.1; upstream documentation is pinned independently."
+      }
+    },
+    {
+      "collection": "library-ink-testing-library",
+      "index": "/home/chris/git/collie/.project-docs/library-ink-testing-library/INDEX.md",
+      "manifest_entries": 2,
+      "classification": "unrelated",
+      "reason": "PWA/CLI/deployment-only framework or tool; not a native production dependency or Android-facing HTTP contract.",
+      "disposition": "excluded with justification",
+      "review_reports": [],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "vadimdemedes/ink-testing-library",
+        "ref": "master",
+        "revision": "1673165d94905066f13b1bc6e1f9eacef8f3688e",
+        "selected_documents": 2,
+        "license": "MIT",
+        "version_note": "Installed 4.0.0; upstream documentation is pinned independently."
+      }
+    },
+    {
+      "collection": "library-jsdom",
+      "index": "/home/chris/git/collie/.project-docs/library-jsdom/INDEX.md",
+      "manifest_entries": 6,
+      "classification": "unrelated",
+      "reason": "PWA/CLI/deployment-only framework or tool; not a native production dependency or Android-facing HTTP contract.",
+      "disposition": "excluded with justification",
+      "review_reports": [],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "jsdom/jsdom",
+        "ref": "main",
+        "revision": "a78f9c22b94e91b39b9fffe36743df789da3a19a",
+        "selected_documents": 6,
+        "license": "MIT",
+        "version_note": "Installed 29.1.1; upstream documentation is pinned independently."
+      }
+    },
+    {
+      "collection": "library-jsqr",
+      "index": "/home/chris/git/collie/.project-docs/library-jsqr/INDEX.md",
+      "manifest_entries": 2,
+      "classification": "unrelated",
+      "reason": "PWA/CLI/deployment-only framework or tool; not a native production dependency or Android-facing HTTP contract.",
+      "disposition": "excluded with justification",
+      "review_reports": [],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "cozmo/jsQR",
+        "ref": "master",
+        "revision": "8e6a036beafa7053dd44b1b76ac578d22b1b3311",
+        "selected_documents": 2,
+        "license": "Apache-2.0",
+        "version_note": "Installed 1.4.0; upstream documentation is pinned independently."
+      }
+    },
+    {
+      "collection": "library-lucide-react",
+      "index": "/home/chris/git/collie/.project-docs/library-lucide-react/INDEX.md",
+      "manifest_entries": 165,
+      "classification": "unrelated",
+      "reason": "PWA/CLI/deployment-only framework or tool; not a native production dependency or Android-facing HTTP contract.",
+      "disposition": "excluded with justification",
+      "review_reports": [],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "lucide-icons/lucide",
+        "ref": "main",
+        "revision": "70562c1ee1c4fdcf736fe97bc893fb8511927934",
+        "selected_documents": 165,
+        "license": "NOASSERTION",
+        "version_note": "Installed 1.22.0; upstream documentation is pinned independently."
+      }
+    },
+    {
+      "collection": "library-msw",
+      "index": "/home/chris/git/collie/.project-docs/library-msw/INDEX.md",
+      "manifest_entries": 4,
+      "classification": "unrelated",
+      "reason": "PWA/CLI/deployment-only framework or tool; not a native production dependency or Android-facing HTTP contract.",
+      "disposition": "excluded with justification",
+      "review_reports": [],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "mswjs/msw",
+        "ref": "main",
+        "revision": "3560a94e00ae2054ce0ea3aaad9fc6fb3892b6bf",
+        "selected_documents": 4,
+        "license": "MIT",
+        "version_note": "Installed 2.14.6; upstream documentation is pinned independently."
+      }
+    },
+    {
+      "collection": "library-qrcode-terminal",
+      "index": "/home/chris/git/collie/.project-docs/library-qrcode-terminal/INDEX.md",
+      "manifest_entries": 2,
+      "classification": "unrelated",
+      "reason": "PWA/CLI/deployment-only framework or tool; not a native production dependency or Android-facing HTTP contract.",
+      "disposition": "excluded with justification",
+      "review_reports": [],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "gtanner/qrcode-terminal",
+        "ref": "master",
+        "revision": "90f66cf5c6b10bcb4358df96a9580f9eb383307b",
+        "selected_documents": 2,
+        "license": "Apache-2.0",
+        "version_note": "Installed 0.12.0; upstream documentation is pinned independently."
+      }
+    },
+    {
+      "collection": "library-react",
+      "index": "/home/chris/git/collie/.project-docs/library-react/INDEX.md",
+      "manifest_entries": 129,
+      "classification": "unrelated",
+      "reason": "PWA/CLI/deployment-only framework or tool; not a native production dependency or Android-facing HTTP contract.",
+      "disposition": "excluded with justification",
+      "review_reports": [],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "react/react",
+        "ref": "main",
+        "revision": "b618bbb4422693bbb8d387180687b3f510300f42",
+        "selected_documents": 129,
+        "license": "MIT",
+        "version_note": "Installed 19.2.7; upstream documentation is pinned independently."
+      }
+    },
+    {
+      "collection": "library-react-router",
+      "index": "/home/chris/git/collie/.project-docs/library-react-router/INDEX.md",
+      "manifest_entries": 214,
+      "classification": "unrelated",
+      "reason": "PWA/CLI/deployment-only framework or tool; not a native production dependency or Android-facing HTTP contract.",
+      "disposition": "excluded with justification",
+      "review_reports": [],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "remix-run/react-router",
+        "ref": "main",
+        "revision": "dee9ad2dab41889e8fbdc6848b5781255d9f133a",
+        "selected_documents": 214,
+        "license": "MIT",
+        "version_note": "Installed 7.18.0; upstream documentation is pinned independently."
+      }
+    },
+    {
+      "collection": "library-sugar-high",
+      "index": "/home/chris/git/collie/.project-docs/library-sugar-high/INDEX.md",
+      "manifest_entries": 10,
+      "classification": "unrelated",
+      "reason": "PWA/CLI/deployment-only framework or tool; not a native production dependency or Android-facing HTTP contract.",
+      "disposition": "excluded with justification",
+      "review_reports": [],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "huozhi/sugar-high",
+        "ref": "main",
+        "revision": "5b70ffa6162681a669a5042416c130244e17f7e8",
+        "selected_documents": 10,
+        "license": null,
+        "version_note": "Installed 2.4.1; upstream documentation is pinned independently."
+      }
+    },
+    {
+      "collection": "library-tailwind-merge",
+      "index": "/home/chris/git/collie/.project-docs/library-tailwind-merge/INDEX.md",
+      "manifest_entries": 45,
+      "classification": "unrelated",
+      "reason": "PWA/CLI/deployment-only framework or tool; not a native production dependency or Android-facing HTTP contract.",
+      "disposition": "excluded with justification",
+      "review_reports": [],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "dcastil/tailwind-merge",
+        "ref": "main",
+        "revision": "b8a94426af712d62b241580578629f0bfd88c823",
+        "selected_documents": 45,
+        "license": "MIT",
+        "version_note": "Installed 3.6.0; upstream documentation is pinned independently."
+      }
+    },
+    {
+      "collection": "library-tw-animate-css",
+      "index": "/home/chris/git/collie/.project-docs/library-tw-animate-css/INDEX.md",
+      "manifest_entries": 22,
+      "classification": "unrelated",
+      "reason": "PWA/CLI/deployment-only framework or tool; not a native production dependency or Android-facing HTTP contract.",
+      "disposition": "excluded with justification",
+      "review_reports": [],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "Wombosvideo/tw-animate-css",
+        "ref": "main",
+        "revision": "1fc30d2b5ad6ab18baf7897828e44ab20a0a62ed",
+        "selected_documents": 22,
+        "license": "MIT",
+        "version_note": "Installed 1.4.0; upstream documentation is pinned independently."
+      }
+    },
+    {
+      "collection": "library-vite",
+      "index": "/home/chris/git/collie/.project-docs/library-vite/INDEX.md",
+      "manifest_entries": 75,
+      "classification": "unrelated",
+      "reason": "PWA/CLI/deployment-only framework or tool; not a native production dependency or Android-facing HTTP contract.",
+      "disposition": "excluded with justification",
+      "review_reports": [],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "vitejs/vite",
+        "ref": "main",
+        "revision": "3b72997d42e7dd2b31898d0e68461e3025e836b6",
+        "selected_documents": 75,
+        "license": "MIT",
+        "version_note": "Installed 8.1.0; upstream documentation is pinned independently."
+      }
+    },
+    {
+      "collection": "library-vite-plugin-pwa",
+      "index": "/home/chris/git/collie/.project-docs/library-vite-plugin-pwa/INDEX.md",
+      "manifest_entries": 65,
+      "classification": "unrelated",
+      "reason": "PWA/CLI/deployment-only framework or tool; not a native production dependency or Android-facing HTTP contract.",
+      "disposition": "excluded with justification",
+      "review_reports": [],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "vite-pwa/vite-plugin-pwa",
+        "ref": "main",
+        "revision": "355cf3dd283ca50da3ac4759501e9c3312a3da91",
+        "selected_documents": 65,
+        "license": "MIT",
+        "version_note": "Installed 1.3.0; upstream documentation is pinned independently."
+      }
+    },
+    {
+      "collection": "library-vitest",
+      "index": "/home/chris/git/collie/.project-docs/library-vitest/INDEX.md",
+      "manifest_entries": 250,
+      "classification": "unrelated",
+      "reason": "PWA/CLI/deployment-only framework or tool; not a native production dependency or Android-facing HTTP contract.",
+      "disposition": "excluded with justification",
+      "review_reports": [],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "vitest-dev/vitest",
+        "ref": "main",
+        "revision": "69e6369f64455b4d78a6338521bbfc5fdb909af0",
+        "selected_documents": 250,
+        "license": "MIT",
+        "version_note": "Installed 4.1.9; upstream documentation is pinned independently."
+      }
+    },
+    {
+      "collection": "library-web-push",
+      "index": "/home/chris/git/collie/.project-docs/library-web-push/INDEX.md",
+      "manifest_entries": 3,
+      "classification": "unrelated",
+      "reason": "PWA/CLI/deployment-only framework or tool; not a native production dependency or Android-facing HTTP contract.",
+      "disposition": "excluded with justification",
+      "review_reports": [],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "web-push-libs/web-push",
+        "ref": "master",
+        "revision": "b34d7d4ba1b982afe8e18e44225bf6286c6c0405",
+        "selected_documents": 3,
+        "license": "NOASSERTION",
+        "version_note": "Installed 3.6.7; upstream documentation is pinned independently."
+      }
+    },
+    {
+      "collection": "lucide-guides",
+      "index": "/home/chris/git/collie/.project-docs/lucide-guides/INDEX.md",
+      "manifest_entries": 149,
+      "classification": "unrelated",
+      "reason": "PWA/CLI/deployment-only framework or tool; not a native production dependency or Android-facing HTTP contract.",
+      "disposition": "excluded with justification",
+      "review_reports": [],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "official-web",
+        "indices": [
+          "https://lucide.dev/llms.txt"
+        ],
+        "crawl_roots": [],
+        "selected_documents": 148,
+        "scope": "All English documentation links from official source indices"
+      }
+    },
+    {
+      "collection": "material-android",
+      "index": "/home/chris/git/collie/.project-docs/material-android/INDEX.md",
+      "manifest_entries": 53,
+      "classification": "applicable",
+      "reason": "Native app contracts, runtime/build API or bundled asset; assigned parent/transport/UI review.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-build-security-review.md",
+        "/home/chris/git/collie/android/acceptance/audit-resources-review.md",
+        "/home/chris/git/collie/android/acceptance/audit-ui-review.md",
+        "/home/chris/git/collie/android/acceptance/audit-transport-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "material-components/material-components-android",
+        "ref": "1.12.0",
+        "revision": "88acfcdb63281714d64e863d2e7da3b53b8da9ce",
+        "selected_documents": 53,
+        "license": "Apache-2.0",
+        "version_note": "Current repository documentation, not necessarily the installed version"
+      }
+    },
+    {
+      "collection": "mcp",
+      "index": "/home/chris/git/collie/.project-docs/mcp/INDEX.md",
+      "manifest_entries": 369,
+      "classification": "unrelated",
+      "reason": "PWA/CLI/deployment-only framework or tool; not a native production dependency or Android-facing HTTP contract.",
+      "disposition": "excluded with justification",
+      "review_reports": [],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "modelcontextprotocol/modelcontextprotocol",
+        "ref": "main",
+        "revision": "c518f7a927cff918bce35d3522fcdb046d264d7c",
+        "selected_documents": 369,
+        "license": "NOASSERTION",
+        "version_note": "Current repository documentation, not necessarily the installed version"
+      }
+    },
+    {
+      "collection": "msw-guides",
+      "index": "/home/chris/git/collie/.project-docs/msw-guides/INDEX.md",
+      "manifest_entries": 180,
+      "classification": "unrelated",
+      "reason": "PWA/CLI/deployment-only framework or tool; not a native production dependency or Android-facing HTTP contract.",
+      "disposition": "excluded with justification",
+      "review_reports": [],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "mswjs/mswjs.io",
+        "ref": "main",
+        "revision": "c444574f76a1e164cc5675bfe9a73600bf623f55",
+        "selected_documents": 180,
+        "license": null,
+        "version_note": "Current repository documentation, not necessarily the installed version"
+      }
+    },
+    {
+      "collection": "muse",
+      "index": "/home/chris/git/collie/.project-docs/muse/INDEX.md",
+      "manifest_entries": 12,
+      "classification": "partially applicable",
+      "reason": "Indirect bridge integration or agent grammar/reference; Android consumes Collie HTTP, not the entire upstream platform.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-integration-collections-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "meta-models/muse-code-sdk",
+        "ref": "main",
+        "revision": "8b77bffea9a482b59177a174777f3c1c7d882fd1",
+        "selected_documents": 12,
+        "license": "MIT",
+        "version_note": "Current repository documentation, not necessarily the installed version"
+      }
+    },
+    {
+      "collection": "muse-official",
+      "index": "/home/chris/git/collie/.project-docs/muse-official/INDEX.md",
+      "manifest_entries": 2,
+      "classification": "partially applicable",
+      "reason": "Agent label/command/icon or fallback integration only; no native implementation of full vendor SDK/model APIs.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-integration-collections-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "official-web",
+        "indices": [],
+        "crawl_roots": [],
+        "selected_documents": 2,
+        "scope": "All English documentation links from official source indices"
+      }
+    },
+    {
+      "collection": "muse-sdk-published",
+      "index": "/home/chris/git/collie/.project-docs/muse-sdk-published/INDEX.md",
+      "manifest_entries": 817,
+      "classification": "partially applicable",
+      "reason": "Agent label/command/icon or fallback integration only; no native implementation of full vendor SDK/model APIs.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-integration-collections-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "official-web",
+        "indices": [],
+        "crawl_roots": [
+          "https://meta-models.github.io/muse-code-sdk/next/"
+        ],
+        "selected_documents": 817,
+        "scope": "All English documentation links from official source indices"
+      }
+    },
+    {
+      "collection": "nix",
+      "index": "/home/chris/git/collie/.project-docs/nix/INDEX.md",
+      "manifest_entries": 4,
+      "classification": "unrelated",
+      "reason": "PWA/CLI/deployment-only framework or tool; not a native production dependency or Android-facing HTTP contract.",
+      "disposition": "excluded with justification",
+      "review_reports": [],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "official-web",
+        "indices": [],
+        "crawl_roots": [],
+        "selected_documents": 4,
+        "scope": "All English documentation links from official source indices"
+      }
+    },
+    {
+      "collection": "nodejs",
+      "index": "/home/chris/git/collie/.project-docs/nodejs/INDEX.md",
+      "manifest_entries": 81,
+      "classification": "unrelated",
+      "reason": "PWA/CLI/deployment-only framework or tool; not a native production dependency or Android-facing HTTP contract.",
+      "disposition": "excluded with justification",
+      "review_reports": [],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "nodejs/node",
+        "ref": "main",
+        "revision": "ae5a0f40b5787a369b6cde39c36fb2760a4cd309",
+        "selected_documents": 81,
+        "license": "NOASSERTION",
+        "version_note": "Current repository documentation, not necessarily the installed version"
+      }
+    },
+    {
+      "collection": "oh-my-pi",
+      "index": "/home/chris/git/collie/.project-docs/oh-my-pi/INDEX.md",
+      "manifest_entries": 172,
+      "classification": "partially applicable",
+      "reason": "Indirect bridge integration or agent grammar/reference; Android consumes Collie HTTP, not the entire upstream platform.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-reference-remainder-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "can1357/oh-my-pi",
+        "ref": "main",
+        "revision": "b07a1c146d0d12cfc855a2c65d52f892ef319040",
+        "selected_documents": 172,
+        "license": "MIT",
+        "version_note": "Current repository documentation, not necessarily the installed version"
+      }
+    },
+    {
+      "collection": "okhttp",
+      "index": "/home/chris/git/collie/.project-docs/okhttp/INDEX.md",
+      "manifest_entries": 37,
+      "classification": "applicable",
+      "reason": "Native app contracts, runtime/build API or bundled asset; assigned parent/transport/UI review.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-transport-review.md",
+        "/home/chris/git/collie/android/acceptance/audit-dependencies-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "lysine-dev/okhttp",
+        "ref": "parent-4.12.0",
+        "revision": "4984568367caaf359b82c452bd28b5e192824d1c",
+        "selected_documents": 37,
+        "license": "Apache-2.0",
+        "version_note": "Current repository documentation, not necessarily the installed version"
+      }
+    },
+    {
+      "collection": "okio",
+      "index": "/home/chris/git/collie/.project-docs/okio/INDEX.md",
+      "manifest_entries": 20,
+      "classification": "applicable",
+      "reason": "Native app contracts, runtime/build API or bundled asset; assigned parent/transport/UI review.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-transport-review.md",
+        "/home/chris/git/collie/android/acceptance/audit-dependencies-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "lysine-dev/okio",
+        "ref": "main",
+        "revision": "a6ae13ee0e7522674ae6382aaf8e6d6e9ef4bb9e",
+        "selected_documents": 20,
+        "license": "Apache-2.0",
+        "version_note": "Current repository documentation, not necessarily the installed version"
+      }
+    },
+    {
+      "collection": "opencode",
+      "index": "/home/chris/git/collie/.project-docs/opencode/INDEX.md",
+      "manifest_entries": 159,
+      "classification": "partially applicable",
+      "reason": "Indirect bridge integration or agent grammar/reference; Android consumes Collie HTTP, not the entire upstream platform.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-terminal-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "anomalyco/opencode",
+        "ref": "dev",
+        "revision": "055d95bb7e278c94baf06235a52cac79dd13ba67",
+        "selected_documents": 159,
+        "license": "MIT",
+        "version_note": "Current repository documentation, not necessarily the installed version"
+      }
+    },
+    {
+      "collection": "oxlint-guides",
+      "index": "/home/chris/git/collie/.project-docs/oxlint-guides/INDEX.md",
+      "manifest_entries": 970,
+      "classification": "unrelated",
+      "reason": "PWA/CLI/deployment-only framework or tool; not a native production dependency or Android-facing HTTP contract.",
+      "disposition": "excluded with justification",
+      "review_reports": [],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "official-web",
+        "indices": [
+          "https://oxc.rs/llms.txt"
+        ],
+        "crawl_roots": [],
+        "selected_documents": 969,
+        "scope": "All English documentation links from official source indices"
+      }
+    },
+    {
+      "collection": "packaging",
+      "index": "/home/chris/git/collie/.project-docs/packaging/INDEX.md",
+      "manifest_entries": 3,
+      "classification": "unrelated",
+      "reason": "PWA/CLI/deployment-only framework or tool; not a native production dependency or Android-facing HTTP contract.",
+      "disposition": "excluded with justification",
+      "review_reports": [],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "official-web",
+        "indices": [],
+        "crawl_roots": [],
+        "selected_documents": 3,
+        "scope": "All English documentation links from official source indices"
+      }
+    },
+    {
+      "collection": "pi",
+      "index": "/home/chris/git/collie/.project-docs/pi/INDEX.md",
+      "manifest_entries": 73,
+      "classification": "partially applicable",
+      "reason": "Indirect bridge integration or agent grammar/reference; Android consumes Collie HTTP, not the entire upstream platform.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-reference-remainder-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "earendil-works/pi",
+        "ref": "main",
+        "revision": "42a3497d03ad17e308a2299fa824727894f2c0ec",
+        "selected_documents": 73,
+        "license": "MIT",
+        "version_note": "Current repository documentation, not necessarily the installed version"
+      }
+    },
+    {
+      "collection": "prime-agent",
+      "index": "/home/chris/git/collie/.project-docs/prime-agent/INDEX.md",
+      "manifest_entries": 19,
+      "classification": "partially applicable",
+      "reason": "Agent label/command/icon or fallback integration only; no native implementation of full vendor SDK/model APIs.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-integration-collections-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "PrimeIntellect-ai/prime-agent",
+        "ref": "main",
+        "revision": "e6ebebebf751bdbdf78935b34a7053977fe863de",
+        "selected_documents": 19,
+        "license": "NOASSERTION",
+        "version_note": "Current repository documentation, not necessarily the installed version"
+      }
+    },
+    {
+      "collection": "protocols",
+      "index": "/home/chris/git/collie/.project-docs/protocols/INDEX.md",
+      "manifest_entries": 17,
+      "classification": "applicable",
+      "reason": "Native app contracts, runtime/build API or bundled asset; assigned parent/transport/UI review.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-reference-remainder-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "official-web",
+        "indices": [],
+        "crawl_roots": [],
+        "selected_documents": 17,
+        "scope": "HTTP, TLS, Origin, WebSocket, JSON, UUID, Web Push, terminal control sequences and grapheme boundaries used by bridge/native/PWA integrations."
+      }
+    },
+    {
+      "collection": "qwen",
+      "index": "/home/chris/git/collie/.project-docs/qwen/INDEX.md",
+      "manifest_entries": 1152,
+      "classification": "partially applicable",
+      "reason": "Agent label/command/icon or fallback integration only; no native implementation of full vendor SDK/model APIs.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-integration-collections-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "QwenLM/qwen-code",
+        "ref": "main",
+        "revision": "6386bb24d0fe5856af100c508c498ff4e52f7bbf",
+        "selected_documents": 1152,
+        "license": "Apache-2.0",
+        "version_note": "Current repository documentation, not necessarily the installed version"
+      }
+    },
+    {
+      "collection": "react",
+      "index": "/home/chris/git/collie/.project-docs/react/INDEX.md",
+      "manifest_entries": 230,
+      "classification": "unrelated",
+      "reason": "PWA/CLI/deployment-only framework or tool; not a native production dependency or Android-facing HTTP contract.",
+      "disposition": "excluded with justification",
+      "review_reports": [],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "reactjs/react.dev",
+        "ref": "main",
+        "revision": "046f17d04295ba047bb5739026b4ac3110f17028",
+        "selected_documents": 230,
+        "license": "CC-BY-4.0",
+        "version_note": "Current repository documentation, not necessarily the installed version"
+      }
+    },
+    {
+      "collection": "robolectric",
+      "index": "/home/chris/git/collie/.project-docs/robolectric/INDEX.md",
+      "manifest_entries": 7,
+      "classification": "applicable",
+      "reason": "Pinned native test tooling; verification semantics, not shipped app runtime.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-reference-remainder-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "robolectric/robolectric",
+        "ref": "robolectric-4.14.1",
+        "revision": "2659448b30bee335f909557629d555bbe3d43495",
+        "selected_documents": 7,
+        "license": "NOASSERTION",
+        "version_note": "Current repository documentation, not necessarily the installed version"
+      }
+    },
+    {
+      "collection": "robolectric-guides",
+      "index": "/home/chris/git/collie/.project-docs/robolectric-guides/INDEX.md",
+      "manifest_entries": 49,
+      "classification": "applicable",
+      "reason": "Pinned native test tooling; verification semantics, not shipped app runtime.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-reference-remainder-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "robolectric/robolectric.github.io",
+        "ref": "main",
+        "revision": "a1f2e6d9aa101e9137fd9532de84e0b933963e76",
+        "selected_documents": 49,
+        "license": "MIT",
+        "version_note": "Current repository documentation, not necessarily the installed version"
+      }
+    },
+    {
+      "collection": "shadcn-chat",
+      "index": "/home/chris/git/collie/.project-docs/shadcn-chat/INDEX.md",
+      "manifest_entries": 12,
+      "classification": "unrelated",
+      "reason": "PWA/CLI/deployment-only framework or tool; not a native production dependency or Android-facing HTTP contract.",
+      "disposition": "excluded with justification",
+      "review_reports": [],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "jakobhoeg/shadcn-chat",
+        "ref": "master",
+        "revision": "47e5f8af020b6eacbd4cbd6ad5f6ff8d60e76aa8",
+        "selected_documents": 12,
+        "license": "MIT",
+        "version_note": "Current repository documentation, not necessarily the installed version"
+      }
+    },
+    {
+      "collection": "shadcn-guides",
+      "index": "/home/chris/git/collie/.project-docs/shadcn-guides/INDEX.md",
+      "manifest_entries": 112,
+      "classification": "unrelated",
+      "reason": "PWA/CLI/deployment-only framework or tool; not a native production dependency or Android-facing HTTP contract.",
+      "disposition": "excluded with justification",
+      "review_reports": [],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "official-web",
+        "indices": [
+          "https://ui.shadcn.com/llms.txt"
+        ],
+        "crawl_roots": [],
+        "selected_documents": 111,
+        "scope": "All English documentation links from official source indices"
+      }
+    },
+    {
+      "collection": "shadcn-ui",
+      "index": "/home/chris/git/collie/.project-docs/shadcn-ui/INDEX.md",
+      "manifest_entries": 321,
+      "classification": "unrelated",
+      "reason": "PWA/CLI/deployment-only framework or tool; not a native production dependency or Android-facing HTTP contract.",
+      "disposition": "excluded with justification",
+      "review_reports": [],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "shadcn-ui/ui",
+        "ref": "main",
+        "revision": "2d3f1cd436b18ea12f24130de4df781355925b08",
+        "selected_documents": 321,
+        "license": "MIT",
+        "version_note": "Current repository documentation, not necessarily the installed version"
+      }
+    },
+    {
+      "collection": "speech-to-text",
+      "index": "/home/chris/git/collie/.project-docs/speech-to-text/INDEX.md",
+      "manifest_entries": 2,
+      "classification": "partially applicable",
+      "reason": "Indirect bridge integration or agent grammar/reference; Android consumes Collie HTTP, not the entire upstream platform.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-integration-remainder-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "official-web",
+        "indices": [],
+        "crawl_roots": [],
+        "selected_documents": 2,
+        "scope": "All English documentation links from official source indices"
+      }
+    },
+    {
+      "collection": "ssh",
+      "index": "/home/chris/git/collie/.project-docs/ssh/INDEX.md",
+      "manifest_entries": 2,
+      "classification": "unrelated",
+      "reason": "PWA/CLI/deployment-only framework or tool; not a native production dependency or Android-facing HTTP contract.",
+      "disposition": "excluded with justification",
+      "review_reports": [],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "official-web",
+        "indices": [],
+        "crawl_roots": [],
+        "selected_documents": 2,
+        "scope": "All English documentation links from official source indices"
+      }
+    },
+    {
+      "collection": "systemd",
+      "index": "/home/chris/git/collie/.project-docs/systemd/INDEX.md",
+      "manifest_entries": 6,
+      "classification": "unrelated",
+      "reason": "PWA/CLI/deployment-only framework or tool; not a native production dependency or Android-facing HTTP contract.",
+      "disposition": "excluded with justification",
+      "review_reports": [],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "official-web",
+        "indices": [],
+        "crawl_roots": [],
+        "selected_documents": 6,
+        "scope": "All English documentation links from official source indices"
+      }
+    },
+    {
+      "collection": "tailscale",
+      "index": "/home/chris/git/collie/.project-docs/tailscale/INDEX.md",
+      "manifest_entries": 11,
+      "classification": "partially applicable",
+      "reason": "Indirect bridge integration or agent grammar/reference; Android consumes Collie HTTP, not the entire upstream platform.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-integration-remainder-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "tailscale/tailscale",
+        "ref": "main",
+        "revision": "87ec06810dc32646739ebc190e5e157cba867a16",
+        "selected_documents": 11,
+        "license": "BSD-3-Clause",
+        "version_note": "Current repository documentation, not necessarily the installed version"
+      }
+    },
+    {
+      "collection": "tailscale-guides",
+      "index": "/home/chris/git/collie/.project-docs/tailscale-guides/INDEX.md",
+      "manifest_entries": 9,
+      "classification": "partially applicable",
+      "reason": "Indirect bridge integration or agent grammar/reference; Android consumes Collie HTTP, not the entire upstream platform.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-integration-remainder-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "official-web",
+        "indices": [],
+        "crawl_roots": [],
+        "selected_documents": 9,
+        "scope": "All English documentation links from official source indices"
+      }
+    },
+    {
+      "collection": "tailwind-guides",
+      "index": "/home/chris/git/collie/.project-docs/tailwind-guides/INDEX.md",
+      "manifest_entries": 198,
+      "classification": "unrelated",
+      "reason": "PWA/CLI/deployment-only framework or tool; not a native production dependency or Android-facing HTTP contract.",
+      "disposition": "excluded with justification",
+      "review_reports": [],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "tailwindlabs/tailwindcss.com",
+        "ref": "main",
+        "revision": "7f92c2213315c195dae583d68752da4042da3ade",
+        "selected_documents": 198,
+        "license": null,
+        "version_note": "Current repository documentation, not necessarily the installed version"
+      }
+    },
+    {
+      "collection": "tern",
+      "index": "/home/chris/git/collie/.project-docs/tern/INDEX.md",
+      "manifest_entries": 85,
+      "classification": "partially applicable",
+      "reason": "Agent label/command/icon or fallback integration only; no native implementation of full vendor SDK/model APIs.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-integration-collections-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "official-web",
+        "indices": [],
+        "crawl_roots": [
+          "https://docs.stencil.so/tern/"
+        ],
+        "selected_documents": 85,
+        "scope": "All English documentation links from official source indices"
+      }
+    },
+    {
+      "collection": "testing-library-guides",
+      "index": "/home/chris/git/collie/.project-docs/testing-library-guides/INDEX.md",
+      "manifest_entries": 117,
+      "classification": "unrelated",
+      "reason": "PWA/CLI/deployment-only framework or tool; not a native production dependency or Android-facing HTTP contract.",
+      "disposition": "excluded with justification",
+      "review_reports": [],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "testing-library/testing-library-docs",
+        "ref": "main",
+        "revision": "3004c00dba031f1475abae31894de7c10490ce91",
+        "selected_documents": 117,
+        "license": "MIT",
+        "version_note": "Current repository documentation, not necessarily the installed version"
+      }
+    },
+    {
+      "collection": "tmux",
+      "index": "/home/chris/git/collie/.project-docs/tmux/INDEX.md",
+      "manifest_entries": 4,
+      "classification": "partially applicable",
+      "reason": "Indirect bridge integration or agent grammar/reference; Android consumes Collie HTTP, not the entire upstream platform.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-integration-remainder-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "tmux/tmux",
+        "ref": "master",
+        "revision": "95c1c3d7c50795170fd95ec8614bf45fea09faab",
+        "selected_documents": 4,
+        "license": "ISC",
+        "version_note": "Current repository documentation, not necessarily the installed version"
+      }
+    },
+    {
+      "collection": "tmux-manual",
+      "index": "/home/chris/git/collie/.project-docs/tmux-manual/INDEX.md",
+      "manifest_entries": 1,
+      "classification": "partially applicable",
+      "reason": "Indirect bridge integration or agent grammar/reference; Android consumes Collie HTTP, not the entire upstream platform.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-integration-remainder-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "official-web",
+        "indices": [],
+        "crawl_roots": [],
+        "selected_documents": 1,
+        "scope": "All English documentation links from official source indices"
+      }
+    },
+    {
+      "collection": "tuios",
+      "index": "/home/chris/git/collie/.project-docs/tuios/INDEX.md",
+      "manifest_entries": 41,
+      "classification": "partially applicable",
+      "reason": "Agent label/command/icon or fallback integration only; no native implementation of full vendor SDK/model APIs.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-integration-collections-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "Gaurav-Gosain/tuios",
+        "ref": "main",
+        "revision": "de010d153531170bfe3dcdb8d57ccb1d74e3fef7",
+        "selected_documents": 41,
+        "license": "MIT",
+        "version_note": "Current repository documentation, not necessarily the installed version"
+      }
+    },
+    {
+      "collection": "typescript",
+      "index": "/home/chris/git/collie/.project-docs/typescript/INDEX.md",
+      "manifest_entries": 137,
+      "classification": "unrelated",
+      "reason": "PWA/CLI/deployment-only framework or tool; not a native production dependency or Android-facing HTTP contract.",
+      "disposition": "excluded with justification",
+      "review_reports": [],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "microsoft/TypeScript-Website",
+        "ref": "v2",
+        "revision": "6556b08756b766fd41d0f887174cb0b042e5f72c",
+        "selected_documents": 137,
+        "license": "CC-BY-4.0",
+        "version_note": "Current repository documentation, not necessarily the installed version"
+      }
+    },
+    {
+      "collection": "vite-guides",
+      "index": "/home/chris/git/collie/.project-docs/vite-guides/INDEX.md",
+      "manifest_entries": 43,
+      "classification": "unrelated",
+      "reason": "PWA/CLI/deployment-only framework or tool; not a native production dependency or Android-facing HTTP contract.",
+      "disposition": "excluded with justification",
+      "review_reports": [],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "official-web",
+        "indices": [
+          "https://vite.dev/llms.txt"
+        ],
+        "crawl_roots": [],
+        "selected_documents": 42,
+        "scope": "All English documentation links from official source indices"
+      }
+    },
+    {
+      "collection": "vite-pwa-guides",
+      "index": "/home/chris/git/collie/.project-docs/vite-pwa-guides/INDEX.md",
+      "manifest_entries": 58,
+      "classification": "unrelated",
+      "reason": "PWA/CLI/deployment-only framework or tool; not a native production dependency or Android-facing HTTP contract.",
+      "disposition": "excluded with justification",
+      "review_reports": [],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "vite-pwa/docs",
+        "ref": "main",
+        "revision": "cb8886edb7a398235f5f3b159abfb2b302b746e0",
+        "selected_documents": 58,
+        "license": "MIT",
+        "version_note": "Current repository documentation, not necessarily the installed version"
+      }
+    },
+    {
+      "collection": "vite-pwa-published",
+      "index": "/home/chris/git/collie/.project-docs/vite-pwa-published/INDEX.md",
+      "manifest_entries": 77,
+      "classification": "unrelated",
+      "reason": "PWA/CLI/deployment-only framework or tool; not a native production dependency or Android-facing HTTP contract.",
+      "disposition": "excluded with justification",
+      "review_reports": [],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "official-web",
+        "indices": [
+          "https://vite-pwa-org.netlify.app/llms.txt"
+        ],
+        "crawl_roots": [],
+        "selected_documents": 76,
+        "scope": "All English documentation links from official source indices"
+      }
+    },
+    {
+      "collection": "vitest-guides",
+      "index": "/home/chris/git/collie/.project-docs/vitest-guides/INDEX.md",
+      "manifest_entries": 216,
+      "classification": "unrelated",
+      "reason": "PWA/CLI/deployment-only framework or tool; not a native production dependency or Android-facing HTTP contract.",
+      "disposition": "excluded with justification",
+      "review_reports": [],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "official-web",
+        "indices": [
+          "https://vitest.dev/llms.txt"
+        ],
+        "crawl_roots": [],
+        "selected_documents": 215,
+        "scope": "All English documentation links from official source indices"
+      }
+    },
+    {
+      "collection": "web-platform",
+      "index": "/home/chris/git/collie/.project-docs/web-platform/INDEX.md",
+      "manifest_entries": 5,
+      "classification": "unrelated",
+      "reason": "PWA/CLI/deployment-only framework or tool; not a native production dependency or Android-facing HTTP contract.",
+      "disposition": "excluded with justification",
+      "review_reports": [],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "mdn/content",
+        "ref": "main",
+        "revision": "47b1321d6cac5c7093583162c4cf73e015cc4905",
+        "selected_documents": 5,
+        "license": "NOASSERTION",
+        "version_note": "Current repository documentation, not necessarily the installed version"
+      }
+    },
+    {
+      "collection": "workbox",
+      "index": "/home/chris/git/collie/.project-docs/workbox/INDEX.md",
+      "manifest_entries": 24,
+      "classification": "unrelated",
+      "reason": "PWA/CLI/deployment-only framework or tool; not a native production dependency or Android-facing HTTP contract.",
+      "disposition": "excluded with justification",
+      "review_reports": [],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "GoogleChrome/workbox",
+        "ref": "v7",
+        "revision": "4ea3138a120fd2c87389b54130e25f47e0fd7089",
+        "selected_documents": 24,
+        "license": "MIT",
+        "version_note": "Current repository documentation, not necessarily the installed version"
+      }
+    },
+    {
+      "collection": "zellij",
+      "index": "/home/chris/git/collie/.project-docs/zellij/INDEX.md",
+      "manifest_entries": 16,
+      "classification": "partially applicable",
+      "reason": "Indirect bridge integration or agent grammar/reference; Android consumes Collie HTTP, not the entire upstream platform.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-integration-remainder-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "zellij-org/zellij",
+        "ref": "main",
+        "revision": "333d7898a840314e41d3cc9d2a264a1b9732bb7b",
+        "selected_documents": 16,
+        "license": "MIT",
+        "version_note": "Current repository documentation, not necessarily the installed version"
+      }
+    },
+    {
+      "collection": "zellij-published",
+      "index": "/home/chris/git/collie/.project-docs/zellij-published/INDEX.md",
+      "manifest_entries": 68,
+      "classification": "partially applicable",
+      "reason": "Indirect bridge integration or agent grammar/reference; Android consumes Collie HTTP, not the entire upstream platform.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-integration-remainder-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "official-web",
+        "indices": [],
+        "crawl_roots": [
+          "https://zellij.dev/documentation/"
+        ],
+        "selected_documents": 68,
+        "scope": "All English documentation links from official source indices"
+      }
+    },
+    {
+      "collection": "zellij-user-guide",
+      "index": "/home/chris/git/collie/.project-docs/zellij-user-guide/INDEX.md",
+      "manifest_entries": 1,
+      "classification": "partially applicable",
+      "reason": "Indirect bridge integration or agent grammar/reference; Android consumes Collie HTTP, not the entire upstream platform.",
+      "disposition": "reviewed with no mismatch found",
+      "review_reports": [
+        "/home/chris/git/collie/android/acceptance/audit-integration-remainder-review.md"
+      ],
+      "limits": "Only source-mapped applicable sections are reviewed. Unused upstream APIs, unrelated vendor/platform features and dependency implementation internals are excluded; this is not review of every saved page.",
+      "source_metadata": {
+        "type": "github",
+        "repo": "zellij-org/zellij-org.github.io",
+        "ref": "main",
+        "revision": "111f441276770f871419949a6695bbad6b518551",
+        "selected_documents": 1,
+        "license": null,
+        "version_note": "Current repository documentation, not necessarily the installed version"
+      }
+    }
+  ]
+}

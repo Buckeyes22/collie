@@ -24,10 +24,16 @@
 // never a harness — so a model module can never end up depending on an adapter.
 
 import type { Block } from "../blocks";
+import type { ColumnRange } from "../column-range";
 import { menusEqual, menusSameIdentity, type MenuModel } from "./menu-model";
 import { multiSelectEquals, multiSelectIdentity, type MultiSelectModel } from "./multi-select-model";
 import { previewCoreEqual, previewsEqual, type PreviewSelectModel } from "./preview-model";
 import { promptsEqual, promptsSameIdentity, type PromptModel } from "./prompt-model";
+import {
+  unreadDialogsEqual,
+  unreadDialogsSameIdentity,
+  type UnreadDialogModel,
+} from "./unread-dialog-model";
 import { wizardsEqual, type WizardModel } from "./wizard-model";
 
 /** The model each interactive block kind carries. Keys are exactly the non-`raw` `Block["kind"]`s —
@@ -38,6 +44,7 @@ export interface DialogModels {
   "preview-select": PreviewSelectModel;
   "multi-select": MultiSelectModel;
   menu: MenuModel;
+  "unread-dialog": UnreadDialogModel;
 }
 
 /** An interactive block kind — every `Block["kind"]` that OWNS THE KEYBOARD. `raw` is not one, and
@@ -84,6 +91,8 @@ function dialogPayload(block: Block): DialogModels[DialogKind] | null {
       return block.multi;
     case "menu":
       return block.menu;
+    case "unread-dialog":
+      return block.cancel;
     default:
       return null;
   }
@@ -106,6 +115,18 @@ export interface DialogComparators<M> {
   signature(m: M): string;
   /** The literal on-screen region text bound to the first write (the bridge's expected prompt). */
   region(m: M): string;
+  /**
+   * The canonical styled lines of the same region (`expected_styled`, ADR 0080 point 7), for a model
+   * whose pointer or another state a tap depends on is visible only as a style. Absent on the kinds
+   * that never carry one, and `undefined` for a model that does not.
+   */
+  styled?(m: M): string | undefined;
+  /**
+   * The display columns of each row of the region (`expected_columns`, lib/column-range.ts), for a
+   * model read from part of its rows because something beside it on the same rows moves on its own.
+   * Absent on the kinds that never carry one, and `undefined` for a model that does not: whole rows.
+   */
+  columns?(m: M): ColumnRange | undefined;
 }
 
 /** The shape of the contract table: one row of comparators per interactive block kind. */
@@ -121,6 +142,8 @@ export const DIALOG_CONTRACT: DialogContract = {
     identity: promptsSameIdentity,
     signature: (m) => m.signature,
     region: (m) => m.signature,
+    styled: (m) => m.styledSignature,
+    columns: (m) => m.bindColumns,
   },
   wizard: {
     // Every wizard key commits too — a digit selects AND advances; Left/Right change the step.
@@ -153,6 +176,20 @@ export const DIALOG_CONTRACT: DialogContract = {
     identity: menusSameIdentity,
     signature: (m) => m.signature,
     region: (m) => m.signature,
+  },
+  "unread-dialog": {
+    // One key, and it commits — so the two comparisons are the same one, and the model says so
+    // (`unreadDialogsEqual` is `unreadDialogsSameIdentity`). Nothing on this card is expected to
+    // change under a tap: a screen that repaints while the operator reaches for it is a screen we
+    // could not read a moment ago and cannot read now, so the tap aborts rather than guesses.
+    commits: unreadDialogsEqual,
+    identity: unreadDialogsSameIdentity,
+    signature: (m) => m.signature,
+    // The signature is a JOIN of up to twelve rows, which is not one region on screen, so it cannot
+    // stand in as the bridge's expected prompt. The LAST non-blank row can: it is literal text the
+    // pane really carries, and on an unread modal it is the row that changes first when the screen
+    // moves. Taken off the signature's own tail so the two can never disagree.
+    region: (m) => m.signature.split("\n").at(-1) ?? "",
   },
 };
 

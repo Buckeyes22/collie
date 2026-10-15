@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="changes_open_current_source">Open current source in Files</string>
+    <string name="changes_deleted_source_notice">This path is deleted in the current change. Its diff remains available; there is no current source to open.</string>
+    <string name="changes_historical_source_notice">This is a historical diff. It does not identify the current file contents. Return to current Changes to open current source.</string>
+</resources>

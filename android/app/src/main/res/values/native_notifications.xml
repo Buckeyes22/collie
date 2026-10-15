@@ -1,0 +1,15 @@
+<resources>
+    <string name="native_notifications_title">Background notifications</string>
+    <string name="native_notifications_channel">Collie notifications</string>
+    <string name="native_notifications_enable">Enable background notifications</string>
+    <string name="native_notifications_disable">Disable background notifications</string>
+    <string name="native_notifications_permission">Allow notifications in Android settings to receive Collie alerts</string>
+    <string name="native_notifications_setup">Install an ntfy UnifiedPush distributor configured for your operator’s self-hosted HTTPS ntfy server. Collie uses its encrypted connection and server enrollment. Keep the distributor’s instant delivery enabled.</string>
+    <string name="native_notifications_unavailable">Notifications require current pairing and an operator-configured ntfy provider</string>
+    <string name="native_notifications_off">Background notifications are off</string>
+    <string name="native_notifications_pair">Pair again to enable notifications</string>
+    <string name="native_notifications_waiting">Waiting for the push distributor</string>
+    <string name="native_notifications_enrolled">UnifiedPush notifications are enrolled</string>
+    <string name="native_notifications_channel_settings">Android notification settings</string>
+    <string name="native_notifications_channel_off">Collie notification channel is disabled in Android settings</string>
+</resources>

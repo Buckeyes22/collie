@@ -4,6 +4,9 @@ import android.app.Application
 import androidx.test.core.app.ApplicationProvider
 import com.lateapex.collie.data.CollieRepository
 import com.lateapex.collie.data.ConnectionStore
+import com.lateapex.collie.data.ScopedImageLoader
+import com.lateapex.collie.data.ScopedImageResult
+import com.lateapex.collie.data.QueuedSendAttemptStore
 import com.lateapex.collie.domain.CollieOrigin
 import com.lateapex.collie.domain.Connection
 import com.lateapex.collie.domain.PaneAddress
@@ -18,6 +21,7 @@ import com.lateapex.collie.network.DevicesResponse
 import com.lateapex.collie.network.DeviceAuthorization
 import com.lateapex.collie.network.HealthResponse
 import com.lateapex.collie.network.MuxConfigResponse
+import com.lateapex.collie.network.ControlAuthority
 import com.lateapex.collie.network.OriginValidator
 import com.lateapex.collie.network.PairResult
 import com.lateapex.collie.network.PaneHistoryResponse
@@ -27,9 +31,17 @@ import com.lateapex.collie.network.ServerSummary
 import com.lateapex.collie.network.SnapshotResponse
 import com.lateapex.collie.network.TranscriptEntry
 import com.lateapex.collie.network.TranscriptPart
+import com.lateapex.collie.network.PaneChatResponse
+import com.lateapex.collie.network.QueuedSendGuard
+import com.lateapex.collie.network.ChatAfter
+import com.lateapex.collie.network.ChatBefore
 import com.lateapex.collie.ui.terminal.AgentSemanticParser
 import com.lateapex.collie.ui.terminal.TerminalDraft
+import com.lateapex.collie.ui.terminal.PiComposer
+import com.lateapex.collie.network.PromptColumns
+import java.io.File
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -87,7 +99,7 @@ class PaneViewModelTest {
     @Test
     fun revokedWriteDemotesTheConnectionAndDisarmsControls() = runTest(dispatcher) {
         val fixture = fixture(
-            ApiResult.Failure(ApiFailure.Http(403, "device not paired", null)),
+            ApiResult.Failure(ApiFailure.Http(403, "device not paired", "pairing.unpaired", source = com.lateapex.collie.network.FailureSource.COLLIE, factor = com.lateapex.collie.network.FailureFactor.PAIRING)),
         )
         fixture.viewModel.refresh()
         advanceUntilIdle()
@@ -98,6 +110,449 @@ class PaneViewModelTest {
         assertFalse(fixture.viewModel.state.value.canWrite)
         assertFalse(fixture.store.connection.value?.isPaired == true)
         assertEquals(1, fixture.api.replyCalls)
+    }
+
+    @Test
+    fun queuedSendUsesOnlyDeclaredKeysAndLatchesAnImmediateDuplicate() = runTest(dispatcher) {
+        val fixture = fixture(ApiResult.Success(ActionResponse(ok = true), 200), agent = "claude")
+        fixture.api.config = BridgeConfigResponse(
+            mux = MuxConfigResponse(capabilities = mapOf("guardedQueuedSend" to true)),
+        )
+        fixture.api.snapshotPanes = listOf(
+            paneSummary(PaneAddress(paneId = "w1:p1")).copy(agent = "claude", status = AgentStatus.WORKING),
+        )
+        val page = queuedPage()
+        fixture.api.chatPage = page
+        fixture.viewModel.refresh()
+        advanceUntilIdle()
+
+        val action = fixture.viewModel.state.value.transcriptSendNow
+        assertNotNull(action)
+        fixture.viewModel.sendQueuedNow(action!!)
+        // A second tap before the launched action settles is ignored by the one-flight gate.
+        fixture.viewModel.sendQueuedNow(action)
+        advanceUntilIdle()
+
+        assertEquals(listOf(listOf("ctrl+Enter")), fixture.api.queuedKeysCalls)
+        assertEquals(page.queuedDigest, fixture.api.lastQueuedGuard?.queueDigest)
+        assertTrue(fixture.api.replyCalls == 0)
+        assertTrue(fixture.api.keysCalls.isEmpty())
+        fixture.viewModel.sendQueuedNow(action)
+        advanceUntilIdle()
+        assertEquals(1, fixture.api.queuedKeysCalls.size)
+        assertEquals(action, fixture.viewModel.state.value.transcriptSendAttempt)
+
+        val recreated = fixture(
+            ApiResult.Success(ActionResponse(ok = true), 200),
+            agent = "claude",
+            queuedAttempts = fixture.queuedAttempts,
+        )
+        recreated.api.config = fixture.api.config
+        recreated.api.snapshotPanes = fixture.api.snapshotPanes
+        recreated.api.chatPage = page
+        recreated.viewModel.refresh(); advanceUntilIdle()
+        assertEquals(action, recreated.viewModel.state.value.transcriptSendAttempt)
+        recreated.viewModel.sendQueuedNow(recreated.viewModel.state.value.transcriptSendNow!!)
+        advanceUntilIdle()
+        assertTrue(recreated.api.queuedKeysCalls.isEmpty())
+    }
+
+    @Test
+    fun queuedVerificationCannotRestoreImagesOrReserveAWriteAfterActorRetirement() = runTest(dispatcher) {
+        val f = fixture(ApiResult.Success(ActionResponse(ok = true), 200), agent = "claude")
+        f.api.config = BridgeConfigResponse(mux = MuxConfigResponse(capabilities = mapOf("guardedQueuedSend" to true)))
+        f.api.snapshotPanes = listOf(paneSummary(PaneAddress(paneId = "w1:p1")).copy(agent = "claude", status = AgentStatus.WORKING))
+        f.api.chatPage = queuedPage(turns = listOf(entry("queued-image").copy(parts = listOf(
+            TranscriptPart("image", url = "data:image/png;base64,AA==", mimeType = "image/png"),
+        ))))
+        f.viewModel.refresh(); advanceUntilIdle()
+        val admitted = requireNotNull(f.viewModel.state.value.transcriptReadContext)
+        val action = requireNotNull(f.viewModel.state.value.transcriptSendNow)
+        f.api.chatHook = { f.repository.showSavedCopy(456L) }
+        f.viewModel.sendQueuedNow(action); advanceUntilIdle()
+        assertFalse(f.repository.isCurrent(admitted))
+        assertNull(f.viewModel.state.value.transcriptReadContext)
+        assertNull(f.viewModel.state.value.transcriptSendAttempt)
+        assertTrue(f.api.queuedKeysCalls.isEmpty())
+        assertEquals(0, f.api.imageBlobCalls)
+        assertFalse(f.viewModel.state.value.transcriptSendPending)
+    }
+
+    @Test
+    fun queuedSendRechecksModalAndStaleQueueBeforeItsOnlyWrite() = runTest(dispatcher) {
+        val modal = fixture(ApiResult.Success(ActionResponse(ok = true), 200), agent = "claude")
+        modal.api.config = BridgeConfigResponse(mux = MuxConfigResponse(capabilities = mapOf("guardedQueuedSend" to true)))
+        modal.api.snapshotPanes = listOf(paneSummary(PaneAddress(paneId = "w1:p1")).copy(agent = "claude", status = AgentStatus.WORKING))
+        modal.api.chatPage = queuedPage()
+        modal.viewModel.refresh(); advanceUntilIdle()
+        val displayed = modal.viewModel.state.value.transcriptSendNow!!
+        modal.api.paneHook = {
+            modal.api.pane = PaneReadResponse(
+                "w1:p1", "Which color?\n❯ 1. Red\n  2. Blue\nEnter to select · Esc to cancel", false, 8,
+            )
+        }
+        modal.viewModel.sendQueuedNow(displayed); advanceUntilIdle()
+        assertTrue(modal.api.queuedKeysCalls.isEmpty())
+
+        val stale = fixture(ApiResult.Success(ActionResponse(ok = true), 200), agent = "claude")
+        stale.api.config = BridgeConfigResponse(mux = MuxConfigResponse(capabilities = mapOf("guardedQueuedSend" to true)))
+        stale.api.snapshotPanes = listOf(paneSummary(PaneAddress(paneId = "w1:p1")).copy(agent = "claude", status = AgentStatus.WORKING))
+        stale.api.chatPage = queuedPage()
+        stale.viewModel.refresh(); advanceUntilIdle()
+        val staleAction = stale.viewModel.state.value.transcriptSendNow!!
+        stale.api.chatHook = { stale.api.chatPage = queuedPage(queued = listOf("replacement"), revision = 4) }
+        stale.viewModel.sendQueuedNow(staleAction); advanceUntilIdle()
+        assertTrue(stale.api.queuedKeysCalls.isEmpty())
+    }
+
+    @Test
+    fun malformedLiveQueueIdentityDisarmsTheVisibleActionWithoutThrowingOrPosting() = runTest(dispatcher) {
+        val fixture = fixture(ApiResult.Success(ActionResponse(ok = true), 200), agent = "claude")
+        fixture.api.config = BridgeConfigResponse(mux = MuxConfigResponse(capabilities = mapOf("guardedQueuedSend" to true)))
+        fixture.api.snapshotPanes = listOf(
+            paneSummary(PaneAddress(paneId = "w1:p1")).copy(agent = "claude", status = AgentStatus.WORKING),
+        )
+        fixture.api.chatPage = queuedPage()
+        fixture.viewModel.refresh(); advanceUntilIdle()
+        val displayed = fixture.viewModel.state.value.transcriptSendNow!!
+        fixture.api.chatHook = {
+            fixture.api.chatPage = queuedPage(digest = "malformed")
+        }
+
+        fixture.viewModel.sendQueuedNow(displayed)
+        advanceUntilIdle()
+
+        assertTrue(fixture.api.queuedKeysCalls.isEmpty())
+        assertNull(fixture.viewModel.state.value.transcriptSendNow)
+        assertNotNull(fixture.viewModel.state.value.mutationError)
+    }
+
+    @Test
+    fun negativeLiveQueueCountersDisarmVisibleActionWithoutReplacingTranscriptCursorOrEtag() = runTest(dispatcher) {
+        val malformedPages = listOf(
+            queuedPage(generation = -1, revision = 13, turns = listOf(entry("rejected-generation"))),
+            queuedPage(revision = -1, turns = listOf(entry("rejected-revision"))),
+        )
+        for (malformed in malformedPages) {
+            val fixture = fixture(ApiResult.Success(ActionResponse(ok = true), 200), agent = "claude")
+            fixture.api.config = BridgeConfigResponse(mux = MuxConfigResponse(capabilities = mapOf("guardedQueuedSend" to true)))
+            fixture.api.snapshotPanes = listOf(
+                paneSummary(PaneAddress(paneId = "w1:p1")).copy(agent = "claude", status = AgentStatus.WORKING),
+            )
+            fixture.api.chatResponseEtag = "\"accepted-page\""
+            fixture.api.chatPage = queuedPage(revision = 12, turns = listOf(entry("retained")))
+            fixture.viewModel.refresh(); advanceUntilIdle()
+            val displayed = fixture.viewModel.state.value.transcriptSendNow
+            assertNotNull("initial valid queue action", displayed)
+            assertEquals(listOf("retained"), fixture.viewModel.state.value.transcript.map { it.uuid })
+
+            fixture.api.chatResponseEtag = "\"rejected-page\""
+            fixture.api.chatPage = malformed
+            fixture.viewModel.refresh(); advanceUntilIdle()
+
+            val afterReject = fixture.viewModel.state.value
+            assertNull("malformed counters disarm PaneUiState", afterReject.transcriptSendNow)
+            assertEquals(listOf("retained"), afterReject.transcript.map { it.uuid })
+            assertEquals(listOf("queued message"), afterReject.transcriptQueued)
+            assertEquals(0, fixture.api.queuedKeysCalls.size)
+
+            // A stale view callback cannot bypass the disarmed visible state or post once.
+            fixture.viewModel.sendQueuedNow(displayed!!)
+            advanceUntilIdle()
+            assertEquals(0, fixture.api.queuedKeysCalls.size)
+
+            fixture.api.chatResponseEtag = "\"next-page\""
+            fixture.api.chatPage = queuedPage(revision = 13, turns = listOf(entry("retained"), entry("next")))
+            fixture.viewModel.refresh(); advanceUntilIdle()
+            assertEquals(ChatAfter(7, 12), fixture.api.chatAfterRequests.last())
+            assertEquals("\"accepted-page\"", fixture.api.chatEtagRequests.last())
+        }
+    }
+
+    @Test
+    fun aLegacyLivePageWithoutRevisionUpdatesDisplayButCannotEnableQueuedSend() = runTest(dispatcher) {
+        val fixture = fixture(ApiResult.Success(ActionResponse(ok = true), 200), agent = "claude")
+        fixture.api.config = BridgeConfigResponse(mux = MuxConfigResponse(capabilities = mapOf("guardedQueuedSend" to true)))
+        fixture.api.snapshotPanes = listOf(
+            paneSummary(PaneAddress(paneId = "w1:p1")).copy(agent = "claude", status = AgentStatus.WORKING),
+        )
+        fixture.api.chatPage = queuedPage(revision = 12, turns = listOf(entry("current")))
+        fixture.viewModel.refresh(); advanceUntilIdle()
+        assertNotNull(fixture.viewModel.state.value.transcriptSendNow)
+
+        fixture.api.chatPage = queuedPage(revision = null, turns = listOf(entry("legacy")))
+        fixture.viewModel.refresh(); advanceUntilIdle()
+
+        assertEquals(listOf("current", "legacy"), fixture.viewModel.state.value.transcript.map { it.uuid })
+        assertNull(fixture.viewModel.state.value.transcriptSendNow)
+        assertEquals(0, fixture.api.queuedKeysCalls.size)
+
+        fixture.api.chatPage = queuedPage(revision = 14, turns = listOf(entry("after-legacy")))
+        fixture.viewModel.refresh(); advanceUntilIdle()
+        assertNull("legacy response must not seed an invalid revision cursor", fixture.api.chatAfterRequests.last())
+    }
+
+    @Test
+    fun actualHttpsFailedChatReadDisarmsQueueAcrossSupportingRefreshAndValidator304(): Unit = runTest(dispatcher) {
+        val certificate = okhttp3.tls.HeldCertificate.Builder().commonName("localhost")
+            .addSubjectAlternativeName("localhost").build()
+        val serverCertificates = okhttp3.tls.HandshakeCertificates.Builder().heldCertificate(certificate).build()
+        val trust = okhttp3.tls.HandshakeCertificates.Builder().addTrustedCertificate(certificate.certificate).build()
+        val server = mockwebserver3.MockWebServer()
+        server.useHttps(serverCertificates.sslSocketFactory())
+        server.start()
+        try {
+            val client = com.lateapex.collie.network.CollieApiClient.defaultHttpClient().newBuilder()
+                .sslSocketFactory(trust.sslSocketFactory(), trust.trustManager).build()
+            val actual = com.lateapex.collie.network.CollieApiClient(client, kotlinx.serialization.json.Json { ignoreUnknownKeys = true })
+            fun page(gen: Long = 7, rev: Long = 12) = """{"paneId":"w1:p1","available":true,"page":"live","gen":$gen,"rev":$rev,"head":1,"oldest":1,"hasOlder":false,"upserts":[{"uuid":"retained","ts":"","role":"assistant","seq":1,"parts":[]}],"queued":["queued message"],"sendQueuedNow":["ctrl+Enter"],"queuedDigest":"${"a".repeat(64)}","queuedSendOccupant":"${"b".repeat(64)}"}"""
+            fun response(body: String) = mockwebserver3.MockResponse.Builder()
+                .setHeader("Content-Type", "application/json").setHeader("ETag", "\"accepted-page\"").body(body).build()
+            for (failure in listOf(response(page(gen = -1)), response(page(rev = -1)),
+                mockwebserver3.MockResponse.Builder().code(503).build(),
+                mockwebserver3.MockResponse.Builder().code(401).build(),
+                mockwebserver3.MockResponse.Builder().code(403).build())) {
+                val requestCountBefore = server.requestCount
+                val f = fixture(ApiResult.Success(ActionResponse(ok = true), 200), agent = "claude")
+                f.store.save(Connection(CollieOrigin(server.url("/mount/").toString()), "phone", "token"))
+                f.api.chatTransport = actual
+                f.api.queuedSendTransport = actual
+                f.api.config = BridgeConfigResponse(mux = MuxConfigResponse(capabilities = mapOf("guardedQueuedSend" to true)))
+                f.api.snapshotPanes = listOf(paneSummary(PaneAddress(paneId = "w1:p1")).copy(agent = "claude", status = AgentStatus.WORKING))
+                server.enqueue(response(page()))
+                f.viewModel.refresh(); advanceUntilIdle()
+                val action = f.viewModel.state.value.transcriptSendNow!!
+                val first = server.takeRequest()
+                assertEquals("GET", first.method)
+                assertEquals("Bearer token", first.headers["Authorization"])
+
+                server.enqueue(failure)
+                f.viewModel.refresh(); advanceUntilIdle()
+                assertNull(f.viewModel.state.value.transcriptSendNow)
+                assertEquals(listOf("retained"), f.viewModel.state.value.transcript.map { it.uuid })
+                assertEquals(listOf("queued message"), f.viewModel.state.value.transcriptQueued)
+                val failed = server.takeRequest()
+                assertTrue(failed.target!!.contains("after="))
+                assertEquals("\"accepted-page\"", failed.headers["If-None-Match"])
+
+                server.enqueue(mockwebserver3.MockResponse.Builder().code(304).build())
+                f.viewModel.refresh(); advanceUntilIdle()
+                assertNull("supporting snapshot and 304 must not restore retired queue authority", f.viewModel.state.value.transcriptSendNow)
+                val unchanged = server.takeRequest()
+                assertEquals(failed.target, unchanged.target)
+                if (failure.status.contains(" 401 ") || failure.status.contains(" 403 ")) {
+                    // Access refusal retires the B04 image actor and its validator. Supporting
+                    // config recovery may read again, but a 304 still cannot re-admit old pixels.
+                    assertNull(unchanged.headers["If-None-Match"])
+                    assertNull(f.viewModel.state.value.transcriptReadContext)
+                } else {
+                    assertEquals("\"accepted-page\"", unchanged.headers["If-None-Match"])
+                }
+                f.viewModel.sendQueuedNow(action); advanceUntilIdle()
+                assertTrue(f.api.queuedKeysCalls.isEmpty())
+                assertEquals(requestCountBefore + 3, server.requestCount)
+
+                server.enqueue(response(page(rev = 13)))
+                f.viewModel.refresh(); advanceUntilIdle()
+                assertNotNull("only a newly accepted live response restores queue authority", f.viewModel.state.value.transcriptSendNow)
+                assertEquals("GET", server.takeRequest().method)
+
+                val restoredAction = f.viewModel.state.value.transcriptSendNow!!
+                server.enqueue(mockwebserver3.MockResponse.Builder().code(304).build())
+                f.viewModel.sendQueuedNow(restoredAction); advanceUntilIdle()
+                assertNull("a no-validator fresh verification cannot authorize a 304", f.viewModel.state.value.transcriptSendNow)
+                assertNull("no reservation or dispatch occurred during failed preflight", f.viewModel.state.value.transcriptSendAttempt)
+                val verification = server.takeRequest()
+                assertEquals("GET", verification.method)
+                assertNull(verification.headers["If-None-Match"])
+                assertTrue(f.api.queuedKeysCalls.isEmpty())
+                server.enqueue(mockwebserver3.MockResponse.Builder().code(304).build())
+                f.viewModel.refresh(); advanceUntilIdle()
+                assertNull(f.viewModel.state.value.transcriptSendNow)
+                assertEquals("GET", server.takeRequest().method)
+
+                server.enqueue(response(page(rev = 14)))
+                f.viewModel.refresh(); advanceUntilIdle()
+                assertNotNull(f.viewModel.state.value.transcriptSendNow)
+                assertEquals("GET", server.takeRequest().method)
+                val recovered = f.viewModel.state.value.transcriptSendNow!!
+                assertNull(f.viewModel.state.value.transcriptSendAttempt)
+                server.enqueue(response(page(rev = 14)))
+                server.enqueue(response(page(rev = 14)))
+                server.enqueue(response("{\"ok\":true}"))
+                server.enqueue(mockwebserver3.MockResponse.Builder().code(304).build())
+                f.viewModel.sendQueuedNow(recovered); advanceUntilIdle()
+                assertEquals("GET", server.takeRequest().method)
+                assertEquals("GET", server.takeRequest().method)
+                val dispatch = server.takeRequest()
+                assertEquals("POST", dispatch.method)
+                assertTrue(dispatch.target!!.contains("/api/pane/w1%3Ap1/keys"))
+                assertEquals("Bearer token", dispatch.headers["Authorization"])
+                assertTrue(dispatch.body?.utf8().orEmpty().contains("\"queued_send\""))
+                assertEquals("GET", server.takeRequest().method)
+                assertEquals(listOf(recovered.keys), f.api.queuedKeysCalls)
+                assertEquals(recovered, f.viewModel.state.value.transcriptSendAttempt)
+                val countAfterDispatch = server.requestCount
+                f.viewModel.sendQueuedNow(recovered); advanceUntilIdle()
+                assertEquals("a dispatched queue never repeats automatically or on a second tap", countAfterDispatch, server.requestCount)
+
+                server.enqueue(mockwebserver3.MockResponse.Builder().code(503).build())
+                f.viewModel.loadOlderTranscript(); advanceUntilIdle()
+                assertNull("a failed current older-page read also retires queue authority", f.viewModel.state.value.transcriptSendNow)
+                val older = server.takeRequest()
+                assertEquals("GET", older.method)
+                assertTrue(older.target!!.contains("before="))
+                assertEquals(listOf("retained"), f.viewModel.state.value.transcript.map { it.uuid })
+                assertEquals(listOf("queued message"), f.viewModel.state.value.transcriptQueued)
+                assertEquals(listOf(recovered.keys), f.api.queuedKeysCalls)
+                assertEquals("durable attempted-send latch survives read disarm", recovered, f.viewModel.state.value.transcriptSendAttempt)
+            }
+        } finally { server.close() }
+        Unit
+    }
+
+    @Test
+    fun olderNonnegativeLiveRevisionKeepsVisibleActionTranscriptAndCursor() = runTest(dispatcher) {
+        val fixture = fixture(ApiResult.Success(ActionResponse(ok = true), 200), agent = "claude")
+        fixture.api.config = BridgeConfigResponse(mux = MuxConfigResponse(capabilities = mapOf("guardedQueuedSend" to true)))
+        fixture.api.snapshotPanes = listOf(
+            paneSummary(PaneAddress(paneId = "w1:p1")).copy(agent = "claude", status = AgentStatus.WORKING),
+        )
+        fixture.api.chatResponseEtag = "\"accepted-page\""
+        fixture.api.chatPage = queuedPage(revision = 12, turns = listOf(entry("retained")))
+        fixture.viewModel.refresh(); advanceUntilIdle()
+        val action = fixture.viewModel.state.value.transcriptSendNow
+        assertNotNull(action)
+
+        fixture.api.chatResponseEtag = "\"older-page\""
+        fixture.api.chatPage = queuedPage(revision = 11, turns = listOf(entry("rejected-older")))
+        fixture.viewModel.refresh(); advanceUntilIdle()
+
+        val state = fixture.viewModel.state.value
+        assertEquals(action, state.transcriptSendNow)
+        assertEquals(listOf("retained"), state.transcript.map { it.uuid })
+        assertEquals(0, fixture.api.queuedKeysCalls.size)
+
+        fixture.api.chatPage = queuedPage(revision = 13, turns = listOf(entry("retained"), entry("next")))
+        fixture.viewModel.refresh(); advanceUntilIdle()
+        assertEquals(ChatAfter(7, 12), fixture.api.chatAfterRequests.last())
+        assertEquals("\"accepted-page\"", fixture.api.chatEtagRequests.last())
+    }
+
+    @Test
+    fun queuedSendTimeoutRemainsUnknownAndLatchedAcrossRecreation() = runTest(dispatcher) {
+        val fixture = fixture(ApiResult.Success(ActionResponse(ok = true), 200), agent = "claude")
+        fixture.api.config = BridgeConfigResponse(mux = MuxConfigResponse(capabilities = mapOf("guardedQueuedSend" to true)))
+        fixture.api.snapshotPanes = listOf(
+            paneSummary(PaneAddress(paneId = "w1:p1")).copy(agent = "claude", status = AgentStatus.WORKING),
+        )
+        fixture.api.chatPage = queuedPage()
+        fixture.api.queuedSendResult = ApiResult.Failure(ApiFailure.Timeout)
+        fixture.viewModel.refresh(); advanceUntilIdle()
+        val action = fixture.viewModel.state.value.transcriptSendNow!!
+        fixture.viewModel.sendQueuedNow(action); advanceUntilIdle()
+        assertEquals(1, fixture.api.queuedKeysCalls.size)
+        assertEquals(action, fixture.viewModel.state.value.transcriptSendAttempt)
+        assertNotNull(fixture.viewModel.state.value.mutationError)
+
+        val recreated = fixture(
+            ApiResult.Success(ActionResponse(ok = true), 200),
+            agent = "claude",
+            queuedAttempts = fixture.queuedAttempts,
+        )
+        recreated.api.config = fixture.api.config
+        recreated.api.snapshotPanes = fixture.api.snapshotPanes
+        recreated.api.chatPage = fixture.api.chatPage
+        recreated.viewModel.refresh(); advanceUntilIdle()
+        recreated.viewModel.sendQueuedNow(recreated.viewModel.state.value.transcriptSendNow!!)
+        advanceUntilIdle()
+        assertTrue(recreated.api.queuedKeysCalls.isEmpty())
+    }
+
+    @Test
+    fun queuedSendPairingRevocationDisarmsWritesWithoutRetry() = runTest(dispatcher) {
+        val fixture = fixture(ApiResult.Success(ActionResponse(ok = true), 200), agent = "claude")
+        fixture.api.config = BridgeConfigResponse(mux = MuxConfigResponse(capabilities = mapOf("guardedQueuedSend" to true)))
+        fixture.api.snapshotPanes = listOf(
+            paneSummary(PaneAddress(paneId = "w1:p1")).copy(agent = "claude", status = AgentStatus.WORKING),
+        )
+        fixture.api.chatPage = queuedPage()
+        fixture.viewModel.refresh(); advanceUntilIdle()
+        val action = fixture.viewModel.state.value.transcriptSendNow!!
+        fixture.api.queuedSendResult = ApiResult.Failure(
+            ApiFailure.Http(
+                403, "device not paired", "pairing.unpaired",
+                source = com.lateapex.collie.network.FailureSource.COLLIE,
+                factor = com.lateapex.collie.network.FailureFactor.PAIRING,
+            ),
+        )
+        fixture.viewModel.sendQueuedNow(action); advanceUntilIdle()
+        assertEquals(1, fixture.api.queuedKeysCalls.size)
+        assertFalse(fixture.viewModel.state.value.canWrite)
+        fixture.viewModel.sendQueuedNow(action); advanceUntilIdle()
+        assertEquals(1, fixture.api.queuedKeysCalls.size)
+    }
+
+    @Test
+    fun missingGuardedCapabilityNeverFallsBackToGenericKeys() = runTest(dispatcher) {
+        val fixture = fixture(ApiResult.Success(ActionResponse(ok = true), 200), agent = "claude")
+        fixture.api.snapshotPanes = listOf(
+            paneSummary(PaneAddress(paneId = "w1:p1")).copy(agent = "claude", status = AgentStatus.WORKING),
+        )
+        fixture.api.chatPage = queuedPage()
+        fixture.viewModel.refresh(); advanceUntilIdle()
+        val action = fixture.viewModel.state.value.transcriptSendNow!!
+        fixture.viewModel.sendQueuedNow(action); advanceUntilIdle()
+        assertTrue(fixture.api.queuedKeysCalls.isEmpty())
+        assertTrue(fixture.api.keysCalls.isEmpty())
+    }
+
+    @Test
+    fun delayedGuardNegotiationCannotPostAfterCapturedActorAuthorityRetires() = runTest(dispatcher) {
+        suspend fun readyFixture() = fixture(ApiResult.Success(ActionResponse(ok = true), 200), agent = "claude").also { f ->
+            f.api.config = BridgeConfigResponse(mux = MuxConfigResponse(capabilities = mapOf("guardedQueuedSend" to true)))
+            f.api.snapshotControlAuthority = ControlAuthority("lead", "1")
+            f.api.snapshotPanes = listOf(paneSummary(PaneAddress(paneId = "w1:p1")).copy(agent = "claude", status = AgentStatus.WORKING))
+            f.api.chatPage = queuedPage()
+            f.viewModel.refresh()
+            advanceUntilIdle()
+        }
+
+        suspend fun attemptAfter(mutate: (Fixture) -> Unit, configAuthority: ControlAuthority? = null) {
+            val f = readyFixture()
+            val action = f.viewModel.state.value.transcriptSendNow!!
+            val entered = CompletableDeferred<Unit>()
+            val release = CompletableDeferred<Unit>()
+            f.api.configAuthority = configAuthority
+            f.api.configHook = {
+                entered.complete(Unit)
+                release.await()
+            }
+            f.viewModel.sendQueuedNow(action)
+            runCurrent()
+            assertTrue("guarded config negotiation did not suspend", entered.isCompleted)
+            mutate(f)
+            release.complete(Unit)
+            advanceUntilIdle()
+            assertTrue("retired actor must not reach the queued-send POST", f.api.queuedKeysCalls.isEmpty())
+        }
+
+        attemptAfter({ it.repository.selectScope(Scope(host = "other", session = "other")) })
+        attemptAfter({ it.store.save(Connection(CollieOrigin("https://replacement.example/"), "phone", "replacement")) })
+        attemptAfter({ it.repository.setLeadEpoch(1) })
+        attemptAfter({}, configAuthority = ControlAuthority("lead", "2"))
+        attemptAfter({ it.repository.showSavedCopy(1234) })
+    }
+
+    @Test
+    fun unknownProvenanceWriteRefusalFreezesControlsWithoutErasingPairing() = runTest(dispatcher) {
+        val fixture = fixture(ApiResult.Failure(ApiFailure.Http(403, "device expired", "pairing.expired")))
+        fixture.viewModel.refresh(); advanceUntilIdle()
+        fixture.viewModel.sendReply("hello"); advanceUntilIdle()
+        assertFalse(fixture.viewModel.state.value.canWrite)
+        assertTrue(fixture.store.connection.value?.isPaired == true)
+        assertEquals(1, fixture.api.replyCalls)
+        assertNotNull(fixture.viewModel.state.value.error)
     }
 
     @Test
@@ -323,8 +778,23 @@ class PaneViewModelTest {
     }
 
     @Test
-    fun loadOlderGrowsThePolledPaneWindowToTheHerdrCap() = runTest(dispatcher) {
+    fun loadOlderClampsItsEffectiveRequestToTheDeclaredAdapterMaximum() = runTest(dispatcher) {
         val fixture = fixture(ApiResult.Success(ActionResponse(ok = true), 200), agent = "shell")
+        fixture.api.config = BridgeConfigResponse(
+            mux = MuxConfigResponse(
+                name = "herdr",
+                readLimits = com.lateapex.collie.network.MuxReadLimitsResponse(
+                    kotlinx.serialization.json.JsonPrimitive(1_000),
+                ),
+            ),
+        )
+        fixture.api.pane = PaneReadResponse(
+            paneId = "w1:p1",
+            text = (1..600).joinToString("\n") { "row $it" },
+            truncated = true,
+            revision = 7,
+            servedLines = 600,
+        )
         fixture.viewModel.refresh()
         advanceUntilIdle()
 
@@ -335,9 +805,34 @@ class PaneViewModelTest {
 
         assertEquals(listOf(600, 1_000), fixture.api.paneLines)
         assertEquals(1_000, fixture.viewModel.state.value.requestedLines)
-        assertEquals(1_000, fixture.viewModel.state.value.loadedLines)
+        assertEquals(1_200, fixture.viewModel.state.value.desiredLines)
+        assertEquals(600, fixture.viewModel.state.value.loadedLines)
         assertFalse(fixture.viewModel.state.value.loadingOlder)
         assertNull(fixture.viewModel.loadOlderScrollback())
+    }
+
+    @Test fun actualPiStaticActionCarriesColumnsAndRefusesChangedQuestionOrRetiredOwner() = runTest(dispatcher) {
+        val root = generateSequence(java.io.File(requireNotNull(System.getProperty("user.dir"))).absoluteFile) { it.parentFile }
+            .map { java.io.File(it, "web/src/fixtures/panes") }.first { it.isDirectory }
+        val panel = java.io.File(root, "pi--omo-v5130-panel-question.txt").readText()
+        for (mode in listOf("tick", "question", "owner")) {
+            val fixture = fixture(ApiResult.Success(ActionResponse(true), 200), agent = "pi")
+            fixture.api.pane = PaneReadResponse("w1:p1", panel, false, 1)
+            fixture.viewModel.refresh()
+            advanceUntilIdle()
+            val shown = AgentSemanticParser.detect("pi", panel, 1)!!
+            fixture.api.pane = fixture.api.pane.copy(text = if (mode == "question") panel.replace("Pick a color?", "Pick a fruit?") else panel.replace("5 queued", "6 queued"), revision = 2)
+            if (mode == "owner") fixture.api.paneHook = {
+                fixture.store.save(Connection(CollieOrigin("https://collie.example/"), "phone", "replacement"))
+            }
+            fixture.viewModel.sendSemanticIntent(shown, com.lateapex.collie.ui.terminal.SemanticIntent.Static(shown.actions.single { it.label == "Red" }))
+            advanceUntilIdle()
+            if (mode == "tick") {
+                assertEquals(listOf(listOf("1")), fixture.api.keysCalls)
+                assertEquals(com.lateapex.collie.network.PromptColumns(0, 91), fixture.api.lastExpectedColumns)
+                assertEquals(shown.regionSignature, fixture.api.lastExpectedPrompt)
+            } else assertTrue(fixture.api.keysCalls.isEmpty())
+        }
     }
 
     @Test
@@ -533,6 +1028,314 @@ class PaneViewModelTest {
     }
 
     @Test
+    fun retainedTranscriptOnlyReauthorizesImagesAfterCurrentSuccessfulPage() = runTest(dispatcher) {
+        val f = fixture(ApiResult.Success(ActionResponse(ok = true), 200))
+        val imageEntry = entry("stable-image-turn").copy(parts = listOf(
+            TranscriptPart("image", url = "data:image/png;base64,AA==", mimeType = "image/png"),
+        ))
+        f.api.historyPages += PaneHistoryResponse("w1:p1", available = true, entries = listOf(imageEntry))
+        f.viewModel.refresh(); advanceUntilIdle()
+        val originalContext = requireNotNull(f.viewModel.state.value.transcriptReadContext)
+        assertTrue(f.repository.isCurrent(originalContext))
+
+        // The text stays available as a saved/stale copy, but a redraw cannot mint a fresh actor.
+        f.repository.showSavedCopy(123L)
+        assertEquals(listOf("stable-image-turn"), f.viewModel.state.value.transcript.map { it.uuid })
+        assertNull(f.viewModel.state.value.transcriptReadContext)
+        assertFalse(f.repository.isCurrent(originalContext))
+        val chatCallsBeforeStaleRead = f.api.chatCalls
+        val scope = Scope()
+        val staleChat = f.repository.chat(PaneAddress(scope, "w1:p1"), expectedContext = originalContext)
+        assertFalse("a retired transcript actor cannot dispatch", staleChat is ApiResult.Success)
+        assertEquals(chatCallsBeforeStaleRead, f.api.chatCalls)
+
+        // Even a 304 that arrives after retirement must not promote those retained entries.
+        f.api.historyAlwaysNotModified = true
+        f.viewModel.refresh(); advanceUntilIdle()
+        assertNull(f.viewModel.state.value.transcriptReadContext)
+
+        // A fresh 200 page under the new context can recreate cards for unchanged UUIDs.
+        f.api.historyAlwaysNotModified = false
+        f.api.historyPages += PaneHistoryResponse("w1:p1", available = true, entries = listOf(imageEntry))
+        f.viewModel.refresh(); advanceUntilIdle()
+        val refreshed = requireNotNull(f.viewModel.state.value.transcriptReadContext)
+        assertTrue(f.repository.isCurrent(refreshed))
+        assertEquals(originalContext.key, refreshed.key)
+        assertTrue(refreshed.navigationGeneration != originalContext.navigationGeneration)
+        assertEquals(listOf("stable-image-turn"), f.viewModel.state.value.transcript.map { it.uuid })
+    }
+
+    @Test
+    fun cachedPane304CannotRestoreRetiredFilesLinkActor() = runTest(dispatcher) {
+        val f = fixture(ApiResult.Success(ActionResponse(ok = true), 200))
+        f.viewModel.refresh(); advanceUntilIdle()
+        val original = requireNotNull(f.viewModel.state.value.paneReadContext)
+        assertTrue(f.repository.isCurrent(original))
+        assertEquals("the actor follows the ViewModel's actual fresh pane read", 1, f.api.paneFreshReads)
+        assertTrue("ordinary unavailable live-chat fallback must not retire the accepted pane actor", f.api.chatCalls > 0)
+
+        // A current consumer retains its original actor on a genuine conditional304.
+        f.api.paneAlwaysNotModified = true
+        f.viewModel.refresh(); advanceUntilIdle()
+        assertTrue(original === f.viewModel.state.value.paneReadContext)
+        f.repository.showSavedCopy(1L)
+        assertNull(f.viewModel.state.value.paneReadContext)
+        f.api.paneAlwaysNotModified = true
+        f.api.paneUnsolicitedNotModified = true
+        f.viewModel.refresh(); advanceUntilIdle()
+        assertNull(f.api.paneEtags.last())
+        assertEquals(1, f.api.paneUnsolicitedReads)
+        assertNull("304 without a fresh body cannot re-admit retained terminal text", f.viewModel.state.value.paneReadContext)
+        assertFalse(f.repository.isCurrent(original))
+        assertTrue("the fixture dispatched the actual conditional pane read", f.api.paneConditionalReads > 0)
+    }
+
+    @Test
+    fun actualHttpsNewPaneConsumerRequiresFresh200AndNeverMintsAnActorFromSharedCache304(): Unit = runTest(dispatcher) {
+        val certificate = okhttp3.tls.HeldCertificate.Builder().commonName("localhost")
+            .addSubjectAlternativeName("localhost").build()
+        val certificates = okhttp3.tls.HandshakeCertificates.Builder().heldCertificate(certificate).build()
+        val trust = okhttp3.tls.HandshakeCertificates.Builder().addTrustedCertificate(certificate.certificate).build()
+        val server = mockwebserver3.MockWebServer()
+        server.useHttps(certificates.sslSocketFactory())
+        server.start()
+        try {
+            val client = com.lateapex.collie.network.CollieApiClient.defaultHttpClient().newBuilder()
+                .sslSocketFactory(trust.sslSocketFactory(), trust.trustManager).build()
+            val actual = com.lateapex.collie.network.CollieApiClient(client, kotlinx.serialization.json.Json { ignoreUnknownKeys = true })
+            val address = PaneAddress(paneId = "w1:p1")
+            val f = fixture(ApiResult.Success(ActionResponse(ok = true), 200), agent = "shell", address = address)
+            f.store.save(Connection(CollieOrigin(server.url("/mount/").toString()), "phone", "token"))
+            runCurrent()
+            f.api.paneTransport = actual
+            f.api.config = BridgeConfigResponse(control = com.lateapex.collie.network.ControlCapabilityResponse(mapOf("filesDiscovery" to true)))
+            fun body() = mockwebserver3.MockResponse.Builder().setHeader("Content-Type", "application/json")
+                .setHeader("ETag", "\"fixture7\"")
+                .body("""{"paneId":"w1:p1","text":"See src/source.txt:3\n","truncated":false,"revision":7,"filesReadReady":true}""").build()
+            fun request(): mockwebserver3.RecordedRequest {
+                val request = requireNotNull(server.takeRequest(2, java.util.concurrent.TimeUnit.SECONDS))
+                assertEquals("GET", request.method)
+                assertEquals("/mount/api/pane/w1%3Ap1", request.url?.encodedPath)
+                assertEquals("Bearer token", request.headers["Authorization"])
+                return request
+            }
+            server.enqueue(body())
+            assertTrue(f.repository.readPane(address) is ApiResult.Success)
+            assertNull(request().headers["If-None-Match"])
+            server.enqueue(mockwebserver3.MockResponse.Builder().code(304).build())
+            val cached = f.repository.readPane(address) as ApiResult.Success
+            assertEquals(304, cached.status)
+            assertTrue(cached.value.notModified)
+            assertEquals("\"fixture7\"", request().headers["If-None-Match"])
+
+            // Same repository/cache as the previous consumer; this new ViewModel owns no body.
+            val fresh = PaneViewModel(ApplicationProvider.getApplicationContext<Application>(), address, "shell", f.repository,
+                com.lateapex.collie.diagnostics.RecordingDiagnosticsRecorder(mutableListOf()), f.queuedAttempts)
+            assertNull(fresh.state.value.paneReadContext)
+            var completedPaneLoads = 0
+            // Supporting config runs only after load() has processed the real pane response.
+            // Its next invocation distinguishes a completed 304 from an already-present actor.
+            f.api.configHook = { completedPaneLoads++ }
+            fun refreshAndAwaitResponse() {
+                val priorLoads = completedPaneLoads
+                fresh.refresh()
+                val responseDeadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(2)
+                while (completedPaneLoads == priorLoads && System.nanoTime() < responseDeadline) {
+                    runCurrent()
+                    if (completedPaneLoads == priorLoads) Thread.sleep(10)
+                }
+                runCurrent()
+                assertEquals("Actual HTTPS pane response is processed before supporting reads", priorLoads + 1, completedPaneLoads)
+                assertFalse("The completed pane phase settles loading", fresh.state.value.loading)
+            }
+            server.enqueue(body())
+            refreshAndAwaitResponse()
+            assertNull("new consumer must request its own fresh body", request().headers["If-None-Match"])
+            val accepted = requireNotNull(fresh.state.value.paneReadContext)
+            assertTrue(f.repository.isCurrent(accepted))
+            assertTrue(fresh.state.value.pane?.filesReadReady == true)
+            assertTrue(fresh.state.value.pane?.text?.contains("src/source.txt:3") == true)
+            assertNotNull(fresh.state.value.filesConfigContext)
+
+            server.enqueue(mockwebserver3.MockResponse.Builder().code(304).build())
+            refreshAndAwaitResponse()
+            assertEquals("\"fixture7\"", request().headers["If-None-Match"])
+            assertTrue("same current consumer retains its original accepted actor", accepted === fresh.state.value.paneReadContext)
+
+            f.repository.showSavedCopy(1L)
+            assertNull(fresh.state.value.paneReadContext)
+            assertFalse(f.repository.isCurrent(accepted))
+            server.enqueue(mockwebserver3.MockResponse.Builder().code(304).build())
+            refreshAndAwaitResponse()
+            assertNull(request().headers["If-None-Match"])
+            assertNull("unsolicited304 must never admit a new or retired body actor", fresh.state.value.paneReadContext)
+            assertNotNull(fresh.state.value.error)
+
+            server.enqueue(body())
+            refreshAndAwaitResponse()
+            assertNull(request().headers["If-None-Match"])
+            val recovered = requireNotNull(fresh.state.value.paneReadContext)
+            assertTrue(f.repository.isCurrent(recovered))
+            assertTrue(recovered.navigationGeneration != accepted.navigationGeneration)
+            assertEquals(cached.value.pane.text, fresh.state.value.pane?.text)
+            assertEquals(6, server.requestCount)
+        } finally {
+            server.close()
+        }
+    }
+
+    @Test
+    fun aFreshPaneReadCannotPublishWithAnActorReplacedDuringItsTransportWait() = runTest(dispatcher) {
+        val f = fixture(ApiResult.Success(ActionResponse(ok = true), 200))
+        val original = requireNotNull(f.repository.readContext(Scope(), "w1:p1"))
+        val replacement = Connection(CollieOrigin("https://collie.example/"), "replacement", "replacement-token")
+        f.api.paneHook = { f.store.save(replacement) }
+        f.viewModel.refresh(); advanceUntilIdle()
+        assertFalse(f.repository.isCurrent(original))
+        assertNull(f.viewModel.state.value.paneReadContext)
+        assertEquals(1, f.api.paneLines.size)
+        f.api.paneHook = null
+        f.viewModel.refresh(); advanceUntilIdle()
+        val recovered = requireNotNull(f.viewModel.state.value.paneReadContext)
+        assertTrue(f.repository.isCurrent(recovered))
+        assertTrue(recovered.connection === replacement)
+    }
+
+    @Test
+    fun acceptedOlderLiveChatPageRestoresItsImageActorAndRejectsAQueuedRetiredActor() = runTest(dispatcher) {
+        val f = fixture(ApiResult.Success(ActionResponse(ok = true), 200))
+        val newest = entry("newest").copy(seq = 2)
+        f.api.chatPage = PaneChatResponse(
+            paneId = "w1:p1", available = true, page = "live", gen = 7, rev = 1,
+            head = 2, oldest = 2, hasOlder = true, upserts = listOf(newest),
+        )
+        f.viewModel.refresh(); advanceUntilIdle()
+        val original = requireNotNull(f.viewModel.state.value.transcriptReadContext)
+        assertEquals(listOf("newest"), f.viewModel.state.value.transcript.map { it.uuid })
+
+        f.repository.showSavedCopy(200L)
+        f.viewModel.loadOlderTranscript()
+        f.repository.showSavedCopy(201L) // retire the actor captured before its coroutine dispatches
+        advanceUntilIdle()
+        assertEquals("a stale queued chat actor must not reach transport", 1, f.api.chatCalls)
+        assertNull(f.viewModel.state.value.transcriptReadContext)
+
+        val imageOlder = TranscriptEntry(
+            "older-image", "2026-09-09T00:00:00Z", "assistant",
+            listOf(TranscriptPart("image", url = "data:image/png;base64,AA==", mimeType = "image/png")),
+            seq = 1,
+        )
+        f.api.chatOlderPages += PaneChatResponse(
+            paneId = "w1:p1", available = true, page = "older", gen = 7,
+            oldest = 1, hasOlder = false, upserts = listOf(imageOlder),
+        )
+        f.viewModel.loadOlderTranscript(); advanceUntilIdle()
+
+        val admitted = requireNotNull(f.viewModel.state.value.transcriptReadContext)
+        assertTrue(f.repository.isCurrent(admitted))
+        assertEquals(original.key, admitted.key)
+        assertTrue(admitted.navigationGeneration != original.navigationGeneration)
+        assertEquals(listOf("older-image", "newest"), f.viewModel.state.value.transcript.map { it.uuid })
+        assertEquals(listOf("newest"), f.api.chatBeforeRequests.drop(1).map { it?.uuid })
+    }
+
+    @Test
+    fun rejectedLivePageCannotReauthorizeRetainedImagesAfterSavedCopy() = runTest(dispatcher) {
+        val f = fixture(ApiResult.Success(ActionResponse(ok = true), 200))
+        val imageReference = "/api/blobs/${"ab".repeat(32)}"
+        val imageEntry = TranscriptEntry(
+            "stable-live-image", "2026-09-09T00:00:00Z", "assistant",
+            listOf(TranscriptPart("image", url = imageReference, mimeType = "image/png")),
+            seq = 10,
+        )
+        f.api.chatPage = PaneChatResponse(
+            paneId = "w1:p1", available = true, page = "live", gen = 7, rev = 10,
+            head = 10, oldest = 10, hasOlder = false, upserts = listOf(imageEntry),
+        )
+        f.viewModel.refresh(); advanceUntilIdle()
+        val originalActor = requireNotNull(f.viewModel.state.value.transcriptReadContext)
+        assertTrue(f.repository.isCurrent(originalActor))
+        assertEquals(listOf("stable-live-image"), f.viewModel.state.value.transcript.map { it.uuid })
+
+        // Authority retirement preserves the saved text but removes the actor that admitted it.
+        f.repository.showSavedCopy(400L)
+        assertNull(f.viewModel.state.value.transcriptReadContext)
+        assertEquals(listOf("stable-live-image"), f.viewModel.state.value.transcript.map { it.uuid })
+
+        // This is a current, successful HTTP response, but its same-generation revision is older
+        // than the retained window, so merge rejects it. It must not adopt the new read actor.
+        val rejected = entry("rejected-replacement").copy(seq = 11)
+        f.api.chatPage = PaneChatResponse(
+            paneId = "w1:p1", available = true, page = "live", gen = 7, rev = 9,
+            head = 9, oldest = 9, hasOlder = false, upserts = listOf(rejected),
+        )
+        f.viewModel.refresh(); advanceUntilIdle()
+        assertEquals(listOf("stable-live-image"), f.viewModel.state.value.transcript.map { it.uuid })
+        assertNull("a rejected merge cannot promote the retired image actor", f.viewModel.state.value.transcriptReadContext)
+
+        // The renderer passes its nullable state-owned actor to the loader. With no admitted actor,
+        // the ordinary load path refuses before scheduling transport or parsing the reference.
+        val loader = ScopedImageLoader(f.repository)
+        try {
+            var imageResult: ScopedImageResult? = null
+            loader.load(
+                context = f.viewModel.state.value.transcriptReadContext,
+                reference = imageReference,
+                viewportWidth = 320,
+                viewportHeight = 240,
+                callback = { imageResult = it },
+                expectedMimeType = "image/png",
+            )
+            assertTrue(imageResult is ScopedImageResult.Refused)
+            assertEquals(0, f.api.imageBlobCalls)
+        } finally {
+            loader.close()
+        }
+
+        // A later page that the window accepts is the event that restores image authority.
+        f.api.chatPage = PaneChatResponse(
+            paneId = "w1:p1", available = true, page = "live", gen = 7, rev = 11,
+            head = 11, oldest = 10, hasOlder = false, upserts = listOf(imageEntry.copy(seq = 10)),
+        )
+        f.viewModel.refresh(); advanceUntilIdle()
+        val recoveredActor = requireNotNull(f.viewModel.state.value.transcriptReadContext)
+        assertTrue(f.repository.isCurrent(recoveredActor))
+        assertEquals(originalActor.key, recoveredActor.key)
+        assertTrue(recoveredActor.navigationGeneration != originalActor.navigationGeneration)
+        assertEquals(listOf("stable-live-image"), f.viewModel.state.value.transcript.map { it.uuid })
+    }
+
+    @Test
+    fun acceptedOlderLegacyHistoryPageRestoresItsImageActorAndRejectsAQueuedRetiredActor() = runTest(dispatcher) {
+        val f = fixture(ApiResult.Success(ActionResponse(ok = true), 200))
+        f.api.historyPages += PaneHistoryResponse("w1:p1", available = true, entries = listOf(entry("newest")), hasMore = true)
+        f.viewModel.refresh(); advanceUntilIdle() // live chat is unavailable; legacy history is admitted
+        val original = requireNotNull(f.viewModel.state.value.transcriptReadContext)
+        assertEquals(listOf("newest"), f.viewModel.state.value.transcript.map { it.uuid })
+
+        f.repository.showSavedCopy(300L)
+        f.viewModel.loadOlderTranscript()
+        f.repository.showSavedCopy(301L)
+        advanceUntilIdle()
+        assertEquals("a stale queued history actor must not reach transport", 1, f.api.historyCalls)
+        assertNull(f.viewModel.state.value.transcriptReadContext)
+
+        val imageOlder = TranscriptEntry(
+            "older-image", "2026-09-09T00:00:00Z", "assistant",
+            listOf(TranscriptPart("image", url = "data:image/png;base64,AA==", mimeType = "image/png")),
+        )
+        f.api.historyPages += PaneHistoryResponse("w1:p1", available = true, entries = listOf(imageOlder), hasMore = false)
+        f.viewModel.loadOlderTranscript(); advanceUntilIdle()
+
+        val admitted = requireNotNull(f.viewModel.state.value.transcriptReadContext)
+        assertTrue(f.repository.isCurrent(admitted))
+        assertEquals(original.key, admitted.key)
+        assertTrue(admitted.navigationGeneration != original.navigationGeneration)
+        assertEquals(listOf("older-image", "newest"), f.viewModel.state.value.transcript.map { it.uuid })
+        assertEquals(listOf("newest"), f.api.historyBeforeRequests.drop(1))
+    }
+
+    @Test
     fun unavailableHistoryIsRetriedAfterAPauseAndPicksUpANewJournal() = runTest(dispatcher) {
         // A Claude started in an open pane has no session log until its first turn. Giving up
         // after one "no-session" left the pane on the mirror for good (S25 Ultra, 2026-09-11).
@@ -570,6 +1373,291 @@ class PaneViewModelTest {
         assertTrue(lines.any { it.first == "action" && it.second["name"] == "pane.send_key_sequence" })
     }
 
+    @Test
+    fun codexAcknowledgementWithoutConsumptionKeepsTheDraftAndWarns() = runTest(dispatcher) {
+        val f = fixture(ApiResult.Success(ActionResponse(ok = true), 200))
+        f.viewModel.refresh()
+        advanceUntilIdle()
+        f.api.replyHook = { message, submit ->
+            if (!submit) f.api.pane = f.api.pane.copy(text = "› $message\n\n  model · /repo · Context 50% left")
+        }
+        f.viewModel.sendReply("hello")
+        advanceUntilIdle()
+
+        assertEquals(2, f.api.replyCalls)
+        assertFalse(f.viewModel.state.value.clearReplyDraft)
+        assertFalse(f.viewModel.state.value.sending)
+        assertEquals(text(com.lateapex.collie.R.string.pane_error_codex_unconfirmed), f.viewModel.state.value.mutationError)
+        assertTrue(f.viewModel.state.value.codexAcceptedReplies.isEmpty())
+    }
+
+    @Test
+    fun piPanelSendRetainsOriginalActorAndColumnsThroughReadbackAndSingleSubmission() = runTest(dispatcher) {
+        val f = fixture(ApiResult.Success(ActionResponse(ok = true), 200), agent = "pi")
+        val idle = piFixture("pi--omo-v5130-panel-phantom.txt")
+        val draft = piFixture("pi--omo-v5130-panel-draft.txt")
+        f.api.pane = f.api.pane.copy(text = idle)
+        f.viewModel.refresh(); advanceUntilIdle()
+        val actor = requireNotNull(f.viewModel.state.value.paneReadContext)
+        f.api.paneConnections.clear()
+        f.api.replyHook = { message, submit ->
+            assertTrue("both writes retain the displayed actor", f.repository.isCurrent(actor))
+            assertEquals(if (submit) "" else "hello collie draft", message)
+            f.api.pane = f.api.pane.copy(text = if (submit) idle else draft, revision = f.api.pane.revision + 1)
+        }
+        f.viewModel.sendReply("hello collie draft")
+        advanceUntilIdle()
+
+        assertEquals(listOf("hello collie draft" to false, "" to true), f.api.replyWrites.map { it.text to it.submit })
+        assertEquals(listOf(PromptColumns(0, 91), PromptColumns(0, 91)), f.api.replyWrites.map { it.columns })
+        assertEquals(listOf(PiComposer.locate(idle)!!.region(), PiComposer.locate(draft)!!.region()), f.api.replyWrites.map { it.binding })
+        assertTrue(f.api.replyWrites.all { it.connection === actor.connection })
+        assertTrue(f.api.paneConnections.isNotEmpty())
+        assertTrue(f.api.paneConnections.all { it === actor.connection })
+        assertTrue(f.viewModel.state.value.clearReplyDraft)
+        assertNull(f.viewModel.state.value.mutationError)
+    }
+
+    @Test
+    fun piCredentialReplacementDuringDraftReadbackCannotSubmitFromReplacementActor() = runTest(dispatcher) {
+        piReplacementDuringReadback(replaceCredential = true)
+    }
+
+    @Test
+    fun piNavigationActorReplacementDuringDraftReadbackCannotSubmitFromFreshLiveActor() = runTest(dispatcher) {
+        piReplacementDuringReadback(replaceCredential = false)
+    }
+
+    private suspend fun kotlinx.coroutines.test.TestScope.piReplacementDuringReadback(replaceCredential: Boolean) {
+        val f = fixture(ApiResult.Success(ActionResponse(ok = true), 200), agent = "pi")
+        val idle = piFixture("pi--omo-v5130-panel-phantom.txt")
+        val draft = piFixture("pi--omo-v5130-panel-draft.txt")
+        f.api.pane = f.api.pane.copy(text = idle)
+        f.viewModel.refresh(); advanceUntilIdle()
+        val original = requireNotNull(f.viewModel.state.value.paneReadContext)
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        var holdReadback = false
+        f.api.paneHook = {
+            if (holdReadback) {
+                holdReadback = false
+                entered.complete(Unit)
+                release.await()
+            }
+        }
+        f.api.replyHook = { _, submit ->
+            assertFalse("only the initial text may reach the original pane", submit)
+            f.api.pane = f.api.pane.copy(text = draft, revision = 8)
+            holdReadback = true
+        }
+        f.viewModel.sendReply("hello collie draft")
+        advanceTimeBy(151); runCurrent()
+        assertTrue(entered.isCompleted)
+        assertEquals(1, f.api.replyCalls)
+        if (replaceCredential) f.store.save(Connection(original.connection.origin, "same origin replacement", "replacement-token"))
+        else f.repository.showSavedCopy(123L)
+        runCurrent()
+        assertFalse(f.repository.isCurrent(original))
+        // Restore a valid compatible empty pane for a different actor while the old read is held.
+        f.api.pane = f.api.pane.copy(text = idle, revision = 9)
+        f.viewModel.refresh(); runCurrent()
+        val replacement = requireNotNull(f.viewModel.state.value.paneReadContext)
+        assertTrue(f.repository.isCurrent(replacement))
+        assertTrue(replacement != original)
+        release.complete(Unit)
+        advanceUntilIdle()
+        assertEquals(listOf("hello collie draft" to false), f.api.replyWrites.map { it.text to it.submit })
+        assertTrue(f.api.replyWrites.single().connection === original.connection)
+        assertFalse(f.viewModel.state.value.sending)
+    }
+
+    @Test
+    fun replyContextProjectsAnAcceptedLivePromptAndClearsOnReadActorRetirement() = runTest(dispatcher) {
+        val f = fixture(ApiResult.Success(ActionResponse(ok = true), 200))
+        val prompt = com.lateapex.collie.network.ChatPrompt("latest-user", "2026-10-13T12:00:00Z", "last live prompt")
+        f.api.chatPage = PaneChatResponse("w1:p1", true, page = "live", gen = 2, rev = 4, head = 10, lastPrompt = prompt)
+        f.viewModel.refresh(); advanceUntilIdle()
+        val actor = requireNotNull(f.viewModel.state.value.transcriptReadContext)
+        assertTrue(f.repository.isCurrent(actor))
+        assertEquals(prompt, f.viewModel.state.value.lastPrompt)
+        f.repository.showSavedCopy(124L)
+        runCurrent()
+        assertFalse(f.repository.isCurrent(actor))
+        assertNull(f.viewModel.state.value.transcriptReadContext)
+        assertNull("reply context must not survive retirement of its accepted live transcript actor", f.viewModel.state.value.lastPrompt)
+    }
+
+    private fun piFixture(name: String): String {
+        val root = generateSequence(File(requireNotNull(System.getProperty("user.dir"))).absoluteFile) { it.parentFile }
+            .map { File(it, "web/src/fixtures/panes") }.first { it.isDirectory }
+        return File(root, name).readText()
+    }
+
+    @Test
+    fun acceptedCodexInputSurvivesUnrelatedOutputAndIsIsolatedByOriginWithoutReplay() = runTest(dispatcher) {
+        val f = fixture(ApiResult.Success(ActionResponse(ok = true), 200))
+        val original = f.store.connection.value!!
+        f.viewModel.refresh()
+        advanceUntilIdle()
+        f.api.replyHook = { message, submit ->
+            f.api.pane = f.api.pane.copy(text = "› ${if (submit) "" else message}\n\n  model · /repo · Context 50% left")
+        }
+        f.viewModel.sendReply("hello")
+        advanceUntilIdle()
+        assertEquals(listOf("hello"), f.viewModel.state.value.codexAcceptedReplies)
+        assertTrue(f.viewModel.state.value.clearReplyDraft)
+        f.viewModel.onReplyDraftCleared()
+        f.api.pane = f.api.pane.copy(text = "unrelated output\n${f.api.pane.text}", revision = 99)
+        f.viewModel.refresh()
+        advanceUntilIdle()
+        advanceTimeBy(10_000)
+        runCurrent()
+        assertEquals(listOf("hello"), f.viewModel.state.value.codexAcceptedReplies)
+        assertFalse(f.viewModel.state.value.clearReplyDraft)
+        f.store.save(Connection(original.origin, "re-paired", "different-token"))
+        runCurrent()
+        assertTrue(f.viewModel.state.value.codexAcceptedReplies.isEmpty())
+        f.store.save(Connection(original.origin, "renamed same pairing", original.token))
+        runCurrent()
+        assertEquals(listOf("hello"), f.viewModel.state.value.codexAcceptedReplies)
+        f.store.save(Connection(CollieOrigin("https://other.example/"), "other", "other-token"))
+        runCurrent()
+        assertTrue(f.viewModel.state.value.codexAcceptedReplies.isEmpty())
+        f.store.save(original)
+        runCurrent()
+        assertEquals(listOf("hello"), f.viewModel.state.value.codexAcceptedReplies)
+        f.viewModel.dismissAcceptedCodexReplies()
+        assertTrue(f.viewModel.state.value.codexAcceptedReplies.isEmpty())
+        assertEquals(2, f.api.replyCalls)
+    }
+
+    @Test
+    fun aTurnPolledDuringSubmitVerificationReconcilesAfterAcceptanceWithoutAnotherUpsert() = runTest(dispatcher) {
+        val f = fixture(ApiResult.Success(ActionResponse(ok = true), 200))
+        f.api.chatPage = PaneChatResponse("w1:p1", true, page = "live", gen = 2, rev = 4, head = 10)
+        f.viewModel.refresh()
+        advanceUntilIdle()
+        assertNotNull("accepted live chat page owns image render authority", f.viewModel.state.value.transcriptReadContext)
+        val guardRead = CompletableDeferred<Unit>()
+        var holdConsumptionRead = false
+        f.api.paneHook = {
+            if (holdConsumptionRead) {
+                holdConsumptionRead = false
+                guardRead.await()
+            }
+        }
+        f.api.replyHook = { message, submit ->
+            f.api.pane = f.api.pane.copy(text = "› ${if (submit) "" else message}\n\n  model · /repo · Context 50% left")
+            if (submit) {
+                holdConsumptionRead = true
+                f.api.chatPage = f.api.chatPage!!.copy(rev = 5, head = 11, upserts = listOf(
+                    TranscriptEntry("new-user", "", "user", listOf(TranscriptPart("text", "hello")), seq = 11),
+                ))
+            }
+        }
+        f.viewModel.sendReply("hello")
+        advanceTimeBy(301)
+        runCurrent()
+        assertEquals(2, f.api.replyCalls)
+        assertFalse(f.viewModel.state.value.clearReplyDraft)
+        f.viewModel.refresh()
+        runCurrent()
+        assertEquals(listOf("new-user"), f.viewModel.state.value.transcript.map { it.uuid })
+        guardRead.complete(Unit)
+        advanceUntilIdle()
+        assertTrue(f.viewModel.state.value.clearReplyDraft)
+        assertTrue(f.viewModel.state.value.codexAcceptedReplies.isEmpty())
+        assertEquals(2, f.api.replyCalls)
+    }
+
+    @Test
+    fun outputPollDuringComposerVerificationDoesNotRefuseAStableEmptyComposer() = runTest(dispatcher) {
+        val f = fixture(ApiResult.Success(ActionResponse(ok = true), 200))
+        f.viewModel.refresh()
+        advanceUntilIdle()
+        val gate = CompletableDeferred<Unit>()
+        var holdNextRead = true
+        f.api.paneHook = {
+            if (holdNextRead) {
+                holdNextRead = false
+                gate.await()
+            }
+        }
+        f.viewModel.sendReply("hello")
+        runCurrent()
+        f.api.pane = f.api.pane.copy(text = "more output\n${f.api.pane.text}", revision = 8)
+        f.viewModel.refresh()
+        runCurrent()
+        f.api.replyHook = { message, submit ->
+            f.api.pane = f.api.pane.copy(text = "› ${if (submit) "" else message}\n\n  model · /repo · Context 50% left")
+        }
+        gate.complete(Unit)
+        advanceUntilIdle()
+
+        assertEquals(2, f.api.replyCalls)
+        assertTrue(f.viewModel.state.value.clearReplyDraft)
+        assertNull(f.viewModel.state.value.mutationError)
+    }
+
+    @Test
+    fun modalPollDuringComposerVerificationStillRefusesTheWrite() = runTest(dispatcher) {
+        val f = fixture(ApiResult.Success(ActionResponse(ok = true), 200))
+        f.viewModel.refresh()
+        advanceUntilIdle()
+        val gate = CompletableDeferred<Unit>()
+        var holdNextRead = true
+        f.api.paneHook = {
+            if (holdNextRead) {
+                holdNextRead = false
+                gate.await()
+            }
+        }
+        f.viewModel.sendReply("hello")
+        runCurrent()
+        f.api.pane = f.api.pane.copy(text = "› 1. Yes\n  2. No\nPress enter to confirm or esc to cancel", revision = 8)
+        f.viewModel.refresh()
+        runCurrent()
+        gate.complete(Unit)
+        advanceUntilIdle()
+
+        assertEquals(0, f.api.replyCalls)
+        assertFalse(f.viewModel.state.value.clearReplyDraft)
+        assertNotNull(f.viewModel.state.value.mutationError)
+    }
+
+
+    @Test
+    fun unsupportedChordsAreBlockedWithoutDisablingThePlainKey() = runTest(dispatcher) {
+        val f = fixture(ApiResult.Success(ActionResponse(ok = true), 200), agent = "shell")
+        f.api.config = BridgeConfigResponse(mux = MuxConfigResponse(unsupportedKeys = listOf("ctrl+Enter", "Delete")))
+        f.viewModel.refresh()
+        advanceUntilIdle()
+        f.viewModel.sendKey("ctrl+Enter")
+        f.viewModel.sendKey("shift+Delete")
+        advanceUntilIdle()
+        assertTrue(f.api.keysCalls.isEmpty())
+        f.viewModel.sendKey("Enter")
+        advanceUntilIdle()
+        assertEquals(listOf(listOf("Enter")), f.api.keysCalls)
+    }
+
+    @Test
+    fun connectionChangeCancelsACodexSubmissionAndRetainsTheDraft() = runTest(dispatcher) {
+        val f = fixture(ApiResult.Success(ActionResponse(ok = true), 200))
+        f.viewModel.refresh()
+        advanceUntilIdle()
+        f.api.replyHook = { _, submit ->
+            if (!submit) f.store.save(Connection(CollieOrigin("https://other.example/"), "other", "other-token"))
+        }
+        f.viewModel.sendReply("hello")
+        advanceUntilIdle()
+        assertEquals(1, f.api.replyCalls)
+        assertFalse(f.viewModel.state.value.clearReplyDraft)
+        assertFalse(f.viewModel.state.value.sending)
+        assertNull(f.viewModel.state.value.pane)
+        assertFalse(f.viewModel.state.value.canWrite)
+    }
+
     private fun entry(uuid: String) =
         TranscriptEntry(uuid, "2026-09-10T00:00:00Z", "assistant", listOf(TranscriptPart("text", text = uuid)))
 
@@ -581,6 +1669,7 @@ class PaneViewModelTest {
         address: PaneAddress = PaneAddress(paneId = "w1:p1"),
         diagnostics: com.lateapex.collie.diagnostics.DiagnosticsRecorder =
             com.lateapex.collie.diagnostics.RecordingDiagnosticsRecorder(mutableListOf()),
+        queuedAttempts: QueuedSendAttemptStore = MemoryQueuedAttempts(),
     ): Fixture {
         val connection = Connection(CollieOrigin("https://collie.example/"), "phone", "token")
         val store = FakeStore(connection)
@@ -595,24 +1684,62 @@ class PaneViewModelTest {
             agent,
             repository,
             diagnostics,
+            queuedAttempts,
         )
-        return Fixture(viewModel, api, store)
+        return Fixture(viewModel, api, store, repository, queuedAttempts)
     }
 
     private fun text(resource: Int): String =
         ApplicationProvider.getApplicationContext<Application>().getString(resource)
 
+    private fun queuedPage(
+        queued: List<String> = listOf("queued message"),
+        revision: Long? = 3,
+        generation: Long? = 7,
+        digest: String? = if (queued == listOf("queued message")) "a".repeat(64) else "c".repeat(64),
+        occupant: String? = "b".repeat(64),
+        turns: List<TranscriptEntry> = emptyList(),
+    ) = PaneChatResponse(
+        paneId = "w1:p1", available = true, page = "live", gen = generation, rev = revision,
+        head = 1, oldest = 1, hasOlder = false, upserts = turns, queued = queued,
+        sendQueuedNow = listOf("ctrl+Enter"),
+        queuedDigest = digest,
+        queuedSendOccupant = occupant,
+    )
+
     private data class Fixture(
         val viewModel: PaneViewModel,
         val api: FakeApi,
         val store: FakeStore,
+        val repository: CollieRepository,
+        val queuedAttempts: QueuedSendAttemptStore,
     )
 
     private class FakeStore(initial: Connection) : ConnectionStore {
         private val mutable = MutableStateFlow<Connection?>(initial)
         override val connection: StateFlow<Connection?> = mutable
+        override fun compareAndSet(expected: Connection, replacement: Connection): Boolean =
+            mutable.compareAndSet(expected, replacement)
+
         override fun save(connection: Connection) { mutable.value = connection }
         override fun clear() { mutable.value = null }
+    }
+
+    private class MemoryQueuedAttempts : QueuedSendAttemptStore {
+        private val current = mutableMapOf<String, String>()
+        private val attempts = mutableSetOf<String>()
+        override fun wasAttempted(actionIdentity: String): Boolean = actionIdentity in attempts
+        override fun observe(paneIdentity: String, actionIdentity: String): Boolean {
+            val prior = current.put(paneIdentity, actionIdentity)
+            if (prior != null && prior != actionIdentity) attempts.remove(prior)
+            return true
+        }
+        override fun recordBeforeDispatch(paneIdentity: String, actionIdentity: String): Boolean {
+            if (actionIdentity in attempts || current[paneIdentity] != actionIdentity) return false
+            attempts += actionIdentity
+            return true
+        }
+        override fun recordOutcome(actionIdentity: String, outcome: String) = Unit
     }
 
     private class FakeApi(
@@ -621,16 +1748,29 @@ class PaneViewModelTest {
         var deviceAuthorization: DeviceAuthorization?,
     ) : CollieApi {
         var replyCalls = 0
+        data class ReplyWrite(val connection: Connection, val text: String, val submit: Boolean, val binding: String?, val columns: PromptColumns?)
+        val replyWrites = mutableListOf<ReplyWrite>()
+        val paneConnections = mutableListOf<Connection>()
         var lastKeys: List<String> = emptyList()
         val keysCalls = mutableListOf<List<String>>()
         var snapshotHook: (() -> Unit)? = null
         var keysHook: ((List<String>) -> Unit)? = null
+        var replyHook: ((String, Boolean) -> Unit)? = null
+        var paneHook: (suspend () -> Unit)? = null
+        var queuedSendTransport: CollieApi? = null
+        var chatTransport: CollieApi? = null
+        var chatHook: (() -> Unit)? = null
         var config = BridgeConfigResponse()
+        var configAuthority: ControlAuthority? = null
+        var configHook: (suspend () -> Unit)? = null
+        var snapshotControlAuthority: ControlAuthority? = null
         var snapshotPanes = listOf(paneSummary(PaneAddress(paneId = "w1:p1")))
         var servers: List<ServerSummary>? = null
         var lastReplyExpectedPrompt: String? = null
         private val keyResults = ArrayDeque(keyResults)
         var lastExpectedPrompt: String? = null
+        var lastExpectedColumns: com.lateapex.collie.network.PromptColumns? = null
+        var queuedSendResult: ApiResult<ActionResponse> = ApiResult.Success(ActionResponse(ok = true), 200)
         val paneLines = mutableListOf<Int>()
         var pane = PaneReadResponse(
             paneId = "w1:p1",
@@ -638,12 +1778,53 @@ class PaneViewModelTest {
             truncated = false,
             revision = 7,
         )
+        var paneAlwaysNotModified = false
+        var paneUnsolicitedNotModified = false
+        var paneUnsolicitedReads = 0
+        var paneTransport: CollieApi? = null
+        val paneEtags = mutableListOf<String?>()
+        var paneConditionalReads = 0
+        var paneFreshReads = 0
         val historyPages = ArrayDeque<PaneHistoryResponse>()
         var historyCalls = 0
+        var chatPage: PaneChatResponse? = null
+        var chatCalls = 0
+        var imageBlobCalls = 0
+        val chatBeforeRequests = mutableListOf<ChatBefore?>()
+        val chatOlderPages = ArrayDeque<PaneChatResponse>()
+        var chatResponseEtag: String? = "\"chat-page\""
+        val chatAfterRequests = mutableListOf<ChatAfter?>()
+        val chatEtagRequests = mutableListOf<String?>()
+        val queuedKeysCalls = mutableListOf<List<String>>()
+        var lastQueuedGuard: QueuedSendGuard? = null
+        override suspend fun chat(connection: Connection, address: PaneAddress, limit: Int,
+            after: ChatAfter?, before: ChatBefore?, etag: String?): ApiResult<PaneChatResponse> {
+            chatCalls++
+            chatBeforeRequests += before
+            chatAfterRequests += after
+            chatEtagRequests += etag
+            chatHook?.invoke()
+            chatTransport?.let { transport ->
+                return kotlinx.coroutines.runBlocking { transport.chat(connection, address, limit, after, before, etag) }
+            }
+            if (before != null) {
+                val older = chatOlderPages.removeFirstOrNull()
+                if (older != null) return ApiResult.Success(older, 200)
+            }
+            val page = chatPage ?: return ApiResult.Failure(ApiFailure.Protocol("Live chat is unavailable"))
+            if (after?.gen == page.gen && after?.rev == page.rev) return ApiResult.NotModified(etag)
+            return ApiResult.Success(page, 200, etag = chatResponseEtag)
+        }
+        override suspend fun imageBlob(connection: Connection, scope: Scope, sha256: String): ApiResult<com.lateapex.collie.network.ImageBlob> {
+            imageBlobCalls++
+            return ApiResult.Failure(ApiFailure.Http(404, null, null))
+        }
         val historyLimits = mutableListOf<Int>()
+        val historyBeforeRequests = mutableListOf<String?>()
 
         val historyEtags = mutableListOf<String?>()
         var historyUnchanged = false
+        var historyAlwaysNotModified = false
 
         override suspend fun history(
             connection: Connection,
@@ -653,9 +1834,10 @@ class PaneViewModelTest {
             etag: String?,
         ): ApiResult<PaneHistoryResponse> {
             historyCalls++
+            historyBeforeRequests += before
             historyLimits += limit
             historyEtags += etag
-            if (historyUnchanged && etag != null) return ApiResult.NotModified(etag)
+            if (historyAlwaysNotModified || historyUnchanged && etag != null) return ApiResult.NotModified(etag)
             val page = historyPages.removeFirstOrNull() ?: PaneHistoryResponse(address.paneId, available = true)
             return ApiResult.Success(page, 200, etag = "\"page-$historyCalls\"")
         }
@@ -667,8 +1849,28 @@ class PaneViewModelTest {
             etag: String?,
             markSeen: Boolean,
         ): ApiResult<PaneReadResponse> {
+            paneConnections += connection
             paneLines += lines
+            paneEtags += etag
+            paneHook?.invoke()
+            paneTransport?.let { return it.pane(connection, address, lines, etag, markSeen) }
+            if (paneUnsolicitedNotModified && etag == null) {
+                paneUnsolicitedReads++
+                return ApiResult.NotModified(null)
+            }
+            if (paneAlwaysNotModified) {
+                paneConditionalReads++
+                assertNotNull("cached304 test must send the cache's actual ETag", etag)
+                return ApiResult.NotModified(etag)
+            }
+            paneFreshReads++
             return ApiResult.Success(pane, 200, etag = "\"7\"")
+        }
+
+        override suspend fun reply(connection: Connection, address: PaneAddress, text: String, submit: Boolean,
+            expectedPrompt: String?, expectedColumns: PromptColumns?): ApiResult<ActionResponse> {
+            replyWrites += ReplyWrite(connection, text, submit, expectedPrompt, expectedColumns)
+            return reply(connection, address, text, submit, expectedPrompt)
         }
 
         override suspend fun reply(
@@ -679,17 +1881,22 @@ class PaneViewModelTest {
             expectedPrompt: String?,
         ): ApiResult<ActionResponse> {
             replyCalls++
+            replyHook?.invoke(text, submit)
             lastReplyExpectedPrompt = expectedPrompt
             return replyResult
         }
 
         override suspend fun health(connection: Connection): ApiResult<HealthResponse> = error("unused")
-        override suspend fun config(connection: Connection) = ApiResult.Success(config, 200)
+        override suspend fun config(connection: Connection): ApiResult<BridgeConfigResponse> {
+            configHook?.invoke()
+            return ApiResult.Success(config, 200, controlAuthority = configAuthority)
+        }
         override suspend fun snapshot(connection: Connection, scope: Scope): ApiResult<SnapshotResponse> {
             snapshotHook?.invoke()
             return ApiResult.Success(
                 SnapshotResponse(
                     bridge = "connected",
+                    controlAuthority = snapshotControlAuthority,
                     device = deviceAuthorization,
                     agents = snapshotPanes,
                     shellPanes = emptyList(),
@@ -704,6 +1911,11 @@ class PaneViewModelTest {
         override suspend fun refresh(connection: Connection, scope: Scope): ApiResult<ActionResponse> = error("unused")
         override suspend fun pair(origin: CollieOrigin, code: String, label: String): ApiResult<PairResult> = error("unused")
         override suspend fun devices(connection: Connection): ApiResult<DevicesResponse> = error("unused")
+        override suspend fun keys(connection: Connection, address: PaneAddress, keys: List<String>, expectedPrompt: String?, expectedColumns: com.lateapex.collie.network.PromptColumns?): ApiResult<ActionResponse> {
+            lastExpectedColumns = expectedColumns
+            return keys(connection, address, keys, expectedPrompt)
+        }
+
         override suspend fun keys(
             connection: Connection,
             address: PaneAddress,
@@ -719,6 +1931,22 @@ class PaneViewModelTest {
             } else {
                 keyResults.removeFirst()
             }
+        }
+
+        override suspend fun queuedSendNow(
+            connection: Connection,
+            address: PaneAddress,
+            keys: List<String>,
+            expectedPrompt: String,
+            guard: QueuedSendGuard,
+        ): ApiResult<ActionResponse> {
+            queuedKeysCalls += keys
+            lastExpectedPrompt = expectedPrompt
+            lastQueuedGuard = guard
+            queuedSendTransport?.let { transport ->
+                return kotlinx.coroutines.runBlocking { transport.queuedSendNow(connection, address, keys, expectedPrompt, guard) }
+            }
+            return queuedSendResult
         }
     }
 

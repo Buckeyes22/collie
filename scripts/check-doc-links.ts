@@ -10,12 +10,16 @@
 // Exit 0 clean. Exit 1 with one line per failure: `path:line  <link>  — reason`.
 
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, resolve, relative } from "node:path";
+import { dirname, isAbsolute, resolve, relative, sep } from "node:path";
 
 const EXCLUDED = ["node_modules/", "web/dist/", ".tracker/"];
+// Historical local documentation uses Linux home checkout paths. Recognize a bounded account
+// component and exact repository boundary; never fall back to another workstation checkout.
+const HISTORICAL_CHECKOUT_ROOT = /^\/home\/[a-z_][a-z0-9_-]{0,31}\/git\/collie(?=\/|$)/;
 
-function listMarkdownFiles(): string[] {
-  const out = Bun.spawnSync(["git", "ls-files", "--cached", "--others", "--exclude-standard", "--", "*.md"]);
+function listMarkdownFiles(root: string): string[] {
+  const out = Bun.spawnSync(["git", "ls-files", "--cached", "--others", "--exclude-standard", "--", "*.md"], { cwd: root });
+  if (out.exitCode !== 0) throw new Error("Could not list repository Markdown files");
   const files = out.stdout.toString().trim().split("\n").filter(Boolean);
   return files.filter((f) => !EXCLUDED.some((ex) => f.startsWith(ex) || f.includes(`/${ex}`)));
 }
@@ -112,11 +116,23 @@ function anchorMatches(anchor: string, anchors: FileAnchors): boolean {
   return false;
 }
 
-type Failure = { file: string; line: number; link: string; reason: string };
+export type Failure = { file: string; line: number; link: string; reason: string };
 
-function checkFile(file: string, failures: Failure[]) {
-  const content = readFileSync(file, "utf8");
-  const dir = dirname(file);
+function localTarget(file: string, pathPart: string, root: string): string {
+  const historicalRoot = pathPart.match(HISTORICAL_CHECKOUT_ROOT)?.[0];
+  if (historicalRoot !== undefined) {
+    const target = resolve(root, `.${pathPart.slice(historicalRoot.length)}`);
+    const within = relative(root, target);
+    if (within === ".." || within.startsWith(`..${sep}`) || isAbsolute(within)) {
+      throw new Error("repository path escapes checkout");
+    }
+    return target;
+  }
+  return pathPart === "" ? resolve(root, file) : resolve(root, dirname(file), pathPart);
+}
+
+export function checkFile(file: string, failures: Failure[], root: string) {
+  const content = readFileSync(resolve(root, file), "utf8");
   eachLine(content, (line, lineNo, inFence) => {
     if (inFence) return;
     // Inline links only: `[text](target)`, not preceded by `!` (that's an image).
@@ -131,7 +147,13 @@ function checkFile(file: string, failures: Failure[]) {
       const pathPart = hashIdx === -1 ? raw : raw.slice(0, hashIdx);
       const anchor = hashIdx === -1 ? null : raw.slice(hashIdx + 1);
 
-      const targetFile = pathPart === "" ? file : resolve(dir, pathPart);
+      let targetFile: string;
+      try {
+        targetFile = localTarget(file, pathPart, root);
+      } catch {
+        failures.push({ file, line: lineNo, link: raw, reason: "repository path escapes checkout" });
+        continue;
+      }
       if (!existsSync(targetFile)) {
         failures.push({ file, line: lineNo, link: raw, reason: "missing file" });
         continue;
@@ -147,19 +169,22 @@ function checkFile(file: string, failures: Failure[]) {
 }
 
 function main() {
-  const files = listMarkdownFiles();
+  const gitRoot = Bun.spawnSync(["git", "rev-parse", "--show-toplevel"]);
+  if (gitRoot.exitCode !== 0) throw new Error("Documentation links must be checked inside a Git checkout");
+  const root = gitRoot.stdout.toString().trim();
+  const files = listMarkdownFiles(root);
   const failures: Failure[] = [];
-  for (const file of files) checkFile(file, failures);
+  for (const file of files) checkFile(file, failures, root);
 
   if (failures.length === 0) {
     console.log(`checked ${files.length} markdown files, all links OK`);
     process.exit(0);
   }
   for (const f of failures) {
-    console.log(`${relative(".", f.file)}:${f.line}  ${f.link}  — ${f.reason}`);
+    console.log(`${f.file}:${f.line}  ${f.link}  — ${f.reason}`);
   }
   console.log(`\n${failures.length} broken link(s) in ${files.length} files checked`);
   process.exit(1);
 }
 
-main();
+if (import.meta.main) main();

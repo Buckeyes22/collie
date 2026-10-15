@@ -1,8 +1,12 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import {
   NAVIGATION_NETWORK_ONLY,
   PROXY_AUTH_PATH,
+  navigationNetworkOnlyUnder,
   isNetworkOnlyNavigation,
 } from "./sw-routes";
 
@@ -14,6 +18,25 @@ describe("service-worker navigation passthrough", () => {
   it("never answers the API from the precache", () => {
     expect(isNetworkOnlyNavigation("/api/snapshot")).toBe(true);
     expect(isNetworkOnlyNavigation("/api/pane/w1:p1/keys")).toBe(true);
+  });
+
+  // The Files reads (ADR 0083) and the Machines routes (ADR 0084) are API calls like their neighbours:
+  // the worker answers none of them from the precache, with or without a query, and the app pages that
+  // show them are Collie's own routes, answered offline from the shell.
+  it("never answers the Files and Machines routes from the precache", () => {
+    for (const path of [
+      "/api/pane/w1%3Ap1/files",
+      "/api/pane/w1%3Ap1/files?dir=docs&host=laptop",
+      "/api/workspace/w1/files?path=README.md",
+      "/api/machines",
+      "/api/machines/local/history",
+      "/api/machines/laptop/alerts",
+    ]) {
+      expect(isNetworkOnlyNavigation(path)).toBe(true);
+    }
+    for (const page of ["/machines", "/machines/local", "/pane/w1%3Ap1/changes/files?dir=docs", "/space/w1/changes/files"]) {
+      expect(isNetworkOnlyNavigation(page)).toBe(false);
+    }
   });
 
   it("passes the reserved proxy namespace to the network, with or without the slash", () => {
@@ -64,27 +87,29 @@ describe("service-worker navigation passthrough", () => {
     expect(isNetworkOnlyNavigation("/?h=box2&s=demo")).toBe(false);
   });
 
-  // PACK_PROTOCOL.md §5: a browser never issues a pack request, so a browser must never be able to
+  // CREW_PROTOCOL.md §5: a browser never issues a crew request, so a browser must never be able to
   // cache one. Answering any of these from the precached app shell would hand a collie-to-collie
   // caller an HTML page.
-  it("never answers the pack surface from the precache", () => {
+  it("never answers the crew surface from the precache", () => {
     for (const path of [
-      "/pack/v1/snapshot",
-      "/pack/v1/snapshot?session=demo",
-      "/pack/v1/pane/w1:p1",
-      "/pack/v1/enroll",
-      "/pack/v1/hello",
-      "/pack/v1",
-      "/pack/v1?x=1",
+      "/crew/v1/snapshot",
+      "/crew/v1/snapshot?session=demo",
+      "/crew/v1/pane/w1:p1",
+      "/crew/v1/enroll",
+      "/crew/v1/hello",
+      "/crew/v1",
+      "/crew/v1?x=1",
     ]) {
       expect(isNetworkOnlyNavigation(path)).toBe(true);
     }
   });
 
-  it("does not claim routes that merely start with the pack prefix", () => {
-    expect(isNetworkOnlyNavigation("/pack")).toBe(false);
+  it("does not claim routes that merely start with the crew prefix", () => {
+    expect(isNetworkOnlyNavigation("/crew")).toBe(false);
     expect(isNetworkOnlyNavigation("/packages")).toBe(false);
-    expect(isNetworkOnlyNavigation("/pack/v10/snapshot")).toBe(false);
+    expect(isNetworkOnlyNavigation("/crew/v10/snapshot")).toBe(false);
+    // 1.7.0's prefix is an ordinary navigation again since 1.9.0 (ADR 0039).
+    expect(isNetworkOnlyNavigation(`/${"pack"}/v1/snapshot`)).toBe(false);
   });
 
   it("still owns every Collie route, so deep links keep resolving offline", () => {
@@ -117,12 +142,12 @@ describe("service-worker navigation passthrough", () => {
       String(/^\/auth(?:[/?]|$)/),
       String(/^\/outpost\.goauthentik\.io(?:[/?]|$)/),
       String(/^\/cdn-cgi\//),
-      String(/^\/pack\/v1(?:[/?]|$)/),
+      String(/^\/crew\/v1(?:[/?]|$)/),
       String(/^\/standby(?:[/?]|$)/),
     ]);
   });
 
-  // The standby door (PACK_PROTOCOL.md §18.15). On the bad day the phone's FIRST hit is an installed
+  // The standby door (CREW_PROTOCOL.md §18.15). On the bad day the phone's FIRST hit is an installed
   // service worker minted from the LEAD's origin, so a precached app shell here is the difference
   // between reaching the takeover page and staring at the UI of the collie that just died.
   it("passes the whole standby namespace to the network, query and all", () => {
@@ -131,5 +156,54 @@ describe("service-worker navigation passthrough", () => {
     }
     // A route that merely shares the prefix is Collie's, exactly as `/authors` is.
     expect(isNetworkOnlyNavigation("/standbyish")).toBe(false);
+  });
+});
+
+// ADR 0052: under a mount the worker sees `/collie/api/…`, so every anchor moves with it.
+describe("navigationNetworkOnlyUnder — the same denylist under a mount", () => {
+  const matches = (rules: RegExp[], path: string) => rules.some((re) => re.test(path));
+
+  it("is the list itself at the root", () => {
+    expect(navigationNetworkOnlyUnder("/").map(String)).toEqual(NAVIGATION_NETWORK_ONLY.map(String));
+  });
+
+  it("moves each anchor to the mount and keeps each rule's shape", () => {
+    const under = navigationNetworkOnlyUnder("/collie/");
+    for (const path of ["/collie/api/snapshot", "/collie/auth", "/collie/auth?rd=%2F", "/collie/crew/v1/hello", "/collie/standby/health"]) {
+      expect(matches(under, path)).toBe(true);
+    }
+    for (const path of ["/collie/", "/collie/settings", "/collie/pane/w1:p1", "/collie/authors", "/api/snapshot", "/auth"]) {
+      expect(matches(under, path)).toBe(false);
+    }
+  });
+
+  it("escapes a mount that carries a regex character", () => {
+    expect(matches(navigationNetworkOnlyUnder("/a.b/"), "/a.b/api/x")).toBe(true);
+    expect(matches(navigationNetworkOnlyUnder("/a.b/"), "/aXb/api/x")).toBe(false);
+  });
+});
+
+// What the worker caches at RUNTIME, read off its source (it cannot run under jsdom). The navigation
+// denylist above only governs navigations; a fetch of `/api/*/files/image` or any other `/api/` read
+// stays off every cache because sw.ts registers no runtime route that matches it. Pinned so a route
+// added later has to change this test first (ADR 0087: no service-worker cache of API answers; ADR
+// 0090: a picture's bytes are held in memory only).
+describe("the service worker's runtime caching", () => {
+  const SW_CODE = readFileSync(resolve(import.meta.dirname, "../sw.ts"), "utf8")
+    .split("\n")
+    .filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line))
+    .join("\n");
+
+  it("registers exactly two routes: the navigation fallback and the /fonts/ cache", () => {
+    expect(SW_CODE.match(/registerRoute\(/g)?.length).toBe(2);
+    expect(SW_CODE).toContain("new NavigationRoute(createHandlerBoundToURL(");
+    expect(SW_CODE).toContain('url.pathname.startsWith(under("/fonts/"))');
+  });
+
+  it("opens one runtime cache, the font cache, and never names an /api path", () => {
+    const opened = [...SW_CODE.matchAll(/caches\.open\(([^)]*)\)/g)].map((m) => m[1]);
+    expect(new Set(opened)).toEqual(new Set(["FONT_CACHE"]));
+    expect(SW_CODE).not.toMatch(/["'`]\/api\//);
+    expect(SW_CODE).not.toMatch(/files\/image/);
   });
 });

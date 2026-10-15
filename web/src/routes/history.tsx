@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useLoaderData, useNavigate, useParams } from "react-router";
+import { useLoaderData, useParams } from "react-router";
 import { ArrowUpToLine, ChevronDown, ChevronUp, Loader2, ScrollText, Search, X } from "lucide-react";
 
 import { RouteHeader } from "@/components/app-header";
@@ -16,6 +16,9 @@ import type { TranscriptEntry } from "@/lib/types";
 import { useRootData } from "@/lib/route-data";
 import { t } from "@/lib/i18n";
 import { useLocale } from "@/hooks/use-locale";
+import { useNav } from "@/hooks/use-nav";
+import { mirrorFont, useDisplayPrefs } from "@/hooks/use-display-prefs";
+import { cn } from "@/lib/utils";
 
 // Pane history route — the agent's own transcript, which is the ONLY conversation history a Claude
 // pane can have. Its terminal runs on the alternate screen, so Herdr retains no scrollback ring at
@@ -31,7 +34,8 @@ import { useLocale } from "@/hooks/use-locale";
 // The loader is deliberately not revalidated (`shouldRevalidate: false` in router.tsx), so the 1.5 s
 // poll never re-pulls a several-hundred-turn transcript out from under the reader.
 
-/** Why the strip is empty, in the user's terms. Each is an ordinary state, not an error. */
+/** Why the strip is empty, in the user's terms. Each is an ordinary state, not an error. Called
+ *  fresh at render time (not a module-level const) so a language switch picks up the new copy. */
 function unavailableCopy() {
   return {
     disabled: t("history.unavailable.disabled"),
@@ -55,11 +59,17 @@ export function HistoryRoute() {
   useLocale();
   const root = useRootData();
   const { paneId = "" } = useParams();
-  const navigate = useNavigate();
-  // Whether an agent session log can exist here at all — a property of the multiplexer, not of this
-  // pane. See the empty-state branch below for what it changes.
-  const sessionLog = useMuxCapability("agentSessionRef");
+  const nav = useNav();
   const scope = data.scope;
+  // Whether an agent session log can exist here at all — a property of the multiplexer THIS PANE's
+  // machine runs (M22/03), not of the pane. See the empty-state branch below for what it changes.
+  const sessionLog = useMuxCapability("agentSessionRef", scope);
+  // The chosen terminal font (Settings → Terminal font) — same source and same idiom as the live
+  // pane mirror (components/agent-chat.tsx). This route renders the same agent transcript, just
+  // scrolled back further, so it must not fall back to the app's own face while the live view
+  // reflects the operator's choice.
+  const { prefs } = useDisplayPrefs();
+  const mirrorFace = mirrorFont(prefs.fontFamily);
 
   const agent =
     root.agents.find((a) => a.paneId === paneId) ??
@@ -69,10 +79,19 @@ export function HistoryRoute() {
   const [older, setOlder] = useState<TranscriptEntry[]>([]);
   const [hasMore, setHasMore] = useState(data.hasMore);
   const [loading, setLoading] = useState(false);
-  const entries = useMemo(
-    () => (older.length ? [...older, ...data.entries] : data.entries),
-    [older, data.entries],
-  );
+  const entries = useMemo(() => {
+    const all = older.length ? [...older, ...data.entries] : data.entries;
+    // A turn the agent REWOUND PAST is not part of this conversation any more, so it is not part of
+    // this view, this find or this jump either. Only pi can say so (`abandoned`, set by its reader
+    // when a row's parent is not the row before it), and the journal KEEPS the turn rather than
+    // dropping it, because a `?before=` cursor still has to resolve its uuid on the bridge. So hiding
+    // is the reader's job, and it belongs here: this is the one array the view, `matchingEntries`,
+    // `userTurnIndices`, the render window and the paging cursor all read.
+    //
+    // The `some` guard keeps the array IDENTITY for every session that never forked, which is almost
+    // all of them, and this value is a dependency of five memos below.
+    return all.some((e) => e.abandoned === true) ? all.filter((e) => e.abandoned !== true) : all;
+  }, [older, data.entries]);
 
   // How many of the NEWEST turns are rendered. Everything else is held in memory, unrendered.
   const [renderCount, setRenderCount] = useState(INITIAL_RENDER);
@@ -199,12 +218,14 @@ export function HistoryRoute() {
   return (
     // The same column as the pane this transcript belongs to, because it is the other half of that
     // screen and one navigation away from it: it keeps the pane's width and its left edge, or the
-    // page jumps sideways on the hop. See AgentChat's wrapper for why the pane stops at 768px.
-    // `max-w-[100dvw]` is the phone bound; `md:max-w-screen-md` only bites from 768px up, where it
-    // is never the wider of the two.
-    <div className="mx-auto flex min-h-0 w-full min-w-0 max-w-[100dvw] flex-1 flex-col md:max-w-screen-md">
+    // page jumps sideways on the hop. So this ladder is COPIED from AgentChat's wrapper and has to
+    // stay identical to it — that comment carries the reasoning, including why the pane column
+    // grows past 768px on a desktop and the dashboard's does not (#166).
+    // `max-w-[100dvw]` is the phone bound; each step above it only bites from its own breakpoint up,
+    // where it is never the wider of the two.
+    <div className="mx-auto flex min-h-0 w-full min-w-0 max-w-[100dvw] flex-1 flex-col md:max-w-screen-md lg:max-w-screen-lg xl:max-w-screen-xl 2xl:max-w-[1400px]">
       <RouteHeader
-        onHome={() => navigate(panePath(paneId, scope))}
+        onHome={() => nav.up(panePath(paneId, scope))}
         width="wide"
         override={
           findOpen ? (
@@ -212,9 +233,7 @@ export function HistoryRoute() {
               query={query}
               onQueryChange={setQuery}
               count={matches.length}
-              // -1 until the reader steps: the bar then reads 0/N, not a match that is not
-              // current (the first Next looked inert; S25 Ultra walk, 2026-09-11).
-              current={matchCursor}
+              current={matchCursor >= 0 ? matchCursor : 0}
               onPrev={() => jumpTo(step(matches, cursor, -1))}
               onNext={() => jumpTo(step(matches, cursor, 1))}
               onClose={closeFind}
@@ -246,7 +265,7 @@ export function HistoryRoute() {
         rightTrail={
           <button
             type="button"
-            onClick={() => navigate(panePath(paneId, scope))}
+            onClick={() => nav.up(panePath(paneId, scope))}
             aria-label={t("history.closeAria")}
             className="flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors active:bg-muted/60"
           >
@@ -263,8 +282,8 @@ export function HistoryRoute() {
         </div>
       </RouteHeader>
 
-      <div className="relative min-h-0 min-w-0 flex-1">
-        <ChatMessageList ref={listRef} className="px-3 py-3">
+      <div className={cn("relative min-h-0 min-w-0 flex-1", mirrorFace.className)} style={mirrorFace.style}>
+        <ChatMessageList ref={listRef} clearBand={12} className="px-3 py-3">
           {entries.length === 0 ? (
             <div className="px-2 py-16 text-center text-sm leading-relaxed text-muted-foreground">
               {/* The route is reachable by URL — a bookmark, a back button, an older cached bundle
@@ -305,6 +324,7 @@ export function HistoryRoute() {
                 agent={agent?.agent}
                 query={query}
                 focusedUuid={focusedUuid}
+                scope={scope}
               />
             </>
           )}

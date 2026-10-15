@@ -2,87 +2,204 @@ RUNTIME DEPENDENCIES
 Every library in the release runtime classpath, from android/app/gradle.lockfile.
 
 androidx.activity:activity:1.8.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
-androidx.annotation:annotation:1.8.1 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
+androidx.annotation:annotation:1.10.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
 androidx.annotation:annotation-experimental:1.4.1 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
-androidx.annotation:annotation-jvm:1.8.1 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
-androidx.appcompat:appcompat:1.7.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
-androidx.appcompat:appcompat-resources:1.7.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
+androidx.annotation:annotation-jvm:1.10.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
+androidx.appcompat:appcompat:1.8.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
+androidx.appcompat:appcompat-resources:1.8.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
 androidx.arch.core:core-common:2.2.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
 androidx.arch.core:core-runtime:2.2.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
 androidx.cardview:cardview:1.0.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
-androidx.collection:collection:1.4.2 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
-androidx.collection:collection-jvm:1.4.2 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
-androidx.concurrent:concurrent-futures:1.0.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
-androidx.constraintlayout:constraintlayout:2.0.1 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
-androidx.constraintlayout:constraintlayout-solver:2.0.1 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
+androidx.collection:collection:1.5.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
+androidx.collection:collection-jvm:1.5.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
+androidx.concurrent:concurrent-futures:1.1.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
+androidx.concurrent:concurrent-futures-ktx:1.1.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
+androidx.constraintlayout:constraintlayout:2.2.1 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
+androidx.constraintlayout:constraintlayout-core:1.1.1 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
 androidx.coordinatorlayout:coordinatorlayout:1.1.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
-androidx.core:core:1.15.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
-androidx.core:core-ktx:1.15.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
+androidx.core:core:1.19.1 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
+androidx.core:core-ktx:1.19.1 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
+androidx.core:core-viewtree:1.0.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
 androidx.cursoradapter:cursoradapter:1.0.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
-androidx.customview:customview:1.1.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
+androidx.customview:customview:1.2.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
 androidx.customview:customview-poolingcontainer:1.0.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
-androidx.databinding:viewbinding:8.9.1 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
-androidx.documentfile:documentfile:1.0.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
+androidx.databinding:viewbinding:9.4.1 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
 androidx.drawerlayout:drawerlayout:1.1.1 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
-androidx.dynamicanimation:dynamicanimation:1.0.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
+androidx.dynamicanimation:dynamicanimation:1.1.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
 androidx.emoji2:emoji2:1.3.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
 androidx.emoji2:emoji2-views-helper:1.3.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
 androidx.fragment:fragment:1.5.4 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
+androidx.graphics:graphics-shapes:1.0.1 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
+androidx.graphics:graphics-shapes-android:1.0.1 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
 androidx.interpolator:interpolator:1.0.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
-androidx.legacy:legacy-support-core-utils:1.0.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
-androidx.lifecycle:lifecycle-common:2.8.7 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
-androidx.lifecycle:lifecycle-common-jvm:2.8.7 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
-androidx.lifecycle:lifecycle-livedata:2.8.7 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
-androidx.lifecycle:lifecycle-livedata-core:2.8.7 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
-androidx.lifecycle:lifecycle-livedata-core-ktx:2.8.7 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
-androidx.lifecycle:lifecycle-process:2.8.7 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
-androidx.lifecycle:lifecycle-runtime:2.8.7 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
-androidx.lifecycle:lifecycle-runtime-android:2.8.7 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
-androidx.lifecycle:lifecycle-runtime-ktx:2.8.7 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
-androidx.lifecycle:lifecycle-runtime-ktx-android:2.8.7 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
-androidx.lifecycle:lifecycle-viewmodel:2.8.7 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
-androidx.lifecycle:lifecycle-viewmodel-android:2.8.7 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
-androidx.lifecycle:lifecycle-viewmodel-ktx:2.8.7 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
-androidx.lifecycle:lifecycle-viewmodel-savedstate:2.8.7 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
+androidx.lifecycle:lifecycle-common:2.11.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
+androidx.lifecycle:lifecycle-common-jvm:2.11.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
+androidx.lifecycle:lifecycle-livedata:2.11.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
+androidx.lifecycle:lifecycle-livedata-core:2.11.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
+androidx.lifecycle:lifecycle-livedata-core-ktx:2.11.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
+androidx.lifecycle:lifecycle-process:2.11.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
+androidx.lifecycle:lifecycle-runtime:2.11.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
+androidx.lifecycle:lifecycle-runtime-android:2.11.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
+androidx.lifecycle:lifecycle-runtime-ktx:2.11.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
+androidx.lifecycle:lifecycle-runtime-ktx-android:2.11.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
+androidx.lifecycle:lifecycle-service:2.11.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
+androidx.lifecycle:lifecycle-viewmodel:2.11.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
+androidx.lifecycle:lifecycle-viewmodel-android:2.11.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
+androidx.lifecycle:lifecycle-viewmodel-ktx:2.11.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
+androidx.lifecycle:lifecycle-viewmodel-savedstate:2.11.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
+androidx.lifecycle:lifecycle-viewmodel-savedstate-android:2.11.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
 androidx.loader:loader:1.0.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
-androidx.localbroadcastmanager:localbroadcastmanager:1.0.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
-androidx.print:print:1.0.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
 androidx.recyclerview:recyclerview:1.4.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
 androidx.resourceinspection:resourceinspection-annotation:1.0.1 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
-androidx.savedstate:savedstate:1.2.1 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
-androidx.startup:startup-runtime:1.1.1 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
+androidx.room:room-common:2.7.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
+androidx.room:room-common-jvm:2.7.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
+androidx.room:room-runtime:2.7.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
+androidx.room:room-runtime-android:2.7.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
+androidx.savedstate:savedstate:1.4.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
+androidx.savedstate:savedstate-android:1.4.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
+androidx.sqlite:sqlite:2.5.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
+androidx.sqlite:sqlite-android:2.5.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
+androidx.sqlite:sqlite-framework:2.5.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
+androidx.sqlite:sqlite-framework-android:2.5.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
+androidx.startup:startup-runtime:1.2.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
 androidx.swiperefreshlayout:swiperefreshlayout:1.2.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
 androidx.tracing:tracing:1.2.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
+androidx.tracing:tracing-ktx:1.2.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
 androidx.transition:transition:1.5.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
 androidx.vectordrawable:vectordrawable:1.1.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
 androidx.vectordrawable:vectordrawable-animated:1.1.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
 androidx.versionedparcelable:versionedparcelable:1.1.1 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
 androidx.viewpager:viewpager:1.0.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
 androidx.viewpager2:viewpager2:1.1.0-beta02 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
-com.google.android.material:material:1.12.0 — Apache-2.0 — https://github.com/material-components/material-components-android
-com.google.errorprone:error_prone_annotations:2.15.0 — Apache-2.0 — https://github.com/google/error-prone
+androidx.work:work-runtime:2.12.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
+androidx.work:work-runtime-ktx:2.12.0 — Apache-2.0 — https://android.googlesource.com/platform/frameworks/support
+com.caverock:androidsvg-aar:1.4 — Apache-2.0 — https://github.com/BigBadaboom/androidsvg
+com.google.android.material:material:1.14.0 — Apache-2.0 — https://github.com/material-components/material-components-android
+com.google.code.findbugs:jsr305:3.0.2 — Apache-2.0 — https://repo.maven.apache.org/maven2/com/google/code/findbugs/jsr305/3.0.2/jsr305-3.0.2.pom
+com.google.code.gson:gson:2.13.2 — Apache-2.0 — https://github.com/google/gson
+com.google.crypto.tink:tink:1.23.0 — Apache-2.0 — https://github.com/tink-crypto/tink-java
+com.google.errorprone:error_prone_annotations:2.41.0 — Apache-2.0 — https://github.com/google/error-prone
 com.google.guava:listenablefuture:1.0 — Apache-2.0 — https://github.com/google/guava
-com.squareup.okhttp3:okhttp:4.12.0 — Apache-2.0 — https://github.com/square/okhttp
-com.squareup.okio:okio:3.6.0 — Apache-2.0 — https://github.com/square/okio
-com.squareup.okio:okio-jvm:3.6.0 — Apache-2.0 — https://github.com/square/okio
+com.google.protobuf:protobuf-java:4.33.6 — BSD-3-Clause — https://github.com/protocolbuffers/protobuf
+com.google.zxing:core:3.5.4 — Apache-2.0 — https://github.com/zxing/zxing
+com.squareup.okhttp3:okhttp:5.5.0 — Apache-2.0 — https://github.com/square/okhttp
+com.squareup.okhttp3:okhttp-android:5.5.0 — Apache-2.0 — https://github.com/square/okhttp
+com.squareup.okio:okio:3.18.1 — Apache-2.0 — https://github.com/square/okio
+com.squareup.okio:okio-jvm:3.18.1 — Apache-2.0 — https://github.com/square/okio
 org.jetbrains:annotations:23.0.0 — Apache-2.0 — https://github.com/JetBrains/java-annotations
-org.jetbrains.kotlin:kotlin-bom:1.8.22 — Apache-2.0 — https://github.com/JetBrains/kotlin
-org.jetbrains.kotlin:kotlin-stdlib:2.1.0 — Apache-2.0 — https://github.com/JetBrains/kotlin
-org.jetbrains.kotlin:kotlin-stdlib-common:2.1.0 — Apache-2.0 — https://github.com/JetBrains/kotlin
-org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.9.10 — Apache-2.0 — https://github.com/JetBrains/kotlin
-org.jetbrains.kotlin:kotlin-stdlib-jdk8:1.9.10 — Apache-2.0 — https://github.com/JetBrains/kotlin
-org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2 — Apache-2.0 — https://github.com/Kotlin/kotlinx.coroutines
-org.jetbrains.kotlinx:kotlinx-coroutines-bom:1.10.2 — Apache-2.0 — https://github.com/Kotlin/kotlinx.coroutines
-org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2 — Apache-2.0 — https://github.com/Kotlin/kotlinx.coroutines
-org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.10.2 — Apache-2.0 — https://github.com/Kotlin/kotlinx.coroutines
-org.jetbrains.kotlinx:kotlinx-serialization-bom:1.7.3 — Apache-2.0 — https://github.com/Kotlin/kotlinx.serialization
-org.jetbrains.kotlinx:kotlinx-serialization-core:1.7.3 — Apache-2.0 — https://github.com/Kotlin/kotlinx.serialization
-org.jetbrains.kotlinx:kotlinx-serialization-core-jvm:1.7.3 — Apache-2.0 — https://github.com/Kotlin/kotlinx.serialization
-org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3 — Apache-2.0 — https://github.com/Kotlin/kotlinx.serialization
-org.jetbrains.kotlinx:kotlinx-serialization-json-jvm:1.7.3 — Apache-2.0 — https://github.com/Kotlin/kotlinx.serialization
+org.jetbrains.kotlin:kotlin-bom:2.4.20 — Apache-2.0 — https://github.com/JetBrains/kotlin
+org.jetbrains.kotlin:kotlin-stdlib:2.4.20 — Apache-2.0 — https://github.com/JetBrains/kotlin
+org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0 — Apache-2.0 — https://github.com/Kotlin/kotlinx.coroutines
+org.jetbrains.kotlinx:kotlinx-coroutines-bom:1.11.0 — Apache-2.0 — https://github.com/Kotlin/kotlinx.coroutines
+org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0 — Apache-2.0 — https://github.com/Kotlin/kotlinx.coroutines
+org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.11.0 — Apache-2.0 — https://github.com/Kotlin/kotlinx.coroutines
+org.jetbrains.kotlinx:kotlinx-serialization-bom:1.11.0 — Apache-2.0 — https://github.com/Kotlin/kotlinx.serialization
+org.jetbrains.kotlinx:kotlinx-serialization-core:1.11.0 — Apache-2.0 — https://github.com/Kotlin/kotlinx.serialization
+org.jetbrains.kotlinx:kotlinx-serialization-core-jvm:1.11.0 — Apache-2.0 — https://github.com/Kotlin/kotlinx.serialization
+org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0 — Apache-2.0 — https://github.com/Kotlin/kotlinx.serialization
+org.jetbrains.kotlinx:kotlinx-serialization-json-jvm:1.11.0 — Apache-2.0 — https://github.com/Kotlin/kotlinx.serialization
+org.jsoup:jsoup:1.23.2 — MIT — https://github.com/jhy/jsoup
 org.jspecify:jspecify:1.0.0 — Apache-2.0 — https://github.com/jspecify/jspecify
+org.unifiedpush.android:connector:3.3.5 — Apache-2.0 — https://codeberg.org/UnifiedPush/android-connector
+
+Protocol Buffers 4.33.6 license (https://github.com/protocolbuffers/protobuf/blob/v33.6/LICENSE):
+
+Copyright 2008 Google Inc.  All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+    * Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+    * Redistributions in binary form must reproduce the above
+copyright notice, this list of conditions and the following disclaimer
+in the documentation and/or other materials provided with the
+distribution.
+    * Neither the name of Google Inc. nor the names of its
+contributors may be used to endorse or promote products derived from
+this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+Code generated by the Protocol Buffer compiler is owned by the owner
+of the input file used when generating it.  This code is not
+standalone and requires a support library to be linked with it.  This
+support library is itself covered by the above license.
 
 OkHttp bundles the Public Suffix List, Mozilla Public License 2.0, https://publicsuffix.org/; its notice ships inside the okhttp artifact.
+jsoup 1.23.2 is distributed under the MIT License.
+
+The MIT License
+
+Copyright (c) 2009-2026 Jonathan Hedley <https://jsoup.org/>
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+NATIVE DECODER SOURCE DEPENDENCIES
+Verified vendored decoder subsets; build/test tools and APK binary retention are not inventoried here.
+
+Google woff2 1.0.2 — MIT — https://github.com/google/woff2/blob/1bccf208bca986e53a647dfe4811322adb06ecf8/LICENSE
+Immutable source: https://github.com/google/woff2/tree/1bccf208bca986e53a647dfe4811322adb06ecf8
+
+Copyright (c) 2013-2017 by the WOFF2 Authors.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+
+Google brotli 1.2.0 — MIT — https://github.com/google/brotli/blob/028fb5a23661f123017c060daa546b55cf4bde29/LICENSE
+Immutable source: https://github.com/google/brotli/tree/028fb5a23661f123017c060daa546b55cf4bde29
+
+Copyright (c) 2009, 2010, 2013-2016 by the Brotli Authors.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
 
 APACHE LICENSE 2.0
 

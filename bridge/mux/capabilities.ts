@@ -16,6 +16,8 @@
 //    hands back a path the operator pastes; the multiplexer is not involved, so it cannot decline it.
 //    It is host-local for every adapter because a mux adapter is host-local by rule (ADR 0011).
 
+import { formatMuxKey, parseMuxKey } from "./keys.ts";
+
 /**
  * Every capability an adapter may declare, in Collie's words.
  *
@@ -28,8 +30,15 @@ export const MUX_CAPABILITIES = [
   "gridScrollback",
   "agentDetection",
   "agentSessionRef",
+  "agentIdentity",
+  "agentMetadata",
+  "agentLifecycleWrites",
+  "agentAutomation",
+  "agentWaits",
+  "paneProcesses",
   "typeText",
   "sendKeys",
+  "guardedQueuedSend",
   "renamePane",
   "closePane",
   "setFocus",
@@ -40,8 +49,26 @@ export const MUX_CAPABILITIES = [
   "listWorktrees",
   "createWorktree",
   "openWorktree",
+  "removeWorktree",
   "pushTopologyEvents",
   "pushPaneEvents",
+  "listSessions",
+  "paneLayout",
+  "portableLayouts",
+  "tabTransfer",
+  "paneSplit",
+  "paneResize",
+  "paneZoom",
+  "paneSwap",
+  "paneMove",
+  "paneDirectionalFocus",
+  "workspaceRename",
+  "workspaceClose",
+  "workspaceMove",
+  "workspaceMoveBlock",
+  "workspaceFocus",
+  "tabMove",
+  "tabFocus",
 ] as const;
 
 /** One declarable capability. */
@@ -69,6 +96,11 @@ export type MuxTopologyLatency =
   | { readonly kind: "push" }
   | { readonly kind: "bounded"; readonly ms: number };
 
+/** The largest single pane-read request this adapter accepts without changing its semantics. */
+export interface MuxReadLimits {
+  readonly maxRequestedLines: number;
+}
+
 /**
  * The route that consumes each capability — the evidence the set was derived rather than invented.
  *
@@ -80,11 +112,21 @@ export const MUX_CAPABILITY_ROUTES = {
   gridScrollback:
     "GET /api/pane/:id?lines=N — a read that reaches behind the viewport, which is what makes the mirror's 'Load older' meaningful (see MuxPane.readableLines).",
   agentDetection:
-    "GET /api/snapshot — the split into `agents` and `shellPanes` and the triage sort (STATUS_RANK) both need the mux to say which agent a pane holds and how it is doing.",
+    "GET /api/snapshot — the split into `agents` and `shellPanes` and every status mark (needs you, working) both need the mux to say which agent a pane holds and how it is doing.",
   agentSessionRef:
     "GET /api/pane/:id/history — the journal keys an on-disk log off the session an agent named. Without this, history is absent, not empty (bridge/journal/registry.ts).",
+  agentIdentity:
+    "GET /api/pane/:id/agent — state, readiness, completion sequence and native session provenance supplied by the owning runtime; lifecycle authority source is reported as unknown when the runtime does not expose it.",
+  agentMetadata: "POST /api/pane/:id/metadata and POST /api/workspace/:id/metadata — bounded source-owned display metadata with no lifecycle authority.",
+  agentLifecycleWrites:
+    "POST /api/pane/:id/agent/{state,session,release,authority/clear} — requires source registration and atomic current-occupant compare-and-set; unsupported while the owning runtime lacks that guarantee.",
+  agentAutomation: "GET /api/agents/named and /api/pane/:id/agent/{control,read,explain}; POST /api/pane/:id/agent/{start,rename,prompt,focus,keys,input} — named, original-occupant actions with retained one-shot outcomes.",
+  agentWaits: "POST/GET/DELETE /api/waits — bounded original-occupant lifecycle, output and closed-event observations; cancellation never undoes delivered work.",
+  paneProcesses: "GET /api/pane/:id/processes — sensitive process and foreground-directory diagnostics from the owning runtime; requires device-read.",
   typeText: "POST /api/pane/:id/reply — step one, the literal text.",
   sendKeys: "POST /api/pane/:id/reply (step two, the submit key) and POST /api/pane/:id/keys (the Keys tray).",
+  guardedQueuedSend:
+    "POST /api/pane/:id/keys with the queued-send identity, occupant, and prompt guard revalidated before dispatch.",
   renamePane: "POST /api/pane/:id/rename — set or clear a pane's operator-chosen label.",
   closePane: "POST /api/pane/:id/close — kill the pane and the agent in it.",
   setFocus:
@@ -94,15 +136,35 @@ export const MUX_CAPABILITY_ROUTES = {
   closeTab: "POST /api/tab/:id/close — a bulk pane-close.",
   createSpace: "POST /api/workspace — a new space, opening a fresh shell.",
   listWorktrees:
-    "GET /api/workspace/:id/worktrees — the worktrees of the repo that space sits in, so the sheet can show them. Absent ⇒ no worktree section at all, which is the honest degrade: without the list there is nothing to open and nothing to remove.",
+    "No route asks it since 1.20.0: the space-scoped list (GET /api/workspace/:id/worktrees) lost its last caller when the New sheet moved to GET /api/worktree/plan (ADR 0093), and was removed. Kept on the port for the conformance set.",
   createWorktree:
-    "POST /api/workspace/:id/worktree — a new branch in a new worktree, opened as its own space.",
+    "POST /api/worktree — a new branch in a new worktree, from the folder the New sheet names, opened as its own space (ADR 0093). Absent ⇒ no branch row on the New page or in the pane sheet.",
   openWorktree:
     "POST /api/workspace/:id/worktree/open — show a worktree that already exists on disk. Idempotent: a worktree already open answers with the space showing it rather than refusing.",
+  removeWorktree:
+    "POST /api/workspace/:id/worktree/remove — remove only the discovered linked checkout owned by this workspace; never deletes its branch or the main checkout.",
   pushTopologyEvents:
     "bridge/event-poker.ts — panes/tabs/spaces appearing, closing or being renamed arrive as a push, so the snapshot poll can idle. Absent ⇒ the adapter polls to keep the same promise, and the poker learns nothing.",
   pushPaneEvents:
     "bridge/event-poker.ts — one pane's content or status changing arrives as a push. Same fallback, same promise.",
+  listSessions:
+    "bridge/sessions.ts `SessionRegistry.refresh()`, the OTHER instances of this multiplexer on this machine, each with the endpoint to dial it, so one bridge can front them all. It fills the snapshot's `sessions` list and what `?session=<name>` can select. ABSENT IS THE DEFAULT AND IT IS THE HARMLESS DIRECTION: the registry pins to the primary, the phone sees the one session it saw before this capability existed, and nothing scans anything. Stated here rather than left implicit, because the absence of this key decides whether a filesystem or a process listing is walked at all (M22 counsel).",
+  paneLayout: "GET /api/pane/:id/layout, /neighbor and /edges — inspect the current layout and adjacent panes without moving focus.",
+  portableLayouts: "GET /api/tab/:id/layout/export and planned layout import/split-ratio routes — export and restore bounded layouts with declared commands.",
+  tabTransfer: "POST /api/tab/:id/transfer/plan and guarded pane.move — transfer an entire existing tab through owner-bound per-pane receipts without creating replacement shells.",
+  paneSplit: "POST /api/pane/:id/layout/split — split the selected pane without changing operator focus by default.",
+  paneResize: "POST /api/pane/:id/layout/resize — resize a pane using a fresh target plan.",
+  paneZoom: "POST /api/pane/:id/layout/zoom — zoom or restore the selected pane using a fresh target plan.",
+  paneSwap: "POST /api/pane/:id/layout/swap — swap panes in one tab using a fresh target plan.",
+  paneMove: "POST /api/pane/:id/layout/move — move a pane to a validated tab or workspace destination.",
+  paneDirectionalFocus: "POST /api/pane/:id/layout/focus-direction — move focus only after an explicit operator action.",
+  workspaceRename: "POST /api/workspace/:id/rename — rename the selected workspace.",
+  workspaceClose: "POST /api/workspace/:id/close — close one workspace or a confirmed linked-worktree group; checkouts remain on disk.",
+  workspaceMove: "POST /api/workspace/:id/move — move one workspace using the mux pre-removal index.",
+  workspaceMoveBlock: "POST /api/workspaces/reorder — move a unique ordered block before an explicit workspace anchor.",
+  workspaceFocus: "POST /api/workspace/:id/focus — explicitly focus a workspace in the owning terminal.",
+  tabMove: "POST /api/tab/:id/move — reorder a tab only within its owning workspace.",
+  tabFocus: "POST /api/tab/:id/focus — explicitly focus a tab in the owning terminal.",
 } satisfies Record<MuxCapability, string>;
 
 /**
@@ -150,6 +212,8 @@ export interface MuxCapabilityDeclaration {
    * adapter never said.
    */
   readonly topologyLatency: MuxTopologyLatency;
+  /** Maximum request size, independent of how much history an individual pane retained. */
+  readonly readLimits: MuxReadLimits;
 }
 
 /**
@@ -175,6 +239,8 @@ export interface MuxCapabilityInput {
   readonly spaces?: MuxSpaceCapacity;
   /** Required — see {@link MuxCapabilityDeclaration.topologyLatency} for why there is no default. */
   readonly topologyLatency: MuxTopologyLatency;
+  /** Maximum safe request size; omitted declarations use the conservative legacy ceiling. */
+  readonly readLimits?: MuxReadLimits;
 }
 
 /**
@@ -185,6 +251,10 @@ export interface MuxCapabilityInput {
  * behaviour none of them implement.
  */
 export function declareCapabilities(input: MuxCapabilityInput): MuxCapabilityDeclaration {
+  const maxRequestedLines = input.readLimits?.maxRequestedLines ?? 1_000;
+  if (!Number.isSafeInteger(maxRequestedLines) || maxRequestedLines < 1 || maxRequestedLines > 10_000) {
+    throw new RangeError("mux read limit must be an integer between 1 and 10000");
+  }
   const claimed = new Set<MuxCapability>(input.supports);
   // Spelled out rather than mapped over MUX_CAPABILITIES, and that is the point: the compiler now
   // demands an answer for every capability, so adding one to the list above fails the build here
@@ -194,8 +264,17 @@ export function declareCapabilities(input: MuxCapabilityInput): MuxCapabilityDec
     gridScrollback: claimed.has("gridScrollback"),
     agentDetection: claimed.has("agentDetection"),
     agentSessionRef: claimed.has("agentSessionRef"),
+    agentIdentity: claimed.has("agentIdentity"),
+    agentMetadata: claimed.has("agentMetadata"),
+    agentLifecycleWrites: claimed.has("agentLifecycleWrites"),
+    agentAutomation: claimed.has("agentAutomation"),
+    agentWaits: claimed.has("agentWaits"),
+    paneProcesses: claimed.has("paneProcesses"),
     typeText: claimed.has("typeText"),
     sendKeys: claimed.has("sendKeys"),
+    // This is a bridge-owned guard around the same one-shot keys port; adapters with no keys door
+    // cannot implement it. The recipe is still filtered through keysDeliverable at the route.
+    guardedQueuedSend: claimed.has("sendKeys"),
     renamePane: claimed.has("renamePane"),
     closePane: claimed.has("closePane"),
     setFocus: claimed.has("setFocus"),
@@ -206,8 +285,26 @@ export function declareCapabilities(input: MuxCapabilityInput): MuxCapabilityDec
     listWorktrees: claimed.has("listWorktrees"),
     createWorktree: claimed.has("createWorktree"),
     openWorktree: claimed.has("openWorktree"),
+    removeWorktree: claimed.has("removeWorktree"),
     pushTopologyEvents: claimed.has("pushTopologyEvents"),
     pushPaneEvents: claimed.has("pushPaneEvents"),
+    listSessions: claimed.has("listSessions"),
+    paneLayout: claimed.has("paneLayout"),
+    portableLayouts: claimed.has("portableLayouts"),
+    tabTransfer: claimed.has("tabTransfer"),
+    paneSplit: claimed.has("paneSplit"),
+    paneResize: claimed.has("paneResize"),
+    paneZoom: claimed.has("paneZoom"),
+    paneSwap: claimed.has("paneSwap"),
+    paneMove: claimed.has("paneMove"),
+    paneDirectionalFocus: claimed.has("paneDirectionalFocus"),
+    workspaceRename: claimed.has("workspaceRename"),
+    workspaceClose: claimed.has("workspaceClose"),
+    workspaceMove: claimed.has("workspaceMove"),
+    workspaceMoveBlock: claimed.has("workspaceMoveBlock"),
+    workspaceFocus: claimed.has("workspaceFocus"),
+    tabMove: claimed.has("tabMove"),
+    tabFocus: claimed.has("tabFocus"),
   } satisfies Record<MuxCapability, boolean>;
   return {
     supports,
@@ -215,6 +312,7 @@ export function declareCapabilities(input: MuxCapabilityInput): MuxCapabilityDec
     notes: input.notes ?? {},
     spaces: input.spaces ?? "many",
     topologyLatency: input.topologyLatency,
+    readLimits: { maxRequestedLines },
   };
 }
 
@@ -224,6 +322,30 @@ export function supportsCapability(
   capability: MuxCapability,
 ): boolean {
   return declaration.supports[capability];
+}
+
+/**
+ * Whether this multiplexer can deliver EVERY key of a sequence, as the keys it names.
+ *
+ * False when `sendKeys` is not declared at all, when a key is not a neutral spelling, or when a key
+ * is declared unsupported — as the whole chord (`ctrl+Enter`) or as its base key (Herdr's `PageUp`
+ * refuses `shift+PageUp` too, keys.ts there). One undeliverable key makes the whole sequence
+ * undeliverable: the keys of a sequence mean something together, and its front half alone is a
+ * different action.
+ *
+ * This is how a surface that offers a key as a button (the chat answer's `sendQueuedNow`) asks the
+ * pane's multiplexer, as a capability fact rather than by its name.
+ */
+export function keysDeliverable(
+  declaration: Pick<MuxCapabilityDeclaration, "supports" | "unsupportedKeys">,
+  keys: readonly string[],
+): boolean {
+  if (!declaration.supports.sendKeys) return false;
+  const refused = new Set(declaration.unsupportedKeys);
+  return keys.every((spelling) => {
+    const parsed = parseMuxKey(spelling);
+    return parsed !== null && !refused.has(formatMuxKey(parsed)) && !refused.has(parsed.key);
+  });
 }
 
 /** The declared capabilities, sorted — for the config surface (M10/06), the matrix and tests. */

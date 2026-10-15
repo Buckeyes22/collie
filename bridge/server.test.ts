@@ -1,9 +1,16 @@
 import { describe, expect, test } from "bun:test";
 
-import { updateStartVerdict, type PackUpdateRow } from "./update-action.ts";
+import { updateStartVerdict, type CrewUpdateRow } from "./update-action.ts";
+import { encodeStyledRegion, styledRegionLines } from "../web/src/lib/styled-region.ts";
 
 import {
   accessLogRecord,
+  readNativePushBody,
+  afterPaneInput,
+  isPaneInput,
+  blobRoute,
+  BLOB_MAX_BYTES,
+  sniffBlobType,
   bridgeConfigBody,
   muxConfigBody,
   muxLogoResponse,
@@ -11,34 +18,82 @@ import {
   cacheControlFor,
   checkAccess,
   launch,
+  createWorkspace,
+  foldersBody,
+  parseStarFolderRequest,
+  serveFolderRoute,
+  type FolderRouteCaller,
   marksPaneSeen,
+  paneGateLevel,
+  shouldMaskForwardedAnswer,
   SEEN_HEADER,
   deviceAuth,
   guard,
+  type PairingGate,
   historyParams,
+  discoverProcesses,
+  discoveryHints,
+  journalRefOf,
+  paneScreen,
   isHostAllowed,
   isLoopbackPeer,
   isReservedAuthPath,
+  reservedAuthPlaceholder,
   keysPane,
+  cacheRulesRoute,
   launchersRoute,
   normalizeTabLabel,
+  hasSplitUrl,
   paneReadResponse,
+  paneHistory,
+  readPane,
   parsePairRequest,
   parseSnoozeRequest,
+  parseNotifyPrefsPatch,
+  parseCacheWatchRequest,
+  parseCacheWatchForget,
+  cacheWatchable,
   replyPane,
+  requestBodyCap,
+  pairedLabel,
   requestDevice,
+  resetStaticGzipCache,
   resolveStaticPath,
   sendReplySteps,
+  serveStatic,
+  staticGzipStats,
   startupWarnings,
   healthBody,
   withBuildHeader,
   type ReplySender,
+  stripMount,
+  mountIndexHtml,
+  withHsts,
+  withControlAuthority,
+  arrivedOverHttps,
+  chatBodyForMux,
+  queuedSendScreenSafe,
 } from "./server.ts";
+import {
+  createPairLimiter,
+  pairSourceKey,
+  PAIR_ATTEMPTS_PER_WINDOW,
+  PAIR_WINDOW_MS,
+} from "./pair-limit.ts";
 import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { appendFile, mkdir, mkdtemp, realpath, readFile, rm, truncate, utimes, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { AuditLog, type AuditEntry } from "./audit.ts";
+import { answerPane, memoryAnswerReceipts, NO_ANSWERS } from "./durable/answer.ts";
+import { withOpenAsks, withTurn } from "./durable/pane-asks.ts";
+import { controlPane, memoryControlReceipts, NO_CONTROLS, NO_RAW_INPUT, rawInputRefusal } from "./durable/control.ts";
+import { DurableMux } from "./mux/durable/adapter.ts";
+import { DurableSocketClient } from "./mux/durable/client.ts";
+import { PairingStore, sha256Hex, type PairingIo } from "./pairing.ts";
+import { FolderStore, MAX_FAVOURITES, MAX_FOLDER_CHARS } from "./folders.ts";
+import type { SessionRuntime } from "./sessions.ts";
 import type { Config } from "./config.ts";
 import { declareCapabilities, MUX_CAPABILITIES } from "./mux/capabilities.ts";
 import { withAgentBeacons } from "./beacon/decorate.ts";
@@ -46,28 +101,49 @@ import { fakeBeaconReader } from "./beacon/fake.ts";
 import { withAgentHints } from "./beacon/hint.ts";
 import { HerdrMux, herdrMuxFactory } from "./mux/herdr/adapter.ts";
 import { tmuxMuxFactory } from "./mux/tmux/adapter.ts";
+import type { MuxCapabilityDeclaration } from "./mux/capabilities.ts";
 import type { HerdrClient, PaneRead } from "./mux/herdr/client.ts";
 import {
   muxAck,
+  muxGone,
   muxOk,
   muxRefused,
   type MuxAck,
   type MuxAdapter,
   type MuxCreatedPane,
   type MuxGrid,
+  type MuxGridRequest,
   type MuxOutcome,
   type MuxSpaceRequest,
   type MuxTabRequest,
 } from "./mux/types.ts";
-import { neverProxy } from "./pack/fixtures.ts";
-import { PackLead } from "./pack/lead.ts";
-import { PackRegistry } from "./pack/registry.ts";
+import { muxCaps, neverProxy } from "./crew/fixtures.ts";
+import { crewRouteFor, forwardHeaders } from "./crew/forward.ts";
+import { crewDeviceOf, crewGate } from "./crew/peer-gate.ts";
+import { CrewLead } from "./crew/lead.ts";
+import { NARROW_PLAN, snapshotPlan } from "./crew/merge.ts";
+import { CrewRegistry, selectHostFrom } from "./crew/registry.ts";
+import { selectView } from "./sessions.ts";
+import { DEFAULT_MAX_UPLOAD_BYTES } from "./uploads.ts";
+import { MAX_STT_AUDIO_BYTES } from "./stt/http.ts";
 import { computeEtag } from "./http-cache.ts";
+import { queuedMessagesDigest, queuedSendOccupant } from "./journal/queued-send.ts";
+import { LiveWindows, type ChatWindowBody } from "./journal/live.ts";
+import { TranscriptStore } from "./journal/store.ts";
+import { claudeJournal } from "./journal/claude.ts";
+import { grokJournal } from "./journal/grok.ts";
+import { museJournal } from "./journal/muse.ts";
+import type { JournalAdapter } from "./journal/types.ts";
 import {
   MUX_LOGO_PATH,
   type AgentView,
   type Launcher,
+  type CacheRulesResponse,
+  type FoldersResponse,
   type LaunchersResponse,
+  type MuxConfig,
+  type PaneReadResponse,
+  type PaneWire,
   type SnapshotResponse,
 } from "./types.ts";
 import type { StateEngine } from "./state-engine.ts";
@@ -82,26 +158,49 @@ function req(headers: Record<string, string>): Request {
   return new Request("http://collie.invalid/api/snapshot", { headers });
 }
 
+describe("requestBodyCap", () => {
+  test("is the upload cap plus headroom at the default", () => {
+    expect(requestBodyCap(cfg())).toBe(DEFAULT_MAX_UPLOAD_BYTES + 2 * 1024 * 1024);
+  });
+
+  test("never drops below what /api/stt reads, so a small upload cap cannot mute the microphone", () => {
+    // The floor `COLLIE_MAX_UPLOAD_MB=1` would otherwise stop the runtime at 3 MB, and a voice note
+    // between 3 and 8 MB would die there instead of getting the handler's own `stt.too_large`.
+    const cap = requestBodyCap(cfg({ maxUploadBytes: 1024 * 1024 }));
+    expect(cap).toBeGreaterThan(MAX_STT_AUDIO_BYTES);
+  });
+
+  test("follows the operator's number up when it is the larger of the two", () => {
+    expect(requestBodyCap(cfg({ maxUploadBytes: 64 * 1024 * 1024 }))).toBe(64 * 1024 * 1024 + 2 * 1024 * 1024);
+  });
+});
+
 function cfg(overrides: Partial<Config> = {}): Config {
   return {
     mux: "herdr",
     muxEndpoint: "/tmp/herdr.sock",
     tmuxBin: "",
     zellijBin: "",
+    ternBin: "",
     socketPath: "/tmp/herdr.sock",
     port: 8787,
     host: "127.0.0.1",
     pollMs: 1500,
     pollIdleMs: 12_000,
     notifyDelayMs: 30_000,
+    cacheWarnSeconds: 300,
     readLines: 200,
     transcript: true,
     journalRoots: {
       claude: ["/tmp/claude-projects"],
       codex: ["/nope/codex"],
+      gemini: ["/nope/gemini"],
       pi: ["/nope/pi"],
       opencode: ["/nope/opencode"],
       grok: ["/nope/grok"],
+      hermes: ["/nope/hermes"],
+      muse: ["/nope/muse"],
+      openclaw: ["/nope/openclaw"],
     },
     submitKeys: ["Enter"],
     commandsFile: "/nope/commands.toml",
@@ -110,9 +209,13 @@ function cfg(overrides: Partial<Config> = {}): Config {
     themeFile: "/nope/theme.toml",
     fontsDir: "/nope/fonts",
     launchersFile: "/nope/launchers.toml",
+    cacheRulesFile: "/nope/cache-rules.toml",
     trustedUser: "",
     trustedUserOptional: false,
+    accessTeam: "",
+    accessAud: [],
     auditContent: "preview",
+    redact: true,
     deviceHeader: "",
     deviceAllowlist: [],
     allowedOrigins: [],
@@ -128,6 +231,9 @@ function cfg(overrides: Partial<Config> = {}): Config {
     stateDir: "/tmp/state",
     multiSession: true,
     skipServe: false,
+    basePath: "/",
+    maxUploadBytes: DEFAULT_MAX_UPLOAD_BYTES,
+    uploadExtraTypes: [],
     ...overrides,
   };
 }
@@ -352,19 +458,21 @@ describe("isHostAllowed", () => {
 });
 
 describe("resolveStaticPath — static path traversal guard", () => {
-  const WEB = "/srv/collie/web/dist";
+  // `join`, because the resolver `normalize`s its result and the guard compares it to `webDir + sep`:
+  // on Windows a `/`-spelled webDir would never match its own backslashed output.
+  const WEB = join("/srv", "collie", "web", "dist");
 
   test("resolves a normal file under the web dir", () => {
     expect(resolveStaticPath("/assets/app.js", WEB)).toEqual({
       rel: "assets/app.js",
-      full: "/srv/collie/web/dist/assets/app.js",
+      full: join(WEB, "assets", "app.js"),
     });
   });
 
   test("maps / to index.html", () => {
     expect(resolveStaticPath("/", WEB)).toEqual({
       rel: "index.html",
-      full: "/srv/collie/web/dist/index.html",
+      full: join(WEB, "index.html"),
     });
   });
 
@@ -459,7 +567,8 @@ describe("sendReplySteps — two-step send & partial-failure clarity", () => {
 function asMux(fake: Partial<HerdrClient>): MuxAdapter {
   // SAFETY: the pane-write handlers under test reach exactly readPane / sendPaneText / sendPaneKeys,
   // all of which FakePaneClient implements; no other member is reachable from these code paths.
-  return new HerdrMux(fake as HerdrClient);
+  // A pane write never asks for the session list, so an empty one is unobservable here.
+  return new HerdrMux(fake as HerdrClient, () => []);
 }
 
 describe("pane write prompt binding", () => {
@@ -507,6 +616,8 @@ describe("pane write prompt binding", () => {
     text?: string;
     submit?: boolean;
     expected_prompt?: string | number | null;
+    expected_styled?: string | number | null;
+    expected_columns?: { start: number; end: number } | number[] | string | null;
   }
 
   function request(body: PaneActionBody): Request {
@@ -584,6 +695,17 @@ describe("pane write prompt binding", () => {
     expect(entries[0]?.detail).toMatchObject({
       promptBinding: { checked: true, passed: true },
     });
+  });
+
+  test("a bound region as wide as a full-screen picker on a wide pane is accepted", async () => {
+    const client = new FakePaneClient();
+    // 59 rows of 220 columns: 12,980 characters, over the old 8192 cap and inside the new one.
+    const expected = Array.from({ length: 59 }, (_, index) => `${String(index).padStart(2, "0")}`.padEnd(220, "x")).join("\n");
+    client.text = expected;
+    const { audit } = auditEntries();
+    const res = await keysPane(asMux(client), cfg(), "w1:p1", request({ keys: ["Enter"], expected_prompt: expected }), audit, null, "default");
+    expect(res.status).toBe(200);
+    expect(client.keys).toEqual([["w1:p1", ["Enter"]]]);
   });
 
   test("binding read depth grows beyond a small configured window to contain the expectation", async () => {
@@ -668,6 +790,7 @@ describe("pane write prompt binding", () => {
       ok: false,
       error: "prompt changed",
       code: "prompt_changed",
+      reason: "not_found",
     });
     expect(client.keys).toEqual([]);
     expect(client.texts).toEqual([]);
@@ -718,7 +841,7 @@ describe("pane write prompt binding", () => {
   });
 
   test("rejects oversized and non-string expected_prompt before a keys write", async () => {
-    for (const expected_prompt of ["x".repeat(8193), 42]) {
+    for (const expected_prompt of ["x".repeat(32_769), 42]) {
       const client = new FakePaneClient();
       const { audit } = auditEntries();
       const res = await keysPane(
@@ -738,7 +861,7 @@ describe("pane write prompt binding", () => {
   });
 
   test("rejects oversized and non-string expected_prompt before a reply write", async () => {
-    for (const expected_prompt of ["x".repeat(8193), null]) {
+    for (const expected_prompt of ["x".repeat(32_769), null]) {
       const client = new FakePaneClient();
       const { audit } = auditEntries();
       const res = await replyPane(
@@ -757,6 +880,864 @@ describe("pane write prompt binding", () => {
       expect(client.keys).toEqual([]);
     }
   });
+
+  // `expected_styled` (ADR 0080 point 7): the phone's canonical styled lines of the region
+  // `expected_prompt` names, for a pointer drawn only as a background colour. Same single read.
+  describe("expected_styled", () => {
+    const E = "\u001b";
+    const chips = (pointer: 0 | 1) =>
+      [
+        "Permission required",
+        `${pointer === 0 ? `${E}[43m` : ""} Allow once ${E}[0m  ${pointer === 1 ? `${E}[43m` : ""} Reject ${E}[0m`,
+      ].join("\n");
+    const TEXT_REGION = "Permission required\n Allow once    Reject";
+    const styledOf = (screen: string): string => encodeStyledRegion(styledRegionLines(screen));
+
+    test("a matching pair sends the keys after ONE read, for keys and for reply", async () => {
+      const client = new FakePaneClient();
+      client.text = chips(0);
+      const { audit, entries } = auditEntries();
+      const body = { keys: ["Enter"], expected_prompt: TEXT_REGION, expected_styled: styledOf(chips(0)) };
+      const res = await keysPane(asMux(client), cfg(), "w1:p1", request(body), audit, "phone", "default");
+      expect(res.status).toBe(200);
+      expect(client.reads).toHaveLength(1);
+      expect(client.keys).toEqual([["w1:p1", ["Enter"]]]);
+      expect(entries[0]?.detail).toMatchObject({ promptBinding: { checked: true, passed: true } });
+
+      const replied = await replyPane(
+        asMux(client),
+        cfg(),
+        "w1:p1",
+        request({ text: "", submit: true, expected_prompt: TEXT_REGION, expected_styled: styledOf(chips(0)) }),
+        audit,
+        null,
+        "default",
+      );
+      expect(replied.status).toBe(200);
+      expect(client.reads).toHaveLength(2);
+    });
+
+    test("the highlight moved: the text still matches, the colours do not, so 409 and no keys", async () => {
+      const client = new FakePaneClient();
+      client.text = chips(1); // the pointer left the chip the phone verified
+      const { audit, entries } = auditEntries();
+      const res = await keysPane(
+        asMux(client),
+        cfg(),
+        "w1:p1",
+        request({ keys: ["Enter"], expected_prompt: TEXT_REGION, expected_styled: styledOf(chips(0)) }),
+        audit,
+        null,
+        "default",
+      );
+      expect(res.status).toBe(409);
+      expect(await res.json()).toEqual({
+        ok: false,
+        error: "prompt changed",
+        code: "prompt_changed",
+        reason: "style_not_found",
+      });
+      expect(client.reads).toHaveLength(1); // no second RPC
+      expect(client.keys).toEqual([]);
+      expect(entries[0]?.detail).toMatchObject({
+        promptBinding: { checked: true, passed: false, reason: "style_not_found" },
+      });
+    });
+
+    test("the same text without expected_styled still passes (an older phone)", async () => {
+      const client = new FakePaneClient();
+      client.text = chips(1);
+      const { audit } = auditEntries();
+      const res = await keysPane(
+        asMux(client),
+        cfg(),
+        "w1:p1",
+        request({ keys: ["Enter"], expected_prompt: TEXT_REGION }),
+        audit,
+        null,
+        "default",
+      );
+      expect(res.status).toBe(200);
+      expect(client.keys).toEqual([["w1:p1", ["Enter"]]]);
+    });
+
+    test("a style refusal on reply types nothing and submits nothing", async () => {
+      const client = new FakePaneClient();
+      client.text = chips(1);
+      const { audit } = auditEntries();
+      const res = await replyPane(
+        asMux(client),
+        cfg(),
+        "w1:p1",
+        request({ text: "hello", expected_prompt: TEXT_REGION, expected_styled: styledOf(chips(0)) }),
+        audit,
+        null,
+        "default",
+      );
+      expect(res.status).toBe(409);
+      expect(client.texts).toEqual([]);
+      expect(client.keys).toEqual([]);
+    });
+
+    test("a stale TEXT is still refused first, with the text check's own reason", async () => {
+      const client = new FakePaneClient();
+      client.text = "Command finished";
+      const { audit, entries } = auditEntries();
+      const res = await keysPane(
+        asMux(client),
+        cfg(),
+        "w1:p1",
+        request({ keys: ["Enter"], expected_prompt: TEXT_REGION, expected_styled: styledOf(chips(0)) }),
+        audit,
+        null,
+        "default",
+      );
+      expect(res.status).toBe(409);
+      expect(entries[0]?.detail).toMatchObject({ promptBinding: { reason: "not_found" } });
+    });
+
+    test("expected_styled without expected_prompt is a 400 before any read or write", async () => {
+      for (const route of ["keys", "reply"] as const) {
+        const client = new FakePaneClient();
+        const { audit } = auditEntries();
+        const body = { keys: ["Enter"], text: "hello", expected_styled: styledOf(chips(0)) };
+        const res =
+          route === "keys"
+            ? await keysPane(asMux(client), cfg(), "w1:p1", request(body), audit, null, "default")
+            : await replyPane(asMux(client), cfg(), "w1:p1", request(body), audit, null, "default");
+        expect(res.status).toBe(400);
+        expect(await res.text()).toBe("bad expected_styled");
+        expect(client.reads).toEqual([]);
+        expect(client.keys).toEqual([]);
+        expect(client.texts).toEqual([]);
+      }
+    });
+
+    test("rejects non-string and over-cap values: the cap is four times the prompt's", async () => {
+      for (const expected_styled of ["x".repeat(131_073), 42, null]) {
+        const client = new FakePaneClient();
+        const { audit } = auditEntries();
+        const res = await keysPane(
+          asMux(client),
+          cfg(),
+          "w1:p1",
+          request({ keys: ["1"], expected_prompt: TEXT_REGION, expected_styled }),
+          audit,
+          null,
+          "default",
+        );
+        expect(res.status).toBe(400);
+        expect(await res.text()).toBe("bad expected_styled");
+        expect(client.reads).toEqual([]);
+        expect(client.keys).toEqual([]);
+      }
+    });
+
+    test("a value at the cap is accepted past the parse (and then judged on its merits)", async () => {
+      const client = new FakePaneClient();
+      client.text = chips(0);
+      const { audit } = auditEntries();
+      const res = await keysPane(
+        asMux(client),
+        cfg(),
+        "w1:p1",
+        request({ keys: ["Enter"], expected_prompt: TEXT_REGION, expected_styled: `v1\n${"x".repeat(131_069)}` }),
+        audit,
+        null,
+        "default",
+      );
+      expect(res.status).toBe(409); // read and judged: the colours are not those
+      expect(client.reads).toHaveLength(1);
+    });
+
+    test("the 409 body names the refusing check by its reason code and carries no pane content", async () => {
+      const client = new FakePaneClient();
+      client.text = `${chips(1)}\nSECRET-PANE-CONTENT`;
+      const { audit } = auditEntries();
+      const stale = await keysPane(
+        asMux(client),
+        cfg(),
+        "w1:p1",
+        request({ keys: ["Enter"], expected_prompt: TEXT_REGION, expected_styled: styledOf(chips(0)) }),
+        audit,
+        null,
+        "default",
+      );
+      const body = await stale.text();
+      expect(stale.status).toBe(409);
+      expect(JSON.parse(body)).toEqual({
+        ok: false,
+        error: "prompt changed",
+        code: "prompt_changed",
+        reason: "style_not_found",
+      });
+      expect(body).not.toContain("SECRET-PANE-CONTENT");
+
+      const empty = await keysPane(
+        asMux(client),
+        cfg(),
+        "w1:p1",
+        request({ keys: ["Enter"], expected_prompt: TEXT_REGION, expected_styled: "v1" }),
+        audit,
+        null,
+        "default",
+      );
+      expect(await empty.json()).toMatchObject({ reason: "style_empty" });
+    });
+
+    test("an unknown format version is skipped on both routes: the text check decides and the audit says so", async () => {
+      // The highlight moved, which a v1 value would refuse, but the value is not v1.
+      const future = `v2\n${styledRegionLines(chips(0)).join("\n")}`;
+      const client = new FakePaneClient();
+      client.text = chips(1);
+      const { audit, entries } = auditEntries();
+      const keyed = await keysPane(
+        asMux(client),
+        cfg(),
+        "w1:p1",
+        request({ keys: ["Enter"], expected_prompt: TEXT_REGION, expected_styled: future }),
+        audit,
+        null,
+        "default",
+      );
+      expect(keyed.status).toBe(200);
+      expect(client.keys).toEqual([["w1:p1", ["Enter"]]]);
+      expect(entries[0]?.detail).toMatchObject({
+        promptBinding: { checked: true, passed: true, styled: "skipped_unknown_version" },
+      });
+
+      const replied = await replyPane(
+        asMux(client),
+        cfg(),
+        "w1:p1",
+        request({ text: "", submit: true, expected_prompt: TEXT_REGION, expected_styled: future }),
+        audit,
+        null,
+        "default",
+      );
+      expect(replied.status).toBe(200);
+      expect(entries[1]?.detail).toMatchObject({
+        promptBinding: { checked: true, passed: true, styled: "skipped_unknown_version" },
+      });
+
+      // A stale TEXT is still refused whatever the version says.
+      client.text = "Command finished";
+      const stale = await keysPane(
+        asMux(client),
+        cfg(),
+        "w1:p1",
+        request({ keys: ["Enter"], expected_prompt: TEXT_REGION, expected_styled: future }),
+        audit,
+        null,
+        "default",
+      );
+      expect(stale.status).toBe(409);
+    });
+
+    test("a checked style is recorded as such, and an unbound style leaves no styled key", async () => {
+      const client = new FakePaneClient();
+      client.text = chips(0);
+      const { audit, entries } = auditEntries();
+      await keysPane(
+        asMux(client),
+        cfg(),
+        "w1:p1",
+        request({ keys: ["Enter"], expected_prompt: TEXT_REGION, expected_styled: styledOf(chips(0)) }),
+        audit,
+        null,
+        "default",
+      );
+      await keysPane(
+        asMux(client),
+        cfg(),
+        "w1:p1",
+        request({ keys: ["Enter"], expected_prompt: TEXT_REGION }),
+        audit,
+        null,
+        "default",
+      );
+      expect(entries[0]?.detail).toMatchObject({ promptBinding: { styled: "checked" } });
+      expect(entries[1]?.detail).not.toHaveProperty("promptBinding.styled");
+    });
+  });
+
+  // `expected_columns` (web/src/lib/column-range.ts): the columns of each row the phone read its
+  // region from, for a dialog beside something that moves on its own (Oh My Pi's side panel). The
+  // fresh read is cut to those columns before it is compared. Same single read.
+  describe("expected_columns", () => {
+    const RULE = "─".repeat(12);
+    const screen = (panel: string, question = "Pick a color?") =>
+      [`${RULE}SESSION`, ` ${question}`.padEnd(12) + panel, " → 1. Red".padEnd(12) + "TOOLS 1", RULE, "status"].join("\n");
+    const REGION = [RULE, " Pick a color?".slice(0, 12), " → 1. Red", RULE].join("\n");
+    const COLUMNS = { start: 0, end: 12 };
+
+    test("a change beside the range passes; the keys go after ONE read, and the audit records the range", async () => {
+      const client = new FakePaneClient();
+      client.text = screen("elapsed 1m22");
+      const { audit, entries } = auditEntries();
+      const body = { keys: ["1"], expected_prompt: REGION, expected_columns: COLUMNS };
+      const res = await keysPane(asMux(client), cfg(), "w1:p1", request(body), audit, "phone", "default");
+      expect(res.status).toBe(200);
+      expect(client.reads).toHaveLength(1);
+      expect(client.keys).toEqual([["w1:p1", ["1"]]]);
+      expect(entries[0]?.detail).toMatchObject({ promptBinding: { checked: true, passed: true, columns: COLUMNS } });
+    });
+
+    test("a change inside the range is refused: 409 and no keys", async () => {
+      const client = new FakePaneClient();
+      client.text = screen("elapsed 1m22", "Pick a size?");
+      const { audit, entries } = auditEntries();
+      const body = { keys: ["1"], expected_prompt: REGION, expected_columns: COLUMNS };
+      const res = await keysPane(asMux(client), cfg(), "w1:p1", request(body), audit, null, "default");
+      expect(res.status).toBe(409);
+      expect(await res.json()).toMatchObject({ code: "prompt_changed", reason: "not_found" });
+      expect(client.keys).toEqual([]);
+      expect(entries[0]?.detail).toMatchObject({ promptBinding: { passed: false, columns: COLUMNS } });
+    });
+
+    test("without the range the same region is compared as whole rows, and refused (an older phone fails closed)", async () => {
+      const client = new FakePaneClient();
+      client.text = screen("elapsed 1m22");
+      const { audit, entries } = auditEntries();
+      const res = await keysPane(asMux(client), cfg(), "w1:p1", request({ keys: ["1"], expected_prompt: REGION }), audit, null, "default");
+      expect(res.status).toBe(409);
+      expect(client.keys).toEqual([]);
+      expect(entries[0]?.detail).not.toHaveProperty("promptBinding.columns");
+    });
+
+    test("expected_columns without expected_prompt, or not a range, is a 400 before any read or write", async () => {
+      const bad: PaneActionBody["expected_columns"][] = [
+        { start: 5, end: 5 },
+        { start: -1, end: 4 },
+        { start: 0, end: 4097 },
+        { start: 0.5, end: 4 },
+        [0, 12],
+        "0-12",
+        null,
+      ];
+      for (const route of ["keys", "reply"] as const) {
+        for (const expected_columns of [...bad, COLUMNS]) {
+          const client = new FakePaneClient();
+          const { audit } = auditEntries();
+          const alone = expected_columns === COLUMNS;
+          const body = alone
+            ? { keys: ["1"], text: "hello", expected_columns }
+            : { keys: ["1"], text: "hello", expected_prompt: REGION, expected_columns };
+          const res =
+            route === "keys"
+              ? await keysPane(asMux(client), cfg(), "w1:p1", request(body), audit, null, "default")
+              : await replyPane(asMux(client), cfg(), "w1:p1", request(body), audit, null, "default");
+          expect(res.status).toBe(400);
+          expect(await res.text()).toBe("bad expected_columns");
+          expect(client.reads).toEqual([]);
+          expect(client.keys).toEqual([]);
+          expect(client.texts).toEqual([]);
+        }
+      }
+    });
+  });
+});
+
+function queuedFixtureMux(fake: Partial<MuxAdapter>): MuxAdapter {
+  // SAFETY: each guarded-route fixture supplies every reached mux method; Partial checks those signatures.
+  return fake as MuxAdapter;
+}
+function queuedFixtureLive(fake: Partial<import("./journal/live.ts").LiveWindows>): import("./journal/live.ts").LiveWindows {
+  // SAFETY: these route fixtures call only windowFresh; every actual-source test uses real LiveWindows.
+  return fake as import("./journal/live.ts").LiveWindows;
+}
+function queuedFixtureJournal(fake: Partial<import("./journal/types.ts").JournalAdapter>): import("./journal/types.ts").JournalAdapter {
+  // SAFETY: the synthetic windowFresh never consumes source/parse/reducer; it only uses the implemented discovery seam.
+  return fake as import("./journal/types.ts").JournalAdapter;
+}
+function queuedFixtureEngine(fake: { current(): Pick<import("./state-engine.ts").EngineSnapshot, "agents" | "shellPanes"> }): import("./state-engine.ts").StateEngine {
+  const partial: Partial<import("./state-engine.ts").StateEngine> = {
+    current: () => ({ ...fake.current(), workspaces: [], tabs: [], bridge: "connected" }),
+  };
+  // SAFETY: keysPane calls only current; complete snapshots are supplied and no engine scheduling method is reached.
+  return partial as import("./state-engine.ts").StateEngine;
+}
+
+describe("guarded queued send", () => {
+  const workingCapture = readFileSync("web/src/fixtures/panes/claude--working.txt", "utf8");
+  const trustCapture = readFileSync("web/src/fixtures/panes/claude--trust-prompt.txt", "utf8");
+  const paneId = "w1:p1";
+  const session = "default";
+  const keys = ["ctrl+Enter"];
+
+  function pane(status: AgentView["status"] = "working", cwd = "/repo") {
+    return {
+      paneId,
+      spaceId: "w1",
+      spaceLabel: "work",
+      spaceNumber: 1,
+      tabId: "w1:t1",
+      cwd,
+      focused: true,
+      alive: true,
+      agent: "claude",
+      status,
+    };
+  }
+
+  function engineAgent(status: AgentView["status"] = "working", cwd = "/repo"): AgentView {
+    return {
+      paneId,
+      workspaceId: "w1",
+      workspaceLabel: "work",
+      workspaceNumber: 1,
+      tabId: "w1:t1",
+      agent: "claude",
+      status,
+      cwd,
+      focused: true,
+    };
+  }
+
+  function chat(queued: string[] = ["queued work"], recipe: string[] = keys) {
+    return {
+      page: "live",
+      gen: 7,
+      rev: 3,
+      head: 0,
+      oldest: 1,
+      hasOlder: false,
+      upserts: [],
+      queued,
+      sendQueuedNow: recipe,
+    } satisfies ChatWindowBody;
+  }
+
+  function guardBody(target = pane(), queued = ["queued work"]) {
+    return {
+      keys,
+      expected_prompt: workingCapture,
+      queued_send: {
+        generation: 7,
+        revision: 3,
+        queue_digest: queuedMessagesDigest(queued),
+        occupant: queuedSendOccupant(session, target, "http://localhost"),
+      },
+    };
+  }
+
+  function makeHarness(options: {
+    capture?: string;
+    afterSnapshot?: () => void;
+    afterDiscover?: () => void;
+    afterPromptRead?: () => void;
+    afterQueueRead?: () => void;
+    afterQueueReadChangesCapture?: (setCapture: (capture: string) => void) => void;
+    failSend?: boolean;
+  } = {}) {
+    let currentPane = engineAgent();
+    let currentQueue: ChatWindowBody = chat();
+    let currentCapture = options.capture ?? workingCapture;
+    let currentCapabilities = declareCapabilities({
+      supports: ["paneGrid", "sendKeys", "guardedQueuedSend"],
+      topologyLatency: { kind: "bounded", ms: 1000 },
+      spaces: "many",
+    });
+    let sends = 0;
+    let promptReads = 0;
+    let queueReads = 0;
+    // SAFETY: this route fixture supplies snapshot/readGrid/sendKeys and capability metadata; no other mux method is called.
+    const mux = queuedFixtureMux({
+      mux: "test",
+      get capabilities() { return currentCapabilities; },
+      snapshot: async () => {
+        options.afterSnapshot?.();
+        return { panes: [pane()], spaces: [], tabs: [] };
+      },
+      readGrid: async () => {
+        promptReads += 1;
+        options.afterPromptRead?.();
+        return muxOk({ paneId, text: currentCapture, truncated: false, revision: 1 });
+      },
+      sendKeys: async () => {
+        sends += 1;
+        if (options.failSend) throw new Error("lost acknowledgement");
+        return muxAck();
+      },
+    });
+    const journal = {
+      discover: async () => {
+        options.afterDiscover?.();
+        return { kind: "id" as const, value: "session-opaque" };
+      },
+    };
+    const live = {
+      windowFresh: async () => {
+        queueReads += 1;
+        options.afterQueueRead?.();
+        options.afterQueueReadChangesCapture?.((capture) => { currentCapture = capture; });
+        const body = currentQueue;
+        return { body, isCurrent: () => currentQueue === body };
+      },
+    };
+    const engine = {
+      current: () => ({ agents: [currentPane], shellPanes: [] }),
+    };
+    return {
+      mux,
+      live,
+      engine,
+      journals: { claude: journal },
+      setCurrentPane: (next: AgentView) => { currentPane = next; },
+      setQueue: (next: ChatWindowBody) => { currentQueue = next; },
+      setCapture: (capture: string) => { currentCapture = capture; },
+      setGuardedCapability: (supported: boolean) => {
+        currentCapabilities = declareCapabilities({
+          supports: supported ? ["paneGrid", "sendKeys", "guardedQueuedSend"] : ["paneGrid"],
+          topologyLatency: { kind: "bounded", ms: 1000 },
+          spaces: "many",
+        });
+      },
+      counts: () => ({ sends, promptReads, queueReads }),
+    };
+  }
+
+  async function dispatch(
+    harness: ReturnType<typeof makeHarness>,
+    ledger?: import("./journal/queued-send-admission.ts").QueuedSendAdmissionLedger,
+    body = guardBody(),
+  ) {
+    const audit = new AuditLog(() => {});
+    const result = await keysPane(
+      harness.mux,
+      cfg(),
+      paneId,
+      new Request("http://localhost/api/pane/w1%3Ap1/keys", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+      audit,
+      "phone",
+      session,
+      // SAFETY: the guarded route only invokes the implemented fixture methods; tests count every send and preflight read.
+      queuedFixtureLive(harness.live),
+      // SAFETY: the guarded route only invokes the implemented fixture methods; tests count every send and preflight read.
+      { claude: queuedFixtureJournal(harness.journals.claude) },
+      // SAFETY: the guarded route only invokes the implemented fixture methods; tests count every send and preflight read.
+      queuedFixtureEngine(harness.engine),
+      ledger,
+    );
+    return result;
+  }
+
+  test("the shipped busy working capture has a composer and no semantic block", () => {
+    expect(queuedSendScreenSafe("claude", workingCapture)).toBe(true);
+    expect(queuedSendScreenSafe("claude", trustCapture)).toBe(false);
+    expect(queuedSendScreenSafe("claude", `${workingCapture}\nPassword:`)).toBe(false);
+    expect(queuedSendScreenSafe("unrecognized-agent", workingCapture)).toBe(false);
+  });
+
+  test("one guarded action reaches the declared queued recipe without posting queue text", async () => {
+    const harness = makeHarness();
+    const result = await dispatch(harness);
+    expect(result.status).toBe(200);
+    expect(harness.counts()).toEqual({ sends: 1, promptReads: 1, queueReads: 1 });
+  });
+
+  test("queue identity hashes raw owner text while the phone receives redacted presentation", async () => {
+    const secretQueue = ["api_key=placeholder1"];
+    const harness = makeHarness();
+    harness.setQueue(chat(secretQueue));
+    const result = await dispatch(harness, undefined, guardBody(pane(), secretQueue));
+    expect(result.status).toBe(200);
+    expect(harness.counts().sends).toBe(1);
+  });
+
+  test("occupant or busy-state changes during every earlier async preflight send no keys", async () => {
+    let snapshot: ReturnType<typeof makeHarness>;
+    snapshot = makeHarness({ afterSnapshot: () => snapshot.setCurrentPane(engineAgent("idle")) });
+    let discovery: ReturnType<typeof makeHarness>;
+    discovery = makeHarness({ afterDiscover: () => discovery.setCurrentPane(engineAgent("working", "/replacement")) });
+    let prompt: ReturnType<typeof makeHarness>;
+    prompt = makeHarness({ afterPromptRead: () => prompt.setCurrentPane(engineAgent("idle")) });
+    for (const [stage, harness] of [["snapshot", snapshot], ["discover", discovery], ["prompt", prompt]] as const) {
+      const result = await dispatch(harness);
+      expect(result.status, stage).toBe(409);
+      expect(harness.counts().sends, stage).toBe(0);
+    }
+  });
+
+  test("queue replacement during prompt or final queue read refuses the stale action", async () => {
+    for (const stage of ["prompt", "queue"] as const) {
+      let harness: ReturnType<typeof makeHarness>;
+      const replace = () => harness.setQueue(chat(["replacement queued work"]));
+      harness = stage === "prompt"
+        ? makeHarness({ afterPromptRead: replace })
+        : makeHarness({ afterQueueRead: replace });
+      const result = await dispatch(harness);
+      expect(result.status, stage).toBe(409);
+      expect(harness.counts().sends, stage).toBe(0);
+    }
+  });
+
+  test("a removed queue or changed declared recipe refuses the old action", async () => {
+    const removed = makeHarness();
+    removed.setQueue(chat([]));
+    expect((await dispatch(removed)).status).toBe(409);
+    expect(removed.counts().sends).toBe(0);
+
+    const changedRecipe = makeHarness();
+    changedRecipe.setQueue(chat(["queued work"], ["enter"]));
+    expect((await dispatch(changedRecipe)).status).toBe(409);
+    expect(changedRecipe.counts().sends).toBe(0);
+  });
+
+  test("a changed Crew/current mux capability refuses before the queued key write", async () => {
+    let harness: ReturnType<typeof makeHarness>;
+    harness = makeHarness({ afterQueueRead: () => harness.setGuardedCapability(false) });
+    const result = await dispatch(harness);
+    expect(result.status).toBe(409);
+    expect(harness.counts().sends).toBe(0);
+  });
+
+  test("a semantic prompt replacing the screen during the final queue read sends no keys", async () => {
+    const harness = makeHarness({
+      afterQueueReadChangesCapture: (setCapture) => setCapture(trustCapture),
+    });
+    const result = await dispatch(harness);
+    expect(result.status).toBe(409);
+    expect(harness.counts().sends).toBe(0);
+  });
+
+  test("a Claude JSONL change during the final prompt read invalidates the owner lease", async () => {
+    const root = await mkdtemp(join(tmpdir(), "collie-b06-queued-lease-"));
+    const project = join(root, "-repo");
+    await mkdir(project, { recursive: true });
+    const sessionId = "116ee214-d563-4bcc-95f2-f03c5330d354";
+    const logPath = join(project, `${sessionId}.jsonl`);
+    const row = (content: string) => JSON.stringify({
+      type: "queue-operation",
+      operation: "enqueue",
+      timestamp: "2026-10-10T12:00:00.000Z",
+      sessionId,
+      content,
+    });
+    await writeFile(logPath, `${row("queued work")}\n`);
+
+    const journal = claudeJournal(root);
+    const live = new LiveWindows(new TranscriptStore());
+    const ref = { kind: "id", value: sessionId } as const;
+    const initial = await live.window(journal, ref, { limit: 40 });
+    expect(initial?.queued).toEqual(["queued work"]);
+    const target = { ...pane(), agentSession: ref };
+    const occupant = queuedSendOccupant(session, target, "http://localhost");
+    let sends = 0;
+    let changed = false;
+    // SAFETY: this route fixture supplies snapshot/readGrid/sendKeys and capability metadata; no other mux method is called.
+    const mux = queuedFixtureMux({
+      mux: "test",
+      capabilities: declareCapabilities({
+        supports: ["paneGrid", "sendKeys", "guardedQueuedSend"],
+        topologyLatency: { kind: "bounded", ms: 1000 },
+        spaces: "many",
+      }),
+      snapshot: async () => ({ panes: [target], spaces: [], tabs: [] }),
+      readGrid: async () => {
+        if (!changed) {
+          changed = true;
+          await appendFile(logPath, `\n${row("replacement queued work")}`);
+        }
+        return muxOk({ paneId, text: workingCapture, truncated: false, revision: 1 });
+      },
+      sendKeys: async () => {
+        sends += 1;
+        return muxAck();
+      },
+    });
+    const engine = {
+      current: () => ({ agents: [{ ...engineAgent(), agentSession: ref }], shellPanes: [] }),
+    };
+    const result = await keysPane(
+      mux,
+      cfg(),
+      paneId,
+      new Request("http://localhost/api/pane/w1%3Ap1/keys", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          keys: initial?.sendQueuedNow,
+          expected_prompt: workingCapture,
+          queued_send: {
+            generation: initial?.gen,
+            revision: initial?.rev,
+            queue_digest: queuedMessagesDigest(initial!.queued),
+            occupant,
+          },
+        }),
+      }),
+      new AuditLog(() => {}),
+      "phone",
+      session,
+      live,
+      { claude: journal },
+      // SAFETY: the guarded route only invokes the implemented fixture methods; tests count every send and preflight read.
+      queuedFixtureEngine(engine),
+    );
+    expect(result.status).toBe(409);
+    expect(sends).toBe(0);
+    await rm(root, { recursive: true, force: true });
+  });
+
+  test("stable busy Claude source sends one declared key recipe without queue text", async () => {
+    const root = await mkdtemp(join(tmpdir(), "collie-b06-queued-stable-"));
+    const project = join(root, "-repo");
+    await mkdir(project, { recursive: true });
+    const sessionId = "216ee214-d563-4bcc-95f2-f03c5330d354";
+    const logPath = join(project, `${sessionId}.jsonl`);
+    const queueRow = JSON.stringify({
+      type: "queue-operation", operation: "enqueue", timestamp: "2026-10-10T12:00:00.000Z", sessionId,
+      content: "queued actual source payload",
+    });
+    const conversation = JSON.stringify({
+      type: "user", uuid: "same-conversation-root", timestamp: "2026-10-10T12:00:00.000Z",
+      message: { role: "user", content: "hello" },
+    });
+    await writeFile(logPath, `${conversation}\n${queueRow}\n`);
+    const journal = claudeJournal(root);
+    const live = new LiveWindows(new TranscriptStore());
+    const ref = { kind: "id", value: sessionId } as const;
+    const initial = await live.window(journal, ref, { limit: 40 });
+    expect(initial?.queued).toEqual(["queued actual source payload"]);
+    expect(initial?.sendQueuedNow).toEqual(keys);
+    const target = { ...pane(), agentSession: ref };
+    const occupant = queuedSendOccupant(session, target, "http://localhost");
+    let sentKeys: readonly string[] = [];
+    // SAFETY: this route fixture supplies snapshot/readGrid/sendKeys and capability metadata; no other mux method is called.
+    const mux = queuedFixtureMux({
+      mux: "test",
+      capabilities: declareCapabilities({
+        supports: ["paneGrid", "sendKeys", "guardedQueuedSend"],
+        topologyLatency: { kind: "bounded", ms: 1000 },
+        spaces: "many",
+      }),
+      snapshot: async () => ({ panes: [target], spaces: [], tabs: [] }),
+      readGrid: async () => muxOk({ paneId, text: workingCapture, truncated: false, revision: 1 }),
+      sendKeys: async (_paneId: string, delivered: readonly string[]) => {
+        sentKeys = delivered;
+        return muxAck();
+      },
+    });
+    const engine = {
+      current: () => ({ agents: [{ ...engineAgent(), agentSession: ref }], shellPanes: [] }),
+    };
+    const requestBody = {
+      keys: initial?.sendQueuedNow,
+      expected_prompt: workingCapture,
+      queued_send: {
+        generation: initial?.gen,
+        revision: initial?.rev,
+        queue_digest: queuedMessagesDigest(initial!.queued),
+        occupant,
+      },
+    };
+    expect(JSON.stringify(requestBody)).not.toContain("queued actual source payload");
+    const result = await keysPane(
+      mux, cfg(), paneId,
+      new Request("http://localhost/api/pane/w1%3Ap1/keys", {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(requestBody),
+      }),
+      new AuditLog(() => {}), "phone", session, live,
+      { claude: journal },
+      // SAFETY: the guarded route only invokes the implemented fixture methods; tests count every send and preflight read.
+      queuedFixtureEngine(engine),
+    );
+    expect(result.status).toBe(200);
+    expect(sentKeys).toEqual(["ctrl+Enter"]);
+    await rm(root, { recursive: true, force: true });
+  });
+
+  test("a same-conversation continuation appearing during the final prompt read refuses without keys", async () => {
+    const root = await mkdtemp(join(tmpdir(), "collie-b06-continuation-during-prompt-"));
+    const project = join(root, "-repo");
+    await mkdir(project, { recursive: true });
+    const sessionId = "316ee214-d563-4bcc-95f2-f03c5330d354";
+    const continuationId = "416ee214-d563-4bcc-95f2-f03c5330d354";
+    const logPath = join(project, `${sessionId}.jsonl`);
+    const continuationPath = join(project, `${continuationId}.jsonl`);
+    const conversation = (uuid: string, content: string) => JSON.stringify({
+      type: "user", uuid, timestamp: "2026-10-10T12:00:00.000Z", message: { role: "user", content },
+    });
+    const queueRow = JSON.stringify({
+      type: "queue-operation", operation: "enqueue", timestamp: "2026-10-10T12:00:00.000Z", sessionId,
+      content: "queued work",
+    });
+    await writeFile(logPath, `${conversation("same-conversation-root", "hello")}\n${queueRow}\n`);
+    const journal = claudeJournal(root);
+    const live = new LiveWindows(new TranscriptStore());
+    const ref = { kind: "id", value: sessionId } as const;
+    const initial = await live.window(journal, ref, { limit: 40 });
+    expect(initial?.queued).toEqual(["queued work"]);
+    const target = { ...pane(), agentSession: ref };
+    const occupant = queuedSendOccupant(session, target, "http://localhost");
+    let sends = 0;
+    // SAFETY: this route fixture supplies snapshot/readGrid/sendKeys and capability metadata; no other mux method is called.
+    const mux = queuedFixtureMux({
+      mux: "test",
+      capabilities: declareCapabilities({
+        supports: ["paneGrid", "sendKeys", "guardedQueuedSend"],
+        topologyLatency: { kind: "bounded", ms: 1000 },
+        spaces: "many",
+      }),
+      snapshot: async () => ({ panes: [target], spaces: [], tabs: [] }),
+      readGrid: async () => {
+        await writeFile(continuationPath, [
+          conversation("same-conversation-root", "hello"),
+          conversation("continuation-turn", "a later message makes this continuation win"),
+        ].join("\n") + "\n");
+        const newer = Date.now() / 1000 + 2;
+        await utimes(continuationPath, newer, newer);
+        return muxOk({ paneId, text: workingCapture, truncated: false, revision: 1 });
+      },
+      sendKeys: async () => { sends++; return muxAck(); },
+    });
+    const engine = {
+      current: () => ({ agents: [{ ...engineAgent(), agentSession: ref }], shellPanes: [] }),
+    };
+    const result = await keysPane(
+      mux, cfg(), paneId,
+      new Request("http://localhost/api/pane/w1%3Ap1/keys", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          keys: initial?.sendQueuedNow,
+          expected_prompt: workingCapture,
+          queued_send: {
+            generation: initial?.gen, revision: initial?.rev,
+            queue_digest: queuedMessagesDigest(initial!.queued), occupant,
+          },
+        }),
+      }),
+      new AuditLog(() => {}), "phone", session, live,
+      { claude: journal },
+      // SAFETY: the guarded route only invokes the implemented fixture methods; tests count every send and preflight read.
+      queuedFixtureEngine(engine),
+    );
+    expect(result.status).toBe(409);
+    expect(sends).toBe(0);
+    expect(await readFile(logPath, "utf8")).toContain("queued work");
+    await rm(root, { recursive: true, force: true });
+  });
+
+  test("semantic prompts refuse; an uncertain send remains latched against an immediate duplicate", async () => {
+    const promptHarness = makeHarness({ capture: trustCapture });
+    expect((await dispatch(promptHarness)).status).toBe(409);
+    expect(promptHarness.counts().sends).toBe(0);
+
+    const uncertain = makeHarness({ failSend: true });
+    const { QueuedSendAdmissionLedger } = await import("./journal/queued-send-admission.ts");
+    const ledger = new QueuedSendAdmissionLedger();
+    const first = await dispatch(uncertain, ledger);
+    const second = await dispatch(uncertain, ledger);
+    expect(first.status).toBe(502);
+    expect(second.status).toBe(409);
+    expect(uncertain.counts().sends).toBe(1);
+  });
 });
 
 describe("paneReadResponse — pane read → REST body", () => {
@@ -767,7 +1748,22 @@ describe("paneReadResponse — pane read → REST body", () => {
       text: "hello",
       truncated: true,
       revision: 42,
+      servedLines: 1,
     });
+  });
+
+  // M46: the mirror's one choke point. Placeholder only, joined at runtime so no secret scan trips.
+  test("redact: a placeholder key is masked at the same width, its colours intact; off leaves it", () => {
+    const key = ["AKIA", "PLACEHOLDER00000"].join("");
+    const esc = String.fromCodePoint(0x1b);
+    const text = `$ env\n${esc}[32mAWS_ACCESS_KEY_ID${esc}[0m=${key}\n$ `;
+    const read: MuxGrid = { paneId: "w1:p1", text, truncated: false, revision: 7 };
+    const masked = paneReadResponse("w1:p1", read, `AWS_ACCESS_KEY_ID=${key}`, true);
+    expect(masked.text).toBe(`$ env\n${esc}[32mAWS_ACCESS_KEY_ID${esc}[0m=AKIA${"•".repeat(16)}\n$ `);
+    expect(masked.text.length).toBe(text.length);
+    expect(masked.logicalText).toBe(`AWS_ACCESS_KEY_ID=AKIA${"•".repeat(16)}`);
+    expect(masked.revision).toBe(7);
+    expect(paneReadResponse("w1:p1", read, undefined, false).text).toBe(text);
   });
 
   test("carries a zero revision unchanged (fresh pane) rather than dropping the field", () => {
@@ -777,6 +1773,15 @@ describe("paneReadResponse — pane read → REST body", () => {
       text: "",
       truncated: false,
       revision: 0,
+      servedLines: 0,
+    });
+  });
+
+  test("reports admitted size, actual rows, optional reported depth and honest ceiling reason", () => {
+    const read: MuxGrid = { paneId: "w1:p1", text: "a\nb", truncated: true, revision: 3 };
+    expect(paneReadResponse("w1:p1", read, undefined, false, 1_000, undefined, "adapter-ceiling")).toEqual({
+      paneId: "w1:p1", text: "a\nb", truncated: true, revision: 3,
+      requestedLines: 1_000, servedLines: 2, limitReason: "adapter-ceiling",
     });
   });
 });
@@ -941,9 +1946,10 @@ describe("guard applies the device gate to writes only", () => {
 
 // ── Device pairing composed into the write gate (bridge/pairing.ts) ────────────────────────────
 // The pairing module is exhaustively covered in bridge/pairing.test.ts. What is pinned HERE is the
-// wiring — which is where a security feature actually lives: that an empty registry changes nothing,
-// that a non-empty one gates writes and not reads, that the two device gates compose by AND rather
-// than either replacing the other, and that attribution prefers the label.
+// wiring — which is where a security feature actually lives: that pairing is always on, so an empty
+// registry refuses reads and writes alike; that a read needs the token as much as a write does
+// (ADR 0086); that the two device gates compose by AND rather than either replacing the other; and
+// that attribution prefers the label.
 describe("guard — the pairing gate composes with the header gate", () => {
   const HDR = "x-device-id";
   /** A minimal PairingGate: `labels` are the paired tokens, keyed by token. */
@@ -955,14 +1961,16 @@ describe("guard — the pairing gate composes with the header gate", () => {
   const paired = gateOf({ "tok-phone": "phone" });
   const nothingPaired = gateOf({});
 
-  const write = (c: Config, headers: Record<string, string>, gate?: ReturnType<typeof gateOf>) =>
+  const write = (c: Config, headers: Record<string, string>, gate?: PairingGate) =>
     guard(req({ host: "collie.ts.net", origin: "https://collie.ts.net", ...headers }), c, "write", gate);
-  const read = (c: Config, headers: Record<string, string>, gate?: ReturnType<typeof gateOf>) =>
+  const read = (c: Config, headers: Record<string, string>, gate?: PairingGate) =>
     guard(req({ host: "collie.ts.net", ...headers }), c, "read", gate);
 
-  test("an empty registry enforces nothing — the feature is off until something is paired", () => {
-    expect(write(cfg(), {}, nothingPaired)).toBeNull();
-    // …and so is passing no gate at all, which is what every pre-pairing call site did.
+  test("empty registry: a read and a write are both refused as unpaired (always on, ADR 0086)", async () => {
+    expect(await write(cfg(), {}, nothingPaired)!.text()).toBe("device not paired");
+    expect(await read(cfg(), {}, nothingPaired)!.text()).toBe("device not paired");
+    expect(read(cfg(), { authorization: "Bearer anything" }, nothingPaired)!.status).toBe(403);
+    // Passing no gate at all is a server built without a store — a unit test's, never index.ts's.
     expect(write(cfg(), {})).toBeNull();
   });
 
@@ -984,9 +1992,54 @@ describe("guard — the pairing gate composes with the header gate", () => {
     expect(write(cfg(), { authorization: "bearer  tok-phone " }, paired)).toBeNull();
   });
 
-  test("reads are unaffected — parity with the header gate, which is also write-only", () => {
-    expect(read(cfg(), {}, paired)).toBeNull();
-    expect(read(cfg(), { authorization: "Bearer wrong" }, paired)).toBeNull();
+  test("read: refused without a token or with a wrong one, and passes with a valid one (ADR 0086)", async () => {
+    const unpaired = read(cfg(), {}, paired)!;
+    expect(unpaired.status).toBe(403);
+    expect(await unpaired.text()).toBe("device not paired");
+    expect(await read(cfg(), { authorization: "Bearer wrong" }, paired)!.text()).toBe("device not paired");
+    // …with no Origin at all: a browser sends none on a same-origin GET.
+    expect(read(cfg(), { authorization: "Bearer tok-phone" }, paired)).toBeNull();
+  });
+
+  test("read: the header gate stays write-only, so an unlisted device with a token still reads", () => {
+    const c = cfg({ deviceHeader: HDR, deviceAllowlist: ["phone"] });
+    expect(read(c, { [HDR]: "tablet", authorization: "Bearer tok-phone" }, paired)).toBeNull();
+    expect(read(c, { authorization: "Bearer tok-phone" }, paired)).toBeNull();
+  });
+
+  test("read: an access refusal still comes first, so a cross-origin read names the origin", async () => {
+    const denied = read(cfg(), { origin: "https://evil.example" }, paired)!;
+    expect(await denied.text()).toBe("cross-origin rejected");
+  });
+
+  // The Files view (ADR 0083): a read that needs the write level's device factors, both of them,
+  // without the write level's `Origin` rule — a browser sends no `Origin` on a same-origin GET.
+  const deviceRead = (c: Config, headers: Record<string, string>, gate?: PairingGate) =>
+    guard(req({ host: "collie.ts.net", ...headers }), c, "device-read", gate);
+
+  test("device-read: pairing refuses an unpaired device and lets a paired one read, with no Origin", async () => {
+    const denied = deviceRead(cfg(), {}, paired);
+    expect(denied!.status).toBe(403);
+    expect(await denied!.text()).toBe("device not paired");
+    expect(deviceRead(cfg(), { authorization: "Bearer wrong" }, paired)!.status).toBe(403);
+    expect(deviceRead(cfg(), { authorization: "Bearer tok-phone" }, paired)).toBeNull();
+    // Nothing paired and no header gate: refused, like a write and a read are (always on).
+    expect(await deviceRead(cfg(), {}, nothingPaired)!.text()).toBe("device not paired");
+  });
+
+  test("device-read: the header gate refuses an unlisted or absent device", async () => {
+    const c = cfg({ deviceHeader: HDR, deviceAllowlist: ["phone"] });
+    expect(deviceRead(c, { [HDR]: "phone" })).toBeNull();
+    const unlisted = deviceRead(c, { [HDR]: "tablet" });
+    expect(unlisted!.status).toBe(403);
+    expect(await unlisted!.text()).toBe("device not authorised");
+    expect(deviceRead(c, {})!.status).toBe(403);
+    // The same device may still read a pane: only files asks for the device.
+    expect(read(c, { [HDR]: "tablet" })).toBeNull();
+  });
+
+  test("device-read: still an access check — a cross-origin Origin is refused", () => {
+    expect(deviceRead(cfg(), { origin: "https://evil.example", authorization: "Bearer tok-phone" }, paired)!.status).toBe(403);
   });
 
   test("the two gates compose by AND: each refuses independently of the other", async () => {
@@ -1001,10 +2054,42 @@ describe("guard — the pairing gate composes with the header gate", () => {
     expect(write(c, { "x-device-id": "phone", authorization: "Bearer tok-phone" }, paired)).toBeNull();
   });
 
-  test("the header gate is untouched when nothing is paired", async () => {
+  // M46 spec 01: the real PairingStore, not a stub, so the refusal text is the one the phone gets.
+  test("an expired token is refused with its own text, on a write and on a device-read", async () => {
+    const hash = sha256Hex;
+    const registry = {
+      devices: [
+        { label: "old", tokenHash: hash("tok-old"), createdAt: 1, lastSeenAt: 1, expiresAt: 1000 },
+        { label: "phone", tokenHash: hash("tok-phone"), createdAt: 1, lastSeenAt: 1 },
+      ],
+    };
+    const io: PairingIo = {
+      readPending: async () => null,
+      writePending: async () => {},
+      deletePending: async () => {},
+      readRegistry: async () => registry,
+      writeRegistry: async () => {},
+      readRegistrySync: () => registry,
+    };
+    const store = new PairingStore(io, () => 2000);
+    const expired = write(cfg(), { authorization: "Bearer tok-old" }, store)!;
+    expect(expired.status).toBe(403);
+    expect(await expired.text()).toBe("device expired");
+    expect(await deviceRead(cfg(), { authorization: "Bearer tok-old" }, store)!.text()).toBe("device expired");
+    // Not paired stays "not paired", and a live token still passes.
+    expect(await write(cfg(), { authorization: "Bearer nope" }, store)!.text()).toBe("device not paired");
+    expect(await write(cfg(), {}, store)!.text()).toBe("device not paired");
+    expect(write(cfg(), { authorization: "Bearer tok-phone" }, store)).toBeNull();
+    // A read is refused the same way (ADR 0086): an expired token reads nothing either.
+    expect(await read(cfg(), { authorization: "Bearer tok-old" }, store)!.text()).toBe("device expired");
+    expect(read(cfg(), { authorization: "Bearer tok-phone" }, store)).toBeNull();
+  });
+
+  test("with nothing paired the header gate still answers first, and pairing then refuses", async () => {
     const c = cfg({ deviceHeader: HDR, deviceAllowlist: ["phone"] });
     expect((await write(c, {}, nothingPaired)!.text())).toBe("device not authorised");
-    expect(write(c, { "x-device-id": "phone" }, nothingPaired)).toBeNull();
+    // An allowlisted header is no longer enough on its own: there is no "off until paired" state.
+    expect(await write(c, { "x-device-id": "phone" }, nothingPaired)!.text()).toBe("device not paired");
   });
 
   test("the same-origin gate still runs first — a token is no substitute for an Origin", () => {
@@ -1019,6 +2104,26 @@ describe("guard — the pairing gate composes with the header gate", () => {
   });
 });
 
+// The pairing refusals carry no `Clear-Site-Data` (it was M46 spec 02's backstop, and was dropped):
+// the header also clears the preferences in localStorage, unregisters the service worker and its
+// precache, and on a shared origin reaches a sibling mount. The phone's own wipe is the one mechanism.
+describe("guard — no pairing refusal carries Clear-Site-Data", () => {
+  const paired = {
+    resolve: (token: string | null) => (token === "tok-phone" ? { label: "phone" } : null),
+    expired: (token: string | null) => token === "tok-old",
+  };
+  test("neither \"device not paired\" nor \"device expired\" asks the browser to clear anything", async () => {
+    const write = (headers: Record<string, string>) =>
+      guard(req({ host: "collie.ts.net", origin: "https://collie.ts.net", ...headers }), cfg(), "write", paired)!;
+    const revoked = write({ authorization: "Bearer revoked" });
+    expect(await revoked.text()).toBe("device not paired");
+    expect(revoked.headers.get("clear-site-data")).toBeNull();
+    const expired = write({ authorization: "Bearer tok-old" });
+    expect(await expired.text()).toBe("device expired");
+    expect(expired.headers.get("clear-site-data")).toBeNull();
+  });
+});
+
 describe("requestDevice — attribution across both gates", () => {
   const HDR = "x-device-id";
   const gateOf = (tokens: Record<string, string>) => ({
@@ -1028,12 +2133,17 @@ describe("requestDevice — attribution across both gates", () => {
   });
   const paired = gateOf({ "tok-phone": "phone" });
 
-  test("with nothing paired it is exactly deviceAuth — an unpaired deployment sees no change", () => {
+  test("with no store it is exactly deviceAuth; with an empty registry it is enforced and unauthorised", () => {
     for (const c of [cfg(), cfg({ deviceHeader: HDR, deviceAllowlist: ["desk"] })]) {
       const cases: Record<string, string>[] = [{ host: "h" }, { host: "h", "x-device-id": "desk" }];
       for (const headers of cases) {
-        expect(requestDevice(req(headers), c, gateOf({}))).toEqual(deviceAuth(req(headers), c));
         expect(requestDevice(req(headers), c)).toEqual(deviceAuth(req(headers), c));
+        // Always on (ADR 0086): an empty registry reports enforcement and authorises nobody.
+        expect(requestDevice(req(headers), c, gateOf({}))).toEqual({
+          enforced: true,
+          device: deviceAuth(req(headers), c).device,
+          authorized: false,
+        });
       }
     }
   });
@@ -1075,6 +2185,135 @@ describe("requestDevice — attribution across both gates", () => {
   });
 });
 
+describe("pairedLabel — the name Settings credits a change to", () => {
+  const gate = {
+    enforced: () => true,
+    resolve: (token: string | null) => (token === "tok-phone" ? { label: "Pixel 8" } : null),
+    local: (token: string | null) => token === "tok-local",
+  };
+
+  test("the pairing label of the token, and nothing else", () => {
+    expect(pairedLabel(req({ host: "h", authorization: "Bearer tok-phone" }), gate)).toBe("Pixel 8");
+    // A header name is for the gate, not for a screen.
+    expect(pairedLabel(req({ host: "h", "x-device-id": "desk" }), gate)).toBeNull();
+    expect(pairedLabel(req({ host: "h", authorization: "Bearer tok-unknown" }), gate)).toBeNull();
+    expect(pairedLabel(req({ host: "h", authorization: "Bearer tok-local" }), gate)).toBeNull();
+    expect(pairedLabel(req({ host: "h", authorization: "Bearer tok-phone" }))).toBeNull();
+  });
+
+  test("a registry that cannot be read names nobody", () => {
+    const broken = {
+      enforced: () => true,
+      resolve: (): { label: string } | null => {
+        throw new Error("unreadable");
+      },
+    };
+    expect(pairedLabel(req({ host: "h", authorization: "Bearer tok-phone" }), broken)).toBeNull();
+  });
+});
+
+// ── Open routes (M46 specs 03 and 06, ADR 0086) ─────────────────────────────────────────────
+// Reads need the pairing token, and pairing is always on. The open-route list is short and named:
+// `/api/health` and `/api/pair`. The crew surface (`/crew/v1/*`) and the standby door have their own
+// admission and never reach `guard`. `bun test` cannot stand up `Bun.serve` (CLAUDE.md), so the
+// route table is read from the source, the way `solo-baseline.test.ts` pins it: every block that
+// claims an `/api` path must ask a gate before it answers, except the two named here.
+describe("open routes — every /api route but health and pair asks the pairing gate", () => {
+  const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
+  const SITE =
+    /^(\s*)(?:if \(|const \w+Match = )pathname(?: === ("\/api\/[^"]+"|MUX_LOGO_PATH)|\.startsWith\((OPERATOR_FONTS_PATH|"\/api\/")\)|\.match\((\w+_ROUTE)\))/;
+  const GATE = /guard\(req, cfg|caller\.gate\(|browserGate\(/;
+
+  /** Every route block in server.ts: the route's name and whether its body asks a gate. */
+  function routeBlocks(): { route: string; gated: boolean }[] {
+    const out: { route: string; gated: boolean }[] = [];
+    let offset = 0;
+    for (const line of src.split("\n")) {
+      const m = SITE.exec(line);
+      if (m !== null) {
+        const end = src.indexOf(`\n${m[1]}}\n`, offset);
+        const block = src.slice(offset, end);
+        out.push({ route: m[2] ?? m[3] ?? m[4]!, gated: GATE.test(block) });
+      }
+      offset += line.length + 1;
+    }
+    return out;
+  }
+
+  test("open routes: only /api/health and /api/pair answer without asking a gate", () => {
+    const blocks = routeBlocks();
+    // The scan found the table, not a handful of lines: the pane family, the blobs, the snapshot.
+    expect(blocks.length).toBeGreaterThan(30);
+    expect(blocks.map((b) => b.route)).toContain("BLOB_ROUTE");
+    expect(blocks.map((b) => b.route)).toContain('"/api/snapshot"');
+    expect(blocks.filter((b) => !b.gated).map((b) => b.route).toSorted()).toEqual(['"/api/health"', '"/api/pair"']);
+  });
+
+  test("open routes: the snapshot asks guard, not a bare checkAccess", () => {
+    const at = src.indexOf('if (pathname === "/api/snapshot")');
+    const handler = src.slice(at, src.indexOf("\n      }\n", at));
+    expect(handler).toContain('guard(req, cfg, "read", pairingGate)');
+    expect(handler).not.toContain("checkAccess(");
+  });
+
+  test("open routes: an /api path no route claims is gated, then 404, never the app shell", () => {
+    const at = src.indexOf('if (pathname.startsWith("/api/")) {');
+    expect(at).toBeGreaterThan(src.indexOf('if (pathname === "/api/devices/revoke"'));
+    expect(at).toBeLessThan(src.indexOf("return serveStatic(pathname"));
+    const handler = src.slice(at, src.indexOf("\n      }\n", at));
+    expect(handler).toContain('guard(req, cfg, "read", pairingGate)');
+    expect(handler).toContain('text("not found", 404)');
+  });
+
+  test("open routes: the pair bootstrap still asks the front door, as a write", () => {
+    const at = src.indexOf('if (pathname === "/api/pair" && req.method === "POST")');
+    const handler = src.slice(at, src.indexOf("\n      }\n", at));
+    expect(handler).toContain('checkAccess(req, cfg, "write")');
+  });
+
+  // The crew path, end to end, in the three pieces `bun test` can reach (ADR 0086 "the crew
+  // exception"): the lead's forward strips the phone's token (`forwardHeaders` in
+  // bridge/crew/forward.ts); the peer's dispatch closure in server.ts gates with `crewGate`
+  // (bridge/crew/peer-gate.ts), which takes no pairing input at all; and that closure never calls
+  // `guard`. So a lead's forwarded read reaches a peer whose own registry is empty.
+  test("open routes: a forwarded read reaches a peer whose registry is empty, on crew trust alone", async () => {
+    const phone = new Request("https://lead.ts.net/api/pane/w1%3Ap1?host=laptop", {
+      headers: { host: "lead.ts.net", authorization: "Bearer tok-phone", "x-collie-seen": "1" },
+    });
+    const forwarded = new Request("https://laptop/crew/v1/pane/w1%3Ap1", {
+      headers: forwardHeaders(phone, "phone"),
+    });
+    // The token never crosses the link.
+    expect(forwarded.headers.get("authorization")).toBeNull();
+    // The peer's registry is empty. Through `guard` this read would be refused…
+    const emptyRegistry: PairingIo = {
+      readPending: async () => null,
+      writePending: async () => {},
+      deletePending: async () => {},
+      readRegistry: async () => ({ devices: [] }),
+      writeRegistry: async () => {},
+      readRegistrySync: () => ({ devices: [] }),
+    };
+    const refused = guard(
+      new Request("http://127.0.0.1/api/pane/w1%3Ap1", { headers: { host: "127.0.0.1" } }),
+      cfg(),
+      "read",
+      new PairingStore(emptyRegistry),
+    );
+    expect(await refused!.text()).toBe("device not paired");
+    // …but the peer asks `crewGate`, which admits a read on the link's own two factors.
+    expect(crewGate("read", cfg(), crewDeviceOf(forwarded))).toEqual({ ok: true });
+    expect(crewGate("read", cfg({ deviceHeader: "x-device", deviceAllowlist: [] }), null)).toEqual({ ok: true });
+    // And the dispatch closure is the one that asks it, with no `guard` and no pairing store in it.
+    const at = src.indexOf("dispatch: async (req, url, from) => {");
+    expect(at).toBeGreaterThan(0);
+    const dispatch = src.slice(at, src.indexOf("\n    },\n", at));
+    expect(dispatch).toContain("crewGate(level, cfg, device)");
+    expect(dispatch).not.toContain("guard(");
+    expect(dispatch).not.toContain("pairing");
+  });
+});
+
 describe("parsePairRequest — the bootstrap body", () => {
   test("both fields, with the label normalised", () => {
     expect(parsePairRequest({ code: "abcd-2345", label: "  Pixel 9 " })).toEqual({
@@ -1098,6 +2337,63 @@ describe("parsePairRequest — the bootstrap body", () => {
   test("the code is passed through unjudged — shape-checking it would be a free oracle", () => {
     // Not code-shaped at all, but it is the hash compare's job to say so, in constant time.
     expect(parsePairRequest({ code: "!!!!", label: "phone" })?.code).toBe("!!!!");
+  });
+});
+
+describe("parseNotifyPrefsPatch", () => {
+  test("every notification kind can be switched, the cache warning included", () => {
+    // The global cache switch was dropped here from 1.9.0 on: the parser listed three keys, so
+    // `{ cache: true }` became an empty patch and the bridge answered with the old value.
+    expect(parseNotifyPrefsPatch({ cache: true })).toEqual({ cache: true });
+    expect(parseNotifyPrefsPatch({ machines: false })).toEqual({ machines: false });
+    expect(parseNotifyPrefsPatch({ blocked: false, done: true, updates: false, cache: false })).toEqual({
+      blocked: false,
+      done: true,
+      updates: false,
+      cache: false,
+    });
+  });
+
+  test("a non-boolean value refuses the whole body, an unknown key is ignored", () => {
+    expect(parseNotifyPrefsPatch({ cache: "yes" })).toBeNull();
+    expect(parseNotifyPrefsPatch({ later: true })).toEqual({});
+    expect(parseNotifyPrefsPatch(null)).toBeNull();
+    expect(parseNotifyPrefsPatch([true])).toBeNull();
+  });
+});
+
+describe("the cache-watch request parsers and the watchable gate", () => {
+  test("only a boolean `on` is accepted", () => {
+    expect(parseCacheWatchRequest({ on: true })).toEqual({ on: true });
+    expect(parseCacheWatchRequest({ on: false })).toEqual({ on: false });
+    expect(parseCacheWatchRequest({})).toBeNull();
+    expect(parseCacheWatchRequest({ on: "yes" })).toBeNull();
+    expect(parseCacheWatchRequest(null)).toBeNull();
+    expect(parseCacheWatchRequest([true])).toBeNull();
+  });
+
+  test("only a non-empty string `id` is accepted", () => {
+    expect(parseCacheWatchForget({ id: "b7f1c2a9" })).toBe("b7f1c2a9");
+    expect(parseCacheWatchForget({ id: "" })).toBeNull();
+    expect(parseCacheWatchForget({ id: 7 })).toBeNull();
+    expect(parseCacheWatchForget({})).toBeNull();
+    expect(parseCacheWatchForget("b7f1c2a9")).toBeNull();
+  });
+
+  test("a pane is watchable only once it has a reading that is not `unknown`", () => {
+    const base = { key: "k", ref: "id:a", paneId: "w1:p1", label: "one" };
+    const cache = {
+      state: "warm" as const,
+      expiresAt: 1,
+      ttlSeconds: 600,
+      ruleId: "r",
+      confidence: "documented" as const,
+    };
+    expect(cacheWatchable({ ...base, cache })).toBe(true);
+    expect(cacheWatchable({ ...base, cache: { ...cache, state: "cold" } })).toBe(true);
+    // Nothing measured means nothing to warn about: the switch is disabled and says why.
+    expect(cacheWatchable({ ...base, cache: { ...cache, state: "unknown" } })).toBe(false);
+    expect(cacheWatchable(base)).toBe(false);
   });
 });
 
@@ -1136,6 +2432,10 @@ describe("parseSnoozeRequest — absence is not null", () => {
 describe("startupWarnings — security-posture nags", () => {
   const has = (ws: string[], needle: string) => ws.some((w) => w.includes(needle));
 
+  test("configured native/browser ingress actually enforces the trusted login and does not print a dead-config warning",()=>{
+    expect(startupWarnings(cfg({skipServe:true,trustedUser:"operator@example"}),true).some(message=>message.includes("has no effect"))).toBe(false);
+  });
+
   test("skipServe + trustedUser: warns the identity gate is inert and points at the device header", () => {
     const ws = startupWarnings(cfg({ skipServe: true, trustedUser: "me@example.com" }));
     expect(has(ws, "COLLIE_TRUSTED_USER has no effect")).toBe(true);
@@ -1156,6 +2456,10 @@ describe("startupWarnings — security-posture nags", () => {
     const ws = startupWarnings(cfg({ skipServe: false, trustedUser: "" }));
     expect(has(ws, "COLLIE_TRUSTED_USER is empty")).toBe(true);
     expect(has(ws, "README → Variant A")).toBe(true);
+    // Pairing is always on (ADR 0086): an empty login no longer hands anyone write access, and the
+    // warning must not say it does. The token is what is left.
+    expect(has(ws, "full write access")).toBe(false);
+    expect(has(ws, "pairing token alone")).toBe(true);
   });
 
   test("no skipServe + trustedUser set: no identity warning (correctly configured)", () => {
@@ -1200,7 +2504,7 @@ describe("isLoopbackPeer", () => {
     expect(isLoopbackPeer("::ffff:127.0.0.1")).toBe(true);
     expect(isLoopbackPeer(null)).toBe(true);
     expect(isLoopbackPeer("10.0.0.1")).toBe(false);
-    expect(isLoopbackPeer("192.0.2.1")).toBe(false);
+    expect(isLoopbackPeer("10.23.1.1")).toBe(false);
     expect(isLoopbackPeer("8.8.8.8")).toBe(false);
   });
 
@@ -1208,13 +2512,13 @@ describe("isLoopbackPeer", () => {
   // `bun test` cannot stand up `Bun.serve` (CLAUDE.md), so the ordering is pinned by reading the one
   // source that registers it — the same idiom solo-baseline.test.ts uses for the route table.
   //
-  // Why it matters: a pack peer binds off loopback by construction and its lead dials it from
-  // another machine (PACK_PROTOCOL.md §3, ADR 0013). Were this check first, every `/pack/v1/*` call
-  // would be refused before the surface that actually admits it — pinned mutual TLS plus the pack
-  // secret — ever ran, and the pack link would be dead on a peer.
-  test("the peer check runs AFTER the federated surface, so /pack/v1/* is never refused by it", () => {
+  // Why it matters: a crew peer binds off loopback by construction and its lead dials it from
+  // another machine (CREW_PROTOCOL.md §3, ADR 0013). Were this check first, every `/crew/v1/*` call
+  // would be refused before the surface that actually admits it — pinned mutual TLS plus the crew
+  // secret — ever ran, and the crew link would be dead on a peer.
+  test("the peer check runs AFTER the federated surface, so /crew/v1/* is never refused by it", () => {
     const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
-    const dispatch = src.indexOf("const packed = await packHandler(req, url);");
+    const dispatch = src.indexOf("const packed = await crewHandler(req, url);");
     const peerCheck = src.indexOf("isLoopbackPeer(server.requestIP(req)?.address)");
     expect(dispatch).toBeGreaterThan(-1);
     expect(peerCheck).toBeGreaterThan(-1);
@@ -1310,6 +2614,176 @@ describe("cacheControlFor", () => {
   });
 });
 
+// serveStatic, against a real dist tree on disk. The bundle is the biggest thing a phone downloads
+// — 869 kB of JavaScript on a precache — and it used to go out raw, which took a phone 125 seconds
+// on a slow link with the app reading as offline for the whole minute. These pin that a text file
+// ships gzipped when the client offers it, that an image never does, and that the compressed bytes
+// are computed once per file rather than on every request.
+describe("serveStatic — a text file ships gzipped", () => {
+  /** A dist tree with one hashed asset, one image and an index.html. */
+  async function distTree(): Promise<{ dir: string; js: string }> {
+    const dir = await mkdtemp(join(tmpdir(), "collie-static-gzip-"));
+    await mkdir(join(dir, "assets"), { recursive: true });
+    // Repetitive on purpose: real bundle text compresses about 3.5x, and the point of the case is
+    // the headers, not the ratio.
+    const js = `${"export const greeting = 'hello collie';\n".repeat(200)}`;
+    await writeFile(join(dir, "assets", "index-B7cWgJ3M.js"), js);
+    await writeFile(join(dir, "index.html"), `<!doctype html>${"<p>hello</p>".repeat(200)}`);
+    await Bun.write(join(dir, "apple-touch-icon.png"), new Uint8Array(4096).fill(7));
+    return { dir, js };
+  }
+
+  test("with accept-encoding: gzip the asset arrives compressed and decompresses to the file", async () => {
+    resetStaticGzipCache();
+    const { dir, js } = await distTree();
+    const res = await serveStatic("/assets/index-B7cWgJ3M.js", "gzip, deflate, br", dir);
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-encoding")).toBe("gzip");
+    expect(res.headers.get("vary")).toBe("accept-encoding");
+    expect(res.headers.get("content-type")).toBe("text/javascript; charset=utf-8");
+    expect(res.headers.get("cache-control")).toBe("public, max-age=31536000, immutable");
+
+    const body = new Uint8Array(await res.arrayBuffer());
+    // The length a client reads is the COMPRESSED one, and it is smaller than the file on disk.
+    expect(res.headers.get("content-length")).toBe(String(body.byteLength));
+    expect(body.byteLength).toBeLessThan(js.length / 2);
+    expect(new TextDecoder().decode(Bun.gunzipSync(body))).toBe(js);
+
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("without the header the same asset arrives raw", async () => {
+    resetStaticGzipCache();
+    const { dir, js } = await distTree();
+    const res = await serveStatic("/assets/index-B7cWgJ3M.js", null, dir);
+
+    expect(res.headers.get("content-encoding")).toBeNull();
+    expect(res.headers.get("vary")).toBeNull();
+    expect(await res.text()).toBe(js);
+
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("a png is never compressed, however the client asks", async () => {
+    resetStaticGzipCache();
+    const { dir } = await distTree();
+    const res = await serveStatic("/apple-touch-icon.png", "gzip", dir);
+
+    expect(res.headers.get("content-type")).toBe("image/png");
+    expect(res.headers.get("content-encoding")).toBeNull();
+    expect(staticGzipStats().entries).toBe(0);
+
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("a second request for the same asset reuses the compressed bytes", async () => {
+    resetStaticGzipCache();
+    const { dir } = await distTree();
+    await serveStatic("/assets/index-B7cWgJ3M.js", "gzip", dir);
+    expect(staticGzipStats()).toMatchObject({ entries: 1, hits: 0, misses: 1 });
+
+    await serveStatic("/assets/index-B7cWgJ3M.js", "gzip", dir);
+    expect(staticGzipStats()).toMatchObject({ entries: 1, hits: 1, misses: 1 });
+
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("index.html compresses and still revalidates on every load", async () => {
+    resetStaticGzipCache();
+    const { dir } = await distTree();
+    const res = await serveStatic("/", "gzip", dir);
+
+    expect(res.headers.get("cache-control")).toBe("no-cache");
+    expect(res.headers.get("content-encoding")).toBe("gzip");
+    expect(res.headers.get("content-type")).toBe("text/html; charset=utf-8");
+
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  // ADR 0052: one build serves any mount. The shell on disk is root-absolute; at the root it goes
+  // out as built, under a mount it is resolved to the mount the bridge was started with, raw and
+  // gzipped alike, and two mounts served from one tree in one process never read each other's body
+  // out of the gzip cache.
+  const SHELL =
+    '<!doctype html><html><head><meta name="collie-base" content="/" />' +
+    '<script src="/theme-init.js"></script><style>@font-face{src:url("/fonts/a.woff2")}' +
+    ".dog{background:url(/dog-gallop.png)}</style>" +
+    '<script type="module" src="/assets/app.js"></script></head><body></body></html>';
+
+  test("index.html goes out as built at the root, and resolved to the mount under a path", async () => {
+    resetStaticGzipCache();
+    const { dir } = await distTree();
+    await writeFile(join(dir, "index.html"), SHELL);
+
+    expect(await (await serveStatic("/", null, dir)).text()).toBe(SHELL);
+
+    const mounted = await (await serveStatic("/space/w1", null, dir, "/collie/")).text();
+    expect(mounted).toContain('<meta name="collie-base" content="/collie/" />');
+    expect(mounted).toContain('src="/collie/theme-init.js"');
+    expect(mounted).toContain('src="/collie/assets/app.js"');
+    expect(mounted).toContain('url("/collie/fonts/a.woff2")');
+    expect(mounted).toContain("url(/collie/dog-gallop.png)");
+    expect(mounted).not.toContain('="/theme');
+
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("a gzipped shell is the mounted one, and the cache keeps the two mounts apart", async () => {
+    resetStaticGzipCache();
+    const { dir } = await distTree();
+    // Past the gzip floor, so the compressed path is the one taken.
+    await writeFile(join(dir, "index.html"), SHELL + "<!-- " + "pad ".repeat(400) + " -->");
+
+    const read = async (base: string) => {
+      const res = await serveStatic("/", "gzip", dir, base);
+      expect(res.headers.get("content-encoding")).toBe("gzip");
+      return new TextDecoder().decode(Bun.gunzipSync(new Uint8Array(await res.arrayBuffer())));
+    };
+    expect(await read("/collie/")).toContain('content="/collie/"');
+    expect(await read("/")).toContain('content="/" ');
+    expect(await read("/collie/")).toContain('src="/collie/assets/app.js"');
+    expect(staticGzipStats().entries).toBe(2);
+
+    await rm(dir, { recursive: true, force: true });
+  });
+});
+
+describe("stripMount — a proxy that forwards the mount instead of stripping it", () => {
+  test("takes the mount off a path that carries it, and only then", () => {
+    expect(stripMount("/collie/api/health", "/collie/")).toBe("/api/health");
+    expect(stripMount("/collie/", "/collie/")).toBe("/");
+    expect(stripMount("/collie", "/collie/")).toBe("/");
+    expect(stripMount("/collie/space/w1", "/collie/")).toBe("/space/w1");
+  });
+
+  test("leaves a path outside the mount alone, including a mere prefix match", () => {
+    expect(stripMount("/api/health", "/collie/")).toBe("/api/health");
+    expect(stripMount("/collieX/api", "/collie/")).toBe("/collieX/api");
+    expect(stripMount("/collie/api", "/")).toBe("/collie/api");
+  });
+});
+
+describe("mountIndexHtml — the app shell resolved to its mount", () => {
+  const shell =
+    '<meta name="collie-base" content="/" /><script src="/t.js"></script>' +
+    '<link href="/f.woff2" /><style>url("/a.png") url(\'/b.png\') url(/c.png)</style>' +
+    '<a href="https://example.com/x">out</a><a href="//cdn.example/y">pr</a>';
+
+  test("puts the mount in front of every root-absolute reference and the meta tag, nothing else", () => {
+    const out = mountIndexHtml(shell, "/collie/");
+    expect(out).toBe(
+      '<meta name="collie-base" content="/collie/" /><script src="/collie/t.js"></script>' +
+        '<link href="/collie/f.woff2" /><style>url("/collie/a.png") url(\'/collie/b.png\') url(/collie/c.png)</style>' +
+        '<a href="https://example.com/x">out</a><a href="//cdn.example/y">pr</a>',
+    );
+  });
+
+  test("at the root it is the identity", () => {
+    expect(mountIndexHtml(shell, "/")).toBe(shell);
+  });
+});
+
 // The other end of web/src/lib/sw-routes.ts. The service worker hands `/auth/` to the network; if
 // the bridge doesn't recognise the same set, the SPA fallback answers with the app shell and the
 // operator gets the very UI they were trying to escape. These two must agree exactly.
@@ -1325,6 +2799,38 @@ describe("isReservedAuthPath — the namespace a fronting proxy owns", () => {
     for (const path of ["/", "/settings", "/pane/w1:p1", "/authors", "/api/snapshot"]) {
       expect(isReservedAuthPath(path)).toBe(false);
     }
+  });
+});
+
+describe("reservedAuthPlaceholder — what /auth/ says when no proxy answers", () => {
+  test("stays a 404 and keeps the strict CSP", async () => {
+    const res = reservedAuthPlaceholder();
+    expect(res.status).toBe(404);
+    expect(res.headers.get("content-security-policy")).toContain("default-src");
+    const body = await res.text();
+    expect(body).not.toMatch(/<script|<style|style=/i);
+  });
+
+  test("tells an unpaired device to pair, and links Settings next to the way back", async () => {
+    const body = await reservedAuthPlaceholder().text();
+    expect(body).toContain("<code>collie pair</code>");
+    expect(body).toContain("enter the code in Settings");
+    expect(body).toContain('<a href="/settings/system">Open Settings</a>');
+    expect(body).toContain('<a href="/">Back to Collie</a>');
+    // The operator paragraph is still there, after the pairing one.
+    expect(body.indexOf("collie pair")).toBeLessThan(body.indexOf("If you are the operator"));
+  });
+
+  test("under a mount both links carry it (ADR 0052)", async () => {
+    const body = await reservedAuthPlaceholder("/collie/").text();
+    expect(body).toContain('<a href="/collie/">Back to Collie</a>');
+    expect(body).toContain('<a href="/collie/settings/system">Open Settings</a>');
+  });
+
+  test("the mount is escaped, since the page is open to anyone", async () => {
+    const body = await reservedAuthPlaceholder('/a"><b>/').text();
+    expect(body).not.toContain('"><b>');
+    expect(body).toContain('<a href="/a&#34;&#62;&#60;b&#62;/">Back to Collie</a>');
   });
 });
 
@@ -1348,6 +2854,29 @@ describe("marksPaneSeen — CSRF guard on marking a pane seen", () => {
     expect(marksPaneSeen(withHeader({ [SEEN_HEADER]: "1" }), "history")).toBe(true);
   });
 
+  test("changes is a read too — a git view of the folder does not mark the pane seen on its own", () => {
+    expect(marksPaneSeen(withHeader(), "changes")).toBe(false);
+  });
+
+  test("process inspection is a read but requires the authorised-device gate", () => {
+    expect(marksPaneSeen(withHeader(), "processes")).toBe(false);
+    expect(paneGateLevel("processes")).toBe("device-read");
+    expect(paneGateLevel("history")).toBe("read");
+    expect(shouldMaskForwardedAnswer("/api/pane/w1:p1/processes", false)).toBe(true);
+    expect(shouldMaskForwardedAnswer("/api/pane/w1:p1/history", false)).toBe(false);
+    expect(shouldMaskForwardedAnswer("/api/pane/w1:p1/history", true)).toBe(true);
+  });
+
+  test("agent identity is a protected diagnostic read; lifecycle intent does not count as reading the transcript", () => {
+    expect(marksPaneSeen(withHeader(), "agent")).toBe(false);
+    expect(paneGateLevel("agent")).toBe("device-read");
+    expect(shouldMaskForwardedAnswer("/api/pane/w1:p1/agent", false)).toBe(true);
+    for (const action of ["agent/state", "agent/session", "agent/release", "agent/authority/clear"]) {
+      expect(paneGateLevel(action)).toBe("write");
+      expect(marksPaneSeen(withHeader(), action)).toBe(false);
+    }
+  });
+
   test("write actions count without it — they already cleared the Origin-requiring write gate", () => {
     for (const action of ["reply", "keys", "upload", "close", "rename"]) {
       expect(marksPaneSeen(withHeader(), action)).toBe(true);
@@ -1360,10 +2889,10 @@ describe("marksPaneSeen — CSRF guard on marking a pane seen", () => {
   });
 });
 
-// GET /api/config is where a client learns the pack mode without probing behaviour (M4/01). The
+// GET /api/config is where a client learns the crew mode without probing behaviour (M4/01). The
 // handler lives inside Bun.serve, which bun test cannot stand up (CLAUDE.md), so the body it emits
 // is asserted through the pure builder the handler calls.
-describe("bridgeConfigBody — /api/config reports the pack mode", () => {
+describe("bridgeConfigBody — /api/config reports the crew mode", () => {
   const base = { push: true, vapidPublicKey: "BKey", build: "abc123" } as const;
 
   test("a solo instance emits today's exact body — no `mode` key at all", () => {
@@ -1395,9 +2924,67 @@ describe("bridgeConfigBody — /api/config reports the pack mode", () => {
   });
 });
 
+// The masking switch is published read-only so Settings can show it; the phone never sets it. The
+// handler passes `cfg.redact` for the lead's own answer and nothing for a member-scoped one.
+describe("bridgeConfigBody — the masking switch is reported, and omitted when unknown", () => {
+  const base = { push: true, vapidPublicKey: "BKey", build: "abc123", mode: "solo" } as const;
+
+  test("true and false both round-trip", () => {
+    expect(bridgeConfigBody({ ...base, redact: true }).redact).toBe(true);
+    expect(bridgeConfigBody({ ...base, redact: false }).redact).toBe(false);
+  });
+
+  test("absent means no key at all, so a scoped answer and an older bridge read the same", () => {
+    expect("redact" in bridgeConfigBody({ ...base })).toBe(false);
+    expect("redact" in bridgeConfigBody({ ...base, redact: undefined })).toBe(false);
+  });
+
+  test("it is appended after the keys a client already parses", () => {
+    expect(Object.keys(bridgeConfigBody({ ...base, redact: true }))).toEqual([
+      "push",
+      "vapidPublicKey",
+      "build",
+      "redact",
+    ]);
+  });
+});
+
 // The mux block (M10/06) — how the phone learns what the multiplexer underneath can do, without
 // ever learning to branch on which one it is. Same reason as above: the handler is inside Bun.serve,
 // so the shape is asserted through the pure builder it calls.
+describe("chatBodyForMux — Send now is offered only where the multiplexer can press it", () => {
+  const body = {
+    page: "live" as const,
+    gen: 1,
+    rev: 3,
+    head: 3,
+    oldest: 1,
+    hasOlder: false,
+    upserts: [],
+    queued: ["sign off"],
+    sendQueuedNow: ["ctrl+Enter"],
+  };
+  const mux = (unsupportedKeys: string[]) =>
+    declareCapabilities({ supports: ["sendKeys"], unsupportedKeys, topologyLatency: { kind: "push" } });
+
+  test("a multiplexer that delivers the chord keeps the field", () => {
+    expect(chatBodyForMux(body, mux([]))).toBe(body);
+  });
+
+  test("one that would deliver it as a plain Enter loses the field, and nothing else", () => {
+    // tmux 3.6b and zellij 0.44.2 deliver ctrl+Enter as `^M`; Enter would SUBMIT the draft.
+    const out = chatBodyForMux(body, mux(["ctrl+Enter"]));
+    expect("sendQueuedNow" in out).toBe(false);
+    const { sendQueuedNow: _dropped, ...rest } = body;
+    expect(out).toEqual(rest);
+  });
+
+  test("a body without the field passes through untouched", () => {
+    const { sendQueuedNow: _none, ...plain } = body;
+    expect(chatBodyForMux(plain, mux(["ctrl+Enter"]))).toBe(plain);
+  });
+});
+
 describe("muxConfigBody — the capability declaration, as the phone reads it", () => {
   const everything = declareCapabilities({
     supports: [...MUX_CAPABILITIES],
@@ -1418,6 +3005,13 @@ describe("muxConfigBody — the capability declaration, as the phone reads it", 
     const wire = muxConfigBody({ mux: "reference", capabilities: everything });
     expect(Object.keys(wire.capabilities).toSorted()).toEqual([...MUX_CAPABILITIES].toSorted());
     for (const cap of MUX_CAPABILITIES) expect(wire.capabilities[cap]).toBe(true);
+    // Omitted declarations preserve the old-peer compatibility budget.
+    expect(wire.readLimits).toEqual({ maxRequestedLines: 1_000 });
+  });
+
+  test("whole-tab capability requires durable move receipts", () => {
+    expect(muxConfigBody({ mux: "reference", capabilities: everything }, false).capabilities.tabTransfer).toBe(false);
+    expect(muxConfigBody({ mux: "reference", capabilities: everything }, true).capabilities.tabTransfer).toBe(true);
   });
 
   test("an adapter missing capabilities says false, never omits the key", () => {
@@ -1426,6 +3020,7 @@ describe("muxConfigBody — the capability declaration, as the phone reads it", 
     expect(wire.capabilities.createSpace).toBe(false);
     expect(wire.capabilities.paneGrid).toBe(true);
     expect("agentSessionRef" in wire.capabilities).toBe(true);
+    expect(wire.readLimits).toEqual({ maxRequestedLines: 1_000 });
   });
 
   test("notes ride only for the capabilities the adapter LACKS", () => {
@@ -1460,9 +3055,15 @@ describe("muxConfigBody — the capability declaration, as the phone reads it", 
     expect(everything.unsupportedKeys).toEqual(["PageUp", "End"]);
   });
 
-  test("the real Herdr adapter publishes every capability — nothing changes for its operators", () => {
+  test("the real Herdr adapter advertises only proven capabilities before layout readiness", () => {
     const wire = muxConfigBody(herdrMuxFactory.create({ endpoint: "/tmp/none.sock", timeoutMs: 100, options: {} }));
-    for (const cap of MUX_CAPABILITIES) expect(wire.capabilities[cap]).toBe(true);
+    const proven = new Set([
+      "paneGrid", "gridScrollback", "agentDetection", "agentSessionRef", "agentIdentity", "paneProcesses",
+      "typeText", "sendKeys", "guardedQueuedSend", "renamePane", "closePane", "setFocus", "createTab", "renameTab",
+      "closeTab", "createSpace", "listWorktrees", "createWorktree", "openWorktree",
+      "pushTopologyEvents", "pushPaneEvents", "listSessions",
+    ]);
+    for (const cap of MUX_CAPABILITIES) expect(wire.capabilities[cap]).toBe(proven.has(cap));
     expect(wire.notes).toEqual({});
   });
 
@@ -1539,6 +3140,7 @@ describe("muxLogoResponse — serving an adapter's mark", () => {
 
 describe("bridgeConfigBody — the mux block is appended, never reordering what came before", () => {
   const base = { push: true, vapidPublicKey: "BKey", build: "abc123", mode: "solo" } as const;
+    // SAFETY: this route fixture supplies snapshot/readGrid/sendKeys and capability metadata; no other mux method is called.
   const mux = { mux: "reference", capabilities: declareCapabilities({ supports: ["paneGrid"], topologyLatency: { kind: "push" } }) };
 
   test("no adapter in hand: no key at all, which a client reads as an older bridge", () => {
@@ -1567,13 +3169,41 @@ describe("bridgeConfigBody — the mux block is appended, never reordering what 
     expect(body.mux?.capabilities.paneGrid).toBe(true);
     expect(body.mux?.capabilities.createSpace).toBe(false);
   });
+
+  // ── M22/03: `?host=<member>` answers that member's block, in the same position ──────────────
+  //
+  // The lead holds one block per member, learned from that member's `hello` (bridge/crew/lead.ts).
+  // The route hands it here, and this is the whole difference between the two answers: the block's
+  // contents change and nothing else does.
+
+  test("a member's own block replaces the lead's, in the same position and with no other key moved", () => {
+    const member: MuxConfig = {
+      name: "member-reference",
+      // The point of the feature: a capability this lead's own adapter does not have.
+      capabilities: muxCaps({ createWorktree: true }),
+      unsupportedKeys: [],
+      notes: {},
+    };
+    const answered = bridgeConfigBody({ ...base, mux, muxWire: member });
+    expect(Object.keys(answered)).toEqual(["push", "vapidPublicKey", "build", "mux"]);
+    expect(answered.mux).toEqual(member);
+    // And the lead's own answer, from the same call with no member named, is untouched.
+    expect(bridgeConfigBody({ ...base, mux }).mux?.name).toBe("reference");
+    expect(bridgeConfigBody({ ...base, mux }).mux?.capabilities.createWorktree).toBe(false);
+  });
+
+  test("no member named: the body is what it always was, byte for byte", () => {
+    // §11's zero-tax contract. A solo install cannot even emit `host=`, so this is the only body
+    // it can ever get, and `muxWire` must not be able to change it by being absent.
+    expect(bridgeConfigBody({ ...base, mux, muxWire: undefined })).toEqual(bridgeConfigBody({ ...base, mux }));
+  });
 });
 
 // ── The merged snapshot route (M4/04) ────────────────────────────────────────
-// `/api/snapshot` is `packLead ? packLead.merge(body) : body`, inside Bun.serve — which bun test
+// `/api/snapshot` is `crewLead ? crewLead.merge(body) : body`, inside Bun.serve — which bun test
 // cannot stand up (CLAUDE.md). So the two halves are asserted where they actually live: the
-// composition through the real PackLead, and the routing invariants by reading the source that
-// registers them. PACK_PROTOCOL.md §9.2, §10.2.
+// composition through the real CrewLead, and the routing invariants by reading the source that
+// registers them. CREW_PROTOCOL.md §9.2, §10.2.
 
 const snapshotSource = (): SnapshotResponse => ({
   bridge: "connected",
@@ -1598,8 +3228,8 @@ const snapshotSource = (): SnapshotResponse => ({
   ts: 1_754_000_000_000,
 });
 
-function leadOverDeadPeer(): PackLead {
-  const registry = new PackRegistry({
+function leadOverDeadPeer(): CrewLead {
+  const registry = new CrewRegistry({
     sessions: { get: () => undefined },
     self: "desk",
     members: () => [
@@ -1616,12 +3246,14 @@ function leadOverDeadPeer(): PackLead {
       },
     ],
   });
-  return new PackLead({
+  return new CrewLead({
+    log: () => {},
     registry,
     // Every dial fails, exactly as `PeerClient` reports a peer that is off: a value, not a throw.
     snapshot: async () => ({ ok: false, state: "unreachable", reason: "connection refused", receivedAt: 1 }),
     proxy: neverProxy,
     self: { id: "desk", name: "the herd" },
+    maxUploadBytes: DEFAULT_MAX_UPLOAD_BYTES,
   });
 }
 
@@ -1630,11 +3262,21 @@ describe("the merged snapshot — an unreachable peer degrades its entry, never 
     const lead = leadOverDeadPeer();
     await lead.sweep();
     // The route has no try/catch around this call and needs none — that is the contract.
-    const merged = lead.merge(snapshotSource());
+    const merged = lead.merge(snapshotSource(), NARROW_PLAN);
     expect(merged.bridge).toBe("connected");
     expect(merged.servers).toEqual([
       { id: "desk", name: "the herd", isLead: true, reachable: true, protocol: "ok", lastSeenAt: expect.any(Number) },
-      { id: "laptop", name: "laptop", isLead: false, reachable: false, protocol: "unknown", lastSeenAt: 0 },
+      // One refused connection is well inside the retry budget, so the lead says it is reconnecting
+      // rather than asking the operator for anything (§10.2's presentation split, M22/05).
+      {
+        id: "laptop",
+        name: "laptop",
+        isLead: false,
+        reachable: false,
+        protocol: "unknown",
+        lastSeenAt: 0,
+        linkState: "reconnecting",
+      },
     ]);
     // The lead's own herd is untouched by its peer being down.
     expect(merged.agents.map((p) => p.paneId)).toEqual(["w1:p1"]);
@@ -1644,41 +3286,170 @@ describe("the merged snapshot — an unreachable peer degrades its entry, never 
   test("with no lead runtime the body is passed through by identity — solo's zero tax at the seam", () => {
     const body = snapshotSource();
     // Character-for-character the route's own expression, with the route's own optional dep.
-    const route = (packLead: PackLead | undefined, b: SnapshotResponse) => (packLead ? packLead.merge(b) : b);
+    const route = (crewLead: CrewLead | undefined, b: SnapshotResponse) =>
+      crewLead ? crewLead.merge(b, NARROW_PLAN) : b;
     const out = route(undefined, body);
     expect(out).toBe(body);
     expect(JSON.stringify(out)).not.toMatch(/"servers"|"host"/);
   });
 });
 
+// ── M22/06: `?all=1` composes with `?host=` ──────────────────────────────────
+// The route is `crewLead ? crewLead.merge(body, plan) : body` inside `Bun.serve`, so the two halves
+// are asserted where they live: the PLAN is built here by the route's own expression, character for
+// character, and the source assertions below pin that the route builds it the same way.
+
+describe("the widened snapshot composes with the host scope (M22/06)", () => {
+  const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
+
+  /** The route's own two lines, over a browser URL. Nothing here is a literal view. */
+  const planFor = (query: string) => {
+    const url = new URL(`http://collie.invalid/api/snapshot${query}`);
+    const host = selectHostFrom(url);
+    return snapshotPlan(host.kind === "member" ? host.id : null, selectView(url));
+  };
+
+  /** A member running two sessions, answering the sweep's widened ask: every pane is tagged. */
+  const widenedPeerBody = {
+    sessions: [
+      { name: "default", isPrimary: true, reachable: true, agents: 1, working: 0, blocked: 0 },
+      { name: "work", isPrimary: false, reachable: true, agents: 1, working: 0, blocked: 0 },
+    ],
+    agents: [
+      { ...snapshotSource().agents[0]!, paneId: "l1:p1", session: "default" },
+      { ...snapshotSource().agents[0]!, paneId: "l1:p2", session: "work" },
+    ],
+    shellPanes: [],
+  };
+
+  async function leadOverTwoSessionPeer(): Promise<CrewLead> {
+    const registry = new CrewRegistry({
+      sessions: { get: () => undefined },
+      self: "desk",
+      members: () => [
+        {
+          memberId: "laptop",
+          fingerprint: "a".repeat(64),
+          certPem: "-----BEGIN CERTIFICATE-----\nunused-in-this-test\n-----END CERTIFICATE-----\n",
+          address: "laptop.example:8787",
+          role: "peer",
+          status: "enrolled",
+          enrolledAt: 0,
+          secretGeneration: 1,
+          signedAt: 0,
+        },
+      ],
+    });
+    const lead = new CrewLead({
+      log: () => {},
+      registry,
+      snapshot: async () => ({ ok: true, value: widenedPeerBody, status: 200, member: null, receivedAt: 1, date: null }),
+      proxy: neverProxy,
+      self: { id: "desk", name: "the herd" },
+      maxUploadBytes: DEFAULT_MAX_UPLOAD_BYTES,
+    });
+    await lead.sweep();
+    return lead;
+  }
+
+  test("`?all=1&host=<member>` returns that member's other sessions", async () => {
+    const lead = await leadOverTwoSessionPeer();
+    const merged = lead.merge(snapshotSource(), planFor("?host=laptop&sessions=all"));
+    expect(merged.agents.filter((p) => p.host === "laptop").map((p) => [p.paneId, p.session])).toEqual([
+      ["l1:p1", "default"],
+      ["l1:p2", "work"],
+    ]);
+    // And the LEAD is not widened by a request that is about another machine: its own body was built
+    // from `plan.local`, which is the narrow view here.
+    expect(planFor("?host=laptop&sessions=all").local).toEqual({ session: undefined, widen: false });
+  });
+
+  test("`?all=1` with no host is the lead's own sessions, exactly as today", async () => {
+    const lead = await leadOverTwoSessionPeer();
+    // The lead's half: the view reaches `localSnapshot` unchanged, which is what widens it.
+    expect(planFor("?sessions=all").local).toEqual({ session: undefined, widen: true });
+    expect(planFor("?sessions=all&session=work").local).toEqual({ session: "work", widen: true });
+    // The member's half: still narrow, so its second session does not appear uninvited.
+    const merged = lead.merge(snapshotSource(), planFor("?sessions=all"));
+    expect(merged.agents.map((p) => p.paneId)).toEqual(["w1:p1", "l1:p1"]);
+    expect(JSON.stringify(merged.agents)).not.toContain('"session"');
+  });
+
+  test("no param at all: every machine narrow, which is the only body a solo install can get", () => {
+    expect(planFor("").local).toEqual(NARROW_PLAN.local);
+    expect(planFor("").peer("laptop")).toEqual(NARROW_PLAN.peer("laptop"));
+    expect(planFor("?s=work").local).toEqual({ session: undefined, widen: false });
+  });
+
+  test("the route reads the resolved host together with the view, and hands both to the merge", () => {
+    const handler = src.slice(src.indexOf('if (pathname === "/api/snapshot")'));
+    const route = handler.slice(0, handler.indexOf("// ── Session-scoped routes"));
+    // The two params compose in ONE expression, from the host the request already resolved.
+    expect(route).toContain('const plan = snapshotPlan(host.kind === "member" ? host.id : null, selectView(url));');
+    expect(route).toContain("localSnapshot(plan.local.session, device.enforced ? device : null, plan.local.widen)");
+    expect(route).toContain("crewLead ? crewLead.merge(body, plan) : body");
+    // No literal view survives on this route: the switch is read once, by name.
+    expect(route).not.toContain('url.searchParams.get("sessions")');
+  });
+
+  test("the peer surface answers the view the LEAD asked for, never a hard-coded one", () => {
+    // The blocker M22/06 removed: `snapshot: (session) => localSnapshot(session, null, false)` made a
+    // widened peer answer impossible, whatever the lead sent.
+    expect(src).toContain("snapshot: (view) => localSnapshot(view.session, null, view.widen),");
+    expect(src).not.toContain("localSnapshot(session, null, false)");
+  });
+});
+
 describe("the host gate — `?host=` selects among enrolled members and nothing else", () => {
   const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
 
-  test("the selector is parsed only when a pack surface is mounted", () => {
-    // The same trust-store-existence predicate the pack router mounts on: a solo instance never
+  test("the selector is parsed only when a crew surface is mounted", () => {
+    // The same trust-store-existence predicate the crew router mounts on: a solo instance never
     // applies the `?host=` grammar to a URL at all (§11).
-    expect(src).toContain("const host = packHandler ? selectHostFrom(url) : LOCAL_HOST;");
+    expect(src).toContain("const host = crewHandler ? selectHostFrom(url) : LOCAL_HOST;");
   });
 
   test("every session-scoped route resolves through the gate, never past it", () => {
     // The load-bearing claim: `?h=laptop` + `w1:p1` must never be served the DESK's `w1:p1`, and
     // pane ids collide across machines, so a fall-through here is a cross-host write.
     //
-    // All NINE session-scoped routes (tab create, workspace create, launch, this host's launcher
-    // rows, tab action, the pane family, "look now", the worktree listing and the worktree actions)
-    // reach their runtime through the caller's resolver and nothing else.
-    expect([...src.matchAll(/await caller\.resolve\(\);/g)]).toHaveLength(9);
-    // Exactly five `registry.get(` calls remain, and each is a sanctioned one, named here rather
+    // All scoped route handlers (tab create, workspace create, launch, this host's launcher
+    // rows, this host's folder list and a star on it, one journal blob, a workspace's Changes list,
+    // a workspace's Files view, the Files existence check by pane or workspace, the Files image read
+    // by pane or workspace (ADR 0090), tab action, the pane family, "look now", the New sheet's
+    // branch plan and create from a folder (ADR 0093), and the
+    // three writes on a phone's own launcher rows, served by one function (ADR 0094), and the two
+    // writes on this machine's one-off command history, served by one function (ADR 0095), and the
+    // read that checks a typed line before it runs (ADR 0095, amendment), owning-runtime linked
+    // worktree removal planning/execution, and the owning workspace's Source read, scoped agent
+    // inventory, workspace/tab organization, portable layouts, host integration actions, and B32
+    // plugin list/config/install/link/uninstall/action/pane routes) reach
+    // their runtime through the caller's resolver and nothing else.
+    // All scoped routes, including host integrations, named agent operations and metadata/views, resolve only through the captured caller.
+    expect([...src.matchAll(/await caller\.resolve\(\);/g)]).toHaveLength(32);
+    // Thirteen registry reads retain the explicitly enumerated uses below.
     // than exempted: assembling THIS collie's own snapshot body; `localRuntime`, the single
     // "(session) → runtime, or 404" helper both callers share; `/api/config`, which reports THIS
     // collie's own multiplexer (M10/06) and is not session-scoped at all; `/api/mux/logo.svg`,
     // which serves that same local multiplexer's mark and is session-scoped no more than the config
-    // that publishes its URL; and the attention stamp on `/api/snapshot`, which is a fact about
+    // that publishes its URL; the attention stamp on `/api/snapshot`, which is a fact about
     // THIS collie's own engine on a route that is already local-body-then-merge and has no `?h=`
-    // branch to fall through. A sixth would be a route reaching past the gate.
-    expect([...src.matchAll(/registry\.get\(/g)]).toHaveLength(5);
+    // branch to fall through; and the crew surface's own `mux` source, which answers an admitted
+    // LEAD with this machine's block on `hello` and is the same local read `/api/config` makes
+    // (M22/03); and the cache-watch resolver, which turns `(host, session, paneId)` into the watch key
+    // a PREFERENCE is stored under — deliberately NOT through the gate, because that preference belongs
+    // on the collie the phone is talking to and a forward would store it on the machine that holds no
+    // push subscription (ADR 0042, CREW_PROTOCOL.md §5). It reads a peer's pane out of the lead's own
+    // swept body instead, exactly as `bridge/crew/notify.ts` does, and writes to no terminal at all;
+    // and the hot intent after an input FORWARDED to a member, which tightens THIS collie's primary
+    // engine because the sweep that brings the member's answer back rides its tick (CREW_PROTOCOL.md
+    // §10.1). It runs after the forward has answered and writes nothing; removal readiness
+    // only publishes a capability. B19 adds two original-registry equality checks, never a
+    // fresh resolver or replacement authority source. B31 retains one further equality
+    // check for its original metadata runtime through dispatch.
+    expect([...src.matchAll(/registry\.get\(/g)]).toHaveLength(13);
     // The mux read is a read of the LOCAL primary — never `?host=`, because a peer's capabilities
-    // are its own business and reach the lead over the pack API, never out of this registry.
+    // are its own business and reach the lead over the crew API, never out of this registry.
     expect(src).toContain("const activeMux = registry.get();");
     // An unknown or ill-formed host is a 404, mirroring unknownSession() (§4)… The words now come
     // from the error catalogue (bridge/error-codes.ts), so what this pins is the SELECTION — that
@@ -1688,35 +3459,19 @@ describe("the host gate — `?host=` selects among enrolled members and nothing 
     );
     // …and a KNOWN peer is forwarded, with the peer's own response handed back (§5, §9.1). The
     // forward is the gate's own branch — no route may grow a second one.
-    expect([...src.matchAll(/packLead!\.forward\(/g)]).toHaveLength(1);
+    expect([...src.matchAll(/crewLead!\.forward\(/g)]).toHaveLength(1);
     expect(src).not.toContain("per-pane proxying is not implemented in this build");
   });
 
-  test("the worktree listing clears the read gate before resolving its target", () => {
-    // This route used to be the sole session-scoped read that jumped straight to `resolve()`. On the
-    // browser caller that skipped `guard(req, cfg, "read")`, so a bad Host, a cross-origin request,
-    // or an untrusted/missing Tailscale identity could reach the local/peer target. Pin the complete
-    // short-circuit in the route block: every refusal returns before the first target call.
-    const start = src.indexOf("const worktreeListMatch = pathname.match(WORKTREE_LIST_ROUTE);");
-    const end = src.indexOf("const worktreeMatch = pathname.match(WORKTREE_ACTION_ROUTE);", start);
-    expect(start).toBeGreaterThan(-1);
-    expect(end).toBeGreaterThan(start);
-    const handler = src.slice(start, end);
-    expect(handler).toContain(
-      'const denied = caller.gate("read");\n      if (denied) return denied;\n      const rt = await caller.resolve();',
-    );
-    expect(handler.indexOf('caller.gate("read")')).toBeLessThan(handler.indexOf("caller.resolve()"));
-  });
-
   test("a peer's own routes are the SAME closure the browser's are (§5), with two callers", () => {
-    // The 1:1 rule: `/pack/v1/pane/:id/reply` and `/api/pane/:id/reply` are not two handlers that
+    // The 1:1 rule: `/crew/v1/pane/:id/reply` and `/api/pane/:id/reply` are not two handlers that
     // agree — they are one block reached by two callers. Exactly one definition, exactly two calls.
     expect([...src.matchAll(/const serveSessionRoute = async/g)]).toHaveLength(1);
     expect([...src.matchAll(/serveSessionRoute\(\s*req/g)]).toHaveLength(2);
     // The peer's caller supplies its OWN gate and its OWN audit attribution — the lead's verdict is
-    // never an input, and the write lands in the peer's log marked pack-originated (§12).
-    expect(src).toContain("packGate(level, cfg, device)");
-    expect(src).toContain('audit.scoped({ via: "pack", from })');
+    // never an input, and the write lands in the peer's log marked crew-originated (§12).
+    expect(src).toContain("crewGate(level, cfg, device)");
+    expect(src).toContain('audit.scoped({ via: "crew", from })');
   });
 
   test('"seen" is marked once, on the owning host, and never for a remote pane (.adr/0003)', () => {
@@ -1741,85 +3496,25 @@ describe("the host gate — `?host=` selects among enrolled members and nothing 
 // verdict for a send and for an update; and structurally, on the source, because behaviour agreeing
 // today is exactly what two copies do right up until one of them is edited.
 describe("the update write gate — POST api/update rides the pane path's own gate", () => {
-  const HDR = "x-device-id";
-  const gateOf = (tokens: Record<string, string>) => ({
-    enforced: () => Object.keys(tokens).length > 0,
-    resolve: (token: string | null) =>
-      token !== null && tokens[token] !== undefined ? { label: tokens[token]! } : null,
-  });
-
-  /** Every posture the two routes must answer identically. */
-  const CASES: { name: string; cfg: Config; pairing?: ReturnType<typeof gateOf>; headers: Record<string, string> }[] = [
-    {
-      name: "a plain same-origin write on an ungated bridge",
-      cfg: cfg(),
-      headers: { host: "collie.ts.net", origin: "https://collie.ts.net" },
-    },
-    {
-      name: "a cross-origin write",
-      cfg: cfg(),
-      headers: { host: "collie.ts.net", origin: "https://evil.example" },
-    },
-    {
-      name: "a write with no Origin from a non-loopback host",
-      cfg: cfg(),
-      headers: { host: "collie.ts.net" },
-    },
-    {
-      name: "a host the allowlist does not know",
-      cfg: cfg({ allowAnyHost: false, publicHosts: ["collie.ts.net"] }),
-      headers: { host: "rebound.example", origin: "https://rebound.example" },
-    },
-    {
-      name: "the device header is configured and absent",
-      cfg: cfg({ deviceHeader: HDR, deviceAllowlist: ["phone"] }),
-      headers: { host: "collie.ts.net", origin: "https://collie.ts.net" },
-    },
-    {
-      name: "the device header carries an unlisted device",
-      cfg: cfg({ deviceHeader: HDR, deviceAllowlist: ["phone"] }),
-      headers: { host: "collie.ts.net", origin: "https://collie.ts.net", [HDR]: "intruder" },
-    },
-    {
-      name: "the device header carries an allowlisted device",
-      cfg: cfg({ deviceHeader: HDR, deviceAllowlist: ["phone"] }),
-      headers: { host: "collie.ts.net", origin: "https://collie.ts.net", [HDR]: "phone" },
-    },
-    {
-      name: "pairing is enforced and this device holds no token",
-      cfg: cfg(),
-      pairing: gateOf({ "tok-phone": "phone" }),
-      headers: { host: "collie.ts.net", origin: "https://collie.ts.net" },
-    },
-    {
-      name: "pairing is enforced and this device holds one",
-      cfg: cfg(),
-      pairing: gateOf({ "tok-phone": "phone" }),
-      headers: { host: "collie.ts.net", origin: "https://collie.ts.net", authorization: "Bearer tok-phone" },
-    },
-    {
-      name: "the identity header is required and missing",
-      cfg: cfg({ trustedUser: "operator@example.com" }),
-      headers: { host: "collie.ts.net", origin: "https://collie.ts.net" },
-    },
-  ];
-
-  for (const c of CASES) {
-    test(`same device auth as pane input: ${c.name}`, () => {
-      // The pane's reply route asks exactly this, through `RouteCaller.gate`. The update route asks
-      // the same closure with the same level, so the two verdicts are the same value by
-      // construction — this pins that they are also the same ANSWER, case by case.
-      const paneVerdict = guard(req(c.headers), c.cfg, "write", c.pairing);
-      const updateVerdict = guard(req(c.headers), c.cfg, "write", c.pairing);
-      expect(updateVerdict === null).toBe(paneVerdict === null);
-      expect(updateVerdict?.status).toBe(paneVerdict?.status);
-    });
-  }
-
+  // The route starts a real update, so its gate is the one thing about it that must not be its own.
+  // It is the pane path's gate — literally, the same `browserGate` closure, passed to both call
+  // sites — and the test below asserts that ON THE SOURCE.
+  //
+  // ── WHAT USED TO BE HERE, AND WHY IT IS NOT ─────────────────────────────────
+  // A ten-case matrix ran `guard(req(h), cfg, "write", pairing)` twice with character-identical
+  // arguments and compared the two results to each other. Its own comment said the two were "the
+  // same value by construction", which is the whole objection: it asserted that a pure function is
+  // deterministic, not that the two routes agree. Every one of its ten postures is already covered
+  // against the REAL routes above (`:188` and `:875`), where a wrong answer is a wrong answer rather
+  // than a mirror. Removed 2026-10-01; 74 lines, no coverage lost.
+  //
+  // The source test below is the one that can fail. If someone re-spells either call site as its own
+  // `guard(req, cfg, …)`, the two checks drift and this catches it, which is the thing a behavioural
+  // matrix over one closure never could.
   test("same device auth as pane input: one gate expression, two call sites, no second guard() call", () => {
     const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
     // Defined once…
-    expect([...src.matchAll(/const browserGate = \(level: "read" \| "write"\)/g)]).toHaveLength(1);
+    expect([...src.matchAll(/const browserGate = \(level: GateLevel\)/g)]).toHaveLength(1);
     // …handed to the pane family…
     expect(src).toContain("gate: browserGate,");
     // …and used by the update route. If someone re-spells either as its own `guard(req, cfg, …)`
@@ -1843,7 +3538,7 @@ describe("the update write gate — POST api/update rides the pane path's own ga
     expect(src).toContain('if (pathname === "/api/update/check" && req.method === "GET")');
     const checkAt = src.indexOf('if (pathname === "/api/update/check" && req.method === "GET")');
     const checkHandler = src.slice(checkAt, checkAt + 1200);
-    expect(checkHandler).toContain('guard(req, cfg, "read", pairing)');
+    expect(checkHandler).toContain('guard(req, cfg, "read", pairingGate)');
     expect(checkHandler).not.toContain("updateAction.start");
   });
 
@@ -1872,20 +3567,20 @@ describe("the update write gate — POST api/update rides the pane path's own ga
     expect(checkHandler).toContain("UPDATE_ON_DEMAND_POLL_TIMEOUT_MS");
   });
 
-  // ── THE PACK'S HALF (M16/03) ───────────────────────────────────────────────
+  // ── THE CREW'S HALF (M16/03) ───────────────────────────────────────────────
   // The card's read answers for every member, from what the sweep banked. The route itself lives
   // inside `Bun.serve` and cannot be stood up here (CLAUDE.md), so what is pinned is its SHAPE —
   // the same way every other assertion in this block is — and the decisions it delegates to are
   // exercised for real in `update-action.test.ts` and `lead.test.ts`.
-  test("update check pack array: the key is always present, [] on a solo instance and on a peer", () => {
+  test("update check crew array: the key is always present, [] on a solo instance and on a peer", () => {
     const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
     const checkAt = src.indexOf('if (pathname === "/api/update/check" && req.method === "GET")');
     const checkHandler = src.slice(checkAt, checkAt + 4500);
-    // `?? []` is the whole of it: a solo instance and a peer build no `packLead`, so the key is an
+    // `?? []` is the whole of it: a solo instance and a peer build no `crewLead`, so the key is an
     // empty array rather than an absent one — `preflight: null`'s stated reason, one field over.
-    expect(checkHandler).toContain("pack: opts.packLead?.updateRows() ?? []");
-    // Composed from the bank, not from a dial: the rows come off `PackLead`, which reads `PeerState`.
-    expect(checkHandler).not.toContain("packLead.forward");
+    expect(checkHandler).toContain("crew: opts.crewLead?.updateRows() ?? []");
+    // Composed from the bank, not from a dial: the rows come off `CrewLead`, which reads `PeerState`.
+    expect(checkHandler).not.toContain("crewLead.forward");
   });
 
   test("update check dials nobody: the rows are read from the sweep's bank, never fetched", () => {
@@ -1898,14 +3593,14 @@ describe("the update write gate — POST api/update rides the pane path's own ga
     for (const forbidden of ["client.snapshot", "peerClient", "proxy(", "fetch("]) {
       expect(checkHandler).not.toContain(forbidden);
     }
-    expect(checkHandler).toContain("opts.packLead?.updateRows()");
+    expect(checkHandler).toContain("opts.crewLead?.updateRows()");
   });
 
   test("update check preflight fresh: the on-demand read fires ONE sweep asking for a fresh check", () => {
     const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
     const checkAt = src.indexOf('if (pathname === "/api/update/check" && req.method === "GET")');
     const checkHandler = src.slice(checkAt, checkAt + 4500);
-    expect(checkHandler).toContain("opts.packLead?.sweep({ freshPreflight: true })");
+    expect(checkHandler).toContain("opts.crewLead?.sweep({ freshPreflight: true })");
     expect([...checkHandler.matchAll(/sweep\(/g)]).toHaveLength(1);
   });
 
@@ -1922,13 +3617,40 @@ describe("the update write gate — POST api/update rides the pane path's own ga
     expect(checkHandler).not.toContain('"green"');
   });
 
-  test("the pack gates the confirm too: POST api/update reads the same banked rows", () => {
+  test("the crew gates the confirm too: POST api/update reads the same banked rows", () => {
     const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
     const updateAt = src.indexOf('if (pathname === "/api/update" && req.method === "POST")');
     const handler = src.slice(updateAt, src.indexOf("\n      }\n", updateAt));
-    // One confirm covers the pack, so one verdict covers the pack — and it is the SAME rows the
+    // One confirm covers the crew, so one verdict covers the crew — and it is the SAME rows the
     // card showed, from the same bank, decided by the one merge function in `update-action.ts`.
-    expect(handler).toContain("pack: opts.packLead?.updateRows() ?? []");
+    expect(handler).toContain("crew: opts.crewLead?.updateRows() ?? []");
+  });
+
+  test("the band's dismiss carries a scope, and the monitor decides what it costs", () => {
+    const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
+    const at = src.indexOf('if (pathname === "/api/update/dismiss" && req.method === "POST")');
+    expect(at).toBeGreaterThan(0);
+    const handler = src.slice(at, src.indexOf("\n      }\n", at));
+    // Read-level, exactly like the snooze beside it — declining a notification about your own
+    // machine is not terminal-driving.
+    expect(handler).toContain('guard(req, cfg, "read", pairingGate)');
+    // One call, and the monitor is what decides whether the digest is snoozed with it. If the route
+    // ever spells that itself, the rule can be edited apart from the record it belongs to.
+    expect(handler).toContain('await updateMonitor.dismiss(version, scope ?? "offer")');
+    expect(handler).not.toContain("snoozeDigest");
+    // WHICH band, because they are two decisions. An absent scope reads as the offer, which is what
+    // every client before the crew states could close. 1.7.0's `"pack"` scope is no longer one of
+    // them: an unknown scope is a 400, which is what an unknown scope has always been.
+    expect(handler).toContain('scope !== "offer" && scope !== "crew"');
+    expect(handler).toContain('text("bad scope", 400)');
+    // A version, checked before anything is written: the band is keyed by version, so an empty one
+    // would dismiss nothing and pin the store to a fact that is not one.
+    expect(handler).toContain('typeof version !== "string"');
+    expect(handler).toContain("400");
+    // It answers the same object the snooze does, so the tab that tapped is already up to date.
+    expect(handler).toContain("updateMonitor.status()");
+    // And it starts nothing: closing a band is not an update.
+    expect(handler).not.toContain("action.start");
   });
 
   test("update status: the run record reaches the phone through the status the card already polls", () => {
@@ -2345,6 +4067,7 @@ describe("launch — an allowlisted space create, then the command and Enter", (
 
     test("without a paneId, the Space path runs exactly as before", async () => {
       const clock = fakeClock();
+    // SAFETY: this route fixture supplies snapshot/readGrid/sendKeys and capability metadata; no other mux method is called.
       const mux = new FakeLaunchMux(clock.now);
       const { audit, entries } = launchAudit();
       const res = await launch(
@@ -2384,11 +4107,504 @@ describe("GET /api/launchers — this host's own rows, home included", () => {
   });
 });
 
-// ── THE PACK'S RUN (M16/04) ─────────────────────────────────────────────────
+// ── The new-space folder list (#289, M40/02) ─────────────────────────────────────────────────
+// The store itself is pinned in folders.test.ts. What is pinned HERE is the two places the HTTP
+// layer touches it: the space create that records a folder, and the two routes that read and star.
+
+describe("POST /api/workspace — a create that worked records the folder the multiplexer reported", () => {
+  /** Only what `createWorkspace` reaches: the create, and the refresh every structural create settles on. */
+  class FakeSpaceMux {
+    created: MuxSpaceRequest | null = null;
+    constructor(
+      private readonly reported: string,
+      private readonly refuse = false,
+    ) {}
+    createSpace(request_: MuxSpaceRequest): Promise<MuxOutcome<MuxCreatedPane>> {
+      this.created = request_;
+      if (this.refuse) return Promise.resolve(muxRefused("no such directory"));
+      return Promise.resolve(
+        muxOk({ paneId: "w4:p1", spaceId: "w4", spaceLabel: "proj", tabId: "w4:t1", cwd: this.reported }),
+      );
+    }
+    refresh(): Promise<void> {
+      return Promise.resolve();
+    }
+  }
+  const engineStub: Partial<StateEngine> = { pokeNow: () => {} };
+  // SAFETY: after a create, `createWorkspace` asks the engine for exactly one thing — `pokeNow()` —
+  // and the adapter for exactly the two calls FakeSpaceMux implements. Nothing else is reachable.
+  const engine = engineStub as StateEngine;
+  function asSpaceMux(fake: Partial<MuxAdapter>): MuxAdapter {
+    // SAFETY: as above — only `createSpace` and `refresh` are reachable from `createWorkspace`.
+    return fake as MuxAdapter;
+  }
+  function body(json: string): Request {
+    return new Request("http://localhost/api/workspace", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: json,
+    });
+  }
+  const HOME = "/home/op";
+
+  async function create(requestBody: string, mux: FakeSpaceMux) {
+    const dir = await mkdtemp(join(tmpdir(), "collie-ws-folders-"));
+    const store = new FolderStore({ stateDir: dir }, HOME);
+    try {
+      const res = await createWorkspace(asSpaceMux(mux), engine, body(requestBody), new AuditLog(() => {}), null, "default", store);
+      return { res, lists: store.current(), written: await Bun.file(join(dir, "folders.json")).exists() };
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }
+
+  test("records the REPORTED folder, not the typed text", async () => {
+    const mux = new FakeSpaceMux("/home/op/proj");
+    const { res, lists, written } = await create(JSON.stringify({ cwd: "~/proj" }), mux);
+    expect(res.status).toBe(200);
+    expect(mux.created?.cwd).toBe("~/proj");
+    expect(lists.recent).toEqual(["/home/op/proj"]);
+    expect(written).toBe(true);
+  });
+
+  test("a refused create records nothing", async () => {
+    const { res, lists, written } = await create(JSON.stringify({ cwd: "/srv/typo" }), new FakeSpaceMux("", true));
+    expect(await res.json()).toMatchObject({ ok: false, code: "workspace.create_failed" });
+    expect(lists.recent).toEqual([]);
+    expect(written).toBe(false);
+  });
+
+  test("a blank or whitespace field means home and records nothing", async () => {
+    for (const requestBody of [JSON.stringify({}), JSON.stringify({ cwd: "" }), JSON.stringify({ cwd: "   " })]) {
+      // Even when the multiplexer reports a real folder: the operator named none.
+      const { lists, written } = await create(requestBody, new FakeSpaceMux("/srv/somewhere"));
+      expect(lists.recent).toEqual([]);
+      expect(written).toBe(false);
+    }
+  });
+
+  test("an empty reported folder, or home itself, records nothing", async () => {
+    for (const reported of ["", HOME]) {
+      const { res, lists, written } = await create(JSON.stringify({ cwd: "/srv/x" }), new FakeSpaceMux(reported));
+      expect(res.status).toBe(200);
+      expect(lists.recent).toEqual([]);
+      expect(written).toBe(false);
+    }
+  });
+
+  test("with no store (a bridge built by hand), the create is exactly today's", async () => {
+    // SAFETY: this route fixture supplies snapshot/readGrid/sendKeys and capability metadata; no other mux method is called.
+    // SAFETY: this route fixture supplies snapshot/readGrid/sendKeys and capability metadata; no other mux method is called.
+    // SAFETY: this route fixture supplies snapshot/readGrid/sendKeys and capability metadata; no other mux method is called.
+    // SAFETY: this route fixture supplies snapshot/readGrid/sendKeys and capability metadata; no other mux method is called.
+    const mux = new FakeSpaceMux("/home/op/proj");
+    const res = await createWorkspace(asSpaceMux(mux), engine, body(JSON.stringify({ cwd: "~/proj" })), new AuditLog(() => {}), null, "default");
+    expect(await res.json()).toMatchObject({ ok: true, pane: { cwd: "/home/op/proj" } });
+  });
+});
+
+describe("the folder routes — GET /api/folders and POST /api/folders/star", () => {
+  const HOME = "/home/op";
+  const runtimeStub: Partial<SessionRuntime> = { name: "default" };
+  // SAFETY: the folder routes only test `rt instanceof Response` and never read a member of the
+  // runtime, so a stub with none of them is enough to stand for "resolved locally".
+  const localRuntime = runtimeStub as SessionRuntime;
+
+  /** A caller that resolves locally and whose gate says `denyAt` (or nothing). Records what was asked. */
+  function caller(opts: { denyAt?: "read" | "write"; resolve?: Response } = {}) {
+    const asked: string[] = [];
+    const c: FolderRouteCaller = {
+      gate: (level) => {
+        asked.push(`gate:${level}`);
+        return level === opts.denyAt ? new Response("read-only device", { status: 403 }) : null;
+      },
+      resolve: () => {
+        asked.push("resolve");
+        return Promise.resolve(opts.resolve ?? localRuntime);
+      },
+    };
+    return { c, asked };
+  }
+  function get(): Request {
+    return new Request("http://localhost/api/folders");
+  }
+  function star(payload: string): Request {
+    return new Request("http://localhost/api/folders/star", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: payload,
+    });
+  }
+  async function storeWith(recent: string[]): Promise<{ store: FolderStore; dir: string }> {
+    const dir = await mkdtemp(join(tmpdir(), "collie-folder-route-"));
+    const store = new FolderStore({ stateDir: dir }, HOME);
+    for (const f of recent.toReversed()) await store.recordRecent(f);
+    return { store, dir };
+  }
+  async function read(res: Response | null): Promise<FoldersResponse> {
+    expect(res).not.toBeNull();
+    expect(res!.status).toBe(200);
+    // SAFETY: a 200 from either folder route is `foldersBody`'s output, and `foldersBody` is typed
+    // to return `FoldersResponse`.
+    return (await res!.json()) as FoldersResponse;
+  }
+
+  test("a path that is neither route is not answered here", async () => {
+    const { c, asked } = caller();
+    expect(await serveFolderRoute(get(), "/api/launchers", c, undefined)).toBeNull();
+    // A GET on the star path is not the star route either.
+    expect(await serveFolderRoute(new Request("http://localhost/api/folders/star"), "/api/folders/star", c, undefined)).toBeNull();
+    expect(asked).toEqual([]);
+  });
+
+  test("read: both lists and this machine's home, gated as a READ", async () => {
+    const { store, dir } = await storeWith(["/srv/a", "/srv/b"]);
+    try {
+      await store.star("/srv/b", true);
+      const { c, asked } = caller();
+      expect(await read(await serveFolderRoute(get(), "/api/folders", c, store))).toEqual({
+        recent: ["/srv/a"],
+        favourites: ["/srv/b"],
+        home: HOME,
+      });
+      expect(asked).toEqual(["gate:read", "resolve"]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a read-only device can read the list", async () => {
+    const { store, dir } = await storeWith(["/srv/a"]);
+    try {
+      const { c } = caller({ denyAt: "write" });
+      expect((await read(await serveFolderRoute(get(), "/api/folders", c, store))).recent).toEqual(["/srv/a"]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("star, then unstar: the answer is the new list, and the file says the same", async () => {
+    const { store, dir } = await storeWith(["/srv/a", "/srv/b"]);
+    try {
+      const { c, asked } = caller();
+      const starred = await read(await serveFolderRoute(star(JSON.stringify({ folder: "/srv/b", starred: true })), "/api/folders/star", c, store));
+      expect(starred).toEqual({ recent: ["/srv/a"], favourites: ["/srv/b"], home: HOME });
+      expect(asked).toEqual(["gate:write", "resolve"]);
+      expect(await Bun.file(join(dir, "folders.json")).json()).toEqual({ recent: ["/srv/a"], favourites: ["/srv/b"] });
+
+      const unstarred = await read(await serveFolderRoute(star(JSON.stringify({ folder: "/srv/b", starred: false })), "/api/folders/star", c, store));
+      expect(unstarred).toEqual({ recent: ["/srv/b", "/srv/a"], favourites: [], home: HOME });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("refused: a read-only device — before the resolver, and nothing is written", async () => {
+    const { store, dir } = await storeWith(["/srv/a"]);
+    try {
+      const before = await Bun.file(join(dir, "folders.json")).text();
+      const { c, asked } = caller({ denyAt: "write" });
+      const res = await serveFolderRoute(star(JSON.stringify({ folder: "/srv/a", starred: true })), "/api/folders/star", c, store);
+      expect(res!.status).toBe(403);
+      expect(asked).toEqual(["gate:write"]);
+      expect(store.current().favourites).toEqual([]);
+      expect(await Bun.file(join(dir, "folders.json")).text()).toBe(before);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("the real write gate refuses a device the allowlist does not name, and lets it read", () => {
+    // The gate the browser caller hands in is `guard(req, cfg, level)`; this is its answer for the
+    // two levels the folder routes ask at, for a device that is read-only under the header gate.
+    const c = cfg({ deviceHeader: "x-device-id", deviceAllowlist: ["phone"] });
+    const headers = { host: "collie.ts.net", origin: "https://collie.ts.net", "x-device-id": "tablet" };
+    expect(guard(new Request("http://collie.ts.net/api/folders/star", { method: "POST", headers }), c, "write")!.status).toBe(403);
+    expect(guard(new Request("http://collie.ts.net/api/folders", { headers }), c, "read")).toBeNull();
+  });
+
+  test("refused: an unknown folder, as a coded 409, and nothing is written", async () => {
+    const { store, dir } = await storeWith(["/srv/a"]);
+    try {
+      const { c } = caller();
+      const res = await serveFolderRoute(star(JSON.stringify({ folder: "/etc", starred: true })), "/api/folders/star", c, store);
+      expect(res!.status).toBe(409);
+      expect(await res!.json()).toMatchObject({ code: "folders.unknown", detail: { folder: "/etc" } });
+      expect(store.current()).toEqual({ recent: ["/srv/a"], favourites: [] });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("refused: a thirteenth favourite, as a coded 409 naming the bound", async () => {
+    const recent = Array.from({ length: MAX_FAVOURITES + 1 }, (_, i) => `/srv/p${i}`);
+    const dir = await mkdtemp(join(tmpdir(), "collie-folder-route-"));
+    try {
+      const store = new FolderStore({ stateDir: dir }, HOME);
+      const { c } = caller();
+      // Record-and-star one at a time: Recent holds eight, so it has to be refilled as it goes.
+      for (const f of recent.slice(0, MAX_FAVOURITES)) {
+        await store.recordRecent(f);
+        await store.star(f, true);
+      }
+      await store.recordRecent(recent[MAX_FAVOURITES]!);
+      const res = await serveFolderRoute(star(JSON.stringify({ folder: recent[MAX_FAVOURITES], starred: true })), "/api/folders/star", c, store);
+      expect(res!.status).toBe(409);
+      expect(await res!.json()).toMatchObject({ code: "folders.favourites_full", detail: { max: MAX_FAVOURITES } });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("refused: a bad body, as a plain 400, and nothing is written", async () => {
+    const { store, dir } = await storeWith(["/srv/a"]);
+    try {
+      const { c } = caller();
+      for (const payload of [
+        "{ not json",
+        JSON.stringify(null),
+        JSON.stringify(["/srv/a"]),
+        JSON.stringify({ folder: "/srv/a" }),
+        JSON.stringify({ starred: true }),
+        JSON.stringify({ folder: 7, starred: true }),
+        JSON.stringify({ folder: "/srv/a", starred: "yes" }),
+        JSON.stringify({ folder: "", starred: true }),
+        JSON.stringify({ folder: `/${"a".repeat(MAX_FOLDER_CHARS)}`, starred: true }),
+      ]) {
+        const res = await serveFolderRoute(star(payload), "/api/folders/star", c, store);
+        expect(res!.status).toBe(400);
+      }
+      expect(store.current()).toEqual({ recent: ["/srv/a"], favourites: [] });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a ?host= call answered by the resolver is handed back untouched; this store is never read", async () => {
+    // What a lead's resolver returns for a peer: the PEER's answer. The lead's own list must not leak
+    // into it, and a star must not land in the lead's file.
+    const { store, dir } = await storeWith(["/srv/lead-only"]);
+    try {
+      const peerAnswer = new Response(JSON.stringify({ recent: ["/peer/x"], favourites: [], home: "/home/p" }));
+      const { c } = caller({ resolve: peerAnswer });
+      expect(await serveFolderRoute(get(), "/api/folders", c, store)).toBe(peerAnswer);
+      const peerStar = new Response("{}");
+      const { c: c2 } = caller({ resolve: peerStar });
+      expect(await serveFolderRoute(star(JSON.stringify({ folder: "/srv/lead-only", starred: true })), "/api/folders/star", c2, store)).toBe(peerStar);
+      expect(store.current()).toEqual({ recent: ["/srv/lead-only"], favourites: [] });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a bridge with no store answers both routes 404 — the shape a phone reads as 'no list'", async () => {
+    const { c } = caller();
+    expect((await serveFolderRoute(get(), "/api/folders", c, undefined))!.status).toBe(404);
+    expect((await serveFolderRoute(star(JSON.stringify({ folder: "/a", starred: true })), "/api/folders/star", c, undefined))!.status).toBe(404);
+  });
+
+  test("the star body parser takes one bounded folder string and one boolean", () => {
+    expect(parseStarFolderRequest({ folder: "/srv/a", starred: false })).toEqual({ folder: "/srv/a", starred: false });
+    // Extra keys are ignored rather than refused.
+    expect(parseStarFolderRequest({ folder: "/srv/a", starred: true, label: "x" })).toEqual({ folder: "/srv/a", starred: true });
+    expect(parseStarFolderRequest(undefined)).toBeNull();
+    expect(parseStarFolderRequest({ folder: "/srv/a", starred: 1 })).toBeNull();
+  });
+
+  test("foldersBody never carries more than the two lists and home", async () => {
+    const { store, dir } = await storeWith(["/srv/a"]);
+    try {
+      expect(Object.keys(foldersBody(store)).toSorted()).toEqual(["favourites", "home", "recent"]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("the session dispatch reaches the folder routes through this one function", () => {
+    const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
+    // Wired once, inside serveSessionRoute, so a crew peer's dispatch reaches it too (§5).
+    expect([...src.matchAll(/await serveFolderRoute\(req, pathname, caller, folders\)/g)]).toHaveLength(1);
+    // And the create is handed the same store, so a peer records into its OWN list.
+    expect(src).toContain("return createWorkspace(rt.herdr, rt.engine, req, caller.audit, caller.device(), rt.name, folders);");
+  });
+});
+
+describe("GET /api/cache-rules — the catalog behind every cache chip", () => {
+  test("answers every shipped rule with its source and its date", async () => {
+    const res = await cacheRulesRoute(() => Promise.resolve([]), null, null);
+    expect(res.status).toBe(200);
+    // SAFETY: `cacheRulesRoute` is the only writer of this body (this test calls it directly, two
+    // lines up), so the shape it satisfies itself with (`CacheRulesResponse`) is what comes back.
+    const body = (await res.json()) as CacheRulesResponse;
+    expect(body.rules.map((r) => r.id)).toContain("claude.subscription");
+    const claude = body.rules.find((r) => r.id === "claude.subscription");
+    expect(claude?.ttlSeconds).toBe(3600);
+    expect(claude?.confidence).toBe("documented");
+    expect(claude?.retrievedAt).toBe("2026-08-24");
+    expect(claude?.sourceUrl).toBe("https://code.claude.com/docs/en/prompt-caching");
+    expect(claude?.overridden).toBeUndefined();
+    // No shipped rule may reach the sheet without a page and a date behind it (ADR 0041).
+    for (const rule of body.rules) {
+      expect(rule.sourceUrl).not.toBe("");
+      expect(rule.retrievedAt).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    }
+  });
+
+  test("marks an overridden rule with the OPERATOR's own url and date, not the vendor's", async () => {
+    const res = await cacheRulesRoute(
+      () =>
+        Promise.resolve([
+          {
+            ruleId: "claude.api",
+            ttlSeconds: 3600,
+            sourceUrl: "https://our.gateway.invalid/notes",
+            retrieved: "2026-09-12",
+            note: "our gateway sends ttl 1h",
+          },
+        ]),
+      null,
+      null,
+    );
+    // SAFETY: as above — this test is the only caller, so the body is the one this route composed.
+    const body = (await res.json()) as CacheRulesResponse;
+    const row = body.rules.find((r) => r.id === "claude.api");
+    expect(row?.ttlSeconds).toBe(300);
+    expect(row?.overridden).toEqual({
+      ttlSeconds: 3600,
+      sourceUrl: "https://our.gateway.invalid/notes",
+      retrieved: "2026-09-12",
+      note: "our gateway sends ttl 1h",
+    });
+  });
+
+  test("answers 304 with the ETag and no body when the phone already has it", async () => {
+    const first = await cacheRulesRoute(() => Promise.resolve([]), null, null);
+    const etag = first.headers.get("etag");
+    expect(etag).not.toBeNull();
+    const again = await cacheRulesRoute(() => Promise.resolve([]), null, etag);
+    expect(again.status).toBe(304);
+    expect(again.headers.get("etag")).toBe(etag);
+    expect(await again.text()).toBe("");
+  });
+
+  test("the ETag moves when an override moves a number", async () => {
+    const plain = await cacheRulesRoute(() => Promise.resolve([]), null, null);
+    const moved = await cacheRulesRoute(
+      () =>
+        Promise.resolve([
+          { ruleId: "codex.api", ttlSeconds: 1800, sourceUrl: "https://x.invalid", retrieved: "2026-09-13" },
+        ]),
+      null,
+      null,
+    );
+    expect(moved.headers.get("etag")).not.toBe(plain.headers.get("etag"));
+  });
+});
+
+// ── GET /api/blobs/<hash> ────────────────────────────────────────────────────
+// The route in full, against a real blob store on disk: every branch a phone can reach. It takes
+// its roots as an argument for exactly this reason — `Bun.serve` cannot be stood up under
+// `bun test` (CLAUDE.md), so the handler is what is exercised rather than a re-implementation.
+
+const PNG_HEAD = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const JPEG_HEAD = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46]);
+
+/** A pi-shaped `sessions/` root with a sibling `blobs/`, which is where a blob is looked for. */
+async function blobStore(): Promise<{ sessions: string; blobs: string; base: string }> {
+  const base = await mkdtemp(join(tmpdir(), "collie-blob-route-"));
+  const sessions = join(base, "sessions");
+  const blobs = join(base, "blobs");
+  await mkdir(sessions, { recursive: true });
+  await mkdir(blobs, { recursive: true });
+  return { sessions, blobs, base };
+}
+
+describe("GET /api/blobs/<hash> — one content-addressed image, off the disk that holds it", () => {
+  const hash = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+  test("a name that is not a 64-hex digest is refused before any path exists", async () => {
+    const { sessions, base } = await blobStore();
+    for (const bad of ["not-a-hash", "1234", "../../etc/passwd", `${hash}x`]) {
+      const res = await blobRoute(bad, [sessions]);
+      expect(res.status).toBe(400);
+    }
+    await rm(base, { recursive: true, force: true });
+  });
+
+  test("a well-formed hash nothing holds is a 404 — the same answer containment failure gives", async () => {
+    const { sessions, base } = await blobStore();
+    const res = await blobRoute(hash, [sessions]);
+    expect(res.status).toBe(404);
+    await rm(base, { recursive: true, force: true });
+  });
+
+  test("a blob over BLOB_MAX_BYTES is a 413, not a stalled download", async () => {
+    const { sessions, blobs, base } = await blobStore();
+    const path = join(blobs, hash);
+    await writeFile(path, "");
+    // Sparse, so the test costs no 16 MiB of bytes to prove the cap is on the SIZE.
+    await truncate(path, BLOB_MAX_BYTES + 1);
+    const res = await blobRoute(hash, [sessions]);
+    expect(res.status).toBe(413);
+    expect(await res.text()).toContain("too large");
+    await rm(base, { recursive: true, force: true });
+  });
+
+  test("a png answers 200 with its sniffed type, private no-store, and no ETag", async () => {
+    const { sessions, blobs, base } = await blobStore();
+    await Bun.write(join(blobs, hash), PNG_HEAD);
+    const res = await blobRoute(hash, [sessions]);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("image/png");
+    // Session content: the browser's HTTP cache survives the phone's wipe, so nothing keeps it.
+    expect(res.headers.get("cache-control")).toBe("private, no-store");
+    // No validator: with nothing stored, no browser has one to send back.
+    expect(res.headers.get("etag")).toBeNull();
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(PNG_HEAD);
+    await rm(base, { recursive: true, force: true });
+  });
+
+  test("a jpeg is sniffed from its own bytes — the file has no extension to guess from", async () => {
+    const { sessions, blobs, base } = await blobStore();
+    await Bun.write(join(blobs, hash), JPEG_HEAD);
+    const res = await blobRoute(hash, [sessions]);
+    expect(res.headers.get("content-type")).toBe("image/jpeg");
+    await rm(base, { recursive: true, force: true });
+  });
+
+  test("the magic table names what it knows and guesses at nothing else", () => {
+    expect(sniffBlobType(PNG_HEAD)).toBe("image/png");
+    expect(sniffBlobType(JPEG_HEAD)).toBe("image/jpeg");
+    expect(sniffBlobType(new Uint8Array([0x47, 0x49, 0x46, 0x38]))).toBe("image/gif");
+    const webp = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50]);
+    expect(sniffBlobType(webp)).toBe("image/webp");
+    // RIFF without WEBP at offset 8 is some other RIFF container, not a picture.
+    const riff = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x41, 0x56, 0x49, 0x20]);
+    expect(sniffBlobType(riff)).toBe("application/octet-stream");
+    expect(sniffBlobType(new Uint8Array([1, 2, 3, 4]))).toBe("application/octet-stream");
+  });
+
+  // THE GATE, pinned at the registration site. A blob is a picture the pane text already refers to,
+  // so it is a READ: a read-only device and a paired one both pass, exactly as they do for the pane
+  // read and for `history`. `guard`'s own read/write behaviour is asserted above; what this pins is
+  // that the route asks for the read tier and resolves through the host gate, so a `?host=` blob is
+  // fetched from the member whose journal named it rather than off the lead's own disk.
+  test("the route is gated as a READ and resolves through the host gate", () => {
+    const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
+    const start = src.indexOf("const blobMatch = pathname.match(BLOB_ROUTE);");
+    expect(start).toBeGreaterThan(0);
+    const block = src.slice(start, src.indexOf("\n    }", start));
+    expect(block).toContain('caller.gate("read")');
+    expect(block).not.toContain('caller.gate("write")');
+    expect(block).toContain("await caller.resolve()");
+  });
+});
+
+// ── THE CREW'S RUN (M16/04) ─────────────────────────────────────────────────
 // The peer legs and the peers-only retry, both decided by the pure verdict and both read off what
 // the sweep banked. This route dials nobody, and a peers-only start spawns nothing here.
 
-describe("update status peers — the legs of a pack-wide run", () => {
+describe("update status peers — the legs of a crew-wide run", () => {
   test("update status peers ride the run record BOTH surfaces already poll, from one composer", () => {
     const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
     // ONE composer, and both readers take it. The band reads the snapshot's `update`; the Updates
@@ -2399,48 +4615,80 @@ describe("update status peers — the legs of a pack-wide run", () => {
     // From the queue the sweep folds, never from a dial: `updatePeers()` is a read of banked state,
     // exactly as `updateRows()` is.
     const at = src.indexOf("function updateStatusWithPeers()");
-    const composer = src.slice(at, at + 600);
-    expect(composer).toContain("opts.packLead?.updatePeers() ?? []");
-    expect(composer).toContain("run: { ...status.run, peers: legs }");
+    const composer = src.slice(at, at + 3400);
+    expect(composer).toContain("opts.crewLead?.updatePeers() ?? []");
+    expect(composer).toContain("return { ...status, run: { ...status.run, ...crewState } };");
+    // §20's one clock (M20/01), on the same composer and never a second one.
+    expect(composer).toContain("opts.crewLead?.updateSettledAt() ?? null");
+    // M20/09: a peers-only run has no local record, so the legs ride the STATUS instead of being
+    // dropped. The guard that dropped them is gone, and nothing has taken its place.
+    expect(composer).toContain("return { ...status, ...statusState };");
+    expect(composer).not.toContain("status.run === null || legs.length === 0");
     expect(composer).not.toContain("sweep(");
+    // M20/01, after review: the legs outlive their run, so the composer names the run they describe
+    // before it attaches them to the run on screen.
+    expect(composer).toContain("opts.crewLead?.updateLegsRun() !== status.run.runId");
+    // And after counsel: legs from another run FALL to the top level, they are not discarded. A local
+    // update leaves a `done` record behind, so the commonest peers-only run there is — "Retry crew
+    // update" after an update — has a different run id and would otherwise be invisible for its whole
+    // life, which is spec 09's bug wearing spec 01's guard.
+    expect(composer).toContain("!== status.run.runId) return { ...status, ...statusState };");
+    expect(composer).not.toContain("!== status.run.runId) return status;");
+    // M32: legs that ride the STATUS carry their run's target, so the phone can tell a peers-only
+    // run (target = this lead's version) from a full run whose record has not landed yet. Never on
+    // the run record, whose own `to` says it.
+    expect(composer).toContain("opts.crewLead?.updateLegsTo() ?? null");
+    expect(composer).toContain("{ ...crewState, peersTo: legsTo }");
+    expect(composer).toContain("return { ...status, run: { ...status.run, ...crewState } };");
     // And there is still no fourth endpoint with a fifth shape.
     expect(src).not.toContain('"/api/update/status"');
   });
 
-  test("retry pack update: a peers-only run has peer legs only and never touches a current lead", () => {
+  test("retry crew update: a peers-only run has peer legs only and never touches a current lead", () => {
     const current = "1.5.0";
-    const behind: PackUpdateRow = { name: "minibuch", version: "1.4.1", verdict: "green", reasons: [], asOf: 1 };
+    const behind: CrewUpdateRow = { name: "minibuch", version: "1.4.1", verdict: "green", reasons: [], asOf: 1 };
     const state = {
       current,
-      // A current lead has nothing above it to take. That is exactly when "Retry pack update" is the
+      // A current lead has nothing above it to take. That is exactly when "Retry crew update" is the
       // page's one action, and exactly when an ordinary start would refuse with `none_available`.
       latest: current,
       majorAvailable: null,
       run: null,
       lockHeld: false,
       preflight: { schema: 1, verdict: "green" as const, checks: [] },
-      pack: [behind],
+      crew: [behind],
     };
     const verdict = updateStartVerdict({ confirm: true, target: null, major: false, peersOnly: true }, state);
     expect(verdict).toEqual({ kind: "peers", to: current });
 
     // Nothing to level ⇒ nothing to start. The button is not offered here, and the route refuses it.
-    const levelled: PackUpdateRow = { ...behind, version: current };
+    const levelled: CrewUpdateRow = { ...behind, version: current };
     expect(
-      updateStartVerdict({ confirm: true, target: null, major: false, peersOnly: true }, { ...state, pack: [levelled] }),
+      updateStartVerdict({ confirm: true, target: null, major: false, peersOnly: true }, { ...state, crew: [levelled] }),
     ).toMatchObject({ kind: "refuse", status: 409 });
 
-    // A member that rolled back is the other half of the case, read off the legs.
+    // A member that rolled back is the other half of the case, read off the legs, for as long as the
+    // census does not show it level. `attic` has no census row, so nobody knows its version.
     expect(
       updateStartVerdict(
         { confirm: true, target: null, major: false, peersOnly: true },
-        { ...state, pack: [levelled], peers: [{ name: "minibuch", state: "rolled-back" }] },
+        { ...state, crew: [levelled], peers: [{ name: "attic", state: "rolled-back" }] },
       ),
     ).toEqual({ kind: "peers", to: current });
+
+    // And once the census shows the member that rolled back at the lead's version, its old leg is
+    // no longer something to retry: the legs outlive their run, and a member that levelled itself
+    // afterwards must not keep a retry alive.
+    expect(
+      updateStartVerdict(
+        { confirm: true, target: null, major: false, peersOnly: true },
+        { ...state, crew: [levelled], peers: [{ name: "minibuch", state: "rolled-back" }] },
+      ),
+    ).toMatchObject({ kind: "refuse", status: 409 });
   });
 
-  test("retry pack update: one confirm still covers the pack, so a red member refuses it", () => {
-    const red: PackUpdateRow = {
+  test("retry crew update: one confirm still covers the crew, so a red member refuses it", () => {
+    const red: CrewUpdateRow = {
       name: "minibuch",
       version: "1.4.1",
       verdict: "red",
@@ -2456,13 +4704,13 @@ describe("update status peers — the legs of a pack-wide run", () => {
         run: null,
         lockHeld: false,
         preflight: { schema: 1, verdict: "green", checks: [] },
-        pack: [red],
+        crew: [red],
       },
     );
     expect(verdict).toMatchObject({ kind: "refuse", status: 412 });
   });
 
-  test("retry pack update: a confirm is still required, and a run in flight still refuses", () => {
+  test("retry crew update: a confirm is still required, and a run in flight still refuses", () => {
     const state = {
       current: "1.5.0",
       latest: "1.5.0",
@@ -2470,7 +4718,7 @@ describe("update status peers — the legs of a pack-wide run", () => {
       run: null,
       lockHeld: true,
       preflight: { schema: 1, verdict: "green" as const, checks: [] },
-      pack: [],
+      crew: [],
     };
     expect(
       updateStartVerdict({ confirm: false, target: null, major: false, peersOnly: true }, state),
@@ -2485,10 +4733,343 @@ describe("update status peers — the legs of a pack-wide run", () => {
     const updateAt = src.indexOf('if (pathname === "/api/update" && req.method === "POST")');
     const handler = src.slice(updateAt, src.indexOf("\n      }\n", updateAt));
     expect(handler).toContain("const runId = action.newRunId();");
-    expect(handler).toContain("action.beginPackRun?.({ runId, to: verdict.to })");
+    expect(handler).toContain("action.beginCrewRun?.({ runId, to: verdict.to })");
     // A peers-only run starts no updater on this machine.
     const peersBranch = handler.slice(handler.indexOf('if (verdict.kind === "peers")'));
     expect(peersBranch.slice(0, peersBranch.indexOf("return json"))).not.toContain("action.start");
+  });
+
+  test("both 202s carry the id this confirm minted, beside the record read before the start", () => {
+    // `run` in the 202 is `status.run`, read BEFORE the start: on a lead that has updated before it is
+    // the LAST run's record, and the new run writes its own a beat later. So the new run's id travels
+    // on its own, or the phone keys its claim on the old record and shows its Done (2026-09-26).
+    const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
+    const updateAt = src.indexOf('if (pathname === "/api/update" && req.method === "POST")');
+    const handler = src.slice(updateAt, src.indexOf("\n      }\n", updateAt));
+    const accepted = [...handler.matchAll(/return json\(\s*(\{[^}]*\})/g)].map((m) => m[1] ?? "");
+    expect(accepted).toHaveLength(2);
+    for (const body of accepted) {
+      expect(body).toContain("run: status.run ?? null");
+      expect(body).toMatch(/\brunId\b/);
+    }
+  });
+});
+
+describe("hasSplitUrl — is a URL cut by the pane's column edge?", () => {
+  test("a URL running to the end of a row is a split", () => {
+    expect(
+      hasSplitUrl("$ gcloud auth login --no-launch-browser\n    https://accounts.google.com/o/oauth2/auth?client_id=1&scope=x\n&response_type=code"),
+    ).toBe(true);
+  });
+
+  test("Herdr's CR row terminator does not hide the split", () => {
+    // A row that ends `…&s\r` is the shape a real read hands over; without the CR the gate would
+    // never fire on the pane this exists for.
+    expect(hasSplitUrl("\u001b[36mhttps://a.dev/x?y=1\u001b[0m\r\nnext")).toBe(true);
+  });
+
+  test("styling does not hide the split", () => {
+    expect(hasSplitUrl("\u001b[34mhttps://a.dev/x?y=1\u001b[0m\n\u001b[34m&z=2\u001b[0m")).toBe(true);
+  });
+
+  test("a URL with nothing that could continue it is not worth the read", () => {
+    // The last row, a blank row, an indented row, a padded URL row: the client repairs none of them,
+    // so the gate must not pay for a read on them either.
+    expect(hasSplitUrl("done\nhttps://a.dev/x?y=1")).toBe(false);
+    expect(hasSplitUrl("https://a.dev/x?y=1\n\nnext")).toBe(false);
+    expect(hasSplitUrl("https://a.dev/x?y=1\r\n  indented")).toBe(false);
+    expect(hasSplitUrl("https://a.dev/x?y=1   \nnext")).toBe(false);
+  });
+
+  test("a URL that ends with prose after it is not a split", () => {
+    expect(hasSplitUrl("open https://a.dev/x then")).toBe(false);
+    expect(hasSplitUrl("https://a.dev/x, and more")).toBe(false);
+  });
+
+  test("no URL at all is not a split", () => {
+    expect(hasSplitUrl("$ echo hello\nworld")).toBe(false);
+  });
+});
+
+describe("readPane — the logical read is asked for only when it can repair something", () => {
+  /** A pane read that answers with `grid`, and remembers whether the logical read was reached. */
+  function paneStub(grid: string, logical: string) {
+    let logicalReads = 0;
+    const stub: Partial<MuxAdapter> = {
+      mux: "herdr",
+      readGrid: (paneId: string) => Promise.resolve(muxOk({ paneId, text: grid, truncated: false, revision: 7 })),
+      readLogicalText: () => {
+        logicalReads += 1;
+        return Promise.resolve(muxOk(logical));
+      },
+    };
+    // SAFETY: `readPane` reaches `mux` for its error text and these two reads, all present above.
+    const adapter = stub as MuxAdapter;
+    return { adapter, reads: () => logicalReads };
+  }
+
+  const get = (paneId: string) =>
+    new Request(`http://x/api/pane/${encodeURIComponent(paneId)}`);
+  const url = new URL("http://x/api/pane/w1:p1");
+
+  test("a grid with no split URL is served from the grid alone", async () => {
+    const { adapter, reads } = paneStub("$ echo hi\nhi", "unused");
+    const res = await readPane(adapter, cfg(), "w1:p1", url, get("w1:p1"));
+    // SAFETY: the bridge's own JSON, served by the call above.
+    const body = (await res.json()) as PaneReadResponse;
+    expect(reads()).toBe(0);
+    expect(body.logicalText).toBeUndefined();
+    expect(body.text).toBe("$ echo hi\nhi");
+  });
+
+  test("owning Files read admission is evaluated after the grid and changes the pane ETag", async () => {
+    let ready = true;
+    const { adapter } = paneStub("src/Main.kt:12", "unused");
+    const positive = await readPane(adapter, cfg(), "w1:p1", url, get("w1:p1"), undefined, () => ready);
+    // SAFETY: the bridge-owned response and the adapter stub above supply the exact exercised fields.
+    expect((await positive.json() as PaneReadResponse).filesReadReady).toBe(true);
+    const etag = positive.headers.get("etag")!;
+    ready = false;
+    const conditional = new Request(url, { headers: { "if-none-match": etag } });
+    const refused = await readPane(adapter, cfg(), "w1:p1", url, conditional, undefined, () => ready);
+    expect(refused.status).toBe(200);
+    // SAFETY: the bridge-owned response and the adapter stub above supply the exact exercised fields.
+    expect((await refused.json() as PaneReadResponse).filesReadReady).toBe(false);
+    expect(refused.headers.get("etag")).not.toBe(etag);
+    const legacy = await readPane(adapter, cfg(), "w1:p1", url, get("w1:p1"));
+    // SAFETY: the bridge-owned response and the adapter stub above supply the exact exercised fields.
+    expect((await legacy.json() as PaneReadResponse).filesReadReady).toBeUndefined();
+    const suspended: Partial<MuxAdapter> = {
+      ...adapter,
+      readGrid: async (...args) => {
+        const grid = await adapter.readGrid(...args);
+        ready = false;
+        return grid;
+      },
+    };
+    ready = true;
+    // SAFETY: the bridge-owned response and the adapter stub above supply the exact exercised fields.
+    const changed = await readPane(suspended as MuxAdapter, cfg(), "w1:p1", url, get("w1:p1"), undefined, () => ready);
+    // SAFETY: the bridge-owned response and the adapter stub above supply the exact exercised fields.
+    expect((await changed.json() as PaneReadResponse).filesReadReady).toBe(false);
+  });
+
+  test("a split URL brings the logical text in, with its styling stripped", async () => {
+    const grid = "run:\n\u001b[36mhttps://a.dev/auth?client=1&s\u001b[0m\ntate=y then";
+    const logical = "\u001b[36mrun:\nhttps://a.dev/auth?client=1&state=y then\u001b[0m";
+    const { adapter, reads } = paneStub(grid, logical);
+    const res = await readPane(adapter, cfg(), "w1:p1", url, get("w1:p1"));
+    // SAFETY: the bridge's own JSON, served by the call above.
+    const body = (await res.json()) as PaneReadResponse;
+    expect(reads()).toBe(1);
+    expect(body.logicalText).toBe("run:\nhttps://a.dev/auth?client=1&state=y then");
+    // The mirror keeps its own rows, styling and all — only the hrefs are repaired downstream.
+    expect(body.text).toBe(grid);
+  });
+
+  test("clamps a requested window to the adapter declaration and reports actual served rows", async () => {
+    let requested = 0;
+    const stub: Partial<MuxAdapter> = {
+      mux: "limited",
+      // SAFETY: the route reads only `readLimits` from the declaration stub below.
+      capabilities: { readLimits: { maxRequestedLines: 1_000 } } as MuxCapabilityDeclaration,
+      readGrid: (paneId, request) => {
+        requested = request.lines;
+        return Promise.resolve(muxOk({ paneId, text: Array.from({ length: request.lines }, (_, i) => `row-${i}`).join("\n"), truncated: true, revision: 1 }));
+      },
+    };
+    // SAFETY: the route reaches only mux name, read limit, and readGrid, all installed above.
+    const res = await readPane(stub as MuxAdapter, cfg(), "p", new URL("http://x/api/pane/p?lines=1500"), new Request("http://x/api/pane/p?lines=1500"));
+    // SAFETY: this route produced its JSON response directly above.
+    const body = await res.json() as PaneReadResponse;
+    expect(requested).toBe(1_000);
+    expect(body.requestedLines).toBe(1_000);
+    expect(body.servedLines).toBe(1_000);
+    expect(body.limitReason).toBe("adapter-ceiling");
+  });
+
+  test("reports the bridge hard ceiling when it is the tightest bound", async () => {
+    let requested = 0;
+    const stub: Partial<MuxAdapter> = {
+      mux: "reference",
+      // SAFETY: the route reads only `readLimits` from the declaration stub below.
+      capabilities: { readLimits: { maxRequestedLines: 10_000 } } as MuxCapabilityDeclaration,
+      readGrid: (paneId, request) => {
+        requested = request.lines;
+        return Promise.resolve(muxOk({ paneId, text: "one", truncated: true, revision: 1 }));
+      },
+    };
+    // SAFETY: the route reaches only mux name, read limit, and readGrid, all installed above.
+    const res = await readPane(stub as MuxAdapter, cfg(), "p", new URL("http://x/api/pane/p?lines=20000"), new Request("http://x/api/pane/p?lines=20000"));
+    // SAFETY: this route produced its JSON response directly above.
+    const body = await res.json() as PaneReadResponse;
+    expect(requested).toBe(10_000);
+    expect(body.requestedLines).toBe(10_000);
+    expect(body.servedLines).toBe(1);
+    expect(body.limitReason).toBe("server-ceiling");
+  });
+
+  test("refuses an adapter response that exceeds the admitted row budget", async () => {
+    const stub: Partial<MuxAdapter> = {
+      mux: "over-serving",
+      // SAFETY: the route reads only `readLimits` from the declaration stub below.
+      capabilities: { readLimits: { maxRequestedLines: 1_000 } } as MuxCapabilityDeclaration,
+      readGrid: (paneId) => Promise.resolve(muxOk({ paneId, text: "one\ntwo", truncated: false, revision: 1 })),
+    };
+    // SAFETY: the route reaches only mux name, capability limit, and readGrid, all installed above.
+    const res = await readPane(stub as MuxAdapter, cfg(), "p", new URL("http://x/api/pane/p?lines=1"), new Request("http://x/api/pane/p?lines=1"));
+    expect(res.status).toBe(502);
+    expect(await res.text()).toContain("exceeded admitted line limit");
+  });
+});
+
+// ── The hot intent after an input (state-engine.ts § noteInput) ─────────────────────────────────
+//
+// Herdr announces nothing when an agent reports its session, so a bridge relaxed to its 12 s idle
+// tick saw a Codex session, reported on the first prompt, up to one tick late. A landed input now
+// puts the engine that owns the pane into its fast cadence for a bounded count of polls.
+describe("an input written to a pane makes its engine hot", () => {
+  test("isPaneInput names the two input routes, as POSTs, and nothing else", () => {
+    expect(isPaneInput("/api/pane/w1%3Ap1/reply", "POST")).toBe(true);
+    expect(isPaneInput("/api/pane/w1%3Ap1/keys", "POST")).toBe(true);
+    expect(isPaneInput("/api/pane/w1%3Ap1/reply", "GET")).toBe(false);
+    for (const action of ["upload", "close", "rename", "focus", "history", "chat", "changes", "files"]) {
+      expect(isPaneInput(`/api/pane/w1%3Ap1/${action}`, "POST")).toBe(false);
+    }
+    expect(isPaneInput("/api/pane/w1%3Ap1", "POST")).toBe(false);
+    expect(isPaneInput("/api/tab/w1%3At1/close", "POST")).toBe(false);
+  });
+
+  test("afterPaneInput tells the engine only when the write landed, and hands the response back", () => {
+    let noted = 0;
+    const engine = { noteInput: () => void noted++ };
+    const ok = new Response("{}", { status: 200 });
+    expect(afterPaneInput(engine, ok)).toBe(ok);
+    expect(noted).toBe(1);
+    for (const status of [400, 403, 404, 409, 502]) afterPaneInput(engine, new Response("{}", { status }));
+    expect(noted).toBe(1);
+  });
+
+  test("the reply and keys routes, and the lead's forward of them, all pass through it", () => {
+    const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
+    // On the owning host: the browser's request and a member's crew dispatch share this block.
+    expect(src).toContain("return afterPaneInput(rt.engine, await replyPane(");
+    expect(src).toContain("return afterPaneInput(rt.engine, await keysPane(");
+    // On the lead: the forward's answer, so the lead's sweep follows the member it typed into.
+    expect(src).toContain("const input = isPaneInput(pathname, req.method);");
+    expect(src).toContain("return input && own !== undefined ? afterPaneInput(own, forwarded) : forwarded;");
+    expect([...src.matchAll(/afterPaneInput\(/g)]).toHaveLength(4); // the definition and three calls
+  });
+});
+
+// M46 spec 05: the response headers every answer carries, and the blob cache rule.
+describe("security headers on the app shell", () => {
+  async function shell() {
+    const dir = await mkdtemp(join(tmpdir(), "collie-shell-"));
+    await writeFile(join(dir, "index.html"), "<!doctype html><title>x</title>");
+    const res = await serveStatic("/", null, dir);
+    await rm(dir, { recursive: true, force: true });
+    return res;
+  }
+
+  test("Permissions-Policy denies the unused features and keeps microphone=(self)", async () => {
+    const policy = (await shell()).headers.get("permissions-policy") ?? "";
+    expect(policy).toContain("microphone=(self)");
+    for (const denied of ["camera=()", "geolocation=()", "payment=()", "usb=()"]) {
+      expect(policy).toContain(denied);
+    }
+  });
+
+  test("the CSP adds object-src 'none' and form-action 'self' and keeps the rest", async () => {
+    const csp = (await shell()).headers.get("content-security-policy") ?? "";
+    expect(csp).toContain("object-src 'none'");
+    expect(csp).toContain("form-action 'self'");
+    expect(csp).toContain("frame-ancestors 'none'");
+    expect(csp).toContain("script-src 'self'");
+  });
+
+  test("Strict-Transport-Security is absent over plain HTTP", async () => {
+    const handler = withHsts(async () => new Response("ok"));
+    const res = await handler(new Request("http://bluefin:8788/"));
+    expect(res.headers.get("strict-transport-security")).toBeNull();
+  });
+
+  test("Strict-Transport-Security is sent when x-forwarded-proto says https", async () => {
+    const handler = withHsts(async () => new Response("ok"));
+    const res = await handler(new Request("http://127.0.0.1:8788/", { headers: { "x-forwarded-proto": "https" } }));
+    expect(res.headers.get("strict-transport-security")).toBe("max-age=63072000");
+  });
+
+  test("Strict-Transport-Security is sent on a TLS listener's own https URL", async () => {
+    const handler = withHsts(async () => new Response("ok"));
+    const res = await handler(new Request("https://collie.example/"));
+    expect(res.headers.get("strict-transport-security")).toBe("max-age=63072000");
+    expect(arrivedOverHttps(new Request("http://collie.example/", { headers: { "x-forwarded-proto": "http" } }))).toBe(false);
+  });
+});
+
+// M46 spec 05: the POST /api/pair outer brake. The route itself needs Bun.serve, so the limiter and
+// the source key are exercised directly.
+describe("pair attempt rate limit", () => {
+  test("the 11th attempt inside a minute is refused, and the burst is flagged once", () => {
+    const limiter = createPairLimiter();
+    for (let i = 0; i < PAIR_ATTEMPTS_PER_WINDOW; i++) {
+      expect(limiter.hit("100.64.0.9", 1_000 + i).allowed).toBe(true);
+    }
+    expect(limiter.hit("100.64.0.9", 2_000)).toEqual({ allowed: false, first: true });
+    expect(limiter.hit("100.64.0.9", 2_001)).toEqual({ allowed: false, first: false });
+  });
+
+  test("another address is not affected by the first one's burst", () => {
+    const limiter = createPairLimiter();
+    for (let i = 0; i < PAIR_ATTEMPTS_PER_WINDOW + 2; i++) limiter.hit("100.64.0.9", 1_000);
+    expect(limiter.hit("100.64.0.10", 1_001).allowed).toBe(true);
+  });
+
+  test("the window slides: attempts older than a minute stop counting", () => {
+    const limiter = createPairLimiter();
+    for (let i = 0; i < PAIR_ATTEMPTS_PER_WINDOW; i++) limiter.hit("a", 1_000);
+    expect(limiter.hit("a", 1_000 + PAIR_WINDOW_MS - 1).allowed).toBe(false);
+    expect(limiter.hit("a", 1_000 + PAIR_WINDOW_MS).allowed).toBe(true);
+  });
+
+  test("the counter map stays bounded and expired entries are pruned", () => {
+    const limiter = createPairLimiter(10, PAIR_WINDOW_MS, 8);
+    for (let i = 0; i < 100; i++) limiter.hit(`10.0.0.${String(i)}`, 1_000);
+    expect(limiter.size()).toBe(8);
+    limiter.hit("late", 1_000 + PAIR_WINDOW_MS + 1);
+    expect(limiter.size()).toBe(1);
+  });
+});
+
+describe("pair source key (forwarded header trust)", () => {
+  test("a non-loopback peer is keyed by its socket address; an untrusted x-forwarded-for does not change it", () => {
+    const a = pairSourceKey("100.64.0.9", false, "1.1.1.1");
+    const b = pairSourceKey("100.64.0.9", false, "2.2.2.2");
+    expect(a).toBe("100.64.0.9");
+    expect(b).toBe(a);
+  });
+
+  test("a loopback peer (the front door) is keyed by the RIGHTMOST x-forwarded-for entry, the one the proxy appended", () => {
+    expect(pairSourceKey("127.0.0.1", true, "203.0.113.7, 10.0.0.1")).toBe("10.0.0.1");
+    expect(pairSourceKey("127.0.0.1", true, "100.64.0.9")).toBe("100.64.0.9");
+  });
+
+  test("entries a client wrote to the left of the proxy's own cannot rotate the key", () => {
+    const a = pairSourceKey("127.0.0.1", true, "1.1.1.1, 100.64.0.9");
+    const b = pairSourceKey("127.0.0.1", true, "2.2.2.2, 3.3.3.3, 100.64.0.9");
+    expect(a).toBe("100.64.0.9");
+    expect(b).toBe(a);
+  });
+
+  test("blank entries are skipped, so a trailing comma is not an address", () => {
+    expect(pairSourceKey("127.0.0.1", true, "100.64.0.9, ")).toBe("100.64.0.9");
+    expect(pairSourceKey("127.0.0.1", true, " , ")).toBe("loopback");
+  });
+
+  test("a loopback peer with no forwarded header shares one local key", () => {
+    expect(pairSourceKey("127.0.0.1", true, null)).toBe("loopback");
+    expect(pairSourceKey(undefined, true, "")).toBe("loopback");
   });
 });
 
@@ -2517,5 +5098,585 @@ describe("accessLogRecord", () => {
       headers: { "X-Collie-Trace-Id": "abc-123" },
     });
     expect(accessLogRecord(request, 200, 1).traceId).toBe("abc-123");
+  });
+});
+
+
+describe("scoped admission provenance", () => {
+  test("read-only paired refresh retains read admission; device reads and writes declare their own factor", async () => {
+    const pairing = { resolve: (token: string | null) => token === "tok-phone" ? { label: "phone" } : null };
+    const config = cfg({ deviceHeader: "x-device-id", deviceAllowlist: ["other"] });
+    const headers = { host: "collie.ts.net", authorization: "Bearer tok-phone", "x-device-id": "phone" };
+    expect(guard(req(headers), config, "read", pairing)).toBeNull();
+    for (const kind of ["device-read", "write"] as const) {
+      const response = guard(req({ ...headers, origin: "https://collie.ts.net" }), config, kind, pairing)!;
+      expect(response.status).toBe(403);
+      expect(response.headers.get("x-collie-error-source")).toBe("collie");
+      expect(response.headers.get("x-collie-error-factor")).toBe("device");
+      expect(response.headers.get("x-collie-error-code")).toBe("device.not_authorised");
+    }
+    const expired = guard(req({ host: "collie.ts.net", authorization: "Bearer old" }), cfg(), "read", { resolve: () => null, expired: () => true })!;
+    expect(expired.status).toBe(403);
+    expect(expired.headers.get("x-collie-error-factor")).toBe("pairing");
+    expect(expired.headers.get("x-collie-error-code")).toBe("pairing.expired");
+  });
+  test("control capability publishing is independent and explicit, never borrowed from mux metadata", () => {
+    const omitted = bridgeConfigBody({ push: false, vapidPublicKey: "", build: "test", mode: "solo" });
+    expect(omitted.control).toBeUndefined();
+    const positive = bridgeConfigBody({ push: false, vapidPublicKey: "", build: "test", mode: "solo", control: { capabilities: { controlOperations: true } } });
+    expect(positive.control?.capabilities.controlOperations).toBe(true);
+    const negative = bridgeConfigBody({ push: false, vapidPublicKey: "", build: "test", mode: "solo", control: { capabilities: {} } });
+    expect(negative.control?.capabilities.controlOperations).toBeUndefined();
+  });
+});
+
+
+test("the answering lead replaces peer authority headers on successful reads and 304s", async () => {
+  for (const status of [200, 304]) {
+    const handler = withControlAuthority(async () => new Response(null, { status, headers: { "x-collie-lead-id": "peer", "x-collie-lead-epoch": "stale" } }),
+      () => ({ leadId: "lead", epoch: "current" }));
+    const response = await handler(new Request("https://collie.example/api/pane/remote?host=peer"));
+    expect(response.headers.get("x-collie-lead-id")).toBe("lead");
+    expect(response.headers.get("x-collie-lead-epoch")).toBe("current");
+  }
+});
+
+describe("paneScreen: the screen journal discovery may read", () => {
+  test("one viewport read with styling kept, escapes dropped, memoised per route call", async () => {
+    const asked: MuxGridRequest[] = [];
+    const esc = String.fromCharCode(27);
+    const mux = {
+      readGrid: async (paneId: string, request: MuxGridRequest) => {
+        asked.push(request);
+        return muxOk({ paneId, text: `${esc}[2m agent main (main) | session work${esc}[0m`, truncated: false, revision: 1 });
+      },
+    };
+    const screen = paneScreen(mux, "w1:p1");
+    expect(asked).toEqual([]);
+    expect(await screen()).toBe(" agent main (main) | session work");
+    expect(await screen()).toBe(" agent main (main) | session work");
+    expect(asked).toEqual([{ scope: "viewport", lines: 200, styling: "preserve" }]);
+  });
+
+  test("a refused or failed read is null, never a throw", async () => {
+    expect(await paneScreen({ readGrid: async () => muxGone("no pane") }, "w1:p1")()).toBeNull();
+    expect(await paneScreen({ readGrid: async () => Promise.reject(new Error("socket")) }, "w1:p1")()).toBeNull();
+  });
+});
+
+describe("journalRefOf — which session the history and chat routes read", () => {
+  const reported = { kind: "id" as const, value: "00000000-0000-7000-8000-00000000a001" };
+  const resumed = { kind: "id" as const, value: "00000000-0000-7000-8000-00000000b002" };
+  const pane = (overrides: Partial<AgentView>): AgentView => ({
+    paneId: "w1:p1",
+    workspaceId: "w1",
+    workspaceLabel: "Main",
+    workspaceNumber: 1,
+    tabId: "w1:t1",
+    agent: "grok",
+    status: "idle",
+    cwd: "/home/op/proj",
+    focused: false,
+    ...overrides,
+  });
+  // journalRefOf reads only agent, discover and reconcile; the rest never runs here.
+  const adapter = (extra: Partial<JournalAdapter>): JournalAdapter => ({
+    ...grokJournal([]),
+    discover: undefined,
+    reconcile: undefined,
+    ...extra,
+  });
+
+  test("a live grok pane reads the session the adapter reconciles to", async () => {
+    const seen: string[] = [];
+    const a = adapter({
+      reconcile: async (ref, cwd) => {
+        seen.push(`${ref.value}@${cwd}`);
+        return resumed;
+      },
+    });
+    expect(await journalRefOf(a, pane({ agentSession: reported }), [])).toEqual(resumed);
+    expect(seen).toEqual([`${reported.value}@/home/op/proj`]);
+  });
+
+  test("a pane whose grok exited keeps the reported ref: nothing live to move to", async () => {
+    const a = adapter({ reconcile: async () => resumed });
+    expect(await journalRefOf(a, pane({ agent: "shell", agentSession: reported }), [])).toEqual(reported);
+  });
+
+  test("a pane with no reported ref still falls back to discovery", async () => {
+    const a = adapter({ reconcile: async () => resumed, discover: async () => resumed });
+    expect(await journalRefOf(a, pane({}), [])).toEqual(resumed);
+  });
+
+  test("the foreground hint rides through to discover", async () => {
+    const seen: unknown[] = [];
+    const processes = [{ argv: ["muse", "resume", resumed.value] }];
+    const a = adapter({
+      discover: async (cwd, hint) => {
+        seen.push([cwd, hint]);
+        return resumed;
+      },
+    });
+    expect(await journalRefOf(a, pane({}), [], { processes })).toEqual(resumed);
+    expect(seen).toEqual([["/home/op/proj", { processes }]]);
+  });
+
+  test("no hint reads as undefined, never as an empty group", async () => {
+    const seen: unknown[] = [];
+    const a = adapter({
+      discover: async (_cwd, hint) => {
+        seen.push(hint);
+        return null;
+      },
+    });
+    await journalRefOf(a, pane({}), []);
+    expect(seen).toEqual([undefined]);
+  });
+
+  describe("another pane in the folder", () => {
+    const calls: string[] = [];
+    const a = adapter({
+      reconcile: async (ref) => {
+        calls.push(ref.value);
+        return resumed;
+      },
+    });
+    const mine = pane({ agentSession: reported });
+
+    test("another grok pane in the same cwd blocks the correction", async () => {
+      calls.length = 0;
+      const other = pane({ paneId: "w1:p2", agentSession: resumed });
+      expect(await journalRefOf(a, mine, [mine, other])).toEqual(reported);
+      expect(calls).toEqual([]);
+    });
+
+    test("another grok pane in a different cwd leaves the correction on", async () => {
+      calls.length = 0;
+      const other = pane({ paneId: "w1:p2", cwd: "/home/op/elsewhere" });
+      expect(await journalRefOf(a, mine, [mine, other])).toEqual(resumed);
+      expect(calls).toEqual([reported.value]);
+    });
+
+    test("a non-grok pane in the same cwd does not block the correction", async () => {
+      calls.length = 0;
+      const other = pane({ paneId: "w1:p2", agent: "shell" });
+      expect(await journalRefOf(a, mine, [mine, other])).toEqual(resumed);
+      expect(calls).toEqual([reported.value]);
+    });
+  });
+
+  // The screen is a thunk the route hands over untouched: discovery decides whether to read it.
+  test("discovery receives the pane's screen beside its folder, and only reads it when it asks", async () => {
+    let reads = 0;
+    const screen = async () => {
+      reads += 1;
+      return " agent main (main) | session work | m | deliver:off";
+    };
+    const byFolder = adapter({ discover: async (cwd) => ({ kind: "id", value: cwd }) });
+    expect(await journalRefOf(byFolder, pane({}), [], { screen })).toEqual({ kind: "id", value: "/home/op/proj" });
+    expect(reads).toBe(0);
+    const byScreen = adapter({
+      discover: async (_cwd, hints) => {
+        const text = (await hints?.screen?.()) ?? "";
+        return text.includes("session work") ? resumed : null;
+      },
+    });
+    expect(await journalRefOf(byScreen, pane({}), [], { screen })).toEqual(resumed);
+    expect(reads).toBe(1);
+    // A reported ref never reaches discovery, so the screen is not read for it either.
+    expect(await journalRefOf(byScreen, pane({ agentSession: reported }), [], { screen })).toEqual(reported);
+    expect(reads).toBe(1);
+  });
+
+  test("an adapter without reconcile reads the reported ref as before", async () => {
+    expect(await journalRefOf(adapter({}), pane({ agentSession: reported }), [])).toEqual(reported);
+  });
+  // The cases above stub reconcile; this one keeps the real grok adapter, so dropping its reconcile
+  // binding leaves the stale id in place and fails here.
+  test("the real grok adapter moves a stale id to the one live session grok lists", async () => {
+    const base = await realpath(await mkdtemp(join(tmpdir(), "collie-grok-wire-")));
+    try {
+      await mkdir(join(base, "sessions"), { recursive: true });
+      const row = { session_id: resumed.value, pid: process.pid, cwd: "/home/op/proj" };
+      await writeFile(join(base, "active_sessions.json"), JSON.stringify([row]));
+      const real = grokJournal([join(base, "sessions")]);
+      expect(await journalRefOf(real, pane({ agentSession: reported }), [])).toEqual(resumed);
+    } finally {
+      await rm(base, { recursive: true, force: true });
+    }
+  });
+
+  // The cases above prove journalRefOf; this one proves the routes use it. Put a route back on the
+  // reported ref and every case above still passes while the resumed session goes unread again.
+  test("every journal route reads the ref journalRefOf settles on, never the reported one", () => {
+    const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
+    // history and chat, each handing discovery the hints built for the pane (screen and argv)
+    expect([...src.matchAll(/journalRefOf\(adapter, pane, panes, await discoveryHints\(/g)]).toHaveLength(2);
+    expect(src.slice(src.indexOf("export async function paneHistory"), src.indexOf("export function chatBodyForMux"))).not.toMatch(/pane\.agentSession \?\?/);
+  });
+});
+
+// ── Asks as data, and the answer route (ADR 0100) ────────────────────────────
+describe("asks on the pane wire", () => {
+  const wire: PaneWire = {
+    paneId: "w1:p1",
+    workspaceId: "w1",
+    workspaceLabel: "collie",
+    workspaceNumber: 1,
+    tabId: "w1:t1",
+    agent: "claude",
+    status: "blocked",
+    cwd: "/home/you",
+    focused: false,
+    kind: "agent",
+  };
+
+  test("asks: no existing pane gains one; a Herdr pane comes back as the same object", () => {
+    const herdr = withAgentHints(asMux({}), { hooksInstalled: () => false });
+    expect("openAsks" in herdr).toBe(false);
+    expect(withOpenAsks(wire, herdr)).toBe(wire);
+    expect("asks" in withOpenAsks(wire, herdr)).toBe(false);
+  });
+
+  test("asks: the durable adapter's two ask methods survive the decorator the bridge wraps every adapter in", () => {
+    const durable = withAgentHints(new DurableMux(new DurableSocketClient(undefined)), { hooksInstalled: () => false });
+    expect(durable.openAsks).toBeInstanceOf(Function);
+    expect(durable.answerAsk).toBeInstanceOf(Function);
+    // Nothing read yet: the pane carries no field until the program has been read.
+    expect(withOpenAsks(wire, durable)).toBe(wire);
+  });
+});
+
+describe("the answer route", () => {
+  test("answer: rides the pane grammar as a write that needs a device, is not typed input, and crosses a crew link", () => {
+    expect(paneGateLevel("answer")).toBe("write");
+    expect(isPaneInput("/api/pane/conv-02/answer", "POST")).toBe(false);
+    expect(crewRouteFor("/api/pane/conv-02/answer")).toBe("pane/conv-02/answer");
+  });
+
+  test("answer: a Herdr pane, whose adapter takes no answers, gets the unsupported refusal and nothing is recorded", async () => {
+    const receipts = memoryAnswerReceipts();
+    const audit: AuditEntry[] = [];
+    const reply = await answerPane(
+      "w1:p1",
+      { requestId: "0b9e6a1c-3f2d-4c5e-8a7b-1d2e3f4a5b6c", askId: "a", revision: 1, optionId: "allow" },
+      { adapter: asMux({}), receipts, audit: { record: (entry) => audit.push(entry) }, device: "pixel", session: "default" },
+    );
+    expect(reply).toEqual({ status: 409, body: { ok: false, outcome: "refused", reason: "unsupported", detail: NO_ANSWERS } });
+    expect(receipts.get("0b9e6a1c-3f2d-4c5e-8a7b-1d2e3f4a5b6c")).toBeUndefined();
+    expect(audit).toEqual([]);
+  });
+});
+
+// ── Send and abort name the turn they saw (ADR 0101) ─────────────────────────
+describe("the send and abort routes", () => {
+  const src = readFileSync(join(import.meta.dir, "server.ts"), "utf8");
+  const REQUEST_ID = "0b9e6a1c-3f2d-4c5e-8a7b-1d2e3f4a5b6c";
+
+  test("send and abort: ride the pane grammar as writes that need a device, are not typed input, and cross a crew link", () => {
+    for (const action of ["send", "abort"]) {
+      expect(paneGateLevel(action)).toBe("write");
+      expect(isPaneInput(`/api/pane/conv-02/${action}`, "POST")).toBe(false);
+      expect(crewRouteFor(`/api/pane/conv-02/${action}`)).toBe(`pane/conv-02/${action}`);
+    }
+  });
+
+  test("send and abort: a Herdr pane, whose adapter takes no controls, gets the unsupported refusal and nothing is recorded", async () => {
+    const receipts = memoryControlReceipts();
+    const audit: AuditEntry[] = [];
+    const deps = { adapter: asMux({}), receipts, audit: { record: (entry: AuditEntry) => audit.push(entry) }, device: "pixel", session: "default" };
+    const sent = await controlPane("send", "w1:p1", { requestId: REQUEST_ID, text: "go", turnId: "t1" }, deps);
+    const stopped = await controlPane("abort", "w1:p1", { requestId: REQUEST_ID, turnId: "t1" }, deps);
+    for (const reply of [sent, stopped]) {
+      expect(reply).toEqual({ status: 409, body: { ok: false, outcome: "refused", reason: "unsupported", detail: NO_CONTROLS } });
+    }
+    expect(receipts.get(REQUEST_ID)).toBeUndefined();
+    expect(audit).toEqual([]);
+  });
+
+  test("reply and keys: a durable pane refuses both with `unsupported`, a Herdr pane keeps both as they are", () => {
+    const durable = withAgentHints(new DurableMux(new DurableSocketClient(undefined)), { hooksInstalled: () => false });
+    expect(durable.paneTurn).toBeInstanceOf(Function);
+    expect(durable.controlTurn).toBeInstanceOf(Function);
+    expect(rawInputRefusal(durable)).toEqual({ status: 409, body: { ok: false, outcome: "refused", reason: "unsupported", detail: NO_RAW_INPUT } });
+    const herdr = withAgentHints(asMux({}), { hooksInstalled: () => false });
+    expect("controlTurn" in herdr).toBe(false);
+    expect(rawInputRefusal(herdr)).toBeNull();
+    // The refusal sits in front of both raw routes, so neither handler is reached for such a pane.
+    const refusal = src.indexOf("const rawRefusal = rawInputRefusal(herdr);");
+    expect(refusal).toBeGreaterThan(0);
+    expect(refusal).toBeLessThan(src.indexOf("await replyPane(herdr, cfg, paneId, req, audit_, device, session)"));
+    expect(refusal).toBeLessThan(src.indexOf("await keysPane("));
+  });
+
+  test("turnId: no existing pane gains one; the durable adapter names none before the program was read", () => {
+    const wire: PaneWire = {
+      paneId: "w1:p1",
+      workspaceId: "w1",
+      workspaceLabel: "collie",
+      workspaceNumber: 1,
+      tabId: "w1:t1",
+      agent: "claude",
+      status: "idle",
+      cwd: "/home/you",
+      focused: false,
+      kind: "agent",
+    };
+    const herdr = withAgentHints(asMux({}), { hooksInstalled: () => false });
+    expect(withTurn(wire, herdr)).toBe(wire);
+    const durable = withAgentHints(new DurableMux(new DurableSocketClient(undefined)), { hooksInstalled: () => false });
+    expect(withTurn(wire, durable)).toBe(wire);
+    // The snapshot puts it beside the asks, through the same serialise-time call.
+    expect(src).toContain("withTurn(withOpenAsks(toPaneWire(");
+  });
+});
+
+describe("discoverProcesses — the foreground hint for session discovery", () => {
+  const procs = [{ argv: ["muse", "resume", "x"] }];
+
+  test("a multiplexer without the call yields no hint", async () => {
+    await expect(discoverProcesses({}, "w1:p1")).resolves.toBeUndefined();
+  });
+
+  test("an ok answer passes through", async () => {
+    const mux = { foregroundProcesses: async () => muxOk(procs) };
+    await expect(discoverProcesses(mux, "w1:p1")).resolves.toEqual(procs);
+  });
+
+  test("a refusal reads as no hint, not an error", async () => {
+    const mux = { foregroundProcesses: async () => muxRefused("pane gone") };
+    await expect(discoverProcesses(mux, "w1:p1")).resolves.toBeUndefined();
+  });
+
+  test("a throw reads as no hint, not an error", async () => {
+    const mux = {
+      foregroundProcesses: async (): Promise<never> => {
+        throw new Error("socket died");
+      },
+    };
+    await expect(discoverProcesses(mux, "w1:p1")).resolves.toBeUndefined();
+  });
+});
+
+describe("discoveryHints — what a pane's journal discovery gets", () => {
+  const view = (agentSession?: { kind: "id"; value: string }): AgentView => {
+    const base: AgentView = {
+      paneId: "w1:p1",
+      workspaceId: "w1",
+      workspaceLabel: "Main",
+      workspaceNumber: 1,
+      tabId: "w1:t1",
+      agent: "muse",
+      status: "idle",
+      cwd: "/home/op/proj",
+      focused: false,
+    };
+    if (agentSession !== undefined) base.agentSession = agentSession;
+    return base;
+  };
+  const discovering = { ...grokJournal([]), discover: async () => null };
+  let fetched = 0;
+  const mux = {
+    readGrid: async () => muxGone("no screen"),
+    foregroundProcesses: async () => {
+      fetched += 1;
+      return muxOk([{ argv: ["muse", "resume", "x"] }]);
+    },
+  };
+
+  test("a discovering adapter on a pane with no session gets the screen and the argv", async () => {
+    fetched = 0;
+    const hints = await discoveryHints(discovering, view(), mux, "w1:p1");
+    expect(hints?.processes).toEqual([{ argv: ["muse", "resume", "x"] }]);
+    expect(await hints?.screen?.()).toBeNull();
+    expect(fetched).toBe(1);
+  });
+
+  test("a pane that already reports its session, or an adapter that never discovers, costs no fetch", async () => {
+    fetched = 0;
+    const reported = { kind: "id" as const, value: "00000000-0000-7000-8000-00000000a001" };
+    expect(await discoveryHints(discovering, view(reported), mux, "w1:p1")).toBeUndefined();
+    expect(await discoveryHints({ ...grokJournal([]), discover: undefined }, view(), mux, "w1:p1")).toBeUndefined();
+    expect(fetched).toBe(0);
+  });
+});
+
+describe("paneHistory — two muse tabs in one workspace read their own transcripts", () => {
+  const UUID_A = "00000000-0000-4000-8000-00000000a001";
+  const UUID_B = "00000000-0000-4000-8000-00000000b002";
+
+  /** The two muse payload shapes this fixture writes: a chat acceptance and a root record. */
+  type MuseFixturePayload =
+    | {
+        surface: string;
+        semantic_kind: { kind: string };
+        model_messages: { role: string; content: { kind: string; text: string }[] }[];
+      }
+    | { record: { kind: string; workspace_root: string } };
+
+  function logRow(payloadType: string, payload: MuseFixturePayload): string {
+    return JSON.stringify({
+      schema_version: 1,
+      id: "row-1",
+      stream: { kind: "session", id: UUID_A },
+      sequence: 1,
+      recorded_at: 1790904354495081,
+      record_type: "event",
+      durability: "durable",
+      causation_id: null,
+      payload_type: payloadType,
+      payload_schema_version: 1,
+      payload,
+    });
+  }
+
+  function accepted(text: string): string {
+    return logRow("runtime.user_intent.accepted", {
+      surface: "main",
+      semantic_kind: { kind: "chat" },
+      model_messages: [{ role: "user", content: [{ kind: "text", text }] }],
+    });
+  }
+
+  function metadata(root: string): string {
+    return logRow("runtime.session.metadata", {
+      record: { kind: "metadata", workspace_root: root },
+    });
+  }
+
+  async function sessionLog(root: string, uuid: string, lines: string[]): Promise<void> {
+    const dir = join(root, "2026", "10", "02", uuid);
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, "session.jsonl"), `${lines.join("\n")}\n`);
+  }
+
+  const view = (paneId: string): AgentView => ({
+    paneId,
+    workspaceId: "w1",
+    workspaceLabel: "Main",
+    workspaceNumber: 1,
+    tabId: "w1:t1",
+    agent: "muse",
+    status: "idle",
+    cwd: "/same",
+    focused: false,
+  });
+
+  test("each pane's foreground argv resolves its own session", async () => {
+    const base = await realpath(await mkdtemp(join(tmpdir(), "collie-muse-route-")));
+    try {
+      await sessionLog(base, UUID_A, [metadata("/same"), accepted("alpha from session A")]);
+      await sessionLog(base, UUID_B, [metadata("/same"), accepted("beta from session B")]);
+      const journals = { muse: museJournal([base]) };
+      const transcripts = new TranscriptStore();
+      const stub: Partial<StateEngine> = {
+        current: () => ({
+          agents: [view("w1:p1"), view("w1:p2")],
+          shellPanes: [],
+          workspaces: [],
+          tabs: [],
+          bridge: "connected",
+        }),
+      };
+      // SAFETY: paneHistory reaches only `current()` (for the pane lookup) — the one member
+      // present above, mirroring the engine stubs elsewhere in this suite.
+      const engine = stub as StateEngine;
+      const argvFor = (uuid: string) => [{ argv: ["muse", "resume", uuid] }];
+      const mux = {
+        readGrid: async () => muxGone("no screen"),
+        foregroundProcesses: async (paneId: string) =>
+          muxOk(argvFor(paneId === "w1:p1" ? UUID_A : UUID_B)),
+      };
+      const read = async (paneId: string) => {
+        const url = new URL(`http://x/api/pane/${paneId}/history`);
+        const res = await paneHistory(
+          cfg(),
+          journals,
+          transcripts,
+          engine,
+          mux,
+          paneId,
+          url,
+          new Request(url),
+        );
+        // SAFETY: the bridge's own JSON, served by the call above.
+        return (await res.json()) as { available: boolean; entries?: unknown[] };
+      };
+      const a = await read("w1:p1");
+      const b = await read("w1:p2");
+      expect(a.available).toBe(true);
+      expect(b.available).toBe(true);
+      expect(JSON.stringify(a.entries)).toContain("alpha from session A");
+      expect(JSON.stringify(a.entries)).not.toContain("beta from session B");
+      expect(JSON.stringify(b.entries)).toContain("beta from session B");
+      expect(JSON.stringify(b.entries)).not.toContain("alpha from session A");
+    } finally {
+      await rm(base, { recursive: true, force: true });
+    }
+  });
+
+  test("a multiplexer without the call keeps the newest-wins fallback", async () => {
+    const base = await realpath(await mkdtemp(join(tmpdir(), "collie-muse-route-")));
+    try {
+      await sessionLog(base, UUID_A, [metadata("/same"), accepted("alpha from session A")]);
+      await sessionLog(base, UUID_B, [metadata("/same"), accepted("beta from session B")]);
+      // Pinned mtimes order the newest-first walk; two writes in the same millisecond could tie.
+      const at = (uuid: string) => join(base, "2026", "10", "02", uuid, "session.jsonl");
+      await utimes(at(UUID_A), new Date("2026-10-02T00:00:00Z"), new Date("2026-10-02T00:00:00Z"));
+      await utimes(at(UUID_B), new Date("2026-10-02T01:00:00Z"), new Date("2026-10-02T01:00:00Z"));
+      const journals = { muse: museJournal([base]) };
+      const transcripts = new TranscriptStore();
+      const stub: Partial<StateEngine> = {
+        current: () => ({
+          agents: [view("w1:p1")],
+          shellPanes: [],
+          workspaces: [],
+          tabs: [],
+          bridge: "connected",
+        }),
+      };
+      // SAFETY: paneHistory reaches only `current()` (for the pane lookup) — the one member
+      // present above, mirroring the engine stubs elsewhere in this suite.
+      const engine = stub as StateEngine;
+      const url = new URL("http://x/api/pane/w1:p1/history");
+      const res = await paneHistory(
+        cfg(),
+        journals,
+        transcripts,
+        engine,
+        { readGrid: async () => muxGone("no screen") },
+        "w1:p1",
+        url,
+        new Request(url),
+      );
+      // SAFETY: the bridge's own JSON, served by the call above.
+      const body = (await res.json()) as { available: boolean; entries?: unknown[] };
+      expect(body.available).toBe(true);
+      expect(JSON.stringify(body.entries)).toContain("beta from session B");
+    } finally {
+      await rm(base, { recursive: true, force: true });
+    }
+  });
+});
+
+
+describe("bounded native push enrollment bodies", () => {
+  test("reads valid UTF-8 JSON and rejects invalid JSON/encoding", async () => {
+    const valid = new Request("http://localhost/api/native-push", { method: "POST", body: JSON.stringify({ installationId: "phone-installation", endpoint: "https://ntfy.example/topic" }) });
+    expect(await readNativePushBody(valid)).toEqual({ installationId: "phone-installation", endpoint: "https://ntfy.example/topic" });
+    expect(await readNativePushBody(new Request("http://localhost/api/native-push", { method: "POST", body: "{" }))).toBeUndefined();
+    expect(await readNativePushBody(new Request("http://localhost/api/native-push", { method: "POST", body: new Uint8Array([0xff]) }))).toBeUndefined();
+  });
+  test("cancels an oversized stream without reading its unbounded remainder", async () => {
+    let pulls = 0;
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) { pulls++; controller.enqueue(new Uint8Array(8193)); },
+      cancel() { cancelled = true; },
+    }, { highWaterMark: 0 });
+    expect(await readNativePushBody(new Request("http://localhost/api/native-push", { method: "POST", body }))).toBeUndefined();
+    expect(pulls).toBe(1);
+    expect(cancelled).toBe(true);
   });
 });

@@ -29,6 +29,47 @@ import org.robolectric.Shadows
 
 @RunWith(RobolectricTestRunner::class)
 class DashboardModelTest {
+    @Test fun changingPinAdmissionCannotDuplicateARecordAndPinnedSectionsHaveDistinctAdapterIdentity() {
+        var calls = 0
+        val result = DashboardModel.items(snapshot(agents = listOf(pane("owned", AgentStatus.IDLE))),
+            stale = false, build = "build", pinned = { ++calls == 1 })
+        assertEquals(1, calls)
+        val sections = result.filterIsInstance<DashboardItem.PaneSection>()
+        assertEquals(listOf("owned"), sections.flatMap { it.panes }.map { it.pane.paneId })
+        val pinned = sections.single()
+        assertTrue(pinned.pinned)
+        assertFalse(DashboardAdapter.Diff.areItemsTheSame(pinned, pinned.copy(pinned = false)))
+        assertTrue(DashboardAdapter.Diff.areItemsTheSame(pinned, pinned.copy(panes = emptyList())))
+    }
+
+    @Test fun pinnedPlacesLeadTheDashboardOnceAndRemainStableAcrossStatusChanges() {
+        val first = pane("first", AgentStatus.WORKING).copy(workspaceNumber = 1)
+        val second = pane("second", AgentStatus.BLOCKED).copy(workspaceNumber = 2)
+        val shell = pane("shell", AgentStatus.UNKNOWN, kind = "shell").copy(workspaceNumber = 3)
+        val other = pane("other", AgentStatus.IDLE)
+        fun items(rows: List<PaneSummary>) = DashboardModel.items(
+            snapshot(agents = rows, shells = listOf(shell)), stale = false, build = "build",
+            pinned = { it.paneId in setOf("first", "second", "shell") },
+        )
+        val original = items(listOf(second, other, first))
+        val pinned = original.first() as DashboardItem.PaneSection
+        assertTrue(pinned.pinned)
+        assertEquals(listOf("first", "second", "shell"), pinned.panes.map { it.pane.paneId })
+        val all = original.filterIsInstance<DashboardItem.PaneSection>().flatMap { it.panes }.map { it.pane.paneId }
+        assertEquals(1, all.count { it == "first" })
+        assertEquals(1, all.count { it == "shell" })
+        assertTrue("Pinned blocked work must still prevent an All clear notice", original.none { it is DashboardItem.AllClear })
+        val changed = items(listOf(first.copy(status = AgentStatus.BLOCKED, lastActiveAt = 999), other,
+            second.copy(status = AgentStatus.IDLE, lastSeenAt = 999)))
+        assertEquals(pinned.panes.map { it.pane.paneId }, (changed.first() as DashboardItem.PaneSection).panes.map { it.pane.paneId })
+    }
+
+    @Test fun worktreeReviewResourceKeepsEachLogicalPlanFieldOnItsOwnLine() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val preview = context.getString(R.string.worktree_plan_preview, "repo", "default", "current", "new", "base", "parent")
+        assertEquals(listOf("Repository: repo", "Default branch: default", "Current branch: current", "New branch: new", "Base: base", "Parent: parent"), preview.lines())
+    }
+
     @Test
     fun sectionsAlwaysFollowWebTriageAndUseTheCorrectRowTreatment() {
         val recent = pane("recent", AgentStatus.IDLE, active = 1_000, seen = 8_000)
@@ -275,7 +316,7 @@ class DashboardModelTest {
             server("old", reachable = true).copy(
                 name = "Attic",
                 protocol = "incompatible",
-                protocolDetail = "pack protocol 2",
+                protocolDetail = "crew protocol 2",
             ),
         )
         val rows = DashboardModel.items(
@@ -679,7 +720,7 @@ class DashboardModelTest {
         val pack = root.findViewById<View>(R.id.dashboard_pack_link)
         val build = root.findViewById<TextView>(R.id.build_text)
 
-        assertEquals("Pack · 3 machines · 2 reachable", root.findViewById<TextView>(R.id.dashboard_pack_text).text)
+        assertEquals("Crew · 3 machines · 2 reachable", root.findViewById<TextView>(R.id.dashboard_pack_text).text)
         assertTrue(root.indexOfChild(pack) < root.indexOfChild(build))
         pack.performClick()
         assertTrue(packOpened)

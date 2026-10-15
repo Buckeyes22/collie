@@ -6,7 +6,7 @@
 //  • It sets no identity — not the pane's agent, not its status, not the session ref an agent named.
 //    The reasoning is `bridge/mux/types.ts` § `MuxPane.agent`, cited rather than restated, and it is
 //    why the port answers `"shell"` instead of guessing from a process name.
-//  • It arms no grammar, keys no journal adapter and never enters the triage sort. A hinted pane is
+//  • It arms no grammar, keys no journal adapter and never enters triage. A hinted pane is
 //    a shell of unknown standing that has a sentence attached to it.
 //  • What reaches the phone is finished English — no harness name, no multiplexer name — so
 //    `web/src` learns nothing new and renders text it does not interpret.
@@ -24,7 +24,7 @@
 // it has.
 
 import { KNOWN_HARNESS_NAMES } from "../journal/registry.ts";
-import { muxDataFields } from "../mux/types.ts";
+import { muxDataFields, muxOptionalMethods } from "../mux/types.ts";
 import type {
   MuxAck,
   MuxAdapter,
@@ -34,12 +34,10 @@ import type {
   MuxGridRequest,
   MuxOutcome,
   MuxPane,
+  MuxSession,
   MuxSnapshot,
   MuxSpaceRequest,
   MuxWorktree,
-  MuxWorktreeCreateRequest,
-  MuxWorktreeOpenRequest,
-  MuxWorktreeOpened,
   MuxWorktreeScope,
   MuxSubscription,
   MuxTabRequest,
@@ -138,6 +136,7 @@ export interface AgentHintDeps {
 export function withAgentHints(adapter: MuxAdapter, deps: AgentHintDeps): MuxAdapter {
   return {
     ...muxDataFields(adapter),
+    ...muxOptionalMethods(adapter),
     mux: adapter.mux,
     // A getter, because the wrapped declaration is itself one — the decorator re-reads the emitter's
     // install per request, and freezing the answer here would undo that.
@@ -164,8 +163,8 @@ export function withAgentHints(adapter: MuxAdapter, deps: AgentHintDeps): MuxAda
     refresh: (): Promise<void> => adapter.refresh(),
     readGrid: (paneId: string, request: MuxGridRequest): Promise<MuxOutcome<MuxGrid>> =>
       adapter.readGrid(paneId, request),
-    typeText: (paneId: string, txt: string): Promise<MuxAck> => adapter.typeText(paneId, txt),
-    sendKeys: (paneId: string, keys: readonly string[]): Promise<MuxAck> => adapter.sendKeys(paneId, keys),
+    typeText: (paneId, txt, finalAdmission) => adapter.typeText(paneId, txt, finalAdmission),
+    sendKeys: (paneId, keys, finalAdmission) => adapter.sendKeys(paneId, keys, finalAdmission),
     renamePane: (paneId: string, label: string | null): Promise<MuxAck> => adapter.renamePane(paneId, label),
     closePane: (paneId: string): Promise<MuxAck> => adapter.closePane(paneId),
     setFocus: (paneId: string): Promise<MuxAck> => adapter.setFocus(paneId),
@@ -175,10 +174,11 @@ export function withAgentHints(adapter: MuxAdapter, deps: AgentHintDeps): MuxAda
     createSpace: (request: MuxSpaceRequest): Promise<MuxOutcome<MuxCreatedPane>> => adapter.createSpace(request),
     listWorktrees: (scope: MuxWorktreeScope): Promise<MuxOutcome<readonly MuxWorktree[]>> =>
       adapter.listWorktrees(scope),
-    createWorktree: (request: MuxWorktreeCreateRequest): Promise<MuxOutcome<MuxCreatedPane>> =>
-      adapter.createWorktree(request),
-    openWorktree: (request: MuxWorktreeOpenRequest): Promise<MuxOutcome<MuxWorktreeOpened>> =>
-      adapter.openWorktree(request),
+    createWorktree: (request, finalAdmission, beforeDispatch) =>
+      adapter.createWorktree(request, finalAdmission, beforeDispatch),
+    openWorktree: (request, finalAdmission, beforeDispatch) =>
+      adapter.openWorktree(request, finalAdmission, beforeDispatch),
+    listSessions: (): Promise<MuxOutcome<readonly MuxSession[]>> => adapter.listSessions(),
     watch: (options: MuxWatchOptions): MuxSubscription => adapter.watch(options),
   };
 }

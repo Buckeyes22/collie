@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/files_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/collie_background"
+    android:orientation="vertical">
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:minHeight="@dimen/collie_header_height"
+        android:orientation="vertical"
+        android:paddingHorizontal="8dp">
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical" android:orientation="horizontal">
+            <Button android:id="@+id/files_back" android:layout_width="wrap_content" android:layout_height="@dimen/collie_touch_target" android:text="@string/files_back" />
+            <TextView android:id="@+id/files_title" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:maxLines="3" android:textColor="@color/collie_on_background" android:textSize="16sp" />
+        </LinearLayout>
+        <HorizontalScrollView android:layout_width="match_parent" android:layout_height="wrap_content" android:fillViewport="false" android:scrollbars="none">
+            <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="horizontal">
+                <Button android:id="@+id/files_source" android:layout_width="wrap_content" android:layout_height="@dimen/collie_touch_target" android:text="@string/files_source" />
+                <Button android:id="@+id/files_preview" android:layout_width="wrap_content" android:layout_height="@dimen/collie_touch_target" android:text="@string/files_preview" android:visibility="gone" />
+            </LinearLayout>
+        </HorizontalScrollView>
+    </LinearLayout>
+    <TextView android:id="@+id/files_breadcrumb" android:layout_width="match_parent" android:layout_height="wrap_content" android:paddingHorizontal="16dp" android:paddingVertical="8dp" android:textColor="@color/collie_muted" android:textSize="14sp" />
+    <LinearLayout android:id="@+id/files_listing_controls" android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical" android:orientation="horizontal" android:paddingHorizontal="12dp">
+        <CheckBox android:id="@+id/files_ignored" android:layout_width="wrap_content" android:layout_height="wrap_content" android:minHeight="48dp" android:text="@string/files_show_ignored" />
+        <TextView android:id="@+id/files_listing_status" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:gravity="end" android:textColor="@color/collie_muted" android:textSize="12sp" />
+    </LinearLayout>
+    <LinearLayout android:id="@+id/files_source_controls" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:paddingHorizontal="8dp" android:visibility="gone">
+        <HorizontalScrollView android:layout_width="match_parent" android:layout_height="wrap_content" android:scrollbars="none">
+            <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:gravity="center_vertical" android:orientation="horizontal">
+                <EditText android:id="@+id/files_find" android:layout_width="180dp" android:layout_height="@dimen/collie_touch_target" android:hint="@string/files_find_hint" android:inputType="text" android:maxLines="1" />
+                <Button android:id="@+id/files_find_next" android:layout_width="wrap_content" android:layout_height="@dimen/collie_touch_target" android:text="@string/files_find_next" />
+            </LinearLayout>
+        </HorizontalScrollView>
+        <HorizontalScrollView android:layout_width="match_parent" android:layout_height="wrap_content" android:scrollbars="none">
+            <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:gravity="center_vertical" android:orientation="horizontal">
+                <EditText android:id="@+id/files_line" android:layout_width="96dp" android:layout_height="@dimen/collie_touch_target" android:hint="@string/files_line_hint" android:inputType="number" android:maxLines="1" />
+                <Button android:id="@+id/files_go_line" android:layout_width="wrap_content" android:layout_height="@dimen/collie_touch_target" android:text="@string/files_go_line" />
+            </LinearLayout>
+        </HorizontalScrollView>
+    </LinearLayout>
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical" android:orientation="horizontal">
+        <TextView android:id="@+id/files_status" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:accessibilityLiveRegion="polite" android:paddingHorizontal="16dp" android:paddingVertical="8dp" android:textColor="@color/collie_muted" android:textSize="14sp" android:visibility="gone" />
+        <Button android:id="@+id/files_retry" android:layout_width="wrap_content" android:layout_height="@dimen/collie_touch_target" android:text="@string/files_retry" android:visibility="gone" />
+    </LinearLayout>
+    <ProgressBar android:id="@+id/files_progress" android:layout_width="36dp" android:layout_height="36dp" android:layout_gravity="center_horizontal" android:visibility="gone" />
+    <androidx.recyclerview.widget.RecyclerView android:id="@+id/files_list" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:clipToPadding="false" android:paddingHorizontal="12dp" android:paddingBottom="16dp" />
+    <ScrollView android:id="@+id/files_source_scroll" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:fillViewport="true" android:visibility="gone">
+        <LinearLayout android:id="@+id/files_source_content" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:padding="12dp" />
+    </ScrollView>
+</LinearLayout>

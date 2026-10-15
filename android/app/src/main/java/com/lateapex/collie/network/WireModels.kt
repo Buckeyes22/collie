@@ -1,8 +1,12 @@
+@file:OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
+
 package com.lateapex.collie.network
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonNames
+import kotlinx.serialization.json.JsonPrimitive
 
 @Serializable
 data class HealthResponse(
@@ -15,10 +19,17 @@ data class HealthResponse(
 @Serializable
 data class BridgeConfigResponse(
     val mux: MuxConfigResponse? = null,
+    val operatorFonts: List<OperatorFontRow> = emptyList(),
     val operatorCommands: List<OperatorCommand> = emptyList(),
     val operatorKeys: List<OperatorKeyRow> = emptyList(),
     val operatorQuickReplies: List<OperatorQuickReplyRow> = emptyList(),
     val stt: SttCapability? = null,
+    val upload: UploadCapability? = null,
+    val redact: Boolean? = null,
+    val control: ControlCapabilityResponse? = null,
+    val hostControl: HostControlResponse? = null,
+    /** New durable launch retries require a positive declaration from this owning host. */
+    val receiptContextBound: Boolean? = null,
 )
 
 @Serializable
@@ -35,9 +46,26 @@ data class MuxConfigResponse(
     val notes: Map<String, String> = emptyMap(),
     val spaces: String? = null,
     val unsupportedKeys: List<String> = emptyList(),
+    val topologyLatency: MuxTopologyLatencyResponse? = null,
+    val readLimits: MuxReadLimitsResponse? = null,
 ) {
     /** Missing capability data fails open, matching the web client during mixed-version upgrades. */
     fun supports(capability: String): Boolean = capabilities[capability] != false
+    /** New operations require a positive declaration; legacy behavior stays limited to supports(). */
+    fun supportsNew(capability: String): Boolean = capabilities[capability] == true
+}
+
+@Serializable
+data class MuxTopologyLatencyResponse(val kind: String, val ms: JsonPrimitive? = null) {
+    fun displayBoundMs(): Long? = ms?.takeIf { kind == "bounded" && !it.isString }?.content
+        ?.toLongOrNull()?.takeIf { it > 0L && it <= 12_000L }
+    fun isPush(): Boolean = kind == "push"
+}
+
+@Serializable
+data class MuxReadLimitsResponse(val maxRequestedLines: JsonPrimitive? = null) {
+    fun verifiedMaximum(): Int? = maxRequestedLines?.takeIf { !it.isString }?.content
+        ?.toIntOrNull()?.takeIf { it in 1..10_000 }
 }
 
 @Serializable
@@ -66,7 +94,7 @@ data class OperatorKeyRow(
     val danger: Boolean = false,
 )
 
-@Serializable
+@Serializable(with = AgentStatusSerializer::class)
 enum class AgentStatus {
     @SerialName("idle") IDLE,
     @SerialName("working") WORKING,
@@ -90,15 +118,158 @@ data class PaneSummary(
     val paneLabel: String? = null,
     val sessionName: String? = null,
     val hasSession: Boolean? = null,
+    val asks: List<DurableAsk>? = null,
+    val turnId: String? = null,
+    /** Mux-reported depth may lag a shrinking buffer and never proves agent history exhaustive. */
     val readableLines: Int? = null,
     val tabLabel: String? = null,
+    val soleTabName: String? = null,
+    val tabPosition: Int? = null,
     val terminalTitle: String? = null,
     val terminalTitleStale: Boolean? = null,
     val hint: String? = null,
     val lastActiveAt: Long? = null,
     val lastSeenAt: Long? = null,
+    val gitHead: PaneGitHead? = null,
+    val cache: PaneCacheReading? = null,
+    val model: String? = null,
+    val hidden: Boolean = false,
     val host: String? = null,
     val session: String? = null,
+)
+
+/** Bounded, additive cache telemetry carried with a pane. Unknown vocabulary stays display-only. */
+@Serializable
+data class PaneCacheReading(
+    val state: String? = null,
+    val expiresAt: Long? = null,
+    val ttlSeconds: Long? = null,
+    val ruleId: String? = null,
+    val label: String? = null,
+    val confidence: String? = null,
+    val lastRequestAt: Long? = null,
+    val measuredAt: Double? = null,
+    val overridden: Boolean? = null,
+    val coldReason: String? = null,
+    val reset: PaneCacheReset? = null,
+)
+
+@Serializable
+data class PaneCacheReset(
+    val ruleId: String? = null,
+    val label: String? = null,
+    val at: Long? = null,
+)
+
+@Serializable
+data class PaneGitHead(
+    val kind: String? = null,
+    val name: String? = null,
+    val sha: String? = null,
+)
+
+@Serializable
+data class CacheRulesResponse(val rules: List<CacheRule> = emptyList())
+
+@Serializable
+data class CacheRule(
+    val id: String,
+    val label: String,
+    val ttlSeconds: Long,
+    val confidence: String,
+    val sourceTitle: String,
+    val sourceUrl: String,
+    val retrievedAt: String,
+    val slidingWindow: Boolean = false,
+    val automatic: Boolean = false,
+    val note: String? = null,
+    val overridden: CacheRuleOverride? = null,
+)
+
+@Serializable
+data class CacheRuleOverride(
+    val ttlSeconds: Long,
+    val sourceUrl: String,
+    val retrieved: String,
+    val note: String? = null,
+)
+
+@Serializable
+data class CacheWatchResponse(
+    val on: Boolean,
+    val global: Boolean,
+    val watchable: Boolean,
+    val warnSeconds: Long,
+)
+
+@Serializable
+internal data class CacheWatchRequest(val on: Boolean)
+
+@Serializable
+internal data class CacheWatchForgetRequest(val id: String)
+
+@Serializable
+data class CacheWatchListResponse(val entries: List<CacheWatchEntry>)
+
+@Serializable
+data class CacheWatchEntry(
+    val id: String,
+    val label: String,
+    val host: String? = null,
+    val session: String? = null,
+    val paneId: String? = null,
+)
+
+@Serializable
+data class PaneProcess(
+    val pid: Long,
+    val name: String,
+    val argv: List<String>? = null,
+    val argv0: String? = null,
+    val cmdline: String? = null,
+    val cwd: String? = null,
+)
+
+@Serializable
+data class PaneProcessesResponse(
+    val ok: Boolean,
+    val paneId: String,
+    val shellPid: Long? = null,
+    val foregroundProcessGroupId: Long? = null,
+    val tty: String? = null,
+    val foregroundCwd: String? = null,
+    val restoreError: String? = null,
+    val processes: List<PaneProcess> = emptyList(),
+    val truncated: Boolean = false,
+)
+
+@Serializable
+data class AgentIdentitySession(
+    val source: String,
+    val agent: String,
+    val kind: String,
+    val value: String,
+)
+
+@Serializable
+data class AgentStateAuthority(
+    val observed: Boolean,
+    val source: String? = null,
+)
+
+/** State authority is explicitly unknown when the owning runtime does not expose its source. */
+@Serializable
+data class AgentIdentityResponse(
+    val ok: Boolean,
+    val paneId: String,
+    val agent: String? = null,
+    val status: AgentStatus,
+    val session: AgentIdentitySession? = null,
+    val stateAuthority: AgentStateAuthority,
+    val interactiveReady: Boolean? = null,
+    val launchPending: Boolean? = null,
+    val stateChangeSeq: String? = null,
+    val completionSeq: String? = null,
 )
 
 @Serializable
@@ -111,6 +282,7 @@ data class WorkspaceSummary(
     val tabCount: Int,
     val paneCount: Int,
     val repoRoot: String? = null,
+    val folder: String? = null,
     val isWorktree: Boolean? = null,
     val host: String? = null,
 )
@@ -156,8 +328,12 @@ data class DeviceAuthorization(
 )
 
 @Serializable
+data class ControlAuthority(val leadId: String, val epoch: String)
+
+@Serializable
 data class SnapshotResponse(
     val bridge: String,
+    val controlAuthority: ControlAuthority? = null,
     val device: DeviceAuthorization? = null,
     val agents: List<PaneSummary>,
     val shellPanes: List<PaneSummary>,
@@ -171,7 +347,7 @@ data class SnapshotResponse(
 )
 
 @Serializable
-data class NotificationState(val snoozedUntil: Long?)
+data class NotificationState(val snoozedUntil: Long?, val preferences: NotifyPreferences? = null)
 
 @Serializable
 data class PaneReadResponse(
@@ -179,6 +355,13 @@ data class PaneReadResponse(
     val text: String,
     val truncated: Boolean,
     val revision: Long,
+    val linkText: String? = null,
+    val requestedLines: Int? = null,
+    val servedLines: Int? = null,
+    val readableLines: Int? = null,
+    val limitReason: String? = null,
+    /** Absent/false leaves automatic printed paths plain without a Files request. */
+    val filesReadReady: Boolean? = null,
 )
 
 @Serializable
@@ -188,6 +371,7 @@ data class ActionResponse(
     val textDelivered: Boolean = false,
     val code: String? = null,
     val detail: JsonObject? = null,
+    val reason: String? = null,
 )
 
 @Serializable
@@ -196,6 +380,8 @@ data class DeviceRecord(
     val createdAt: Long,
     val lastSeenAt: Long,
     val current: Boolean,
+    val expiresAt: Long? = null,
+    val expired: Boolean = false,
 )
 
 @Serializable
@@ -203,13 +389,16 @@ data class DevicesResponse(
     val enforced: Boolean,
     val current: String? = null,
     val devices: List<DeviceRecord>,
+    val currentExpired: Boolean = false,
 )
 
 @Serializable
 data class TranscriptResult(
-    val text: String,
+    val text: String? = null,
     val truncated: Boolean = false,
     val isError: Boolean = false,
+    val denied: Boolean = false,
+    val imageUrl: String? = null,
 )
 
 /** One transcript part. Fields not used by its `kind` remain absent on the wire. */
@@ -221,6 +410,10 @@ data class TranscriptPart(
     val name: String? = null,
     val summary: String? = null,
     val result: TranscriptResult? = null,
+    val id: String? = null,
+    val call: JsonObject? = null,
+    val url: String? = null,
+    val mimeType: String? = null,
 )
 
 @Serializable
@@ -229,7 +422,15 @@ data class TranscriptEntry(
     val ts: String,
     val role: String,
     val parts: List<TranscriptPart>,
+    val seq: Long? = null,
+    val abandoned: Boolean = false,
 )
+
+/** Bounded response body from the authenticated journal blob endpoint. */
+data class ImageBlob(val contentType: String?, val bytes: ByteArray) {
+    init { require(bytes.isNotEmpty() && bytes.size <= MAX_BYTES) }
+    companion object { const val MAX_BYTES = 10 * 1024 * 1024 }
+}
 
 @Serializable
 data class PaneHistoryResponse(
@@ -259,6 +460,46 @@ data class SttResponse(
     val code: String? = null,
     val detail: JsonObject? = null,
 )
+
+sealed interface UploadSource {
+    val fileName: String
+    val contentType: String
+    val contentLength: Long
+    fun openOnce(): java.io.InputStream
+    fun reportProgress(bytesSent: Long) = Unit
+    fun dispose()
+
+    data class Image(val upload: ImageUpload) : UploadSource {
+        override val fileName get() = upload.fileName
+        override val contentType get() = upload.contentType
+        override val contentLength get() = upload.bytes.size.toLong()
+        private val consumed = java.util.concurrent.atomic.AtomicBoolean(false)
+        override fun openOnce(): java.io.InputStream {
+            check(consumed.compareAndSet(false, true)) { "Upload source already consumed" }
+            return upload.bytes.inputStream()
+        }
+        override fun dispose() = Unit
+    }
+
+    class Document(
+        override val fileName: String,
+        override val contentType: String,
+        private val file: java.io.File,
+        override val contentLength: Long,
+        private val progress: (Long, Long) -> Unit = { _, _ -> },
+    ) : UploadSource {
+        private val consumed = java.util.concurrent.atomic.AtomicBoolean(false)
+        private val disposed = java.util.concurrent.atomic.AtomicBoolean(false)
+        init { require(fileName.isNotBlank() && contentType.isNotBlank() && contentLength in 1..10L * 1024 * 1024 && file.length() == contentLength) }
+        override fun openOnce(): java.io.InputStream {
+            check(!disposed.get()) { "Upload source disposed" }
+            check(consumed.compareAndSet(false, true)) { "Upload source already consumed" }
+            return file.inputStream()
+        }
+        override fun reportProgress(bytesSent: Long) = progress(bytesSent, contentLength)
+        override fun dispose() { disposed.set(true); file.delete() }
+    }
+}
 
 data class ImageUpload(
     val fileName: String,
@@ -324,12 +565,37 @@ data class Launcher(
     val command: String,
     val label: String,
     val cwd: String? = null,
+    val harness: String? = null,
+    val noPrompts: Boolean = false,
+    val source: String? = null,
+    val id: String? = null,
+    val kind: String? = null,
+    val addedBy: String? = null,
+    val addedAt: Long? = null,
+    val addedAs: String? = null,
+    /** Present for the richer, server-supplied target catalog; absent on legacy launcher rows. */
+    val target: StartTarget? = null,
 )
 
 @Serializable
 data class LaunchersResponse(
     val launchers: List<Launcher>,
     val home: String,
+    val harnesses: List<HarnessInfo>? = null,
+    val items: List<LauncherItem>? = null,
+    val adding: LaunchersAdding? = null,
+    val recentRuns: List<RecentRun>? = null,
+)
+
+/** POST /api/launchers/added response; the saved intent keeps this wire payload encrypted locally. */
+@Serializable
+data class AddedLauncherResponse(
+    val ok: Boolean,
+    val row: JsonObject? = null,
+    val replayed: Boolean? = null,
+    val error: String? = null,
+    val code: String? = null,
+    val detail: JsonObject? = null,
 )
 
 @Serializable
@@ -345,6 +611,7 @@ data class Worktree(
 data class WorktreeListResponse(
     val ok: Boolean,
     val worktrees: List<Worktree> = emptyList(),
+    val defaultBranch: String? = null,
     val error: String? = null,
     val code: String? = null,
     val detail: JsonObject? = null,
@@ -355,6 +622,9 @@ data class WorktreeOpenResponse(
     val ok: Boolean,
     val pane: CreatedPane? = null,
     val alreadyOpen: Boolean = false,
+    val launcherStarted: Boolean = false,
+    val launcherError: String? = null,
+    val replayed: Boolean = false,
     val error: String? = null,
     val code: String? = null,
     val detail: JsonObject? = null,
@@ -365,6 +635,8 @@ data class NotifyPreferences(
     val blocked: Boolean,
     val done: Boolean,
     val updates: Boolean,
+    val cache: Boolean = false,
+    val machines: Boolean = true,
 )
 
 @Serializable
@@ -372,6 +644,8 @@ data class NotifyPreferencesPatch(
     val blocked: Boolean? = null,
     val done: Boolean? = null,
     val updates: Boolean? = null,
+    val cache: Boolean? = null,
+    val machines: Boolean? = null,
 )
 
 @Serializable
@@ -398,6 +672,7 @@ data class UpdateRun(
     val recovery: String? = null,
     val runId: String? = null,
     val peers: List<UpdatePeerLeg>? = null,
+    val settledAt: Long? = null,
 )
 
 /** `/standby/update` also answers `{ "state": "idle" }` before any run exists. */
@@ -446,10 +721,20 @@ data class UpdateInfo(
     val majorAvailable: String?,
     val majorUrl: String?,
     val installKind: String? = null,
+    val packageCommand: String? = null,
+    val restartNeeded: Boolean = false,
+    val restartCommand: String? = null,
+    val linkChange: JsonObject? = null,
+    val urgent: JsonObject? = null,
+    val peers: List<UpdatePeerLeg>? = null,
+    val peersTo: String? = null,
+    val settledAt: Long? = null,
     val bridgeStale: Boolean,
     val checkedAt: Long?,
     val newerVersions: List<String>? = null,
     val run: UpdateRun? = null,
+    val dismissedVersion: String? = null,
+    val dismissedCrewVersion: String? = null,
 )
 
 @Serializable
@@ -468,12 +753,14 @@ data class PreflightReport(
 )
 
 @Serializable
-data class UpdatePackMember(
+data class UpdateCrewMember(
     val name: String,
     val version: String?,
     val verdict: String,
     val reasons: List<String>,
     val asOf: Long?,
+    val health: String? = null,
+    val installKind: String? = null,
 )
 
 @Serializable
@@ -485,12 +772,22 @@ data class UpdateCheckResponse(
     val majorAvailable: String?,
     val majorUrl: String?,
     val installKind: String? = null,
+    val packageCommand: String? = null,
+    val restartNeeded: Boolean = false,
+    val restartCommand: String? = null,
+    val linkChange: JsonObject? = null,
+    val urgent: JsonObject? = null,
+    val peers: List<UpdatePeerLeg>? = null,
+    val peersTo: String? = null,
+    val settledAt: Long? = null,
     val bridgeStale: Boolean,
     val checkedAt: Long?,
     val newerVersions: List<String>? = null,
     val run: UpdateRun? = null,
     val preflight: PreflightReport? = null,
-    val pack: List<UpdatePackMember>? = null,
+    @JsonNames("pack") val crew: List<UpdateCrewMember>? = null,
+    val dismissedVersion: String? = null,
+    val dismissedCrewVersion: String? = null,
 )
 
 @Serializable
@@ -502,7 +799,7 @@ data class UpdateStartResponse(
 )
 
 @Serializable
-data class PackIdentity(
+data class CrewIdentity(
     val id: String,
     val name: String,
     val secretGeneration: Int,
@@ -510,26 +807,26 @@ data class PackIdentity(
 )
 
 @Serializable
-data class PackSelf(
+data class CrewSelf(
     val id: String,
     val name: String,
     val version: String,
 )
 
 @Serializable
-data class PackDeputy(
+data class CrewDeputy(
     val id: String,
     val warrantGeneration: Int? = null,
 )
 
 @Serializable
-data class PackConflict(
+data class CrewConflict(
     val leadMemberId: String,
     val warrantGeneration: Int? = null,
 )
 
 @Serializable
-data class PackMember(
+data class CrewMember(
     val id: String,
     val name: String,
     val isLead: Boolean,
@@ -541,15 +838,16 @@ data class PackMember(
     val version: String? = null,
     val secretBehind: Boolean,
     val provisional: Boolean,
-    val conflict: PackConflict? = null,
+    val linkState: String? = null,
+    val conflict: CrewConflict? = null,
 )
 
 @Serializable
-data class PackStatusResponse(
-    val pack: PackIdentity,
-    val self: PackSelf,
-    val deputy: PackDeputy?,
-    val members: List<PackMember>,
+data class CrewStatusResponse(
+    @JsonNames("pack") val crew: CrewIdentity,
+    val self: CrewSelf,
+    val deputy: CrewDeputy?,
+    val members: List<CrewMember>,
     val ts: Long,
 )
 
@@ -573,16 +871,30 @@ internal data class PairResponse(
 internal data class PairRequest(val code: String, val label: String)
 
 @Serializable
+data class PromptColumns(val start: Int, val end: Int) {
+    fun valid(): Boolean = start >= 0 && start < end && end <= 4096
+}
+
+@Serializable
 internal data class ReplyRequest(
     val text: String,
     val submit: Boolean,
     @SerialName("expected_prompt") val expectedPrompt: String? = null,
+    @SerialName("expected_columns") val expectedColumns: PromptColumns? = null,
 )
 
 @Serializable
 internal data class KeysRequest(
     val keys: List<String>,
     @SerialName("expected_prompt") val expectedPrompt: String? = null,
+    @SerialName("expected_columns") val expectedColumns: PromptColumns? = null,
+)
+
+@Serializable
+internal data class GuardedQueuedSendRequest(
+    val keys: List<String>,
+    @SerialName("expected_prompt") val expectedPrompt: String,
+    @SerialName("queued_send") val queuedSend: QueuedSendGuard,
 )
 
 @Serializable
@@ -605,16 +917,26 @@ internal data class CreateWorkspaceRequest(
 internal data class LaunchRequest(
     val command: String,
     val paneId: String? = null,
+    val requestId: String = java.util.UUID.randomUUID().toString(),
 )
 
 @Serializable
-internal data class BranchRequest(val branch: String)
+internal data class BranchRequest(val branch: String, val requestId: String = java.util.UUID.randomUUID().toString())
 
 @Serializable
 internal data class WorktreePathRequest(val path: String)
 
 @Serializable
 internal data class SnoozeRequest(val snoozedUntil: Long?)
+
+@Serializable
+enum class UpdateDismissalScope {
+    @SerialName("offer") OFFER,
+    @SerialName("crew") CREW,
+}
+
+@Serializable
+internal data class UpdateDismissRequest(val version: String, val scope: UpdateDismissalScope)
 
 @Serializable
 internal data class RevokeDeviceRequest(val label: String)
@@ -634,3 +956,11 @@ internal data class ErrorResponse(
     val textDelivered: Boolean = false,
     val detail: JsonObject? = null,
 )
+
+@Serializable
+data class OperatorFontRow(val family: String, val basename: String, val weight: String? = null) {
+    fun valid(): Boolean = family.matches(Regex("^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$")) &&
+        family.lowercase() !in setOf("serif", "sans-serif", "monospace", "cursive", "fantasy", "system-ui", "math", "inherit", "initial", "unset", "revert", "revert-layer") &&
+        basename.length in 1..128 && !basename.startsWith(".") && basename.endsWith(".woff2") && basename.none { it == '/' || it == '\\' || it == '\u0000' } &&
+        (weight == null || weight.matches(Regex("[0-9]{3}( [0-9]{3})?")) && weight.split(" ").map(String::toInt).let { parts -> parts.all { it in 100..900 } && (parts.size == 1 || parts[0] <= parts[1]) })
+}

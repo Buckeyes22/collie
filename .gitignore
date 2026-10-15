@@ -10,6 +10,8 @@ out/
 target/
 # The compiled `collie` binary — built from the checkout, never committed.
 /bin/
+# Bun's macOS compiler fallback can spill this exact root-level scratch executable.
+/.[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f].bun-build
 
 # Logs
 *.log
@@ -47,6 +49,8 @@ Thumbs.db
 .claude/*
 !.claude/settings.json
 !.claude/hooks/
+
+# The tracker lives in the collie-workspace repo, never here
 .tracker/
 
 # Bug-repro screenshots — evidence for a fix, not documentation. Keep them local;
@@ -56,7 +60,25 @@ docs/bugs/
 
 # Local tooling scratch (browser-automation captures)
 .playwright-mcp/
-android/.kotlin/
 
-# Lane scratch files
+# The browser tier's output: a screenshot and a trace kept only when a case fails, plus the HTML
+# report over them. Evidence for whoever reads the failure, never a baseline — the CI job uploads
+# these as an artefact and nothing compares them run to run.
+web/test-results/
+web/playwright-report/
+
+# The service-worker tier's two bundles (M26/04). `web/e2e/.builds/a` and `.builds/b` are two real
+# `vite build` runs, produced fresh whenever the swappable server starts, plus the one-line pointer
+# that says which of them is being served. Build output, like `dist/` — never committed.
+web/e2e/.builds/
+
+# Native Android build outputs
+android/.gradle/
+android/.kotlin/
+android/**/build/
+android/**/.cxx/
+android/local.properties
 .superpowers/
+
+# Local reference documentation, source inventory, and refresh tooling.
+/.project-docs/

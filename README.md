@@ -15,13 +15,15 @@ The app follows the agents already running on your server.
 - Find agents waiting for input from the dashboard.
 - Browse spaces, tabs and panes across your configured hosts and sessions.
 - Read transcript history or the terminal mirror, and search older turns.
+- Browse listed Git changes, inspect bounded file diffs, and read the latest commit from panes or spaces.
 - Answer supported agent prompts, send replies, attach images, and use terminal keys.
-- Pair the phone for write access and revoke devices through Settings.
-- Use voice input when your server has speech-to-text configured.
-- Inspect Pack state and manage **server** updates.
+- Pair the phone for read and write access and revoke devices through Settings.
+- Read durable-agent Chat, answer asks, send or steer a turn, and stop it through guarded HTTP actions.
+- Inspect Crew state, use a configured deputy ingress, and manage **server** updates.
+- Use New to start a declared worktree-capable agent from the default branch or a chosen ref, with a server-validated parent folder; on supported Herdr runtimes, review and remove an exact linked checkout while preserving its branch.
 
-Background push notifications are not implemented in the native app. Server updates do not
-update the Android APK. Some agent interactions depend on the bridge's journal and multiplexer
+Native notifications use UnifiedPush with an operator-configured self-hosted ntfy server.
+Android app updates are discovered, verified and installed separately from server updates. Some agent interactions depend on the bridge's journal and multiplexer
 capabilities; unfamiliar terminal screens may require raw controls.
 
 ## Requirements
@@ -30,10 +32,10 @@ You need a reachable Collie HTTPS server as well as an Android phone.
 
 | Requirement | Details |
 | --- | --- |
-| Android | Android 8.0 / API 26 or newer |
-| Server | A self-hosted Collie deployment; the current development baseline is server 1.5.1 |
+| Android | Current Android 17 / API 37 |
+| Server | A self-hosted Collie deployment; HTTP contracts reconciled to official Collie v1.21.0 |
 | Network | Usually Tailscale on the host and phone, with access to the same tailnet |
-| Write access | A short-lived pairing code generated on the host with `collie pair` |
+| Device access | A short-lived pairing code generated on the host with `collie pair` |
 
 The app starts with an empty server field. It does not provide a hosted server or install agents
 on your machine. Start with the upstream [server installation guide](https://github.com/AltanS/collie/blob/main/docs/install.md)
@@ -59,7 +61,7 @@ cd collie/android
 ./gradlew --no-daemon assembleDebug
 ```
 
-Use JDK 21 and an Android SDK containing platform 36 and Build Tools 36.0.0. Set `ANDROID_HOME`
+Use JDK 21 and an Android SDK containing stable platform 37.2 and Build Tools 37.0.0. Set `ANDROID_HOME`
 to your SDK directory. The APK appears under `app/build/outputs/apk/debug/app-debug.apk`;
 it installs as `com.lateapex.collie.debug` and can coexist with the release app.
 
@@ -69,8 +71,8 @@ Pairing gives the phone control of real terminal sessions with the host user's p
 
 Use a private tailnet or another authenticated ingress. The client requires HTTPS, verifies
 certificates, refuses API redirects, and stores its pairing credential encrypted through Android
-Keystore. The server's access policy remains essential: device pairing gates writes, while reads
-depend on the server's ingress and identity policy.
+Keystore. The server's access policy remains essential: Collie requires pairing for reads and writes. The server's ingress and identity policy
+still applies. Mounted HTTPS URLs such as `https://collie.example/tools/collie/` are supported.
 
 Diagnostic capture is off by default for new installs. If enabled, it records terminal content
 and messages locally; review an export before sharing it. Pairing bodies and Authorization header
@@ -84,6 +86,7 @@ Start with the guide for your task.
 | --- | --- |
 | [Getting started](android/GETTING_STARTED.md) | Install, connect, pair and troubleshoot |
 | [Android developer guide](android/README.md) | Architecture, toolchain, testing and native capabilities |
+| [Upstream API compatibility](android/UPSTREAM_API_COMPATIBILITY.md) | Audited server contracts and native adaptations |
 | [Contributing](CONTRIBUTING.md) | Development setup, checks and PR expectations |
 | [Android releases](android/RELEASING.md) | Signing, versioning, acceptance and draft releases |
 | [Android changelog](ANDROID_CHANGELOG.md) | Changes for app releases |
@@ -101,3 +104,5 @@ the separate [Android workflow](.github/workflows/android-release.yml).
 Collie is released under the [MIT license](LICENSE), with the original upstream copyright notice
 preserved. See [Acknowledgments](ACKNOWLEDGMENTS.md) for the upstream project and the native app's
 bundled asset notices. Product names and marks belong to their respective owners.
+
+Native access through browser SSO requires an explicitly configured [OIDC/PKCE/DPoP identity gateway](docs/native-identity-gateway.md). Native Tailscale access remains unchanged; arbitrary cookie-only proxies are not claimed supported.

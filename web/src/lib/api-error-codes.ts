@@ -57,6 +57,31 @@ export const API_ERROR_CODES = [
   // Launchers — /api/launch
   "launch.not_allowlisted",
   "launch.pane_unknown",
+  "launch.unknown_harness",
+  "launch.bad_folder",
+  "launch.folder_missing",
+  "launch.request_mismatch",
+  "launch.receipts_unavailable",
+  "launch.outcome_unknown",
+  "launch.no_device",
+  "launch.run_off",
+  "launch.bad_line",
+  "launch.run_no_branch",
+  "launch.recent_unknown",
+  "launch.recent_unreadable",
+  "launcher.adds_off",
+  "launcher.free_text_off",
+  "launcher.bad_text",
+  "launcher.bad_recipe",
+  "launcher.duplicate",
+  "launcher.added_full",
+  "launcher.unknown_row",
+  "launcher.store_unreadable",
+  "launcher.no_device",
+
+  // The new-space folder list — POST /api/folders/star (#289)
+  "folders.unknown",
+  "folders.favourites_full",
 
   // Worktrees — /api/workspace/:id/worktree[s|/open|/remove] (ADR 0032)
   "worktree.list_failed",
@@ -67,8 +92,17 @@ export const API_ERROR_CODES = [
   "worktree.ambiguous_branch",
   "worktree.branch_required",
   "worktree.not_a_repo",
+  "worktree.invalid_branch",
+  "worktree.invalid_base",
+  "worktree.folder_invalid",
+  "worktree.folder_missing",
+  "worktree.folder_link",
+  "worktree.folder_outside_home",
+  "worktree.folder_hidden",
+  "worktree.folder_in_repo",
+  "worktree.target_exists",
 
-  // Image upload — POST /api/pane/:id/upload
+  // Attachment upload — POST /api/pane/:id/upload
   "upload.too_large",
   "upload.no_file",
   "upload.bad_type",
@@ -83,6 +117,10 @@ export const API_ERROR_CODES = [
   "stt.empty",
   "stt.provider_failed",
 
+  // The prompt-cache watch list — /api/notifications/cache-watch (ADR 0042)
+  "cache.pane_unknown",
+  "cache.no_session",
+
   // Device pairing — POST /api/pair, POST /api/devices/revoke
   "pairing.bad_request",
   "pairing.no_pending",
@@ -96,8 +134,8 @@ export const API_ERROR_CODES = [
   "session.unknown",
   "host.unknown",
 
-  // The pack overview — this collie is not a lead with a pack (solo, or a peer)
-  "pack.not_lead",
+  // The crew overview — this collie is not a lead with a crew (solo, or a peer)
+  "crew.not_lead",
 
   // Starting an update from the phone — POST /api/update (M15/05)
   "update.confirm_required",
@@ -107,6 +145,8 @@ export const API_ERROR_CODES = [
   "update.major_confirm_required",
   "update.target_mismatch",
   "update.none_available",
+  "update.peers_packaged",
+  "update.packaged",
   "update.start_failed",
 ] as const;
 

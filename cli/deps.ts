@@ -1,3 +1,4 @@
+import { HOST } from "../bridge/host.ts";
 import { cmdRestart, type LifecycleDeps } from "./lifecycle.ts";
 import type { Io } from "./io.ts";
 import { loadContext } from "./context.ts";
@@ -6,6 +7,7 @@ import { cmdServe } from "./serve.ts";
 import { realLinkFs } from "./link.ts";
 import { realExec, realFiles, realNet, waitReady } from "./sys.ts";
 import type { UpdateDeps } from "./update.ts";
+import { githubCredential } from "../bridge/update.ts";
 
 // The dependency sets a verb is handed, built from the real seams. They live HERE, and not in the
 // dispatcher, because `cli/main.ts` — the bootstrap that must run on a checkout whose `node_modules`
@@ -17,8 +19,9 @@ import type { UpdateDeps } from "./update.ts";
  * filesystem seams, and the clock. Real implementations here; `cli/lifecycle.test.ts` supplies
  * fakes for the same interfaces.
  */
-export function lifecycleDeps(io: Io, ui: Ui | null = null): LifecycleDeps {
-  const ctx = loadContext(io.err);
+export function lifecycleDeps(io: Io, ui: Ui | null = null, opts: { readonly repairAcl?: boolean } = {}): LifecycleDeps {
+  // `repairAcl`: only the bridge process may change an access list (M43 spec 04, `cli/context.ts`).
+  const ctx = loadContext(io.err, { repairAcl: opts.repairAcl === true });
   const deps: LifecycleDeps = {
     ctx,
     io,
@@ -28,9 +31,11 @@ export function lifecycleDeps(io: Io, ui: Ui | null = null): LifecycleDeps {
     ready: (port, host) => waitReady(port, host),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     uid: () => process.getuid?.() ?? 0,
-    platform: process.platform,
+    host: HOST,
+    // Read-only here: the Windows task is registered on `current` when the install has one.
+    link: realLinkFs,
     // The first-run multiplexer question (`cli/mux.ts`), asked through Bun's built-in behind a tty
-    // check exactly as `stt setup` and `pack add` guard theirs: a question nobody can answer must
+    // check exactly as `stt setup` and `crew add` guard theirs: a question nobody can answer must
     // refuse legibly rather than read EOF as an answer.
     interactive: process.stdin.isTTY === true,
     prompt: (question) => (process.stdin.isTTY === true ? prompt(question) : null),
@@ -56,8 +61,7 @@ export function updateDeps(io: Io): UpdateDeps {
     // same one `collie link` publishes the PATH name through), the two anonymous HTTPS GETs, and the
     // running platform the artifact is chosen by.
     link: realLinkFs,
-    net: realNet,
-    platform: process.platform,
+    net: realNet(githubCredential(deps.ctx.env)),
     arch: process.arch,
     // The detached updater's clock, wait and identity (M15/04). Real here; `cli/update.test.ts`
     // drives a 30 s health budget in no time at all by handing over fakes.

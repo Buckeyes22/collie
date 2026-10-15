@@ -10,58 +10,97 @@ internal object CodexStatusRow {
     private const val MIN_FIELDS = 2
     private const val MAX_FIELDS = 12
     private const val MAX_FIELD_CHARS = 160
-    private const val MAX_RIGHT_STATUS_CHARS = 96
+    private const val MAX_ROW_CHARS = 512
+    private val inlineQueue = Regex("^ {2}\\S.*\\bto queue(?: message)?\\s+\\d+% context (?:left|used)\\b.*$")
     private val contextShape = Regex(
         "^ {2}\\S.* · (?:(?:.* · )+Context \\d+% (?:left|used)\\b|Context \\d+% (?:left|used)\\b · \\S).*$",
     )
 
     fun matches(rawLine: String): Boolean {
         val plain = TerminalPlainText.strip(rawLine).trimEnd()
-        if (contextShape.matches(plain)) return true
-        val segments = segments(rawLine)
+        if (contextShape.matches(plain) || inlineQueue.matches(plain)) return true
+        if (plain.codePointCount(0, plain.length) > MAX_ROW_CHARS || plain.any(::isControl)) return false
+        val segments = splitPaintedGaps(segments(rawLine.trimEnd())).toMutableList()
+        while (segments.lastOrNull()?.text?.isBlank() == true) segments.removeAt(segments.lastIndex)
+        if (segments.isNotEmpty()) segments[segments.lastIndex] = segments.last().copy(text = segments.last().text.trimEnd())
         if (segments.size < 4 || segments.first().text != "  " || !segments.first().style.isPlain) return false
 
         var cursor = 1
         var fields = 0
+        var paint: String? = null
+        val fieldColours = mutableSetOf<String>()
         while (cursor < segments.size) {
             val field = segments[cursor]
-            if (!field.style.isField || !validField(field.text)) break
+            if (!field.style.isField || !validField(field.text)) return false
+            fieldColours += field.style.foreground ?: return false
             fields++
             cursor++
             if (cursor >= segments.size) break
 
             val separator = segments[cursor]
-            if (separator.style.isDimPlain && separator.text == SEPARATOR) {
-                cursor++
-                continue
-            }
-            if (separator.style.isDimPlain && separator.text.startsWith(SEPARATOR)) {
-                if (fields < MIN_FIELDS || !validField(separator.text.removePrefix(SEPARATOR))) return false
-                fields++
-                cursor++
+            if (separator.style.isPlain && separator.text.length >= 2 && separator.text.all { it == ' ' }) {
+                if (fields < MIN_FIELDS || !validRightStatusTail(segments.drop(cursor + 1))) return false
                 break
             }
-            break
+            val nextPaint = separator.style.separatorPaint ?: return false
+            if (paint != null && paint != nextPaint) return false
+            paint = nextPaint
+            if (separator.text != SEPARATOR && separator.text.startsWith(SEPARATOR)) {
+                if (fields < MIN_FIELDS || !validField(separator.text.removePrefix(SEPARATOR))) return false
+                if (cursor != segments.lastIndex) {
+                    val gap = segments[cursor + 1]
+                    if (!gap.style.isPlain || gap.text.length < 2 || gap.text.any { it != ' ' } ||
+                        !validRightStatusTail(segments.drop(cursor + 2))) return false
+                }
+                fields++
+                break
+            }
+            if (separator.text != SEPARATOR || cursor == segments.lastIndex) return false
+            val spinner = segments.getOrNull(cursor + 1)
+            if (cursor == segments.size - 2 && spinner != null && spinner.style.isField &&
+                Regex("[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]").matches(spinner.text)
+            ) break
+            cursor++
         }
         if (fields !in MIN_FIELDS..MAX_FIELDS) return false
-        return validRightStatusTail(segments.drop(cursor))
+        return paint == null || !paint.startsWith("fg:") || paint.removePrefix("fg:") !in fieldColours
     }
 
     private fun validRightStatusTail(tail: List<Segment>): Boolean {
-        if (tail.isEmpty()) return true
-        var cursor = 0
-        val padding = tail[cursor]
-        if (!padding.style.isPlain || padding.text.length < 2 || padding.text.any { !it.isWhitespace() }) return false
-        cursor++
-        if (cursor == tail.size) return true
-        val status = tail[cursor]
-        if (!status.style.hasForeground || status.style.hasBackground || status.style.bold || status.style.dim ||
-            status.text.isBlank() || status.text != status.text.trim() ||
-            status.text.codePointCount(0, status.text.length) > MAX_RIGHT_STATUS_CHARS
-        ) return false
-        cursor++
-        if (cursor == tail.size) return true
-        return tail.drop(cursor).all { it.style.isPlain && it.text.all(Char::isWhitespace) }
+        if (tail.isEmpty() || tail.size > 12 || tail.first().text.startsWith(' ')) return false
+        return tail.sumOf { it.text.codePointCount(0, it.text.length) } <= MAX_FIELD_CHARS &&
+            tail.all { !it.style.hasBackground && (it.style.foreground != null || it.style.dim) }
+    }
+
+    private fun splitPaintedGaps(input: List<Segment>): List<Segment> = input.flatMapIndexed { index, segment ->
+        val match = Regex("^(\\S(?:.*\\S)?)( {2,})$").matchEntire(segment.text)
+        if (match == null || index == input.lastIndex || segment.style.foreground == null) listOf(segment)
+        else listOf(segment.copy(text = match.groupValues[1]), Segment(match.groupValues[2], Style()))
+    }
+
+    /** Only renderer-painted single braille glyphs are animation; an unpainted typed glyph stays. */
+    fun composerText(raw: String): String = segments(raw).joinToString("") {
+        if (it.style.foreground != null && it.text.length == 1 && it.text[0] in '\u2800'..'\u28ff') " "
+        else it.text
+    }.trimEnd()
+
+    fun isDimPlaceholder(raw: String): Boolean {
+        val parts = segments(raw)
+        val bodyEnd = 2 + CodexComposer.PLACEHOLDER.length
+        var offset = 0
+        var sawBody = false
+        for (part in parts) {
+            val end = offset + part.text.length
+            if (offset < bodyEnd && end > 2) {
+                val body = part.text.substring((2 - offset).coerceAtLeast(0), (bodyEnd - offset).coerceAtMost(part.text.length))
+                if (body.any { !it.isWhitespace() }) {
+                    sawBody = true
+                    if (!part.style.dim) return false
+                }
+            }
+            offset = end
+        }
+        return sawBody
     }
 
     private fun validField(value: String): Boolean =
@@ -111,14 +150,19 @@ internal object CodexStatusRow {
                 0 -> result = Style()
                 1 -> result = result.copy(bold = true)
                 2 -> result = result.copy(dim = true)
+                3 -> result = result.copy(italic = true)
+                4 -> result = result.copy(underline = true)
                 22 -> result = result.copy(bold = false, dim = false)
-                in 30..37, in 90..97 -> result = result.copy(hasForeground = true)
-                39 -> result = result.copy(hasForeground = false)
+                23 -> result = result.copy(italic = false)
+                24 -> result = result.copy(underline = false)
+                in 30..37, in 90..97 -> result = result.copy(foreground = codes[cursor].toString())
+                39 -> result = result.copy(foreground = null)
                 in 40..47, in 100..107 -> result = result.copy(hasBackground = true)
                 49 -> result = result.copy(hasBackground = false)
                 38 -> {
-                    result = result.copy(hasForeground = true)
-                    cursor += extendedColourArgs(codes, cursor + 1)
+                    val args = extendedColourArgs(codes, cursor + 1)
+                    result = result.copy(foreground = codes.subList(cursor, (cursor + args + 1).coerceAtMost(codes.size)).joinToString(";"))
+                    cursor += args
                 }
                 48 -> {
                     result = result.copy(hasBackground = true)
@@ -139,14 +183,21 @@ internal object CodexStatusRow {
     private data class Segment(val text: String, val style: Style)
 
     private data class Style(
-        val hasForeground: Boolean = false,
+        val foreground: String? = null,
         val hasBackground: Boolean = false,
         val bold: Boolean = false,
         val dim: Boolean = false,
+        val italic: Boolean = false,
+        val underline: Boolean = false,
     ) {
-        val isPlain: Boolean get() = !hasForeground && !hasBackground && !bold && !dim
-        val isField: Boolean get() = hasForeground && !hasBackground && !bold && !dim
-        val isDimPlain: Boolean get() = !hasForeground && !hasBackground && !bold && dim
+        val isPlain: Boolean get() = foreground == null && !hasBackground && !bold && !dim && !italic && !underline
+        val isField: Boolean get() = foreground != null && !hasBackground && !bold && !dim && !italic && !underline
+        val separatorPaint: String? get() = when {
+            hasBackground || bold || italic || underline -> null
+            dim -> if (foreground == null) "dim" else null
+            foreground == null -> "plain"
+            else -> "fg:$foreground"
+        }
     }
 
     private const val ESC = '\u001b'

@@ -27,11 +27,11 @@
     <string name="settings_cancel">Cancel</string>
     <string name="settings_disconnect_failed">The local connection could not be removed. Try again.</string>
     <string name="loading">Loading…</string>
-    <string name="pack_loading">Loading pack…</string>
-    <string name="pack_title">Pack</string>
+    <string name="pack_loading">Loading crew…</string>
+    <string name="pack_title">Crew</string>
     <string name="pack_back">Back to Collie</string>
     <string name="pack_summary">%1$s · generation %2$d\nLead: %3$s · %4$s</string>
-    <string name="pack_solo">This is a solo Collie; no pack is configured.</string>
+    <string name="pack_solo">This is a solo Collie; no crew is configured.</string>
     <string name="pack_member">%1$s · %2$s</string>
     <string name="pack_lead_suffix">\u0020· lead</string>
     <string name="pack_version">\nServer version %1$s</string>
@@ -69,6 +69,13 @@
     <string name="settings_hands_free_description">Send the transcript immediately instead of putting it in the message box. Off by default — you normally read what was heard before it reaches the terminal.</string>
     <string name="settings_terminal_font_title">Text size</string>
     <string name="settings_terminal_font_description">The terminal mirror and the draft field, on this device.</string>
+    <string name="settings_ui_typeface">Interface font</string>
+    <string name="settings_ui_typeface_system">System</string>
+    <string name="settings_ui_typeface_grotesk">Space Grotesk</string>
+    <string name="settings_ui_typeface_aldrich">Aldrich</string>
+    <string name="settings_ui_typeface_loading">Loading %1$s…</string>
+    <string name="settings_ui_typeface_fetching">Loading selected interface font…</string>
+    <string name="settings_ui_typeface_unavailable">Operator fonts could not be verified. Using the shipped interface font.</string>
     <string name="settings_terminal_size">Mirror text</string>
     <string name="settings_draft_size">Draft text</string>
     <string name="settings_decrease">Decrease %1$s</string>
@@ -76,18 +83,18 @@
     <string name="symbol_minus" translatable="false">−</string>
     <string name="symbol_plus" translatable="false">+</string>
     <string name="settings_notify_title">Notify when</string>
-    <string name="settings_notify_description">Applies to all devices.</string>
+    <string name="settings_notify_description">These preferences are shared by every device receiving bridge notifications. Native background delivery is not available in this app.</string>
     <string name="settings_snooze_title">Do not disturb</string>
     <string name="settings_snooze_description">Temporarily silence bridge notifications on every device.</string>
-    <string name="settings_updates_description">Update Collie, and the pack with it.</string>
+    <string name="settings_updates_description">Update Collie, and the crew with it.</string>
     <string name="settings_updates_open">Open server updates</string>
     <string name="settings_licenses">Open-source licenses</string>
     <string name="licenses_title">Open-source licenses</string>
     <string name="settings_devices_title">Paired devices</string>
     <string name="settings_devices_description">Review and revoke terminal-control credentials.</string>
-    <string name="settings_pack_title">Pack overview</string>
-    <string name="settings_pack_description">How every machine in the pack is doing.</string>
-    <string name="settings_pack_open">Open pack</string>
+    <string name="settings_pack_title">Crew overview</string>
+    <string name="settings_pack_description">How every machine in the crew is doing.</string>
+    <string name="settings_pack_open">Open crew</string>
     <string name="settings_diagnostics_title">Diagnostics</string>
     <string name="settings_diagnostics_description">Capture recent app activity to help diagnose a bug. Off by default. When enabled, diagnostics include terminal content and messages; review exports before sharing. Pairing codes and device tokens are excluded.</string>
     <string name="settings_diagnostics_send_title">Send diagnostics</string>
@@ -108,8 +115,20 @@
     <string name="settings_notify_needs_input">Needs input</string>
     <string name="settings_notify_finished">Finished</string>
     <string name="settings_notify_updates">Server updates</string>
+    <string name="settings_notify_machines">Machine alerts</string>
+    <string name="settings_notify_cache">Cache alerts</string>
     <string name="settings_notify_updating">Updating notification preference…</string>
     <string name="settings_notify_subject">Notification preferences</string>
+    <string name="settings_cache_watches_title">Watched panes</string>
+    <string name="settings_cache_watches_description">Lead-owned cache watches across this bridge. Entries without a current pane can be forgotten but cannot be opened.</string>
+    <string name="settings_cache_watches_loading">Loading watched panes…</string>
+    <string name="settings_cache_watches_failed">Watched panes are unavailable. Refresh Settings and check the connection.</string>
+    <string name="settings_cache_watches_unsupported">This server does not provide cache-watch controls.</string>
+    <string name="settings_cache_watches_empty">No panes are being watched.</string>
+    <string name="settings_cache_watches_orphan">%1$s · pane is no longer available; this entry cannot be opened.</string>
+    <string name="settings_cache_watches_open">Open watched pane %1$s</string>
+    <string name="settings_cache_watches_forget">Forget watch</string>
+    <string name="settings_cache_watches_forgetting">Forgetting cache watch…</string>
     <string name="settings_snoozed_until">Snoozed until %1$s</string>
     <string name="settings_notifications_active">Notifications are active</string>
     <string name="settings_snooze_resume">Resume</string>
@@ -149,7 +168,7 @@
     </plurals>
     <string name="settings_pack_machines">%1$s · %2$d machines</string>
     <string name="settings_pack_solo">Solo Collie</string>
-    <string name="settings_pack_status_unavailable">Pack status unavailable</string>
-    <string name="settings_pack_unchanged">Pack status unchanged</string>
+    <string name="settings_pack_status_unavailable">Crew status unavailable</string>
+    <string name="settings_pack_unchanged">Crew status unchanged</string>
     <string name="settings_change">Change</string>
 </resources>

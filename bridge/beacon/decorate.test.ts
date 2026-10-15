@@ -4,16 +4,25 @@ import { withAgentBeacons, type AgentBeaconDeps, type BeaconMatcher } from "./de
 import { withAgentHints } from "./hint.ts";
 import { fakeBeaconReader, FAKE_BEACON_NOW, type FakeBeacon } from "./fake.ts";
 import { BEACON_SCHEMA_VERSION, type BeaconMarker, type BeaconStatus } from "./types.ts";
-import { declareCapabilities, type MuxCapability } from "../mux/capabilities.ts";
+import { declareCapabilities, type MuxCapability, type MuxCapabilityDeclaration } from "../mux/capabilities.ts";
+import { herdrHostControl } from "../host-control/herdr.ts";
 import {
   muxAck,
   muxGone,
   muxOk,
   type MuxAdapter,
   type MuxGridRequest,
+  type MuxLayoutMutation,
+  type MuxLayoutRead,
+  type MuxPortableLayout,
+  type MuxLayoutCreated,
+  type MuxOutcome,
   type MuxPane,
+  type MuxSession,
   type MuxSnapshot,
   type MuxSpaceRequest,
+  type MuxStarterOutcome,
+  type MuxStarters,
   type MuxSubscription,
   type MuxTabRequest,
   type MuxWatchOptions,
@@ -22,6 +31,7 @@ import {
   type MuxWorktreeOpenRequest,
   type MuxWorktreeScope,
 } from "../mux/types.ts";
+import type { ForegroundProcess } from "../journal/types.ts";
 
 // THE DECORATOR'S OWN TESTS — the join, the two-way capability lift, and the pass-through.
 //
@@ -59,6 +69,43 @@ class StubAdapter implements MuxAdapter {
   readonly mux = "stub";
   /** The adapter's mark, when a case gives it one. Absent by default, like an adapter with none. */
   logo?: string;
+  hostControl?: MuxAdapter["hostControl"];
+  /** The unwrapped pane read, when a case gives it one. Absent by default, like a multiplexer that
+   *  cannot unwrap at all (tmux) — the decorators must carry it without inventing it. */
+  readLogicalText?: (paneId: string, lines: number) => Promise<MuxOutcome<string>>;
+  processInfo?: (paneId: string) => Promise<MuxOutcome<import("../mux/types.ts").MuxPaneProcessInfo>>;
+  readLayout?: MuxAdapter["readLayout"];
+  applyLayout?: MuxAdapter["applyLayout"];
+  layoutRuntimeIdentity?: MuxAdapter["layoutRuntimeIdentity"];
+  removeWorktree?: MuxAdapter["removeWorktree"];
+
+  exportPortableLayout?: MuxAdapter["exportPortableLayout"];
+  applyPortableLayout?: MuxAdapter["applyPortableLayout"];
+  setSplitRatio?: MuxAdapter["setSplitRatio"];
+  renameSpace?: MuxAdapter["renameSpace"];
+  closeSpace?: MuxAdapter["closeSpace"];
+  moveSpace?: MuxAdapter["moveSpace"];
+  moveSpaceBlock?: MuxAdapter["moveSpaceBlock"];
+  focusSpace?: MuxAdapter["focusSpace"];
+  moveTab?: MuxAdapter["moveTab"];
+  focusTab?: MuxAdapter["focusTab"];
+  agentIdentity?: (paneId: string) => Promise<MuxOutcome<import("../mux/types.ts").MuxAgentIdentity>>;
+  reportPaneMetadata?: MuxAdapter["reportPaneMetadata"];
+  reportWorkspaceMetadata?: MuxAdapter["reportWorkspaceMetadata"];
+  /** The starter pair of a durable program (ADR 0102). Absent by default, like every other multiplexer. */
+  listStarters?: () => Promise<MuxStarters>;
+  startStarter?: (starterId: string, requestId: string) => Promise<MuxStarterOutcome>;
+  /** The two ask methods (ADR 0100), when a case gives them. Absent by default, like every adapter
+   *  whose panes have a screen. */
+  openAsks?: MuxAdapter["openAsks"];
+  answerAsk?: MuxAdapter["answerAsk"];
+  /** The two control methods (ADR 0101), when a case gives them. Absent by default, like every
+   *  adapter whose panes have a screen. */
+  paneTurn?: MuxAdapter["paneTurn"];
+  controlTurn?: MuxAdapter["controlTurn"];
+  /** The foreground argv, when a case gives it one. Absent by default, like a multiplexer
+   *  without the call — the decorators must carry it without inventing it. */
+  foregroundProcesses?: (paneId: string) => Promise<MuxOutcome<readonly ForegroundProcess[]>>;
   capabilities = declareCapabilities({
     supports: ["paneGrid", "typeText", "sendKeys"],
     notes: { agentDetection: "the adapter's own note", closePane: "untouched" },
@@ -137,6 +184,11 @@ class StubAdapter implements MuxAdapter {
     return Promise.resolve(muxOk({ paneId: "%9", spaceId: "space", spaceLabel: "space", tabId: "tab", cwd: "/tmp" }));
   }
 
+  listSessions() {
+    this.note("listSessions");
+    return Promise.resolve(muxOk<readonly MuxSession[]>([{ name: "default", endpoint: "/tmp/stub.sock" }]));
+  }
+
   listWorktrees(scope: MuxWorktreeScope) {
     this.note("listWorktrees", scope);
     return Promise.resolve(muxOk<readonly MuxWorktree[]>([]));
@@ -201,6 +253,35 @@ function decorate(adapter: MuxAdapter, beacons: readonly FakeBeacon[], hooks = t
   return withAgentBeacons(adapter, fakeBeaconReader(beacons), deps(hooks, matcher));
 }
 
+describe("production decorator composition preserves declared read bounds", () => {
+  for (const maxRequestedLines of [1_000, 10_000]) {
+    test(`hooks and hints keep the owning adapter's ${maxRequestedLines}-line ceiling`, () => {
+      const metadata: Omit<MuxCapabilityDeclaration, "supports" | "notes"> = {
+        unsupportedKeys: ["F1"],
+        spaces: "one",
+        topologyLatency: { kind: "bounded", ms: 321 },
+        readLimits: { maxRequestedLines },
+      };
+      const raw = new StubAdapter();
+      raw.capabilities = declareCapabilities({ ...metadata, supports: ["paneGrid", "gridScrollback", "typeText", "sendKeys"] });
+      let installed = false;
+      const beacons = withAgentBeacons(raw, fakeBeaconReader([]), { matcher: stubMatcher(), hooksInstalled: () => installed });
+      const composed = withAgentHints(beacons, { hooksInstalled: () => installed });
+      for (const state of [false, true, false]) {
+        installed = state;
+        for (const wrapped of [beacons, composed]) {
+          expect(wrapped.capabilities.readLimits.maxRequestedLines).toBe(maxRequestedLines);
+          expect(wrapped.capabilities.spaces).toBe(metadata.spaces);
+          expect(wrapped.capabilities.topologyLatency).toEqual(metadata.topologyLatency);
+          expect(wrapped.capabilities.unsupportedKeys).toEqual(metadata.unsupportedKeys);
+          expect(wrapped.capabilities.supports.agentDetection).toBe(state);
+          expect(wrapped.capabilities.supports.agentSessionRef).toBe(state);
+        }
+      }
+    });
+  }
+});
+
 async function paneOf(adapter: MuxAdapter, paneId: string): Promise<MuxPane> {
   const found = (await adapter.snapshot()).panes.find((pane) => pane.paneId === paneId);
   if (found === undefined) throw new Error(`no pane ${paneId} in the snapshot`);
@@ -245,10 +326,38 @@ describe("a decorator preserves the adapter's whole surface", () => {
     mux: true,
     capabilities: true,
     logo: true,
+    hostControl: true,
     reachable: true,
     snapshot: true,
     refresh: true,
     readGrid: true,
+    processInfo: true,
+    agentIdentity: true,
+    agentList: true,
+    agentRead: true,
+    agentControl: true,
+    agentExplain: true,
+    agentAction: true,
+    agentWait: true,
+    agentObservedMove: true,
+    agentObservedTransition: true,
+    reportPaneMetadata: true,
+    reportPaneMetadataOriginal: true,
+    reportWorkspaceMetadata: true,
+    readLogicalText: true,
+    readLayout: true,
+    applyPortableLayout: true,
+    exportPortableLayout: true,
+    setSplitRatio: true,
+    applyLayout: true,
+    layoutRuntimeIdentity: true,
+    listStarters: true,
+    startStarter: true,
+    openAsks: true,
+    answerAsk: true,
+    paneTurn: true,
+    controlTurn: true,
+    foregroundProcesses: true,
     typeText: true,
     sendKeys: true,
     renamePane: true,
@@ -257,10 +366,19 @@ describe("a decorator preserves the adapter's whole surface", () => {
     createTab: true,
     renameTab: true,
     closeTab: true,
+    renameSpace: true,
+    closeSpace: true,
+    moveSpace: true,
+    moveSpaceBlock: true,
+    focusSpace: true,
+    moveTab: true,
+    focusTab: true,
     createSpace: true,
     listWorktrees: true,
     createWorktree: true,
     openWorktree: true,
+    removeWorktree: true,
+    listSessions: true,
     watch: true,
   } satisfies Record<keyof Required<MuxAdapter>, true>;
 
@@ -280,8 +398,53 @@ describe("a decorator preserves the adapter's whole surface", () => {
 
   /** A raw adapter carrying EVERY field, so a decorator dropping any one of them is visible. */
   function fullAdapter(): MuxAdapter {
-    const stub = new StubAdapter();
+    const stub: StubAdapter & Pick<MuxAdapter, "agentList" | "agentRead" | "agentControl" | "agentExplain" | "agentAction" | "agentWait" | "agentObservedMove" | "agentObservedTransition" | "reportPaneMetadataOriginal"> = new StubAdapter();
     stub.logo = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"></svg>`;
+    stub.hostControl = herdrHostControl;
+    stub.readLogicalText = (paneId, lines) => Promise.resolve(muxOk(`${paneId}:${lines}`));
+    stub.processInfo = (paneId) => Promise.resolve(muxOk({ paneId, processes: [], truncated: false }));
+    const layout = { workspaceId: "space", tabId: "tab", zoomed: false as const, area: { x: 0, y: 0, width: 80, height: 24 }, focusedPaneId: "%1", panes: [{ paneId: "%1", focused: true, rect: { x: 0, y: 0, width: 80, height: 24 } }], splits: [] };
+    stub.readLayout = async () => muxOk({ kind: "layout", layout } satisfies MuxLayoutRead);
+    stub.applyLayout = async () => muxOk({ kind: "focus-direction", changed: false, paneId: "%1", layout } satisfies MuxLayoutMutation);
+    stub.layoutRuntimeIdentity = () => "fixture-runtime-1";
+    stub.removeWorktree = async ({ workspaceId, force }) => muxOk({ workspaceId, path: "/repo/.worktrees/topic", forced: force });
+
+    const portable: MuxPortableLayout = {
+      workspaceId: "space", tabId: "tab", focusedPaneId: "%1", zoomed: false,
+      root: { type: "pane", label: null, cwd: null, paneId: "%1", command: null, env: {} },
+    };
+    stub.exportPortableLayout = async () => muxOk(portable);
+    stub.applyPortableLayout = async (): Promise<MuxOutcome<MuxLayoutCreated>> => muxOk({ workspaceId: "space", tabId: "tab", paneIds: ["%2"], focusedPaneId: "%2" });
+    stub.setSplitRatio = async () => muxOk(portable);
+    stub.renameSpace = async () => ({ ok: true, value: undefined });
+    stub.closeSpace = async () => ({ ok: true, value: undefined });
+    stub.moveSpace = async () => ({ ok: true, value: undefined });
+    stub.moveSpaceBlock = async () => ({ ok: true, value: undefined });
+    stub.focusSpace = async () => ({ ok: true, value: undefined });
+    stub.moveTab = async () => ({ ok: true, value: undefined });
+    stub.focusTab = async () => ({ ok: true, value: undefined });
+    stub.agentIdentity = (paneId) => Promise.resolve(muxOk({
+      paneId, agent: null, status: "unknown", stateAuthority: { observed: false, source: null },
+      interactiveReady: null, launchPending: null, stateChangeSeq: null, completionSeq: null,
+    }));
+    stub.agentList = async () => ({ ok: false, reason: "refused", detail: "fixture" });
+    stub.agentRead = async () => ({ ok: false, reason: "refused", detail: "fixture" });
+    stub.agentControl = async () => ({ ok: false, reason: "refused", detail: "fixture" });
+    stub.agentExplain = async () => ({ ok: false, reason: "refused", detail: "fixture" });
+    stub.agentAction = async () => ({ ok: false, reason: "refused", detail: "fixture" });
+    stub.agentWait = async () => ({ ok: false, reason: "refused", detail: "fixture" });
+    stub.agentObservedTransition = async () => ({ ok: false, reason: "gone", detail: "fixture" });
+    stub.agentObservedMove = async () => ({ ok: false, reason: "gone", detail: "fixture" });
+    stub.reportPaneMetadata = async () => muxOk(undefined);
+    stub.reportPaneMetadataOriginal = async () => muxOk(undefined);
+    stub.reportWorkspaceMetadata = async () => muxOk(undefined);
+    stub.listStarters = () => Promise.resolve({ hostName: "stub", starters: [], reachable: true });
+    stub.startStarter = (starterId) => Promise.resolve({ kind: "started", paneId: starterId, replayed: false });
+    stub.openAsks = () => [];
+    stub.answerAsk = () => Promise.resolve(muxOk({ kind: "taken", replayed: false }));
+    stub.paneTurn = () => "turn-1";
+    stub.controlTurn = () => Promise.resolve({ kind: "ok", replayed: false });
+    stub.foregroundProcesses = () => Promise.resolve(muxOk([]));
     return stub;
   }
 
@@ -307,11 +470,63 @@ describe("a decorator preserves the adapter's whole surface", () => {
     expect(wrapped.logo).toBe(raw.logo);
   });
 
+  test("actual stacked decorators forward original named action and wait callbacks without recapture", async () => {
+    const raw = fullAdapter(); const original: import("../control/agent-models.ts").AgentOccupant = { paneId: "w1:p1", terminalId: "terminal", workspaceId: "w1", tabId: "w1:t1", runtimeIdentity: "runtime", agent: "codex", sessionIdentity: null, processIdentity: "a".repeat(64), name: "named" };
+    const signal = new AbortController().signal; let admitted = true; let preflights = 0; let actions = 0; let observations = 0;
+    const current = (runtime: string) => admitted && runtime === original.runtimeIdentity;
+    const firstBytes = async () => { preflights++; return current(original.runtimeIdentity); };
+    raw.agentAction = async (_action, expected, finalAdmission, actualSignal, beforeDispatch) => {
+      expect(expected).toBe(original); expect(finalAdmission).toBe(current); expect(actualSignal).toBe(signal); expect(beforeDispatch).toBe(firstBytes); expect(preflights).toBe(0);
+      if (beforeDispatch && await beforeDispatch() && finalAdmission(expected.runtimeIdentity)) actions++;
+      return { ok: false, reason: "refused", detail: "fixture" };
+    };
+    raw.agentWait = async (_condition, expected, timeout, finalAdmission, actualSignal) => { expect(expected).toBe(original); expect(timeout).toBe(1000); expect(finalAdmission).toBe(current); expect(actualSignal).toBe(signal); observations++; return { ok: false, reason: "refused", detail: "fixture" }; };
+    const wrapped = withAgentHints(decorate(raw, []), { hooksInstalled: () => false }); admitted = false;
+    await wrapped.agentAction?.({ kind: "rename", name: "new" }, original, current, signal, firstBytes); expect(actions).toBe(0); expect(preflights).toBe(1);
+    await wrapped.agentWait?.({ kind: "lifecycle", until: ["idle"] }, original, 1000, current, signal); expect(observations).toBe(1);
+    admitted = true; preflights = 0; await wrapped.agentAction?.({ kind: "rename", name: "new" }, original, current, signal, firstBytes); expect(actions).toBe(1);
+  });
+
+  test("stacked decorators preserve the captured observation owner and original moved proof without invoking them", async () => {
+    const raw = fullAdapter(); const original: import("../control/agent-models.ts").AgentOccupant = { paneId: "w1:p1", terminalId: "terminal", workspaceId: "w1", tabId: "w1:t1", runtimeIdentity: "runtime", agent: "codex", sessionIdentity: null, processIdentity: "a".repeat(64), name: "named" };
+    const controller = new AbortController(); let checks = 0; let calls = 0;
+    const current = () => false; const owner = Object.freeze({ current: () => { checks++; return true; } });
+    const moved = { previousPaneId: original.paneId, previousWorkspaceId: original.workspaceId, previousTabId: original.tabId, info: { ...original, paneId: "w1:p2", status: "idle" as const, focused: false, interactiveReady: false, launchPending: false, stateChangeSeq: "0", completionSeq: "0" } };
+    raw.agentWait = async (_condition, expected, timeout, admission, signal, actualOwner) => { expect(expected).toBe(original); expect(timeout).toBe(1000); expect(admission).toBe(current); expect(signal).toBe(controller.signal); expect(actualOwner).toBe(owner); expect(checks).toBe(0); calls++; return { ok: false, reason: "gone", detail: "fixture" }; };
+    raw.agentObservedMove = async (expected, proof, actualOwner) => { expect(expected).toBe(original); expect(proof).toBe(moved); expect(actualOwner).toBe(owner); expect(checks).toBe(0); calls++; return { ok: false, reason: "gone", detail: "fixture" }; };
+    const wrapped = withAgentHints(decorate(raw, []), { hooksInstalled: () => false });
+    await wrapped.agentWait?.({ kind: "event", event: "pane-moved", targetId: original.paneId, workspaceId: null, status: null, agent: null, label: null }, original, 1000, current, controller.signal, owner);
+    await wrapped.agentObservedMove?.(original, moved, owner); expect(calls).toBe(2); expect(checks).toBe(0);
+    const transition = { event: "pane-closed" as const, previousPaneId: original.paneId, previousWorkspaceId: original.workspaceId, previousTabId: original.tabId, terminalId: original.terminalId, after: null };
+    raw.agentObservedTransition = async (expected, proof, actualOwner) => { expect(expected).toBe(original); expect(proof).toBe(transition); expect(actualOwner).toBe(owner); expect(checks).toBe(0); calls++; return { ok: false, reason: "gone", detail: "fixture" }; };
+    const transitionWrapped = withAgentHints(decorate(raw, []), { hooksInstalled: () => false });
+    await transitionWrapped.agentObservedTransition?.(original, transition, owner); expect(calls).toBe(3); expect(checks).toBe(0);
+  });
+
+  test("an adapter with no unwrapped read does not gain one from a decorator", () => {
+    // Optional, so `in` is the question that matters: a decorator that defined the key would make
+    // every multiplexer without the read look like it had one.
+    expect("readLogicalText" in decorate(new StubAdapter(), [])).toBe(false);
+    expect("readLogicalText" in withAgentHints(new StubAdapter(), { hooksInstalled: () => false })).toBe(false);
+    // The ask methods too (ADR 0100): a screen adapter must never come out looking like it answers by id.
+    // And the control methods (ADR 0101): a screen adapter must never come out refusing `/reply`.
+    for (const field of ["openAsks", "answerAsk", "paneTurn", "controlTurn"]) {
+      expect(field in decorate(new StubAdapter(), [])).toBe(false);
+      expect(field in withAgentHints(new StubAdapter(), { hooksInstalled: () => false })).toBe(false);
+    }
+  });
+
   test("an adapter with no mark comes out with the KEY absent, through either decorator", () => {
     // Absent, not present-and-undefined: `"logo" in adapter` is the question `muxDataFields` keeps
     // answerable, and a decorator that assigned `logo: undefined` would answer it wrongly.
     expect("logo" in decorate(new StubAdapter(), [])).toBe(false);
     expect("logo" in withAgentHints(new StubAdapter(), { hooksInstalled: () => false })).toBe(false);
+  });
+
+  test("an explicitly declared host-control provider survives both decorators", () => {
+    const raw = Object.assign(new StubAdapter(), { hostControl: herdrHostControl });
+    expect(decorate(raw, []).hostControl).toBe(herdrHostControl);
+    expect(withAgentHints(raw, { hooksInstalled: () => false }).hostControl).toBe(herdrHostControl);
   });
 });
 
@@ -327,6 +542,10 @@ describe("everything but capabilities and snapshot is a pass-through", () => {
 
   test("every method reaches the wrapped adapter with the arguments it was given", async () => {
     const adapter = new StubAdapter();
+    adapter.removeWorktree = async (removeRequest) => {
+      adapter.calls.push({ method: "removeWorktree", args: [removeRequest] });
+      return muxOk({ workspaceId: removeRequest.workspaceId, path: "/repo/.worktrees/topic", forced: removeRequest.force });
+    };
     const decorated = decorate(adapter, []);
     expect(decorated.mux).toBe(adapter.mux);
     expect(await decorated.reachable()).toBe(true);
@@ -340,6 +559,7 @@ describe("everything but capabilities and snapshot is a pass-through", () => {
     await decorated.renameTab("tab", "label");
     await decorated.closeTab("tab");
     await decorated.createSpace({ cwd: "/tmp" });
+    expect(await decorated.removeWorktree?.({ workspaceId: "space", force: false })).toMatchObject({ ok: true });
     expect(decorated.watch(watchOptions)).toBe(adapter.subscription);
 
     const seen = adapter.calls.filter((call) => call.method !== "snapshot" && call.method !== "readGrid");
@@ -354,8 +574,20 @@ describe("everything but capabilities and snapshot is a pass-through", () => {
       { method: "renameTab", args: ["tab", "label"] },
       { method: "closeTab", args: ["tab"] },
       { method: "createSpace", args: [{ cwd: "/tmp" }] },
+      { method: "removeWorktree", args: [{ workspaceId: "space", force: false }] },
       { method: "watch", args: [watchOptions] },
     ]);
+  });
+
+  test("the unwrapped read passes through with its arguments, through either decorator", async () => {
+    const adapter = new StubAdapter();
+    adapter.readLogicalText = (paneId, lines) => Promise.resolve(muxOk(`${paneId}/${lines}`));
+    expect(await decorate(adapter, []).readLogicalText?.("%1", 20)).toEqual(
+      await adapter.readLogicalText("%1", 20),
+    );
+    expect(
+      await withAgentHints(adapter, { hooksInstalled: () => false }).readLogicalText?.("%1", 20),
+    ).toEqual(await adapter.readLogicalText("%1", 20));
   });
 
   test("a beacon changing synthesises no event — watch is the wrapped adapter's, untouched", () => {
@@ -525,4 +757,30 @@ describe("no pane takes an identity it cannot prove", () => {
     ]);
     expect((await paneOf(decorated, "%1")).agent).toBe("shell");
   });
+});
+
+
+test("composed production beacons and hints forward exact original worktree predicates without early invocation", async () => {
+  const adapter = new StubAdapter();
+  let beforeCalls = 0; let finalCalls = 0; let targetCurrent = true; let ownerCurrent = true;
+  const finalAdmission = (identity: string) => { finalCalls++; return identity === "original-runtime" && ownerCurrent; };
+  const beforeDispatch = async () => { beforeCalls++; return targetCurrent; };
+  let seenFinal: typeof finalAdmission | undefined; let seenBefore: typeof beforeDispatch | undefined;
+  adapter.createWorktree = async (request, originalFinal?: typeof finalAdmission, originalBefore?: typeof beforeDispatch) => {
+    seenFinal = originalFinal; seenBefore = originalBefore;
+    expect(request.branch).toBe("original-branch");
+    if (!originalBefore || !await originalBefore() || !originalFinal || !originalFinal("original-runtime")) return { ok: false, reason: "refused", detail: "retired" };
+    return muxOk({ paneId: "%original", spaceId: "original", spaceLabel: "original", tabId: "original-tab", cwd: "/original" });
+  };
+  const wrapped = withAgentHints(decorate(adapter, [], false), { hooksInstalled: () => false });
+  expect(beforeCalls).toBe(0); expect(finalCalls).toBe(0);
+  expect((await wrapped.createWorktree({ repoRoot: "/original", branch: "original-branch" }, finalAdmission, beforeDispatch)).ok).toBe(true);
+  expect(seenFinal).toBe(finalAdmission); expect(seenBefore).toBe(beforeDispatch);
+  expect(beforeCalls).toBe(1); expect(finalCalls).toBe(1);
+  ownerCurrent = false;
+  expect((await wrapped.createWorktree({ repoRoot: "/original", branch: "original-branch" }, finalAdmission, beforeDispatch)).ok).toBe(false);
+  targetCurrent = false;
+  const priorFinal = finalCalls;
+  expect((await wrapped.createWorktree({ repoRoot: "/original", branch: "original-branch" }, finalAdmission, beforeDispatch)).ok).toBe(false);
+  expect(finalCalls).toBe(priorFinal); // The final target wait precedes authority dispatch.
 });

@@ -1,0 +1,21 @@
+<resources>
+    <string name="pack_takeover_title">Deputy standby</string>
+    <string name="pack_takeover_setup">Native takeover uses your configured HTTPS Collie address. Your operator must set up one hostname with failover routing to the lead and the named deputy, and supervise the deputy’s restart. This app keeps the same pairing and verified TLS connection.</string>
+    <string name="pack_takeover_leading">The current lead is serving this address.</string>
+    <string name="pack_takeover_cold">The standby door is cold. The deputy cannot take over while the lead is healthy or its warrant is unavailable.</string>
+    <string name="pack_takeover_armed">The deputy is armed after %1$d seconds without its lead. Review the crew before confirming takeover.</string>
+    <string name="pack_takeover_unavailable">Standby is unavailable at the configured address. Check the shared HTTPS failover setup. Without that setup, the operator recovers on the intended host with the supported collie promote command.</string>
+    <string name="pack_takeover_pending">A takeover attempt is unresolved. Check Crew status; this app will not send another attempt until the expected new lead is verified, or you explicitly review a recovered lead.</string>
+    <string name="pack_takeover_confirm">Take over</string>
+    <string name="pack_takeover_confirm_detail">Ask the configured deputy to become the lead? It will verify peer consensus, apply its warrant and restart. Keep using this HTTPS address and pairing. Existing terminal actions are not replayed.</string>
+    <string name="pack_takeover_changed">The standby state or paired connection changed. Refresh before taking over.</string>
+    <string name="pack_takeover_checking">Checking standby before sending one takeover request…</string>
+    <string name="pack_takeover_unknown">Takeover delivery is uncertain. Check Crew status before any further recovery; no request is repeated automatically.</string>
+    <string name="pack_takeover_storage">Takeover custody could not be recorded. No request was sent.</string>
+    <string name="pack_takeover_refresh">Refresh Crew and standby</string>
+    <string name="pack_takeover_review">Review recovered Crew</string>
+    <string name="pack_takeover_review_detail">The paired Crew and standby checks now report a serving lead. After reviewing its identity and member status, resolve the previous uncertain takeover? This only clears the local attempt; it sends no takeover request.</string>
+    <item name="pack_takeover_button" type="id" />
+    <item name="pack_takeover_status" type="id" />
+    <item name="pack_takeover_review_button" type="id" />
+</resources>

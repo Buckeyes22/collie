@@ -28,7 +28,7 @@
 // acknowledgement for `closePane` is a spinner in a bottom sheet three components away, and
 // asserting on it from a manifest would be asserting on a mock of itself.
 //
-// What it does is exactly what the pack-wire guard does for a protocol change (ADR 0025 — "the guard
+// What it does is exactly what the crew-wire guard does for a protocol change (ADR 0025 — "the guard
 // checks that a decision was recorded; it never says which one is right"). Add a mutating export to
 // lib/api.ts next month and ack-manifest.test.ts FAILS until you write one classified line here. The
 // line is then in the diff, and it gets reviewed. The guard cannot do the work for you; it can
@@ -80,6 +80,10 @@ export const ACK_MANIFEST = {
     channel: "silent",
     why: "It cannot fail in a way the operator could act on: it swallows its own throw by design (see its doc in lib/api.ts), and the revalidation that every caller runs immediately after is what reports the herd as it actually is.",
   },
+  fetchFilesExist: {
+    channel: "silent",
+    why: "A read that POSTs only because its paths ride in the body (ADR 0088): it changes nothing, so there is nothing to acknowledge. Its whole answer is which printed paths become links, and a failure draws them as plain text.",
+  },
   closePane: {
     channel: "echo",
     why: "The pane VANISHING from the strip is the outcome, so the echo carries only the acceptance — a success status would announce a fact the screen is already making, and the pane sheet closes before it could be read anyway.",
@@ -124,13 +128,45 @@ export const ACK_MANIFEST = {
     channel: "status",
     why: "A launcher creates a Space (dashboard) or a tab beside the pane you launched it from (switcher), and the app navigates straight into its pane either way, so the button that asked is already off screen; hooks/use-spaces.ts names what was created on arrival, exactly as createWorkspace does. A refusal (an unlisted row, an unknown pane, a failed send) has no control left to sit in either.",
   },
-  createWorktree: {
+  startLaunch: {
     channel: "status",
-    why: "A worktree arrives as a whole new space and the app navigates into its pane, so the eye has already left the button that asked for it; hooks/use-spaces.ts names what was created on arrival, exactly as createWorkspace does.",
+    why: "The New page's Start creates a space and the app navigates straight into its pane, so the page is already gone; hooks/use-spaces.ts `start` names a refusal on the status line as `launch` does. An answer that never came is the page's own notice and its Try again button instead (M48, ADR 0091): the status line could only guess whether the pane exists.",
   },
-  openWorktree: {
+  startRun: {
     channel: "status",
-    why: "Same navigation, same reason as createWorktree — and `alreadyOpen` is an answer rather than a refusal (ADR 0032), so the operator is told the space is ready without being told which of the two things just happened.",
+    why: "A one-off run creates a space and the app navigates straight into its pane, exactly as `startLaunch` does, so the page is already gone; a refusal names the switch, the device or the character the bridge refused on the status line. An answer that never came is the page's own notice and its Try again button, with the same request id (ADR 0091, ADR 0095).",
+  },
+  checkRun: {
+    channel: "inline",
+    why: "A read asked on Start for a typed line: it runs and stores nothing. Its answer (a character the bridge refuses, or whether the line skips prompts) goes straight into the New page's own refusal notice and the confirm sheet, so the person reads it beside the field they are fixing (ADR 0095, amendment).",
+  },
+  removeRecentRun: {
+    channel: "silent",
+    why: "The line leaves the history under the thumb once the bridge answers; a refusal publishes an error status through lib/mutate.ts and the history is read again (ADR 0095).",
+  },
+  clearRecentRuns: {
+    channel: "silent",
+    why: "The history empties on the page the person is looking at once the bridge answers; a refusal publishes an error status through lib/mutate.ts and the history is read again (ADR 0095).",
+  },
+  addLauncher: {
+    channel: "inline",
+    why: "The added row appears in the list the person is looking at, so the list is the acceptance. A refusal names a field (a character the bridge refuses, a line too long) or a switch the operator turned off, and the person must still read it while they fix the line, so it sits in the add form itself and not on the status line (M48, ADR 0094).",
+  },
+  removeAddedLauncher: {
+    channel: "silent",
+    why: "The row leaves the list under the thumb once the bridge answers; a refusal publishes an error status through lib/mutate.ts and the list is read again.",
+  },
+  renameAddedLauncher: {
+    channel: "silent",
+    why: "The new label replaces the old one in the row being edited once the bridge answers; a refusal publishes an error status through lib/mutate.ts and the row keeps its old label.",
+  },
+  starFolder: {
+    channel: "silent",
+    why: "The row moves between Favourites and Recent and its star fills or empties under the thumb, both on the page the operator is looking at, once the bridge answers with the new list; a refusal publishes an error status through lib/mutate.ts and the list is read again (lib/folders.ts).",
+  },
+  createWorktreeAt: {
+    channel: "status",
+    why: "A branch arrives as a whole new space and the app navigates into its pane, so the eye has already left the New page; hooks/use-spaces.ts `start` names what was created on arrival, exactly as createWorkspace does. An answer that never came is the page's own notice instead (M48, ADR 0091), because the status line cannot say whether the start happened.",
   },
   setSnooze: {
     channel: "echo",
@@ -139,6 +175,22 @@ export const ACK_MANIFEST = {
   setNotifyPrefs: {
     channel: "echo",
     why: "The switch flips optimistically under the thumb; the server's merged view then reconciles it, and a REVERT is paired with an error status because a switch that moves back in silence misinforms anyone who has stopped looking (hooks/use-notify-prefs.ts).",
+  },
+  setMachineAlerts: {
+    channel: "inline",
+    why: "The alert card shows Saving, Saved or Could not save in its own header and keeps the last stored rules on screen after a failure, because a rule that did not land has to stay visible next to the control that tried to set it (components/machine-alerts-control.tsx).",
+  },
+  setCacheWatch: {
+    channel: "echo",
+    why: "The sheet's switch flips optimistically under the thumb and the bridge's answer reconciles it; a revert is paired with an error status, for the reason `setNotifyPrefs` states (hooks/use-cache-watch.ts).",
+  },
+  forgetCacheWatch: {
+    channel: "echo",
+    why: "The row leaves the watched list synchronously, so the row VANISHING is the receipt; the bridge's returned list then reconciles it, and a failure puts the row back with an error status (hooks/use-cache-watch-list.ts).",
+  },
+  registerPushSubscription: {
+    channel: "inline",
+    why: "Settings switches on only after the bridge acknowledges registration; setup failures stay beside the switch so the operator can read them and retry (routes/settings.tsx).",
   },
   checkForUpdates: {
     channel: "inline",
@@ -152,6 +204,10 @@ export const ACK_MANIFEST = {
     channel: "silent",
     why: "\"Remind me next digest\" is answered by the card's own line changing to say so, in the same tap. A second acknowledgement of a dismissal is noise about noise.",
   },
+  dismissUpdate: {
+    channel: "silent",
+    why: "The acknowledgement is the band leaving the screen, on the same tap. A toast confirming that a band was closed would be a notice about declining a notice, and the state it records is visible in its absence.",
+  },
   pairDevice: {
     channel: "inline",
     why: "A mistyped or expired code is a refusal the operator fixes IN the form, one field away, so the sentence belongs beside the field rather than floating over the page (components/paired-devices.tsx).",
@@ -160,7 +216,7 @@ export const ACK_MANIFEST = {
     channel: "inline",
     why: "A failed revoke leaves the row it was aimed at still on screen, and that row is the only place the message is unambiguous about WHICH device is still paired.",
   },
-  uploadImage: {
+  uploadFile: {
     channel: "status",
     why: "Success appends a host path to the draft, which is easy to miss in a box the operator was already typing in, so the status line names what just went into it (components/composer.tsx).",
   },

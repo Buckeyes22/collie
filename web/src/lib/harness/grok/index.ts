@@ -34,12 +34,14 @@ import {
   composerReady,
   extractInputDraft,
   extractStatusLines,
+  prepareGrokDisplay,
   stripCanvasBackground,
   stripChrome,
 } from "./chrome";
 import { detectAskRegion } from "./ask";
 import { detectPermissionRegion } from "./permission";
 import { detectPlanMenuRegion } from "./plan-menu";
+import { detectModelPickerRegion } from "./model-picker";
 
 export function grokBuildBlocks(lines: StyledLine[]): Block[] {
   // Drop Grok's full-screen theme-canvas paint before any block is built, so every rendered
@@ -77,6 +79,15 @@ export function grokBuildBlocks(lines: StyledLine[]): Block[] {
     return blocks;
   }
 
+  const picker = detectModelPickerRegion(lines);
+  if (picker) {
+    const before = trimTrailingBlank(lines.slice(0, picker.startLine));
+    const blocks: Block[] = [];
+    if (before.length > 0) blocks.push({ kind: "raw", lines: before });
+    blocks.push({ kind: "prompt-select", prompt: picker.model, lines: lines.slice(picker.startLine) });
+    return blocks;
+  }
+
   return [{ kind: "raw", lines: stripChrome(lines) }];
 }
 
@@ -88,5 +99,13 @@ export const grokAdapter: HarnessAdapter = {
   extractStatusLines,
   extractInputDraft,
   composerReady,
+  // The way OUT of a grok modal, for the unread-dialog card (.adr/0053) — and the reason the key is
+  // DECLARED per adapter rather than assumed to be Escape. Read from `grok/PERMISSION_NOTES.md`
+  // (`… Ctrl+o:always-approve │ Ctrl+c:cancel │ Esc:scrollback`) and `grok/ASK_NOTES.md`
+  // (`Tab:next answer │ Esc:scrollback │ Shift+x:dismiss`): on grok, Escape opens the scrollback
+  // view. Ctrl+C is the cancel.
+  cancelKey: "ctrl+c",
   composerPrompt,
+  // Drops the scrollbar track and the terminal padding from the phone mirror's wrapped view.
+  prepareDisplay: prepareGrokDisplay,
 };

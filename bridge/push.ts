@@ -1,7 +1,11 @@
+import type { DeviceBindings, IngressBinding, BindingRetired } from "./native-access/device-bindings.ts";
 import type { JsonObject, JsonValue } from "./json.ts";
 import { mkdir, rename, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type { Config } from "./config.ts";
+import type { PushTitleCode, PushTitleDetail } from "./push-titles.ts";
+import { redactText } from "./redact.ts";
 
 // Optional Web Push (VAPID). Zero hard dependency: if `web-push` isn't installed or VAPID keys
 // aren't configured, push is silently disabled and the rest of the bridge works unchanged.
@@ -28,6 +32,7 @@ export type PushSubscription = { endpoint: string; keys: { p256dh: string; auth:
 export interface StoredSubscription extends PushSubscription {
   /** When this endpoint was FIRST seen. Preserved across a re-subscribe of the same endpoint —
    *  "since when has this device been subscribed" is the question it answers, not "when last". */
+  nativeBinding?: IngressBinding;
   createdAt?: string;
   /** The `User-Agent` of the request that registered it, trimmed and capped. The only thing that
    *  tells "my iPhone" from "the Mac I used once" in a list of opaque Apple endpoints. */
@@ -36,6 +41,9 @@ export interface StoredSubscription extends PushSubscription {
 
 /** What a registration knows about itself beyond the subscription — see {@link Push.addSubscription}. */
 export interface SubscriptionMeta {
+  /** Derived by the dispatcher, never from a registration body. */
+  nativeIngress?: boolean;
+  nativeBinding?: IngressBinding;
   /**
    * An endpoint this registration SUPERSEDES: the one the same device last registered with. A
    * service worker re-registration (a reinstall, a rejected push topic, a restart-triggered
@@ -59,7 +67,13 @@ export type PushDeliveryResult = { statusCode?: number; body?: string; headers?:
 export type SubscriptionRow = { endpoint: string; createdAt?: string; userAgent?: string };
 
 /** The deep-link fields the service worker reads off a push payload (see web/src/sw.ts). */
-type PushPayloadData = { paneId?: string; session?: string; host?: string; target?: "settings" };
+type PushPayloadData = {
+  paneId?: string;
+  session?: string;
+  host?: string;
+  machine?: string;
+  target?: "settings" | "machine";
+};
 
 /** The HTTP status a `web-push` rejection carries, or undefined when it carries none. */
 function sendErrorStatus<T>(err: T): number | undefined {
@@ -84,6 +98,13 @@ function coerceStored(v: JsonValue | undefined): StoredSubscription | null {
     endpoint: o.endpoint,
     keys: { p256dh: keys.p256dh, auth: keys.auth },
   };
+  if (o.nativeBinding !== undefined) {
+    const b = o.nativeBinding;
+    if (b === null || typeof b !== "object" || Array.isArray(b) || Object.keys(b).length !== 3 ||
+        typeof b.id !== "string" || !/^[A-Za-z0-9_-]{16,64}$/u.test(b.id) || typeof b.revision !== "number" ||
+        !Number.isSafeInteger(b.revision) || b.revision < 1 || typeof b.pairedDeviceId !== "string" || !/^[0-9a-f]{64}$/u.test(b.pairedDeviceId)) return null;
+    row.nativeBinding = { id: b.id, revision: b.revision, pairedDeviceId: b.pairedDeviceId };
+  }
   if (typeof o.createdAt === "string") row.createdAt = o.createdAt;
   if (typeof o.userAgent === "string") row.userAgent = o.userAgent.slice(0, USER_AGENT_MAX);
   return row;
@@ -120,6 +141,32 @@ const SEND_OPTIONS = { TTL: 21_600, topic: "collie-herd", urgency: "high" } as c
 // update stays relevant far longer than a transient "needs you". The trailing "s" is not a typo:
 // "collie-update" is 13 characters, which Apple refuses outright — see the base64 note above.
 const UPDATE_SEND_OPTIONS = { TTL: 259_200, topic: "collie-updates" } as const;
+// A machine's sustained load (ADR 0084) rides its own topics, for the update push's reason: sharing
+// "collie-herd" would let a queued load alert and a queued herd summary overwrite each other. One hour
+// of TTL, because a load alert older than that describes a minute the Machines page shows better, and
+// `high` urgency for the herd's reason: it is one push per episode, and a deferred one is late for the
+// only thing it is for. The topic is one per machine and metric ({@link machineTopic}), carried on the
+// message's `topic`; "collie-machines" (15 characters, which base64 can produce) is only the fallback
+// for a machine message that names none.
+const MACHINE_SEND_OPTIONS = { TTL: 3_600, topic: "collie-machines", urgency: "high" } as const;
+
+/** The fixed start of every per-machine topic. 16 characters, plus {@link MACHINE_TOPIC_HASH} = 28. */
+const MACHINE_TOPIC_PREFIX = "collie-machines-";
+/** Base64url characters of the hash kept: 72 bits, so two machines' topics do not meet by chance. */
+const MACHINE_TOPIC_HASH = 12;
+
+/**
+ * The collapse topic of one machine's alert on one metric: `collie-machines-` and the first 12
+ * base64url characters of the SHA-256 of `<id>:<metric>`. One topic per machine and metric, so a
+ * phone that is offline while two machines (or CPU and memory on one) alert gets both, where one
+ * shared topic kept only the last. A machine id is free text and can be longer than a topic may be,
+ * which is why it is hashed and not spelled. 28 characters, inside RFC 8030's alphabet and 32-char
+ * ceiling and a length base64 can produce ({@link topicIsSendable}).
+ */
+export function machineTopic(id: string, metric: string): string {
+  const hash = createHash("sha256").update(`${id}:${metric}`).digest("base64url");
+  return `${MACHINE_TOPIC_PREFIX}${hash.slice(0, MACHINE_TOPIC_HASH)}`;
+}
 
 /** Whether a collapse topic is one every push service will accept: RFC 8030's alphabet and 32-char
  *  ceiling, plus the length base64 can actually produce (Apple decodes it; ≡ 1 mod 4 is impossible).
@@ -173,12 +220,21 @@ export type PushSender = (
 /**
  * A notification instruction for the service worker (see web/src/sw.ts). `type:"clear"` closes the
  * notification on `tag` instead of showing one; `type:"update"` is an update-available alert (its own
- * collapse topic; taps open Settings); otherwise the SW renders `{ title, body }` into the `tag` slot,
+ * collapse topic; taps open Settings); `type:"machine"` is a sustained-load alert (its own topic; taps
+ * open that machine's page); otherwise the SW renders `{ title, body }` into the `tag` slot,
  * deep-links to `paneId` on tap, and re-alerts when `renotify` is set.
  */
 export interface PushMessage {
-  type?: "clear" | "update";
+  type?: "clear" | "update" | "machine";
   title?: string;
+  /**
+   * The stable code `title` was rendered from, and the values it was filled with (`push-titles.ts`).
+   * The service worker shows its own translation of the code when it has one and `title` otherwise,
+   * so an older cached SW — which ignores both — keeps showing exactly what it did. A title the
+   * operator typed (`collie push-test "…"`) is not Collie's to translate and carries no code.
+   */
+  titleCode?: PushTitleCode;
+  titleDetail?: PushTitleDetail;
   body?: string;
   /** Notification slot. Same tag replaces (rather than stacks) the previous notification. */
   tag?: string;
@@ -190,7 +246,7 @@ export interface PushMessage {
    */
   session?: string;
   /**
-   * The pack member the alerting session lives on (`?h=`, PACK_PROTOCOL.md §4). Threaded into the
+   * The crew member the alerting session lives on (`?h=`, CREW_PROTOCOL.md §4). Threaded into the
    * payload `data` alongside `session` so a tap deep-links to the right machine. Absent for the
    * collie that is sending — i.e. always absent on a solo instance, and always absent for the lead's
    * own sessions — which is the same omitted-not-null discipline `session` follows and what keeps
@@ -202,9 +258,45 @@ export interface PushMessage {
    *
    *  The client resolves this name to `/settings/updates` (web/src/lib/push-decision.ts). The name
    *  itself is frozen: an old cached service worker resolves it to `/settings` and lands one row
-   *  away from the page it wanted, which renaming the field would have turned into `/`. */
-  target?: "settings";
+   *  away from the page it wanted, which renaming the field would have turned into `/`.
+   *
+   *  `"machine"` opens `/machines/<machine>` (ADR 0084). An old service worker does not know it and
+   *  reads only `host`, which a machine push never carries, so it takes the pane path with no pane
+   *  and no `?h=`: the dashboard. */
+  target?: "settings" | "machine";
+  /**
+   * The machine a load alert is about (ADR 0084), threaded into the payload `data` as `machine`. It
+   * is deliberately NOT `host`: an old cached service worker reads `host` as a crew member and opens
+   * `/?h=<id>`, which on a solo Collie (id `local`) names no member at all.
+   */
+  machine?: string;
+  /**
+   * The push service's collapse topic for this one message ({@link machineTopic}), in place of the
+   * type's own. Never sent to the device. A topic {@link topicIsSendable} refuses is ignored.
+   */
+  topic?: string;
   renotify?: boolean;
+}
+
+/**
+ * A push message with its words masked (`bridge/redact.ts`): the body, and the title. A push crosses
+ * a third-party push service and shows on a lock screen, so it is the last place a secret should be.
+ *
+ * A title is a catalogue sentence filled from `titleDetail` (`push-titles.ts`), and the phone renders
+ * its own translation from the code and the detail when it has one. So a title the mask CHANGED drops
+ * its code and detail and travels as the masked English: a translated title rebuilt from the raw
+ * detail would put back exactly what was masked. A title the mask left alone keeps both.
+ *
+ * Pure and exported for the test; {@link Push.send} calls it when `COLLIE_REDACT` is on.
+ */
+export function redactPushMessage(message: PushMessage): PushMessage {
+  const out: PushMessage = { ...message };
+  if (message.body !== undefined) out.body = redactText(message.body);
+  if (message.title === undefined) return out;
+  const title = redactText(message.title);
+  if (title === message.title) return out;
+  const { titleCode: _titleCode, titleDetail: _titleDetail, ...plain } = out;
+  return { ...plain, title };
 }
 
 export class Push {
@@ -225,6 +317,7 @@ export class Push {
   constructor(
     private readonly cfg: Config,
     sender?: PushSender,
+    private readonly nativeBindings?: DeviceBindings,
   ) {
     this.file = join(cfg.stateDir, "push-subscriptions.json");
     this.sender = sender ?? ((sub, payload, options) => this.lib!.sendNotification(sub, payload, options));
@@ -253,11 +346,13 @@ export class Push {
     this.lib.setVapidDetails(this.cfg.vapidSubject, this.cfg.vapidPublic, this.cfg.vapidPrivate);
     this._enabled = true;
     await this.loadStore();
+    await this.refreshNativeBindings();
     console.log(`[push] enabled (${this.subs.size} saved subscription(s))`);
   }
 
   async addSubscription(sub: PushSubscription, meta: SubscriptionMeta = {}): Promise<void> {
     if (!this.enabled) return;
+    if (meta.nativeIngress && (!this.nativeBindings || !meta.nativeBinding || !this.nativeBindings.current(meta.nativeBinding)) || meta.nativeBinding && (!this.nativeBindings || !this.nativeBindings.current(meta.nativeBinding))) throw new Error("native.enrollment_binding");
     // The row this one supersedes (SubscriptionMeta.replaces). Dropped BEFORE the new one is stored,
     // and only when it is a different endpoint — a device re-registering the endpoint it already
     // holds is naming itself, not a predecessor.
@@ -270,6 +365,7 @@ export class Push {
     const previous = this.subs.get(sub.endpoint);
     const userAgent = meta.userAgent?.trim().slice(0, USER_AGENT_MAX) ?? previous?.userAgent;
     const row: StoredSubscription = { endpoint: sub.endpoint, keys: sub.keys };
+    if (meta.nativeBinding) row.nativeBinding = { id: meta.nativeBinding.id, revision: meta.nativeBinding.revision, pairedDeviceId: meta.nativeBinding.pairedDeviceId };
     // Re-subscribing does not restart the clock: `createdAt` is when this endpoint first appeared.
     row.createdAt = previous?.createdAt ?? new Date().toISOString();
     if (userAgent !== undefined && userAgent !== "") row.userAgent = userAgent;
@@ -313,17 +409,22 @@ export class Push {
   }
 
   /** Send a notification instruction (render, clear, or update) to every subscribed device. */
-  async send(msg: PushMessage): Promise<void> {
+  async send(message: PushMessage, originalProducerCurrent: () => boolean = () => true): Promise<void> {
     // The SW reads deep-link fields from `data`. `session` is omitted for the primary and `host` for
     // this collie's own sessions (both absent on the message), keeping that payload identical to the
-    // pre-multi-session, pre-pack shape.
+    // pre-multi-session, pre-crew shape.
+    const { topic, ...raw } = message;
+    const msg = this.cfg.redact ? redactPushMessage(raw) : raw;
     const data: PushPayloadData = { paneId: msg.paneId };
     if (msg.session !== undefined) data.session = msg.session;
     if (msg.host !== undefined) data.host = msg.host;
+    if (msg.machine !== undefined) data.machine = msg.machine;
     if (msg.target !== undefined) data.target = msg.target;
-    // Per-message collapse topic — update alerts must not share the herd slot (see UPDATE_SEND_OPTIONS).
-    const options = msg.type === "update" ? UPDATE_SEND_OPTIONS : SEND_OPTIONS;
-    await this.broadcast(JSON.stringify({ ...msg, data }), options);
+    // Per-message collapse topic — update and load alerts must not share the herd slot (see above).
+    const base =
+      msg.type === "update" ? UPDATE_SEND_OPTIONS : msg.type === "machine" ? MACHINE_SEND_OPTIONS : SEND_OPTIONS;
+    const options = topic !== undefined && topicIsSendable(topic) ? { ...base, topic } : base;
+    await this.broadcast(JSON.stringify({ ...msg, data }), options, originalProducerCurrent);
   }
 
   /** Convenience for a one-off render (used by the manual push-test script). */
@@ -331,16 +432,20 @@ export class Push {
     await this.send({ title, body, paneId: data.paneId });
   }
 
-  private async broadcast(payload: string, options: SendOptions): Promise<void> {
-    if (!this.enabled) return;
+  private async broadcast(payload: string, options: SendOptions, originalProducerCurrent: () => boolean = () => true): Promise<void> {
+    if (!this.enabled || !originalProducerCurrent()) return;
+    if (this.nativeBindings) await this.refreshNativeBindings();
+    if (!originalProducerCurrent()) return;
     const dead: string[] = [];
     // One entry per subscription attempted this round, so the eviction pass below can ask which
     // push services proved themselves healthy before it holds a failure against any one device.
     const results = await Promise.all(
       [...this.subs.values()].map(async (sub) => {
         try {
+          if (sub.nativeBinding && (!this.nativeBindings || !this.nativeBindings.current(sub.nativeBinding))) return { sub, err: null };
           // `{ endpoint, keys }` and nothing else: the stored row also carries operator metadata,
           // and web-push serialises what it is handed.
+          if (!originalProducerCurrent()) return { sub, err: null };
           await this.sender({ endpoint: sub.endpoint, keys: sub.keys }, payload, options);
           return { sub, err: null };
         } catch (err) {
@@ -349,6 +454,7 @@ export class Push {
       }),
     );
 
+    if (!originalProducerCurrent()) return;
     // A push service that delivered to SOMEBODY this round has a working VAPID/JWT/network path,
     // so a sibling's failure on that same origin is about that subscription and nothing else.
     const healthy = new Set(
@@ -407,6 +513,19 @@ export class Push {
    *
    * This and {@link save} are the only reader and the only writer of `push-subscriptions.json`.
    */
+  /** Retire only the exact local enrollment. The durable event remains pending until B22 commits
+   * its signed offline clear; removing a legacy subscription cannot acknowledge that obligation. */
+  async refreshNativeBindings(): Promise<void> {
+    if (!this.nativeBindings) return;
+    for (const event of this.nativeBindings.pendingRetirements()) await this.retireNativeBinding(event);
+  }
+
+  async retireNativeBinding(event: BindingRetired): Promise<number> {
+    let count = 0;
+    for (const [endpoint, row] of this.subs) if (row.nativeBinding?.id === event.bindingId && row.nativeBinding.revision === event.revision && row.nativeBinding.pairedDeviceId === event.pairedDeviceId) { this.subs.delete(endpoint); this.failures.delete(endpoint); count++; }
+    if (count) await this.save(); return count;
+  }
+
   async loadStore(): Promise<void> {
     try {
       const raw: unknown = await Bun.file(this.file).json();

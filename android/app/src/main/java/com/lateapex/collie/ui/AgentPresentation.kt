@@ -19,6 +19,7 @@ internal fun displayAgentTitle(agent: String, title: String?): String? {
 internal fun paneDisplayName(pane: PaneSummary): String {
     val raw = pane.paneLabel?.takeIf(String::isNotBlank)
         ?: pane.sessionName?.takeIf(String::isNotBlank)
+        ?: pane.soleTabName?.takeIf(String::isNotBlank)
         ?: pane.terminalTitle?.takeIf { it.isNotBlank() && pane.terminalTitleStale != true }
     return displayAgentTitle(pane.agent, raw)
         ?: if (pane.kind == "shell") "shell" else pane.agent
@@ -57,6 +58,7 @@ internal fun dashboardPaneText(pane: PaneSummary): DashboardPaneText {
     val tab = pane.tabLabel?.takeIf(String::isNotBlank)
     val stale = pane.terminalTitle != null && pane.terminalTitleStale == true
     val own = pane.sessionName?.takeIf(String::isNotBlank)
+        ?: pane.soleTabName?.takeIf(String::isNotBlank)
         ?: pane.terminalTitle?.takeIf { it.isNotBlank() && !stale }
     val secondary = displayAgentTitle(pane.agent, own)
     val label = displayAgentTitle(pane.agent, pane.paneLabel?.takeIf(String::isNotBlank))

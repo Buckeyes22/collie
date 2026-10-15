@@ -7,6 +7,7 @@ import com.lateapex.collie.domain.Scope
 /** Device-local presentation and interaction preferences for the native client. */
 class NativePreferences(
     context: Context,
+    offlineStoreOverride: com.lateapex.collie.data.OfflineContentStore? = null,
     private val now: () -> Long = System::currentTimeMillis,
 ) {
     enum class ThemeMode(val storedValue: String, val delegateMode: Int) {
@@ -15,10 +16,57 @@ class NativePreferences(
         DARK("dark", AppCompatDelegate.MODE_NIGHT_YES),
     }
 
+    enum class UiTypeface(val storedValue: String) {
+        SYSTEM("system"),
+        GROTESK("grotesk"),
+        ALDRICH("aldrich"),
+    }
+
     private val preferences = context.applicationContext.getSharedPreferences(
         PREFERENCES,
         Context.MODE_PRIVATE,
     )
+
+    val offlineContentStore: com.lateapex.collie.data.OfflineContentStore by lazy {
+        offlineStoreOverride ?: com.lateapex.collie.data.OfflineContentStore.shared(context.applicationContext)
+    }
+    init {
+        val originalPreferences = preferences
+        offlineContentStore.registerDraftTargetConsumer(originalPreferences) { scope, blocked ->
+            retirePasswordDraftTarget(originalPreferences, scope, blocked)
+        }
+    }
+    internal fun onPasswordDraftsRetired(listener: (com.lateapex.collie.data.PasswordDraftRetirement) -> Unit): AutoCloseable {
+        passwordDraftListeners += listener; return AutoCloseable { passwordDraftListeners -= listener }
+    }
+
+    /** Local clear notifications carry a revision cutoff, never draft text. Callbacks/ACK are
+     * outside both storage and preference locks; an edit committed later survives that event. */
+    fun onDraftsCleared(listener: (Long) -> Unit): AutoCloseable {
+        draftClearListeners += listener
+        return AutoCloseable { draftClearListeners -= listener }
+    }
+    fun draftRevision(key: String): Long = synchronized(sensitiveContentLock) { volatileDraftRevisions[key] ?: 0 }
+
+    fun clearRetainedDrafts(): Boolean {
+        val cutoff = draftRevisionClock.get()
+        if (!offlineContentStore.clearDrafts()) return false
+        synchronized(sensitiveContentLock) {
+            volatileDraftRevisions.filterValues { it <= cutoff }.keys.toList().forEach { key ->
+                volatileDrafts.remove(key); volatileDraftOwners.remove(key); volatileDraftTimes.remove(key); volatileDraftTargets.remove(key)
+                volatileDraftRevisions.remove(key)
+            }
+        }
+        draftClearListeners.forEach { it(cutoff) }
+        return true
+    }
+
+    /** Only disambiguates the editable pairing label; never derived from a device identifier. */
+    val pairingLabelSuffix: String
+        get() = preferences.getString("pairing_label_suffix", null)
+            ?: java.util.UUID.randomUUID().toString().takeLast(4).also {
+                preferences.edit().putString("pairing_label_suffix", it).apply()
+            }
 
     var themeMode: ThemeMode
         get() {
@@ -55,6 +103,36 @@ class NativePreferences(
             preferences.edit().putInt(DRAFT_FONT_SIZE, value.coerceIn(13, 16)).apply()
         }
 
+    var uiTypeface: UiTypeface
+        get() = UiTypeface.entries.firstOrNull { it.storedValue == preferences.getString(UI_TYPEFACE, null) }
+            ?: UiTypeface.ALDRICH
+        set(value) { preferences.edit().putString(UI_TYPEFACE, value.storedValue).apply() }
+
+    data class OperatorTypefaceSelection(val family: String, val basename: String, val ownerFingerprint: String)
+
+    val operatorTypefaceSelection: OperatorTypefaceSelection?
+        get() {
+            val family = preferences.getString(OPERATOR_TYPEFACE_FAMILY, null) ?: return null
+            val basename = preferences.getString(OPERATOR_TYPEFACE_BASENAME, null) ?: return null
+            val owner = preferences.getString(OPERATOR_TYPEFACE_OWNER, null) ?: return null
+            return OperatorTypefaceSelection(family, basename, owner).takeIf { validOperatorTypefaceSelection(it) }
+        }
+
+    fun selectOperatorTypeface(family: String, basename: String, ownerFingerprint: String): Boolean {
+        val selection = OperatorTypefaceSelection(family, basename, ownerFingerprint)
+        if (!validOperatorTypefaceSelection(selection)) return false
+        return preferences.edit()
+            .putString(OPERATOR_TYPEFACE_FAMILY, family)
+            .putString(OPERATOR_TYPEFACE_BASENAME, basename)
+            .putString(OPERATOR_TYPEFACE_OWNER, ownerFingerprint)
+            .commit()
+    }
+
+    fun clearOperatorTypeface() {
+        preferences.edit().remove(OPERATOR_TYPEFACE_FAMILY).remove(OPERATOR_TYPEFACE_BASENAME)
+            .remove(OPERATOR_TYPEFACE_OWNER).apply()
+    }
+
     var handsFreeEnabled: Boolean
         get() = preferences.getBoolean(HANDS_FREE_ENABLED, false)
         set(value) {
@@ -82,6 +160,16 @@ class NativePreferences(
             if (value == null) editor.remove(DASHBOARD_SPACES_OPEN) else editor.putBoolean(DASHBOARD_SPACES_OPEN, value)
             editor.apply()
         }
+
+    /** Bounded Changes discovery depth; the bridge supports values 1 through 4. */
+    var changesDepth: Int
+        get() = preferences.getInt(CHANGES_DEPTH, 2).coerceIn(1, 4)
+        set(value) { preferences.edit().putInt(CHANGES_DEPTH, value.coerceIn(1, 4)).apply() }
+
+    /** Include nested repositories in Changes discovery. */
+    var changesNested: Boolean
+        get() = preferences.getBoolean(CHANGES_NESTED, true)
+        set(value) { preferences.edit().putBoolean(CHANGES_NESTED, value).apply() }
 
     var dashboardLaunchOpen: Boolean?
         get() = if (preferences.contains(DASHBOARD_LAUNCH_OPEN)) {
@@ -134,41 +222,114 @@ class NativePreferences(
             }.apply()
         }
 
-    fun paneDraft(key: String): String {
-        volatileDrafts[key]?.let { return it }
-        val valueKey = "$PANE_DRAFT_PREFIX$key"
-        val savedKey = "$PANE_DRAFT_SAVED_PREFIX$key"
-        val value = preferences.getString(valueKey, "").orEmpty()
-        if (value.isEmpty()) return ""
-        val savedAt = preferences.getLong(savedKey, 0L)
-        if (savedAt == 0L) {
-            preferences.edit().putLong(savedKey, now()).apply()
-            return value
+    fun paneDraft(key: String, owner: com.lateapex.collie.data.ScopedCustodyOwner? = null,
+        scope: com.lateapex.collie.data.RetainedReadScope? = null, localIdentity: String? = null): String = synchronized(sensitiveContentLock) {
+        val identity = owner?.storageIdentity ?: localIdentity
+        if (key in passwordBlockedKeys || scope?.target?.let { it in passwordBlockedTargets } == true) return@synchronized ""
+        val savedOwner = volatileDraftOwners[key]
+        if (savedOwner != null && identity != null && savedOwner != identity) return@synchronized ""
+        volatileDrafts[key]?.let {
+            if (scope != null && volatileDraftTargets[key] != scope.target) return@synchronized ""
+            val time = volatileDraftTimes[key] ?: now()
+            if (now() >= time && now() - time <= PANE_DRAFT_TTL_MS) return@synchronized it
+            volatileDrafts.remove(key); volatileDraftOwners.remove(key); volatileDraftTimes.remove(key); volatileDraftTargets.remove(key)
         }
-        if (now() - savedAt <= PANE_DRAFT_TTL_MS) return value
-        preferences.edit().remove(valueKey).remove(savedKey).apply()
-        return ""
+        if (owner != null && scope != null) offlineContentStore.draft(key, owner, scope)?.let { return@synchronized it }
+        // Existing plaintext is not silently migrated or destroyed by installing this release.
+        // Its exact old key remains readable; owned mismatches never become a successor's draft.
+        val legacyOwner = preferences.getString("$PANE_DRAFT_OWNER_PREFIX$key", null)
+        if (key in passwordRetiredLegacyKeys || scope != null && !offlineContentStore.legacyDraftAllowed(scope)) return@synchronized ""
+        if (identity != null && legacyOwner != null && legacyOwner != identity) return@synchronized ""
+        val savedAt = preferences.getLong("$PANE_DRAFT_SAVED_PREFIX$key", 0L)
+        if (savedAt != 0L && (now() < savedAt || now() - savedAt > PANE_DRAFT_TTL_MS)) return@synchronized ""
+        preferences.getString("$PANE_DRAFT_PREFIX$key", "").orEmpty()
     }
 
-    fun savePaneDraft(key: String, value: String) {
-        val valueKey = "$PANE_DRAFT_PREFIX$key"
-        val savedKey = "$PANE_DRAFT_SAVED_PREFIX$key"
-        val editor = preferences.edit()
-        when {
-            value.isBlank() -> {
-                volatileDrafts.remove(key)
-                editor.remove(valueKey).remove(savedKey)
-            }
-            !fitsPaneDraftStore(value) -> {
-                volatileDrafts[key] = value
-                editor.remove(valueKey).remove(savedKey)
-            }
-            else -> {
-                volatileDrafts.remove(key)
-                editor.putString(valueKey, value).putLong(savedKey, now())
-            }
+    fun savePaneDraft(
+        key: String, value: String, owner: com.lateapex.collie.data.ScopedCustodyOwner? = null,
+        scope: com.lateapex.collie.data.RetainedReadScope? = null, localIdentity: String? = null,
+        current: () -> Boolean = { true },
+    ) = synchronized(sensitiveContentLock) {
+        if (!current()) return@synchronized
+        if (value.isNotBlank() && (key in passwordBlockedKeys || scope?.target?.let { it in passwordBlockedTargets } == true ||
+            scope != null && !offlineContentStore.draftTargetAllowed(scope))) return@synchronized
+        volatileDraftRevisions[key] = draftRevisionClock.incrementAndGet()
+        if (value.isBlank()) {
+            volatileDrafts.remove(key); volatileDraftOwners.remove(key); volatileDraftTimes.remove(key); volatileDraftTargets.remove(key)
+            if (owner != null) offlineContentStore.removeDraft(key, owner)
+            // Editing/clearing this exact legacy entry is an explicit user action, not migration.
+            preferences.edit().remove("$PANE_DRAFT_PREFIX$key").remove("$PANE_DRAFT_SAVED_PREFIX$key").remove("$PANE_DRAFT_OWNER_PREFIX$key").commit()
+            return@synchronized
         }
-        editor.apply()
+        volatileDrafts[key] = value; volatileDraftTimes[key] = now()
+        val identity = owner?.storageIdentity ?: localIdentity
+        if (identity == null) volatileDraftOwners.remove(key) else volatileDraftOwners[key] = identity
+        if (scope == null) volatileDraftTargets.remove(key) else volatileDraftTargets[key] = scope.target
+        if (owner != null && fitsPaneDraftStore(value) && offlineContentStore.draftsEnabled &&
+            offlineContentStore.saveDraft(key, value, owner, scope, current)) {
+            // New writes are ciphertext only. A failed disk ACK never deletes a legacy source.
+            preferences.edit().remove("$PANE_DRAFT_PREFIX$key").remove("$PANE_DRAFT_SAVED_PREFIX$key").remove("$PANE_DRAFT_OWNER_PREFIX$key").commit()
+        }
+    }
+
+    val legacyDraftCount: Int get() = preferences.all.keys.count { it.startsWith(PANE_DRAFT_PREFIX) }
+
+    /** Explicit consent migrates only entries whose existing owner matches this original owner.
+     * Unknown legacy ownership remains intact for a separate deliberate discard choice. */
+    fun migrateLegacyDrafts(
+        owner: com.lateapex.collie.data.ScopedCustodyOwner,
+        scope: com.lateapex.collie.data.RetainedReadScope? = null,
+        current: () -> Boolean,
+    ): Boolean = synchronized(sensitiveContentLock) {
+        if (!offlineContentStore.draftsEnabled || !current() || scope == null || scope.owner != owner || scope.subject == null || scope.viewAll) return@synchronized false
+        if (!offlineContentStore.legacyDraftAllowed(scope)) return@synchronized false
+        val components = listOf(owner.origin, owner.pairedDeviceIdentity, scope.host.orEmpty(), scope.session.orEmpty(), requireNotNull(scope.subject))
+        // Unknown old formats, hashes or ambiguous delimiters do not prove a pane target.
+        if (components.any { it.contains('|') }) return@synchronized false
+        val exactKey = components.joinToString("|")
+        var success = true
+        for (storedKey in preferences.all.keys.filter { it.startsWith(PANE_DRAFT_PREFIX) }) {
+            val key = storedKey.removePrefix(PANE_DRAFT_PREFIX)
+            if (key != exactKey) continue
+            if (preferences.getString("$PANE_DRAFT_OWNER_PREFIX$key", null) != owner.storageIdentity) continue
+            val value = preferences.getString(storedKey, null) ?: continue
+            val savedAt = preferences.getLong("$PANE_DRAFT_SAVED_PREFIX$key", now())
+            if (!fitsPaneDraftStore(value) || savedAt > now() || now() - savedAt > PANE_DRAFT_TTL_MS) continue
+            if (!offlineContentStore.saveDraft(key, value, owner, scope, current)) { success = false; continue }
+            if (!preferences.edit().remove(storedKey).remove("$PANE_DRAFT_SAVED_PREFIX$key").remove("$PANE_DRAFT_OWNER_PREFIX$key").commit()) success = false
+        }
+        success
+    }
+
+    fun discardLegacyDrafts(): Boolean = synchronized(sensitiveContentLock) {
+        val editor = preferences.edit()
+        preferences.all.keys.filter { it.startsWith(PANE_DRAFT_PREFIX) || it.startsWith(PANE_DRAFT_SAVED_PREFIX) || it.startsWith(PANE_DRAFT_OWNER_PREFIX) }.forEach(editor::remove)
+        editor.commit()
+    }
+
+    /** Explicit clear retires encrypted and volatile content; cosmetic preferences survive. */
+    fun clearSensitiveContent() {
+        check(offlineContentStore.clearDrafts()) { "Unable to clear encrypted drafts" }
+        synchronized(sensitiveContentLock) {
+        check(discardLegacyDrafts()) { "Unable to clear legacy drafts" }
+        volatileDrafts.clear(); volatileDraftOwners.clear(); volatileDraftTimes.clear(); volatileDraftTargets.clear()
+        }
+    }
+
+    fun retireSensitiveContent(owner: com.lateapex.collie.data.ScopedCustodyOwner) {
+        check(offlineContentStore.retireOwner(owner)) { "Unable to retire encrypted content" }
+        synchronized(sensitiveContentLock) {
+        val identity = owner.storageIdentity
+        val diskKeys = preferences.all.keys.filter { it.startsWith(PANE_DRAFT_PREFIX) }.map { it.removePrefix(PANE_DRAFT_PREFIX) }
+        val retired = (diskKeys + volatileDrafts.keys).filter { key ->
+            val stored = volatileDraftOwners[key] ?: preferences.getString("$PANE_DRAFT_OWNER_PREFIX$key", null)
+            stored == null || stored == identity
+        }.toSet()
+        val editor = preferences.edit()
+        retired.forEach { key -> editor.remove("$PANE_DRAFT_PREFIX$key").remove("$PANE_DRAFT_SAVED_PREFIX$key").remove("$PANE_DRAFT_OWNER_PREFIX$key") }
+        check(editor.commit()) { "Unable to retire original-owner pane drafts" }
+        retired.forEach { volatileDrafts.remove(it); volatileDraftOwners.remove(it); volatileDraftTimes.remove(it); volatileDraftTargets.remove(it) }
+        }
     }
 
     fun fitsPaneDraftStore(value: String): Boolean = value.length <= MAX_PERSISTED_DRAFT_CHARS
@@ -184,6 +345,10 @@ class NativePreferences(
         internal const val DIAGNOSTICS_ENABLED = "diagnostics_enabled"
         internal const val TERMINAL_FONT_SIZE = "terminal_font_size"
         internal const val DRAFT_FONT_SIZE = "draft_font_size"
+        internal const val UI_TYPEFACE = "ui_typeface"
+        internal const val OPERATOR_TYPEFACE_FAMILY = "operator_typeface_family"
+        internal const val OPERATOR_TYPEFACE_BASENAME = "operator_typeface_basename"
+        internal const val OPERATOR_TYPEFACE_OWNER = "operator_typeface_owner"
         internal const val HANDS_FREE_ENABLED = "hands_free_enabled"
         internal const val PANE_DRAFT_PREFIX = "pane_draft:"
         internal const val PANE_DRAFT_SAVED_PREFIX = "pane_draft_saved:"
@@ -192,12 +357,61 @@ class NativePreferences(
         internal const val DASHBOARD_RECENT_OPEN = "dashboard_recent_open"
         internal const val DASHBOARD_RECENT_SORT = "dashboard_recent_sort"
         internal const val DASHBOARD_SPACES_OPEN = "dashboard_spaces_open"
+        internal const val CHANGES_DEPTH = "changes_depth"
+        internal const val CHANGES_NESTED = "changes_nested"
         internal const val DASHBOARD_LAUNCH_OPEN = "dashboard_launch_open"
         internal const val DASHBOARD_SHELLS_OPEN = "dashboard_shells_open"
         internal const val PANE_STRIPS_VISIBLE = "pane_strips_visible"
         internal const val DASHBOARD_SCOPE_HOST = "dashboard_scope_host"
         internal const val DASHBOARD_SCOPE_SESSION = "dashboard_scope_session"
         internal const val DASHBOARD_SCOPE_VIEW_ALL = "dashboard_scope_view_all"
+        private val sensitiveContentLock = Any()
+        private val volatileDraftOwners = mutableMapOf<String, String>()
+        private const val PANE_DRAFT_OWNER_PREFIX = "pane_draft_owner:"
         private val volatileDrafts = mutableMapOf<String, String>()
+        private val volatileDraftTimes = mutableMapOf<String, Long>()
+        private val volatileDraftTargets = mutableMapOf<String, String>()
+        private val passwordBlockedTargets = mutableSetOf<String>()
+        private val passwordBlockedKeys = mutableSetOf<String>()
+        private val passwordRetiredLegacyKeys = mutableSetOf<String>()
+        private val passwordDraftListeners = java.util.concurrent.CopyOnWriteArrayList<(com.lateapex.collie.data.PasswordDraftRetirement) -> Unit>()
+        private val volatileDraftRevisions = mutableMapOf<String, Long>()
+        private val draftRevisionClock = java.util.concurrent.atomic.AtomicLong()
+        private val draftClearListeners = java.util.concurrent.CopyOnWriteArrayList<(Long) -> Unit>()
+
+        private fun retirePasswordDraftTarget(preferences: android.content.SharedPreferences,
+            scope: com.lateapex.collie.data.RetainedReadScope, blocked: Boolean): Boolean {
+            val identity = scope.owner.storageIdentity
+            val components = listOf(scope.owner.origin, scope.owner.pairedDeviceIdentity, scope.host.orEmpty(), scope.session.orEmpty(), scope.subject.orEmpty())
+            val exactKey = components.takeIf { scope.subject != null && it.none { value -> value.contains('|') } }?.joinToString("|")
+            var legacyDeleted = true
+            val cutoff = synchronized(sensitiveContentLock) {
+                if (!blocked) {
+                    passwordBlockedTargets.remove(scope.target); exactKey?.let(passwordBlockedKeys::remove)
+                    return true
+                }
+                passwordBlockedTargets += scope.target
+                exactKey?.let { passwordBlockedKeys += it; passwordRetiredLegacyKeys += it }
+                val keys = volatileDrafts.keys.filter { key -> volatileDraftOwners[key] == identity &&
+                    (volatileDraftTargets[key] == scope.target || key == exactKey) }
+                keys.forEach { key -> volatileDrafts.remove(key); volatileDraftOwners.remove(key); volatileDraftTimes.remove(key); volatileDraftTargets.remove(key) }
+                if (exactKey != null && preferences.getString("$PANE_DRAFT_OWNER_PREFIX$exactKey", null) == identity) {
+                    // Only this proved original legacy key is retired; failure is quarantined by
+                    // the durable target legacy-retired flag and cannot resurrect after clean read.
+                    legacyDeleted = preferences.edit().remove("$PANE_DRAFT_PREFIX$exactKey").remove("$PANE_DRAFT_SAVED_PREFIX$exactKey")
+                        .remove("$PANE_DRAFT_OWNER_PREFIX$exactKey").commit()
+                }
+                draftRevisionClock.get()
+            }
+            val event = com.lateapex.collie.data.PasswordDraftRetirement(scope, cutoff)
+            passwordDraftListeners.forEach { it(event) } // ACK/cancel never under RAM/storage locks.
+            return legacyDeleted
+        }
     }
+
+    private fun validOperatorTypefaceSelection(value: OperatorTypefaceSelection): Boolean =
+        value.family.matches(Regex("^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$")) &&
+            value.family.lowercase() !in setOf("serif", "sans-serif", "monospace", "cursive", "fantasy", "system-ui", "math", "inherit", "initial", "unset", "revert", "revert-layer") &&
+            value.basename.length in 1..128 && !value.basename.startsWith(".") && value.basename.endsWith(".woff2") &&
+            value.basename.none { it == '/' || it == '\\' || it == '\u0000' } && value.ownerFingerprint.matches(Regex("[0-9a-f]{64}"))
 }

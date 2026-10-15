@@ -10,8 +10,8 @@ Android app releases are independent of server/PWA releases.
 | --- | --- | --- |
 | Application ID | `com.lateapex.collie` | Preserve for in-place upgrades. |
 | Debug application ID | `com.lateapex.collie.debug` | Development only; separate local data. |
-| versionName | `1.5.2` | Pick the next Android SemVer at release time. |
-| versionCode | `3` | Increase for every distributed update. |
+| versionName | `1.6.0` | Pick the next Android SemVer at release time. |
+| versionCode | `4` | Increase for every distributed update. |
 | Tag | `android-vX.Y.Z` | Must match the APK's versionName. |
 | Changelog | `ANDROID_CHANGELOG.md` | Record app changes separately from the server. |
 
@@ -37,12 +37,15 @@ interactive shell prompts. Never commit their values or pass passwords directly 
 
 | Variable | Purpose |
 | --- | --- |
-| `ANDROID_HOME` | SDK with Build Tools 36.0.0 |
+| `ANDROID_HOME` | SDK with Build Tools 37.0.0 |
 | `COLLIE_ANDROID_KEYSTORE` | Absolute path to the release keystore outside the worktree |
 | `COLLIE_ANDROID_KEY_ALIAS` | Alias of the private key |
 | `COLLIE_ANDROID_STORE_PASSWORD` | Keystore password |
 | `COLLIE_ANDROID_KEY_PASSWORD` | Private-key password |
 | `COLLIE_ANDROID_CERT_SHA256` | Independently checked certificate SHA-256 fingerprint |
+| `COLLIE_ANDROID_METADATA_SIGNING_KEY` | Existing encrypted P-256 metadata signing key outside the worktree |
+| `COLLIE_ANDROID_METADATA_SIGNING_PASSWORD` | Password supplied privately through the environment |
+| `COLLIE_ANDROID_METADATA_KEY_CHAIN` | Optional reviewed JSON key-transition chain; empty for the pinned key |
 | `COLLIE_ANDROID_EXPECTED_TAG` | Optional expected `android-vX.Y.Z` tag |
 | `COLLIE_ANDROID_RELEASE_DIR` | Optional fresh output directory; existing output is refused |
 
@@ -52,9 +55,14 @@ Add `COLLIE_ANDROID_KEYSTORE_BASE64` containing the keystore's base64 encoding. 
 decodes it into runner-temporary storage and removes that file after signing. The fingerprint
 must come from your trusted key record, not an unreviewed candidate APK.
 
-Private vulnerability reporting is currently disabled on this fork. Enable it in repository
-Settings → Security before publishing and confirm the report route in [SECURITY.md](../SECURITY.md)
-works from a contributor account.
+Private vulnerability reporting is enabled on this fork (verified through the repository API on
+2026-10-13). Confirm its state and the report route in [SECURITY.md](../SECURITY.md) before publishing.
+
+The metadata key is separate from the APK signing key. Reuse the public key pinned in
+`android/app/src/main/res/raw/android_release_metadata_public_key.pem`; the helper refuses a
+mismatch. It signs the exact metadata bytes and publishes the detached signature alongside the
+APK. Key transitions require the existing key-chain verifier and a reviewed chain; do not replace
+the trust anchor to make a candidate pass.
 
 ## Prepare a local candidate
 
@@ -108,9 +116,11 @@ modules, including transitive and platform modules. It excludes build and test d
 root component's SHA-256 is the actual signed APK hash, so the inventory is tied to those exact APK
 bytes.
 
-This is a build-input inventory, not an inventory of code retained after R8. It does not claim to
-identify bundled assets or dependency edges, and third-party license data is not inferred from the
-lockfile. Those omissions are marked incomplete in the SBOM; review the packaged notices separately.
+This is a build-input inventory, not an inventory of code retained after R8. It also verifies the
+vendored Google WOFF2/Brotli source inventories, records their pinned commits and archive hashes,
+and includes their MIT licenses and local patch hashes. Other bundled assets and dependency edges
+remain incomplete, and Maven license data is not inferred from the lockfile. Review the packaged
+notices separately; the recorded native archive hashes are provenance, not a fresh upstream fetch.
 Rebuild the APK from the current source and lockfile before signing. The APK hash links the inventory
 to an artifact; it does not prove that an older APK was built with the current lockfile.
 
@@ -148,13 +158,13 @@ database, or the scan step failed.
 
 ## Device acceptance
 
-Smoke-test the signed artifact before publication; keep the extended matrix as follow-up coverage.
+Smoke-test the signed artifact and complete the current physical-device checks before publication.
 
-Use a dedicated test device or emulator and synthetic terminal content. Do not run uninstalling
-instrumentation against a personal phone as a routine release check: the runner may reinstall the
-app and erase its local connection. The existing API 26/API 36 emulator checks provide broad
-regression coverage; they do not need to be repeated on every physical-device configuration before
-an initial release.
+Current Android acceptance uses the owned physical Pixel running Android 17 / API 37 on
+dell-7680 and synthetic terminal content. Do not run uninstalling instrumentation against another
+personal app namespace: the runner may reinstall the app and erase its local connection.
+Older API/emulator results are historical evidence, not current release acceptance.
+The [toolchain record](TOOLCHAIN.md) describes the stable SDK and build pins.
 
 Initial artifact smoke check:
 
@@ -163,10 +173,11 @@ Initial artifact smoke check:
 - [ ] Checksums, bundled license notices and release notes match the reviewed artifact.
 - [ ] Public screenshots and attachments contain no unapproved private content.
 
-Extended follow-up matrix:
+Required current-device checks:
 
 - Fresh HTTPS pairing, authorization refusal, device revocation and harmless exactly-once replies.
-- Prompts, Keys, history, attachments and configured STT against a disposable live server.
+- Prompts, Keys, history and non-speech attachments against a disposable live server.
+  Speech-to-text is excluded from this Android completion release.
 - Background/foreground, real network/VPN loss, server restart and process-death recovery.
 - Diagnostics opt-in and pairing-body exclusion on a real deployment.
 - Additional IMEs, insets, spoken TalkBack, large text, split window and both themes.
@@ -176,7 +187,7 @@ Record which checks actually ran, with APK checksum, certificate fingerprint, so
 app/server versions, device/API and date. Disclose material known limitations in release notes.
 Untested extended scenarios are coverage gaps; an observed regression affecting basic use, credential
 protection or terminal write safety requires a fix. Historical
-[acceptance records](README.md#emulator-and-physical-device-acceptance) remain regression evidence.
+[acceptance records](README.md#current-physical-device-acceptance-and-historical-results) remain regression evidence.
 
 ## Cut and review a release
 
@@ -189,11 +200,11 @@ Only tag the clean commit after choosing the Android version and completing the 
 5. Create an annotated `android-vX.Y.Z` tag on that commit.
 6. Push the commit and tag when ready to create the draft.
 
-For example, after a release commit for Android 1.5.2:
+For example, after a release commit for Android 1.6.0:
 
 ```bash
-git tag -a android-v1.5.2 -m "Collie for Android 1.5.2"
-git push origin main android-v1.5.2
+git tag -a android-v1.6.0 -m "Collie for Android 1.6.0"
+git push origin main android-v1.6.0
 ```
 
 The [Android release workflow](../.github/workflows/android-release.yml) tests and builds before
@@ -202,9 +213,13 @@ and verifies the certificate. It creates a **draft** GitHub Release with signed 
 links. Missing secrets or a signer mismatch fail the job; there is no unsigned fallback.
 
 Review the draft notes, version/code, source commit, checksum, certificate, notices and artifact
-smoke-check result. Record extended validation gaps accurately; completing the entire follow-up
-matrix is not required to publish the initial release. The workflow does not publish
-automatically. GitHub CLI documents the draft behavior in
+smoke-check result. Publish only after the required prepublication checks and approved draft review
+are complete. The Android completion release also requires current Pixel workflows, real background
+notifications, and same-signer upgrade proof before completion can be claimed, as specified in
+[the approved completion goal](acceptance/completion-goal-2026-10-13.txt). The anonymous native update
+channel needs published assets: verify its final upgrade against the unchanged reviewed APK after
+publication. Historical expanded follow-up matrices are superseded by that scope. The workflow does
+not publish automatically. GitHub CLI documents the draft behavior in
 [gh release create](https://cli.github.com/manual/gh_release_create).
 
 The inherited `vX.Y.Z` server workflow is restricted to upstream. Its tarballs and website

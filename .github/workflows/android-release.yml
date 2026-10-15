@@ -23,12 +23,23 @@ jobs:
           distribution: temurin
           java-version: "21"
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
-        # The default also installs the retired `tools` package, which sdkmanager 16 rejects.
-        with:
-          packages: platform-tools
+      - name: Install pinned Android CLI from Google's signed repository
+        run: |
+          set -euo pipefail
+          test "$(dpkg --print-architecture)" = amd64
+          sudo install -d -m 0755 /etc/apt/keyrings
+          curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | sudo tee /etc/apt/keyrings/google.asc >/dev/null
+          printf '%s\n' 'deb [arch=amd64 signed-by=/etc/apt/keyrings/google.asc] https://dl.google.com/android/cli/latest/debian/ stable main' | sudo tee /etc/apt/sources.list.d/android-cli.list >/dev/null
+          sudo apt-get update
+          sudo apt-get install -y android-cli=1.0.16500706
+          test "$(android --no-metrics --version)" = 1.0.16500706
       - name: Install pinned SDK
-        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+        run: |
+          set -euo pipefail
+          : "${ANDROID_HOME:?Runner Android SDK path is required}"
+          # Accept SDK license prompts in CI; preserve the CLI exit status if yes gets SIGPIPE.
+          (set +o pipefail; yes | android --no-metrics --sdk="$ANDROID_HOME" sdk install platform-tools platforms/android-37.2@1 build-tools/37.0.0 ndk/27.1.12297006 cmake/3.22.1)
+          test -s "$ANDROID_HOME/licenses/android-sdk-license"
       - name: Validate native boundaries
         run: |
           bun run check:android
@@ -89,12 +100,23 @@ jobs:
           distribution: temurin
           java-version: "21"
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
-        # The default also installs the retired `tools` package, which sdkmanager 16 rejects.
-        with:
-          packages: platform-tools
+      - name: Install pinned Android CLI from Google's signed repository
+        run: |
+          set -euo pipefail
+          test "$(dpkg --print-architecture)" = amd64
+          sudo install -d -m 0755 /etc/apt/keyrings
+          curl -fsSL https://dl.google.com/linux/linux_signing_key.pub | sudo tee /etc/apt/keyrings/google.asc >/dev/null
+          printf '%s\n' 'deb [arch=amd64 signed-by=/etc/apt/keyrings/google.asc] https://dl.google.com/android/cli/latest/debian/ stable main' | sudo tee /etc/apt/sources.list.d/android-cli.list >/dev/null
+          sudo apt-get update
+          sudo apt-get install -y android-cli=1.0.16500706
+          test "$(android --no-metrics --version)" = 1.0.16500706
       - name: Install signing tools
-        run: sdkmanager "build-tools;36.0.0"
+        run: |
+          set -euo pipefail
+          : "${ANDROID_HOME:?Runner Android SDK path is required}"
+          # Accept SDK license prompts in CI; preserve the CLI exit status if yes gets SIGPIPE.
+          (set +o pipefail; yes | android --no-metrics --sdk="$ANDROID_HOME" sdk install build-tools/37.0.0)
+          test -s "$ANDROID_HOME/licenses/android-sdk-license"
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: android-unsigned
@@ -106,6 +128,9 @@ jobs:
           COLLIE_ANDROID_STORE_PASSWORD: ${{ secrets.COLLIE_ANDROID_STORE_PASSWORD }}
           COLLIE_ANDROID_KEY_PASSWORD: ${{ secrets.COLLIE_ANDROID_KEY_PASSWORD }}
           COLLIE_ANDROID_CERT_SHA256: ${{ secrets.COLLIE_ANDROID_CERT_SHA256 }}
+          COLLIE_ANDROID_METADATA_SIGNING_KEY_PEM: ${{ secrets.COLLIE_ANDROID_METADATA_SIGNING_KEY_PEM }}
+          COLLIE_ANDROID_METADATA_SIGNING_PASSWORD: ${{ secrets.COLLIE_ANDROID_METADATA_SIGNING_PASSWORD }}
+          COLLIE_ANDROID_METADATA_KEY_CHAIN_JSON: ${{ vars.COLLIE_ANDROID_METADATA_KEY_CHAIN_JSON }}
           COLLIE_ANDROID_EXPECTED_TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
@@ -113,11 +138,29 @@ jobs:
             echo 'Configure Android release signing secrets before pushing a release tag.' >&2
             exit 1
           }
+          test -n "$COLLIE_ANDROID_METADATA_SIGNING_KEY_PEM" || {
+            echo 'Configure the protected P-256 Android metadata signing key before pushing a release tag.' >&2
+            exit 1
+          }
+          test -n "$COLLIE_ANDROID_METADATA_SIGNING_PASSWORD" || {
+            echo 'Configure the protected Android metadata signing password before pushing a release tag.' >&2
+            exit 1
+          }
           umask 077
           export COLLIE_ANDROID_KEYSTORE="$RUNNER_TEMP/collie-release.jks"
-          trap 'rm -f "$COLLIE_ANDROID_KEYSTORE"' EXIT
+          export COLLIE_ANDROID_METADATA_SIGNING_KEY="$RUNNER_TEMP/collie-metadata-signing-key.pem"
+          export COLLIE_ANDROID_METADATA_KEY_CHAIN="$RUNNER_TEMP/collie-metadata-key-chain.json"
+          trap 'rm -f "$COLLIE_ANDROID_KEYSTORE" "$COLLIE_ANDROID_METADATA_SIGNING_KEY" "$COLLIE_ANDROID_METADATA_KEY_CHAIN"' EXIT
           printf '%s' "$COLLIE_ANDROID_KEYSTORE_BASE64" | base64 --decode > "$COLLIE_ANDROID_KEYSTORE"
           unset COLLIE_ANDROID_KEYSTORE_BASE64
+          printf '%s' "$COLLIE_ANDROID_METADATA_SIGNING_KEY_PEM" > "$COLLIE_ANDROID_METADATA_SIGNING_KEY"
+          unset COLLIE_ANDROID_METADATA_SIGNING_KEY_PEM
+          if [[ -n "${COLLIE_ANDROID_METADATA_KEY_CHAIN_JSON:-}" ]]; then
+            printf '%s' "$COLLIE_ANDROID_METADATA_KEY_CHAIN_JSON" > "$COLLIE_ANDROID_METADATA_KEY_CHAIN"
+          else
+            printf '[]' > "$COLLIE_ANDROID_METADATA_KEY_CHAIN"
+          fi
+          unset COLLIE_ANDROID_METADATA_KEY_CHAIN_JSON
           bash scripts/android-release.sh
       - name: Write release notes
         env:
@@ -125,7 +168,7 @@ jobs:
           SOURCE_COMMIT: ${{ github.sha }}
         run: |
           cat > "$RUNNER_TEMP/android-notes.md" <<EOF
-          Native Android client for a self-hosted Collie server. Requires Android 8.0 or newer.
+          Native Android client for a self-hosted Collie server. Requires Android 17 / API 37 (current release).
 
           This is a draft: complete the artifact smoke check in android/RELEASING.md before publishing, and list what it covered here.
 

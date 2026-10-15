@@ -117,8 +117,12 @@ The rule is right about internal code and wrong about a parse boundary — at th
 - **Every override names files, and every one of those files is a module whose own
   coerce/parse function is where the `typeof` sits** — the Herdr socket and wire modules, journal
   adapters over third-party JSONL, `/pack/v1/*` payloads, HTTP request bodies and disk-backed state
-  in the bridge, and the localStorage-backed preference stores in `web/`. Each override carries its
-  reasoning as a comment in `.oxlintrc.json`.
+  in the bridge, and the localStorage-backed preference stores in `web/`. B32's plugin request
+  readers and JSON config redaction/restore parser also live in the existing bounded
+  `host-control/request.ts` boundary. `host-control/plugin-codecs.ts` is the single owner of
+  validated Herdr plugin JSON DTOs for plugin lists, actions, logs, owner operations, and
+  configuration receipts; its runtime checks stay inside named parsers and callers receive typed
+  values. Each override carries its reasoning as a comment in `.oxlintrc.json`.
 - **Non-boundary `typeof` stays at `error` and was paid down.** `bridge/state-engine.ts` is the
   clearest case: it narrowed already-typed Herdr pane fields and carried a hand-written `hasAgent`
   guard, so its checks were fixed, and the `agent_session` shape check moved out to the wire

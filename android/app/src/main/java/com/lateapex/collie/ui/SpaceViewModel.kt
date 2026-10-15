@@ -8,6 +8,8 @@ import androidx.lifecycle.viewModelScope
 import com.lateapex.collie.CollieApplication
 import com.lateapex.collie.R
 import com.lateapex.collie.data.CollieRepository
+import com.lateapex.collie.data.ScopedReadContext
+import com.lateapex.collie.data.custodyOwner
 import com.lateapex.collie.domain.PollingBackoff
 import com.lateapex.collie.domain.Scope
 import com.lateapex.collie.network.ApiFailure
@@ -77,6 +79,9 @@ internal data class SpaceUiState(
     val mux: MuxConfigResponse? = null,
     val paired: Boolean = false,
     val writeAuthorized: Boolean = false,
+    val readSource: ReadSourceState = ReadSourceState.Unavailable(0),
+    val refreshNotice: String? = null,
+    val originalReadContext: ScopedReadContext? = null,
 )
 
 internal class SpaceViewModel(
@@ -89,16 +94,69 @@ internal class SpaceViewModel(
     private val mutableState = MutableStateFlow(SpaceUiState())
     val state: StateFlow<SpaceUiState> = mutableState.asStateFlow()
     private val requestInFlight = AtomicBoolean(false)
+    private val manualRefreshPending = AtomicBoolean(false)
     private val pollingBackoff = PollingBackoff()
     private var pollingJob: Job? = null
+    private var observedConnection = repository.connection.value
+    private var lastGoodCapturedAt: Long? = null
+
+    @Volatile internal var originalContext: ScopedReadContext? = null
+        private set
+    private fun adoptOriginalContext(context: ScopedReadContext) {
+        if (originalContext?.custodyOwner?.let { it != context.custodyOwner } == true) {
+            mutableState.value = SpaceUiState()
+
+        }
+        originalContext = context
+        mutableState.value = mutableState.value.copy(originalReadContext = context)
+    }
+
+    private val authorityRegistration = repository.onAuthorityRetired { event ->
+        withRetirementOnMain(event, { originalContext }) {
+            val reason = event.reason
+            if (reason == com.lateapex.collie.data.AuthorityInvalidation.ACCESS_FROZEN) {
+                repository.accessFailure?.takeIf { it is ApiFailure.Http && it.status in setOf(401, 403) }?.let { failure ->
+                    mutableState.value = mutableState.value.copy(loading = false, error = MainViewModel.describe(getApplication<Application>().resources, failure))
+                }
+            }
+            mutableState.value = mutableState.value.copy(writeAuthorized = false)
+            if (reason in setOf(com.lateapex.collie.data.AuthorityInvalidation.PAIRING_RETIRED,
+                com.lateapex.collie.data.AuthorityInvalidation.CONNECTION_CHANGED,
+                com.lateapex.collie.data.AuthorityInvalidation.DISCONNECTED,
+                com.lateapex.collie.data.AuthorityInvalidation.SCOPE_CHANGED)) {
+                lastGoodCapturedAt = null
+                mutableState.value = SpaceUiState()
+            } else if (reason == com.lateapex.collie.data.AuthorityInvalidation.LEAD_CHANGED) {
+                mutableState.value = mutableState.value.copy(loading = false, refreshing = false)
+            }
+        }
+    }
+
+    override fun onCleared() {
+        authorityRegistration.close()
+        super.onCleared()
+    }
 
     init {
+        repository.selectSubject(scope, workspaceId)
         mutableState.value = mutableState.value.copy(
             paired = repository.connection.value?.isPaired == true,
             writeAuthorized = repository.writesAllowed(),
         )
         viewModelScope.launch {
+            repository.readSource.collect { source ->
+                mutableState.value = mutableState.value.copy(readSource = source, writeAuthorized = repository.writesAllowed(scope, workspaceId))
+            }
+        }
+        viewModelScope.launch {
             repository.connection.collectLatest { connection ->
+                val adopted = originalContext?.takeIf { !repository.isActorRetired(it) }
+                if (adopted != null && adopted.connection !== connection) return@collectLatest
+                if (connection !== observedConnection && adopted?.connection !== connection) {
+                    observedConnection = connection
+                    mutableState.value = SpaceUiState()
+                    loadConfig()
+                }
                 mutableState.value = mutableState.value.copy(
                     paired = connection?.isPaired == true,
                     writeAuthorized = repository.writesAllowed(),
@@ -108,14 +166,17 @@ internal class SpaceViewModel(
     }
 
     fun startPolling() {
+        repository.selectSubject(scope, workspaceId)
         if (pollingJob != null) return
-        pollingJob = viewModelScope.launch {
+        val activePoll = viewModelScope.launch {
             loadConfig()
             while (true) {
                 load(manual = false)
                 delay(pollingBackoff.delayAfter(POLL_MS))
             }
         }
+        pollingJob = activePoll
+        activePoll.invokeOnCompletion { if (pollingJob === activePoll) pollingJob = null }
     }
 
     fun stopPolling() {
@@ -124,7 +185,24 @@ internal class SpaceViewModel(
     }
 
     fun refresh() {
-        viewModelScope.launch { load(manual = true) }
+        if (!manualRefreshPending.compareAndSet(false, true)) return
+        val context = repository.readContext(scope, workspaceId)
+        if (context == null) {
+            manualRefreshPending.set(false)
+            return
+        }
+        mutableState.value = mutableState.value.copy(refreshing = true, error = null)
+        viewModelScope.launch {
+            try {
+                while (requestInFlight.get() && repository.isCurrent(context)) delay(10)
+                if (repository.isCurrent(context)) load(manual = true, expectedContext = context)
+            } finally {
+                manualRefreshPending.set(false)
+                if (repository.isCurrent(context)) {
+                    mutableState.value = mutableState.value.copy(refreshing = false)
+                }
+            }
+        }
     }
 
     suspend fun createTab(label: String?, cwd: String?): ApiResult<CreateResponse> =
@@ -143,23 +221,63 @@ internal class SpaceViewModel(
     }
 
     private suspend fun loadConfig() {
-        val result = repository.config()
+        val context = repository.readContext(scope, workspaceId) ?: return
+        adoptOriginalContext(context)
+        val result = repository.config(scope, context)
+        if (!repository.isCurrent(context)) return
         if (result is ApiResult.Success) {
             mutableState.value = mutableState.value.copy(mux = result.value.mux)
         }
     }
 
-    private suspend fun load(manual: Boolean) {
+    private suspend fun load(manual: Boolean, expectedContext: ScopedReadContext? = null) {
+        if (!manual && manualRefreshPending.get()) return
         if (!requestInFlight.compareAndSet(false, true)) return
+        val context = expectedContext ?: repository.readContext(scope, workspaceId)
+            ?: run { requestInFlight.set(false); return }
+        if (!repository.isCurrent(context)) {
+            requestInFlight.set(false)
+            return
+        }
+        adoptOriginalContext(context)
         mutableState.value = mutableState.value.copy(
             loading = mutableState.value.content == null,
             refreshing = manual,
             error = null,
         )
         try {
-            when (val result = repository.snapshot(scope)) {
+            var refreshNotice: String? = null
+            if (manual) {
+                val refresh = repository.refresh(scope, context)
+                if (!repository.isCurrent(context)) return
+                when (refresh) {
+                    is ApiResult.Success -> if (!refresh.value.ok) {
+                        mutableState.value = mutableState.value.copy(loading = false, refreshing = false,
+                            error = refresh.value.error, writeAuthorized = false)
+                        return
+                    }
+                    is ApiResult.Failure -> {
+                        if (refresh.error is ApiFailure.Http && refresh.error.status == 404) {
+                            refreshNotice = getApplication<Application>().getString(R.string.refresh_ordinary_reload)
+                        } else {
+                            val retainedTimestamp = if (mutableState.value.content != null) lastGoodCapturedAt else null
+                            retainedTimestamp?.let(repository::showSavedCopy)
+                            mutableState.value = mutableState.value.copy(loading = false, refreshing = false,
+                                error = MainViewModel.describe(getApplication<Application>().resources, refresh.error),
+                                readSource = repository.readSource.value,
+                                writeAuthorized = false)
+                            return
+                        }
+                    }
+                    is ApiResult.NotModified -> refreshNotice = getApplication<Application>().getString(R.string.refresh_ordinary_reload)
+                }
+            }
+            val result = repository.paneSnapshot(scope, context)
+            if (!repository.isCurrent(context)) return
+            when (result) {
                 is ApiResult.Success -> {
                     pollingBackoff.succeeded()
+                    lastGoodCapturedAt = result.value.ts
                     val content = SpaceModel.from(result.value, workspaceId, scope)
                     mutableState.value = if (content == null) {
                         mutableState.value.copy(
@@ -171,23 +289,25 @@ internal class SpaceViewModel(
                     } else {
                         mutableState.value.copy(
                             content = content,
+                            readSource = repository.readSource.value,
                             writeAuthorized = repository.writesAllowed(),
                             loading = false,
                             refreshing = false,
-                            error = null,
+                            error = refreshNotice,
+                            refreshNotice = refreshNotice,
                         )
                     }
                 }
                 is ApiResult.Failure -> {
                     pollingBackoff.failed()
-                    if (result.error is ApiFailure.Http && result.error.message == "device not paired") {
-                        repository.demoteToReadOnly()
-                    }
+                    val retainedTimestamp = if (mutableState.value.content != null) lastGoodCapturedAt else null
+                    retainedTimestamp?.let(repository::showSavedCopy)
                     mutableState.value = mutableState.value.copy(
                         loading = false,
                         refreshing = false,
                         error = MainViewModel.describe(getApplication<Application>().resources, result.error),
-                        writeAuthorized = repository.writesAllowed(),
+                        readSource = repository.readSource.value,
+                        writeAuthorized = false,
                     )
                 }
                 is ApiResult.NotModified -> {

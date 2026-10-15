@@ -1,9 +1,12 @@
-import { type OpsRecord, PackOpsStore } from "../bridge/pack/ops-store.ts";
+import { normaliseBasePath } from "../bridge/config.ts";
+import type { Host } from "../bridge/host.ts";
+import { type OpsRecord, CrewOpsStore } from "../bridge/crew/ops-store.ts";
+import { emptyConfigLayer } from "../bridge/config-source.ts";
 import type { CliContext, Environment } from "./context.ts";
 import { effectiveServePort, instanceSuffix } from "./context.ts";
 import type { Io } from "./io.ts";
 import type { LinkProbe, LinkWriter } from "./link.ts";
-import type { Exec, ExecResult, Files } from "./sys.ts";
+import type { EnvOverride, Exec, ExecResult, Files } from "./sys.ts";
 
 // Fakes for the two seams every verb reaches the world through (cli/sys.ts), shared by the verb
 // suites. TEST-ONLY: nothing under `cli/` that ships imports this, so it never reaches the compiled
@@ -19,26 +22,86 @@ export const HOME = "/home/pat";
 export const HANDLER_FILE = `${CONFIG}/tailscale-managed-handler`;
 export const STATE = "/state";
 
+/**
+ * The key a fake filesystem stores a path under: POSIX, no drive. On Windows `join` and `resolve`
+ * return `C:\opt\collie\bin\collie`; the fakes model a POSIX box, so that folds back to
+ * `/opt/collie/bin/collie`. Without a host the fold always runs, because a test that pins a Windows
+ * host on Linux hands the fakes Windows spellings too. Pass a host to ask what that host would do:
+ * only `win32` folds.
+ */
+export function posixKey(p: string, host?: Host): string {
+  return host === undefined || host.platform === "win32" ? p.replace(/^[A-Za-z]:/, "").replaceAll("\\", "/") : p;
+}
+
+/** A map that folds its keys with {@link posixKey}, so a test may name a path in either spelling. */
+class PathMap<V> extends Map<string, V> {
+  override get(key: string): V | undefined {
+    return super.get(posixKey(key));
+  }
+  override set(key: string, value: V): this {
+    return super.set(posixKey(key), value);
+  }
+  override has(key: string): boolean {
+    return super.has(posixKey(key));
+  }
+  override delete(key: string): boolean {
+    return super.delete(posixKey(key));
+  }
+}
+
+/** A set of paths that folds its members the same way. */
+class PathSet extends Set<string> {
+  override add(value: string): this {
+    return super.add(posixKey(value));
+  }
+  override has(value: string): boolean {
+    return super.has(posixKey(value));
+  }
+  override delete(value: string): boolean {
+    return super.delete(posixKey(value));
+  }
+}
+
 export interface FakeExec extends Exec {
   /**
    * `<tool> <args…>` for every call, in order. A {@link Exec.runIn} call is recorded with its
    * working directory prefixed — `<cwd>$ <tool> <args…>` — because for the build steps the cwd IS
-   * the difference between installing the root tree and installing `web/`.
+   * the difference between installing the root tree and installing `web/`. A `pathPrefix` is
+   * recorded the way a shell would write it: `<cwd>$ PATH=<dir>:$PATH <tool> <args…>`.
    */
   calls: string[];
   killed: number[];
+  /** Every {@link Exec.processCommand} probe, with the bound it asked for (absent = the default). */
+  probed: { pid: number; timeoutMs?: number }[];
+  /** Every {@link Exec.listProcesses} call, by the executable names it asked for. */
+  listed: string[][];
   spawned: { command: string[]; env: Record<string, string>; logPath: string }[];
+  /**
+   * Every {@link Exec.runLogged} call — the command, its log path and the bound it was given. The
+   * bound is recorded because the handoff's whole guarantee is that this call is bounded at all.
+   */
+  ran: { command: string[]; cwd: string; env: Record<string, string>; logPath: string; timeoutMs: number }[];
   /** Every {@link Exec.capture} call that named a timeout — the call line and the bound it passed. */
   timeouts: { call: string; ms: number }[];
+  /**
+   * Every {@link Exec.capture} or {@link Exec.runIn} call that passed an `envOverride`: the call line
+   * as {@link FakeExec.calls} spells it, and the override. A call without one is not recorded, so a
+   * test can tell "passed nothing" from "passed an empty override" only by its absence here.
+   */
+  overrides: { call: string; env: EnvOverride }[];
 }
 
 /**
  * An answer that varies with how many times its prefix has matched — `n` is 1 on the first match.
  * Wrapped in an object rather than left as a bare function so the two forms are told apart by the
  * property they carry, not by what `typeof` says about them.
+ *
+ * `env` is that {@link Exec.capture} call's `envAdd`, when it passed one — undefined otherwise. It
+ * lets a scripted answer depend on what a caller like `systemdUserReachable` retried WITH, without
+ * a second, env-matching answer table.
  */
 export interface PerCallAnswer {
-  perCall: (n: number) => Partial<ExecResult>;
+  perCall: (n: number, env?: Readonly<Record<string, string>>) => Partial<ExecResult>;
 }
 
 export interface Scripted {
@@ -48,48 +111,139 @@ export interface Scripted {
   answers?: [prefix: string, answer: Partial<ExecResult> | PerCallAnswer][];
   /** The process table, for `ps -p <pid> -o command=`. */
   ps?: Record<number, string>;
+  /** Pids whose {@link Exec.processLookup} cannot be answered: a process table that did not answer in time. */
+  psUnknown?: number[];
+  /** {@link Exec.listProcesses} does not answer (`null`): PowerShell failed or ran past its bound. */
+  listUnknown?: true;
+  /** Pids a kill does not end: access denied (another account's, or an elevated, process). */
+  unkillable?: number[];
   /** pid handed back by a detached spawn. */
   spawnPid?: number | null;
+  /**
+   * What a {@link Exec.runLogged} client answers, by `<tool> <args…>` prefix; the first match wins.
+   * `hang: true` is the wedged manager — the call spends the caller's whole bound and comes back as
+   * a timeout, which is the branch no exit code can state.
+   */
+  logged?: [prefix: string, answer: { code?: number; stdout?: string; stderr?: string; hang?: true }][];
+  /**
+   * Where a {@link Exec.runLogged} call's output goes. Wire it to the suite's own {@link fakeFiles}
+   * so a test can read the runner log the operator is told to read; unset, the output is dropped.
+   */
+  logSink?: (path: string, text: string) => void;
 }
 
 export function fakeExec(scripted: Scripted = {}): FakeExec {
   const calls: string[] = [];
   const killed: number[] = [];
+  const probed: { pid: number; timeoutMs?: number }[] = [];
+  const listed: string[][] = [];
   const timeouts: { call: string; ms: number }[] = [];
   const spawned: { command: string[]; env: Record<string, string>; logPath: string }[] = [];
+  const ran: {
+    command: string[];
+    cwd: string;
+    env: Record<string, string>;
+    logPath: string;
+    timeoutMs: number;
+  }[] = [];
   const absent = new Set(scripted.absent ?? []);
   const seen = new Map<string, number>();
-  const answer = (tool: string, args: readonly string[], cwd?: string): ExecResult => {
-    const line = (cwd === undefined ? "" : `${cwd}$ `) + [tool, ...args].join(" ");
+  const answer = (
+    tool: string,
+    args: readonly string[],
+    cwd?: string,
+    pathPrefix?: string,
+    envAdd?: Readonly<Record<string, string>>,
+  ): ExecResult => {
+    const line =
+      (cwd === undefined ? "" : `${cwd}$ `) +
+      (pathPrefix === undefined ? "" : `PATH=${pathPrefix}:$PATH `) +
+      [tool, ...args].join(" ");
     calls.push(line);
     if (absent.has(tool)) return { code: 127, stdout: "", stderr: "", found: false };
     for (const [prefix, a] of scripted.answers ?? []) {
       if (!line.startsWith(prefix)) continue;
       const n = (seen.get(prefix) ?? 0) + 1;
       seen.set(prefix, n);
-      const resolved = "perCall" in a ? a.perCall(n) : a;
+      const resolved = "perCall" in a ? a.perCall(n, envAdd) : a;
       return { code: 0, stdout: "", stderr: "", found: true, ...resolved };
     }
     return { code: 0, stdout: "", stderr: "", found: true };
   };
+  const overrides: { call: string; env: EnvOverride }[] = [];
+  const noteOverride = (env: EnvOverride | undefined): void => {
+    if (env !== undefined) overrides.push({ call: calls.at(-1) ?? "", env });
+  };
   return {
     calls,
     killed,
+    probed,
+    listed,
     spawned,
+    ran,
     timeouts,
+    overrides,
     which: (tool) => (absent.has(tool) ? null : `/fake/${tool}`),
-    capture: (tool, args, timeoutMs) => {
-      const r = answer(tool, args);
+    capture: (tool, args, timeoutMs, envAdd, envOverride) => {
+      const r = answer(tool, args, undefined, undefined, envAdd);
+      noteOverride(envOverride);
       if (timeoutMs !== undefined) timeouts.push({ call: [tool, ...args].join(" "), ms: timeoutMs });
       return r;
     },
     inherit: (tool, args) => answer(tool, args),
-    runIn: (tool, args, cwd) => answer(tool, args, cwd),
+    runIn: (tool, args, cwd, pathPrefix, envOverride) => {
+      const r = answer(tool, args, cwd, pathPrefix);
+      noteOverride(envOverride);
+      return r;
+    },
+    runLogged(command, opts) {
+      const line = command.join(" ");
+      calls.push(line);
+      ran.push({
+        command: [...command],
+        cwd: opts.cwd,
+        env: opts.env,
+        logPath: opts.logPath,
+        timeoutMs: opts.timeoutMs,
+      });
+      const scriptedAnswer = (scripted.logged ?? []).find(([prefix]) => line.startsWith(prefix))?.[1] ?? {};
+      const timedOut = scriptedAnswer.hang === true;
+      const text = `${scriptedAnswer.stdout ?? ""}${scriptedAnswer.stderr ?? ""}`;
+      if (text !== "") scripted.logSink?.(opts.logPath, text);
+      return { code: timedOut ? 124 : (scriptedAnswer.code ?? 0), timedOut, stderr: scriptedAnswer.stderr ?? "" };
+    },
     spawnDetached(command, opts) {
       spawned.push({ command: [...command], env: opts.env, logPath: opts.logPath });
       return scripted.spawnPid === undefined ? 4242 : scripted.spawnPid;
     },
-    processCommand: (pid) => scripted.ps?.[pid] ?? null,
+    processCommand: (pid, timeoutMs) => {
+      probed.push(timeoutMs === undefined ? { pid } : { pid, timeoutMs });
+      return scripted.ps?.[pid] ?? null;
+    },
+    // The same table, three answers: a scripted row runs, a `psUnknown` pid cannot be asked about,
+    // and anything else is gone. Recorded in `probed` like `processCommand`, for the same bound checks.
+    processLookup: (pid, timeoutMs) => {
+      probed.push(timeoutMs === undefined ? { pid } : { pid, timeoutMs });
+      if (scripted.psUnknown?.includes(pid) === true) return { kind: "unknown", why: "PowerShell did not answer within 60s" };
+      const command = scripted.ps?.[pid];
+      // A killed process is gone from the next lookup, as from the next listing, unless it is unkillable.
+      const ended = killed.includes(pid) && scripted.unkillable?.includes(pid) !== true;
+      return command === undefined || ended ? { kind: "gone" } : { kind: "running", command };
+    },
+    // The scripted process table, minus what this fake has killed, and only the rows whose command
+    // names one of the executables asked for: a killed process is gone from the next listing.
+    listProcesses: (names) => {
+      listed.push([...names]);
+      if (scripted.listUnknown === true) return null;
+      const stems = names.map((n) => n.replace(/\.exe$/i, "").toLowerCase());
+      return Object.entries(scripted.ps ?? {})
+        .map(([pid, command]) => ({ pid: Number(pid), command }))
+        .filter(
+          (row) =>
+            (!killed.includes(row.pid) || scripted.unkillable?.includes(row.pid) === true) &&
+            stems.some((st) => row.command.toLowerCase().includes(st)),
+        );
+    },
     kill: (pid) => void killed.push(pid),
   };
 }
@@ -103,57 +257,166 @@ export interface FakeFiles extends Files {
   entries: Map<string, { text: string; mode?: number }>;
   /** Paths `remove` refuses to delete — the `rm -f` failures teardown must survive. */
   undeletable: Set<string>;
+  /** Paths owned by uid 0 — how a test states a package-manager-owned tree. Everything else reads as uid 1000. */
+  rootOwned: Set<string>;
+  /** Paths this process may not write — how a test states a read-only root. Everything else is writable. */
+  readOnly: Set<string>;
+  /**
+   * Paths that exist but carry no execute bit — how a test states the shell's `[ -x ]` saying no.
+   * Everything seeded is executable by default, because almost every seeded path is a data file no
+   * test ever runs, and the one lookup that asks ({@link resolveTool}) only ever asks about tools.
+   */
+  notExecutable: Set<string>;
+  /**
+   * Inode and mtime per path — how a test states that the running executable and the file at its
+   * path are two different files. Anything not named here reads as one shared inode and mtime 0,
+   * which is a machine whose process and files agree.
+   */
+  stats: Map<string, { inode: number; mtimeMs: number }>;
+  /** Symlink targets by path — `/proc/<pid>/exe` above all. */
+  links: Map<string, string>;
+  /** Explicit non-file entry types, for safety checks that must not follow a symlink. */
+  entryTypes: Map<string, "directory" | "symlink" | "other">;
+  /** Canonical paths for entries whose realpath differs from their lexical path. */
+  realPaths: Map<string, string>;
+  /** Directories a strict listing cannot read. */
+  unlistable: Set<string>;
+  /** Rename destinations or sources that fail, for publication failure paths. */
+  unrenamable: Set<string>;
   /** Destructive filesystem operations in order: `rm -rf <p>` / `mv <from> <to>`. Ordering is the assertion `build` lives or dies by. */
   ops: string[];
 }
 
 export function fakeFiles(seed: SeededFiles = {}): FakeFiles {
-  const entries = new Map<string, { text: string; mode?: number }>();
+  const entries = new PathMap<{ text: string; mode?: number }>();
   for (const [p, text] of Object.entries(seed)) entries.set(p, { text });
-  const undeletable = new Set<string>();
+  const undeletable = new PathSet();
+  const rootOwned = new PathSet();
+  const readOnly = new PathSet();
+  const notExecutable = new PathSet();
+  const stats = new PathMap<{ inode: number; mtimeMs: number }>();
+  const links = new PathMap<string>();
+  const entryTypes = new PathMap<"directory" | "symlink" | "other">();
+  const realPaths = new PathMap<string>();
+  const unlistable = new PathSet();
+  const unrenamable = new PathSet();
   const ops: string[] = [];
+  let tempDirs = 0;
   // Paths are a flat set, so a "directory" is whatever entries sit under it — enough to model the
   // staging swap, whose whole content is `web/dist/**`.
   const under = (p: string): string[] =>
-    [...entries.keys()].filter((k) => k === p || k.startsWith(`${p}/`));
-  return {
+    [...new Set([...entries.keys(), ...entryTypes.keys()])].filter((k) => k === p || k.startsWith(`${p}/`));
+  const raw: FakeFiles = {
     entries,
     undeletable,
+    rootOwned,
+    readOnly,
+    notExecutable,
+    stats,
+    links,
+    entryTypes,
+    realPaths,
+    unlistable,
+    unrenamable,
     ops,
+    ownerUid: (p) => (rootOwned.has(p) ? 0 : 1000),
+    writable: (p) => !readOnly.has(p),
     exists: (p) => under(p).length > 0,
+    executable: (p) => under(p).length > 0 && !notExecutable.has(p),
     read: (p) => entries.get(p)?.text ?? null,
+    digest: (p) => {
+      const text = entries.get(p)?.text;
+      return text === undefined ? null : new Bun.CryptoHasher("sha256").update(text).digest("hex");
+    },
+    entryType: (p) =>
+      entryTypes.get(p) ?? (entries.has(p) ? "file" : under(p).some((k) => k !== p) ? "directory" : null),
     list: (p) => [
       ...new Set(
-        [...entries.keys()]
+        [...entries.keys(), ...entryTypes.keys()]
           .filter((k) => k.startsWith(`${p}/`))
           .map((k) => k.slice(p.length + 1).split("/")[0]!),
       ),
     ],
+    listStrict(p) {
+      if (unlistable.has(p)) throw new Error(`EACCES: cannot read ${p}`);
+      return [
+        ...new Set(
+          [...entries.keys(), ...entryTypes.keys()]
+            .filter((k) => k.startsWith(`${p}/`))
+            .map((k) => k.slice(p.length + 1).split("/")[0]!),
+        ),
+      ];
+    },
+    realpath: (p) => realPaths.get(p) ?? (under(p).length > 0 ? p : null),
+    mkdtemp(prefix) {
+      const p = `${prefix}${++tempDirs}`;
+      entryTypes.set(p, "directory");
+      return p;
+    },
     write: (p, text, mode) => void entries.set(p, { text, mode }),
-    mkdirp: () => {},
+    mkdirp: (p) => void entryTypes.set(p, "directory"),
     remove: (p) => {
       if (undeletable.has(p)) return;
       entries.delete(p);
+      entryTypes.delete(p);
     },
     removeTree: (p) => {
       ops.push(`rm -rf ${p}`);
-      for (const k of under(p)) if (!undeletable.has(k)) entries.delete(k);
-    },
-    rename: (from, to) => {
-      ops.push(`mv ${from} ${to}`);
-      for (const k of under(from)) {
-        const value = entries.get(k)!;
+      for (const k of under(p)) {
+        if (undeletable.has(k)) continue;
         entries.delete(k);
-        entries.set(to + k.slice(from.length), value);
+        entryTypes.delete(k);
       }
     },
+    stat: (p) => stats.get(p) ?? (under(p).length > 0 ? { inode: 1, mtimeMs: 0 } : null),
+    readlink: (p) => links.get(p) ?? null,
+    rename: (from, to) => {
+      ops.push(`mv ${from} ${to}`);
+      if (unrenamable.has(from) || unrenamable.has(to)) throw new Error("EACCES: rename refused");
+      for (const k of under(from)) {
+        const value = entries.get(k);
+        const type = entryTypes.get(k);
+        entries.delete(k);
+        entryTypes.delete(k);
+        if (value !== undefined) entries.set(to + k.slice(from.length), value);
+        if (type !== undefined) entryTypes.set(to + k.slice(from.length), type);
+      }
+    },
+  };
+  // The seeded keys are POSIX. Code under test builds paths with `join` and `resolve`, which hand
+  // back `C:\opt\collie\bin` on Windows, so every path that comes in is folded to the key a test wrote.
+  const one = <A extends unknown[], R>(f: (p: string, ...rest: A) => R) =>
+    (p: string, ...rest: A): R => f(posixKey(p), ...rest);
+  return {
+    ...raw,
+    ownerUid: one(raw.ownerUid),
+    writable: one(raw.writable),
+    exists: one(raw.exists),
+    executable: one(raw.executable),
+    read: one(raw.read),
+    digest: one(raw.digest),
+    entryType: one(raw.entryType),
+    list: one(raw.list),
+    listStrict: one(raw.listStrict),
+    // These two RETURN a path the code under test then compares with one it built itself (`compilePaths`:
+    // `realpath(bin) !== bin`; `createOwnedDirectory`: `dirname(mkdtemp(prefix)) !== bin`), so the answer
+    // keeps the caller's spelling; only the lookup is folded.
+    realpath: (p) => (raw.realpath(posixKey(p)) === null ? null : (raw.realPaths.get(p) ?? p)),
+    mkdtemp: (prefix) => `${prefix}${raw.mkdtemp(posixKey(prefix)).slice(posixKey(prefix).length)}`,
+    write: one(raw.write),
+    mkdirp: one(raw.mkdirp),
+    remove: one(raw.remove),
+    removeTree: one(raw.removeTree),
+    stat: one(raw.stat),
+    readlink: one(raw.readlink),
+    rename: (from, to) => raw.rename(posixKey(from), posixKey(to)),
   };
 }
 
 export interface FakeLinkFs extends LinkWriter {
   /** The destination, as this fake models it: absolute path → what is there. */
   entries: Map<string, LinkProbe>;
-  /** `mkdirp <p>` / `symlink <target> <at>` / `rm <at>`, in order. */
+  /** `mkdirp <p>` / `symlink <target> <at>` / `rm <at>` / `junction <target> <at>`, in order. */
   ops: string[];
   /** Paths whose write fails — the `~/.local/bin` an operator cannot write to. */
   readonly: Set<string>;
@@ -164,24 +427,34 @@ export interface FakeLinkFs extends LinkWriter {
  * because every decision this seam feeds is made from the destination alone.
  */
 export function fakeLinkFs(seed: Record<string, LinkProbe> = {}): FakeLinkFs {
-  const entries = new Map<string, LinkProbe>(Object.entries(seed));
+  // Keys fold through `posixKey` like every other fake path (see `fakeFiles`): a seed or a probe may
+  // spell a path either way. A link TARGET is stored as written, because the code under test compares
+  // it against a path it built itself (`classifyLink`: `probe.target === own`) and a folded target
+  // would never match on Windows.
+  const entries = new PathMap<LinkProbe>();
+  for (const [p, probe] of Object.entries(seed)) entries.set(p, probe);
   const ops: string[] = [];
-  const readonlyPaths = new Set<string>();
+  const readonlyPaths = new PathSet();
   return {
     entries,
     ops,
     readonly: readonlyPaths,
     probe: (p) => entries.get(p) ?? { kind: "absent" },
-    mkdirp: (p) => void ops.push(`mkdirp ${p}`),
+    mkdirp: (p) => void ops.push(`mkdirp ${posixKey(p)}`),
     symlink(target, at) {
-      ops.push(`symlink ${target} ${at}`);
+      ops.push(`symlink ${posixKey(target)} ${posixKey(at)}`);
       if (readonlyPaths.has(at)) throw new Error("EACCES: permission denied");
       entries.set(at, { kind: "symlink", target });
     },
     remove(at) {
-      ops.push(`rm ${at}`);
+      ops.push(`rm ${posixKey(at)}`);
       if (readonlyPaths.has(at)) throw new Error("EACCES: permission denied");
       entries.delete(at);
+    },
+    junction(target, at) {
+      ops.push(`junction ${posixKey(target)} ${posixKey(at)}`);
+      if (readonlyPaths.has(at)) throw new Error("EACCES: permission denied");
+      entries.set(at, { kind: "symlink", target });
     },
   };
 }
@@ -193,10 +466,10 @@ export type SeededOps = Readonly<Record<string, OpsRecord>>;
  * The ops store over an in-memory file — how the operator reached each member, with no disk. Kept
  * here rather than in one suite because three of them need it and none of them may write a real one.
  */
-export function fakeOps(seed: SeededOps = {}): PackOpsStore & { contents: () => string | null } {
+export function fakeOps(seed: SeededOps = {}): CrewOpsStore & { contents: () => string | null } {
   let contents: string | null =
     Object.keys(seed).length === 0 ? null : `${JSON.stringify({ version: 1, members: seed }, null, 2)}\n`;
-  const store = new PackOpsStore("/state", {
+  const store = new CrewOpsStore("/state", {
     read: async () => contents,
     write: async (_p, data) => {
       contents = data;
@@ -225,14 +498,97 @@ export function context(
     configDir: CONFIG,
     home: HOME,
     env,
+    // No config file: a fixture that wanted one passes its own layer through `over`.
+    configLayer: emptyConfigLayer(),
     port: 8787,
     serveMode: "https",
     // Derived from the fixture env rather than pinned, exactly as `loadContext` derives it: a test
     // that sets COLLIE_SERVE_PORT would otherwise get a context disagreeing with its own env.
     servePort: effectiveServePort(env),
+    basePath: normaliseBasePath(env.COLLIE_BASE_PATH),
     socket: "/home/pat/.config/herdr/herdr.sock",
     handlerFile: `${CONFIG}/tailscale-managed-handler${instanceSuffix(instance)}`,
     stateDir: STATE,
     ...over,
   };
+}
+
+// ── THE LEG-1 PROBE'S OWN FIELD LIST ────────────────────────────────────────
+//
+// `cli/testdata/leg1-probe.sh` is the golden script a real member runs, and it emits one
+// `collie-probe:<field>=<value>` line per fact. Three suites build a fake probe payload from a
+// `PROBE_DEFAULTS` table of their own, and on 2026-10-01 those tables held 21, 20 and 15 of the 21
+// fields. Two of them were therefore testing their consumers against a payload NO REAL MEMBER
+// SENDS, which is the one thing a fake must never do.
+//
+// So the field list lives here, once, and `cli/probe-contract.test.ts` holds it against the golden
+// script: add a `say` line there and that test fails until this table learns the field. A suite
+// still chooses its own VALUES — a deputy mid-update and a fresh member disagree about almost every
+// one — but it can no longer be short a field, because it spreads this first.
+
+/** Every fact leg 1 reports, in the order the golden script says them. `probe` is the terminator. */
+export const PROBE_FIELDS = [
+  "home",
+  "git",
+  "bun",
+  "herdr",
+  "curl",
+  "tar",
+  "sha256",
+  "configdir",
+  "envhost",
+  "envport",
+  "envmux",
+  "checkout",
+  "checkoutgit",
+  "installroot",
+  "commit",
+  "branch",
+  "dirty",
+  "dirtyfiles",
+  "version",
+  "address",
+  "port",
+] as const;
+
+export type ProbeField = (typeof PROBE_FIELDS)[number];
+
+/**
+ * A complete payload for a member that has been started once and is otherwise untouched.
+ *
+ * `envmux: "herdr"` and not empty, because `collie start` writes `COLLIE_MUX` into the config-dir
+ * `.env` and a solo collie leaves `COLLIE_HOST` unset (`cli/mux.ts`, F23). So the default member has
+ * already chosen, and a case that means to ask its machine seeds `envmux: ""` itself.
+ */
+export function probeDefaults() {
+  return {
+    home: HOME,
+    git: "/usr/bin/git",
+    bun: `${HOME}/.bun/bin/bun`,
+    herdr: "/usr/local/bin/herdr",
+    curl: "/usr/bin/curl",
+    tar: "/usr/bin/tar",
+    sha256: "/usr/bin/sha256sum",
+    configdir: `${HOME}/.config/herdr/plugins/config/herdr.collie`,
+    envhost: "",
+    envport: "",
+    envmux: "herdr",
+    checkout: "",
+    checkoutgit: "",
+    installroot: "",
+    commit: "",
+    branch: "",
+    dirty: "",
+    dirtyfiles: "",
+    version: "",
+    address: "100.64.0.9",
+    port: "free",
+  } satisfies Record<ProbeField, string>;
+}
+
+/** The payload as leg 1 prints it: one line per field, then the terminator. */
+export function probeOutput(over: Partial<Record<ProbeField, string>> = {}): string {
+  const all = { ...probeDefaults(), ...over };
+  const lines = PROBE_FIELDS.map((field) => `collie-probe:${field}=${all[field]}`);
+  return [...lines, "collie-probe:probe=ok", ""].join("\n");
 }

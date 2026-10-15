@@ -5,10 +5,12 @@ import com.lateapex.collie.network.BridgeConfigResponse
 import com.lateapex.collie.network.SttCapability
 import com.lateapex.collie.network.SttResponse
 import com.lateapex.collie.network.UploadResponse
+import com.lateapex.collie.network.UploadSource
 import java.io.ByteArrayInputStream
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -27,15 +29,49 @@ class ComposerMediaTest {
         override val imageUnreadable = "The selected image could not be read."
         override val imageTooLarge = "That image is too large — 10 MB is the limit."
         override val imageEmpty = "The selected image is empty."
+        override val attachmentAdded = "File attached."
+        override val attachmentUploadSubject = "Attachment upload"
+        override val attachmentUploadNoResult = "Attachment upload returned no result."
+        override val attachmentUploadRefused = "Server refused the attachment."
         override fun providerUnavailable(provider: String) = "$provider is unavailable."
         override fun failure(subject: String, failure: com.lateapex.collie.network.ApiFailure) = subject
     }
+    @Test
+    fun thumbnailSamplingBoundsBothDimensionsEvenForExtremePanoramas() {
+        listOf(200_000 to 1, 1 to 200_000, 16_000 to 12_000, Int.MAX_VALUE to 1).forEach { (width, height) ->
+            val sample = ComposerMedia.thumbnailSample(width, height, 32)
+            assertTrue(width / sample <= 1024)
+            assertTrue(height / sample <= 1024)
+            assertEquals(1, Integer.bitCount(sample))
+        }
+    }
+
     @Test
     fun boundedReadAcceptsTheLimitAndRejectsOneByteMore() {
         val exact = ByteArray(16) { it.toByte() }
 
         assertArrayEquals(exact, ComposerMedia.readBounded(ByteArrayInputStream(exact), 16))
         assertNull(ComposerMedia.readBounded(ByteArrayInputStream(ByteArray(17)), 16))
+    }
+
+    @Test fun genericDocumentUploadMapsOnlyTheReturnedServerPathIntoTheDraft() = runBlocking {
+        val file = java.io.File.createTempFile("collie-upload-test-", ".part").apply { writeText("safe") }
+        val source = UploadSource.Document("brief.txt", "text/plain", file, file.length())
+        val result = actions(BridgeConfigResponse()).uploadDocument(source) {
+            ApiResult.Success(UploadResponse(ok = true, path = "/tmp/brief.txt"), 200)
+        }
+        assertEquals(ComposerMediaResult.Draft("/tmp/brief.txt", "File attached."), result)
+        source.dispose()
+    }
+
+    @Test fun genericUploadDisplaysStructuredServerRefusalWithoutRetry() = runBlocking {
+        val file = java.io.File.createTempFile("collie-upload-test-", ".part").apply { writeText("bad") }
+        val source = UploadSource.Document("brief.txt", "text/plain", file, file.length())
+        val result = actions(BridgeConfigResponse()).uploadDocument(source) {
+            ApiResult.Success(UploadResponse(ok = false, error = "unsupported"), 200)
+        }
+        assertEquals(ComposerMediaResult.Failure("Server refused the attachment."), result)
+        source.dispose()
     }
 
     @Test

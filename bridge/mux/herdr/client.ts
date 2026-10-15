@@ -1,7 +1,25 @@
-import type { JsonObject } from "../../json.ts";
+import { strictAgentJson } from "../../control/agent-requests.ts";
+import { agentObject, agentString, parseAgentControlInfo, agentEventMatch, type WireAgentControlInfo } from "./agent-codecs.ts";
+import { AGENT_LIMITS, type AgentAction, type AgentEventCondition, type AgentWaitCondition } from "../../control/agent-models.ts";
+import type { JsonObject, JsonValue } from "../../json.ts";
+
+function expectHerdrType(response: JsonObject, type: string): JsonObject {
+  if (response.type !== type) throw new Error(`herdr response: expected ${type}`);
+  return response;
+}
+function hasControlCharacters(value: string): boolean {
+  return Array.from(value).some((character) => { const code = character.codePointAt(0) ?? 0; return code < 0x20 || code === 0x7f; });
+}
+import { HOST } from "../../host.ts";
+import { statSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { readWindowsPipeWitness } from "./windows-pipe-witness.ts";
 import type { AgentStatus } from "../../types.ts";
-import { dialHerdr, type DialMode, type SockHandle } from "../../dial.ts";
+import { WriteAdmissionRetired, dialHerdr, type DialMode, type SockHandle } from "../../dial.ts";
 import { decodeReplyLine, decodeStreamLine, type EventData } from "../../wire.ts";
+import { redactText } from "../../redact.ts";
+import { randomUUID } from "node:crypto";
+import { INTEGRATION_TARGETS, type AgentManifestSnapshot, type AgentManifestSummary, type IntegrationTarget, type IntegrationSummary, type HostMutationResult } from "../../host-control/types.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The Herdr socket TRANSPORT. THIS IS THE ONLY FILE that knows Herdr's method
@@ -13,6 +31,14 @@ import { decodeReplyLine, decodeStreamLine, type EventData } from "../../wire.ts
 // Key fact: RPC is ONE-SHOT — the server closes the connection after a single
 // response. So every request opens a fresh connection, reads one line, closes.
 // ─────────────────────────────────────────────────────────────────────────────
+
+/** Identity reported by the vendor ping; this alone grants no feature authority. */
+export interface HerdrHandshake { readonly version: string; readonly protocol: number; readonly paneOriginalMetadataV1?: boolean; readonly agentViewReadV1?: boolean; readonly pluginUserDirsV1?: boolean; readonly pluginOwnerOperationsV1?: boolean }
+export interface HerdrMetadataProtocolCapabilities { readonly paneOriginalMetadataV1: boolean; readonly agentViewReadV1: boolean }
+export type HerdrMoveDestination =
+  | { readonly type: "tab"; readonly tab_id: string; readonly split: "right" | "down"; readonly target_pane_id: string; readonly ratio: number | null }
+  | { readonly type: "new_tab"; readonly workspace_id: string; readonly label: string | null }
+  | { readonly type: "new_workspace"; readonly label: string | null; readonly tab_label: string | null };
 
 /** Raw wire shape of a workspace from `workspace.list`. */
 /** The repo a workspace sits in, as Herdr reports it on the workspace record itself. */
@@ -33,8 +59,35 @@ export interface WireWorkspace {
   tab_count: number;
   active_tab_id: string;
   agent_status: AgentStatus;
-  /** Present when the workspace sits in a Git work tree — probed 2026-08-28 on herdr 0.8.2. */
+  /**
+   * Present when the workspace sits in a Git work tree — probed 2026-08-28 on herdr 0.8.2.
+   *
+   * Still in herdr 0.9.3's schema (protocol 22) but no longer sent for a plain workspace: probed
+   * 2026-10-07, `workspace.list` and `session.snapshot` omit it on every workspace, Git ones
+   * included. The repo is read from {@link HerdrClient.workspaceWorktrees} instead (adapter.ts).
+   */
   worktree?: WireWorkspaceWorktree | null;
+}
+
+/**
+ * The repo a `worktree.list` answer is about — its `source` object (herdr 0.9.3, protocol 22).
+ *
+ * `source_checkout_path` is NOT the asked workspace's own checkout: probed 2026-10-07, asked from
+ * inside a linked worktree it still names the repo's main checkout. Which checkout the workspace
+ * sits in is the `worktrees` entry whose `open_workspace_id` is that workspace.
+ */
+export interface WireWorktreeSource {
+  repo_root: string;
+  repo_key?: string;
+  repo_name?: string;
+  source_checkout_path?: string;
+  source_workspace_id?: string | null;
+}
+
+/** A whole `worktree.list` answer: the repo, and every checkout of it. */
+export interface WireWorktreeListing {
+  source: WireWorktreeSource;
+  worktrees: WireWorktree[];
 }
 
 /**
@@ -74,6 +127,7 @@ export interface WirePane {
   focused: boolean;
   cwd: string;
   foreground_cwd?: string;
+  restore_error?: string | null;
   agent?: string | null;
   agent_status: AgentStatus;
   /** User-set pane label (herdr `pane.rename`). Present only once set — the key disappears when
@@ -117,15 +171,110 @@ export interface WirePane {
    * +1 is the trailing newline). Exact once scrollback exists; an OVER-estimate on a near-empty
    * screen, where trailing blank rows are trimmed from the read (0+31 → 4 lines read).
    *
-   * This is the only trustworthy "is there more to load" signal Herdr gives us — `PaneRead.truncated`
-   * is ALWAYS false, even when a read demonstrably cut scrollback off (200 requested of 6895
-   * available still reports `truncated: false`). Gate on this, never on `truncated`.
+   * This is the reported pane scroll-ring depth, not proof that an agent's alternate-screen output is
+   * recoverable. Herdr 0.9.3 also reports `PaneRead.truncated` when its bounded line helper omits
+   * rows; retain both facts without treating `truncated: false` as exhaustive history.
    */
   scroll?: {
     offset_from_bottom: number;
     max_offset_from_bottom: number;
     viewport_rows: number;
   } | null;
+}
+
+/** Read-only `agent.get` payload from the pinned Herdr protocol. */
+export interface WireAgentInfo {
+  pane_id: string;
+  agent?: string | null;
+  agent_status: AgentStatus;
+  agent_session?: {
+    source: string;
+    agent: string;
+    kind: "id" | "path";
+    value: string;
+  } | null;
+  interactive_ready?: boolean;
+  launch_pending?: boolean;
+  state_change_seq?: string;
+  completion_seq?: string | null;
+}
+
+function parseWireAgentInfo(value: JsonValue, exactUint64Marker: string): WireAgentInfo {
+  const row = wireObject(value, "agent row");
+  const paneId = wireText(row, "pane_id");
+  const rawAgent = row.agent;
+  if (rawAgent !== undefined && rawAgent !== null && typeof rawAgent !== "string") {
+    throw new Error("herdr agent.get: malformed agent");
+  }
+  const rawStatus = row.agent_status;
+  const status = parseAgentStatus(rawStatus);
+  if (status === null) throw new Error("herdr agent.get: malformed agent_status");
+  const sequence = (field: string): string | null => {
+    const raw = row[field];
+    if (raw === undefined || raw === null) return null;
+    if (typeof raw === "string" && raw.startsWith(`\u0000collie.uint64.${exactUint64Marker}.`)) {
+      const exact = raw.slice(`\u0000collie.uint64.${exactUint64Marker}.`.length);
+      if (!/^(0|[1-9][0-9]{0,19})$/.test(exact) || BigInt(exact) > 18_446_744_073_709_551_615n) {
+        throw new Error(`herdr agent.get: malformed ${field}`);
+      }
+      return exact;
+    }
+    if (typeof raw === "string") throw new Error(`herdr agent.get: malformed ${field}`);
+    if (typeof raw !== "number" || !Number.isSafeInteger(raw) || raw < 0) {
+      throw new Error(`herdr agent.get: malformed ${field}`);
+    }
+    return String(raw);
+  };
+  const optionalBoolean = (field: string): boolean | undefined => {
+    const raw = row[field];
+    if (raw === undefined) return undefined;
+    if (typeof raw !== "boolean") throw new Error(`herdr agent.get: malformed ${field}`);
+    return raw;
+  };
+  const rawSession = row.agent_session;
+  let session: WireAgentInfo["agent_session"];
+  if (rawSession === undefined || rawSession === null) {
+    session = rawSession;
+  } else {
+    const ref = wireObject(rawSession, "agent_session");
+    const kind = wireText(ref, "kind");
+    if (kind !== "id" && kind !== "path") throw new Error("herdr agent.get: malformed agent_session.kind");
+    session = {
+      source: wireText(ref, "source"),
+      agent: wireText(ref, "agent"),
+      kind,
+      value: wireText(ref, "value"),
+    };
+  }
+  const info: WireAgentInfo = {
+    pane_id: paneId,
+    agent: rawAgent,
+    agent_status: status,
+    agent_session: session,
+    state_change_seq: sequence("state_change_seq") ?? undefined,
+    completion_seq: sequence("completion_seq"),
+  };
+  const interactiveReady = optionalBoolean("interactive_ready");
+  const launchPending = optionalBoolean("launch_pending");
+  if (interactiveReady !== undefined) info.interactive_ready = interactiveReady;
+  if (launchPending !== undefined) info.launch_pending = launchPending;
+  return info;
+}
+
+function parseAgentStatus(value: JsonValue | undefined): AgentStatus | null {
+  switch (value) {
+    case "idle": case "working": case "blocked": case "done": case "unknown": return value;
+    default: return null;
+  }
+}
+
+function validWireSession(value: WirePane["agent_session"]): boolean {
+  return value === undefined || value === null || (
+    typeof value === "object" && typeof value.source === "string" && value.source.trim() !== "" &&
+    typeof value.agent === "string" && value.agent.trim() !== "" &&
+    (value.kind === "id" || value.kind === "path") &&
+    typeof value.value === "string" && value.value.trim() !== ""
+  );
 }
 
 /**
@@ -155,6 +304,243 @@ export interface PaneRead {
   text: string;
   truncated: boolean;
   revision: number;
+}
+
+/** `pane.process_info` result from the pinned protocol schema (protocol 22/schema 1). */
+export interface WirePaneProcessInfo {
+  runtime_incarnation?: string;
+  original_binding?: string;
+  original_incarnation?: string;
+  original_epoch?: string;
+  pane_id: string;
+  shell_pid?: number | null;
+  foreground_process_group_id?: number | null;
+  foreground_processes: Array<{
+    pid: number;
+    name: string;
+    argv?: string[] | null;
+    argv0?: string | null;
+    cmdline?: string | null;
+    cwd?: string | null;
+  }>;
+  tty?: string | null;
+  /** Parser metadata, not a Herdr field. True when the wire list exceeded Collie's output bound. */
+  truncated?: boolean;
+}
+
+const MAX_PROCESS_INFO_REPLY_CHARS = 1_000_000;
+const MAX_PROCESSES = 64;
+const MAX_PROCESS_ARGS = 64;
+
+function wireObject(value: JsonValue | undefined, field: string): JsonObject {
+  if (value === null || value === undefined || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error(`herdr pane.process_info: malformed ${field}`);
+  }
+  return value;
+}
+
+function wireText(row: JsonObject, field: string): string;
+function wireText(row: JsonObject, field: string, optional: true): string | undefined;
+function wireText(row: JsonObject, field: string, optional = false): string | undefined {
+  const value = row[field];
+  if (value === undefined || value === null) {
+    if (optional) return undefined;
+    throw new Error(`herdr pane.process_info: missing ${field}`);
+  }
+  if (typeof value !== "string") throw new Error(`herdr pane.process_info: malformed ${field}`);
+  return value;
+}
+
+function integrationTarget(value: JsonValue | undefined): IntegrationTarget | null {
+  if (value === undefined || value === null || Array.isArray(value)) return null;
+  return INTEGRATION_TARGETS.find((target) => target === value) ?? null;
+}
+
+function integrationRows(value: JsonValue | undefined): readonly IntegrationSummary[] {
+  if (!Array.isArray(value) || value.length > INTEGRATION_TARGETS.length) throw new Error("herdr integration.list: malformed integrations");
+  const seen = new Set<string>();
+  return value.map((item) => {
+    if (item === null || typeof item !== "object" || Array.isArray(item)) throw new Error("herdr integration.list: malformed integration");
+    // SAFETY: null and arrays were excluded; this value is one JSON object row.
+    const row = item as JsonObject;
+    const target = integrationTarget(row.target);
+    if (!target || seen.has(target)) throw new Error("herdr integration.list: invalid or duplicate target");
+    seen.add(target);
+    const label = wireText(row, "label");
+    const command = wireText(row, "command");
+    if (label.length > 256 || command.length > 512 || typeof row.available !== "boolean" ||
+        (row.state !== "not_installed" && row.state !== "current" && row.state !== "outdated")) {
+      throw new Error("herdr integration.list: malformed integration status");
+    }
+    const optionalVersion = (key: string): string | null | undefined => {
+      const raw = row[key];
+      if (raw === undefined) return undefined;
+      if (raw === null) return null;
+      if (typeof raw !== "string" || raw.length > 128) throw new Error(`herdr integration.list: malformed ${key}`);
+      return raw;
+    };
+    return { target, label, command, available: row.available, state: row.state,
+      installedVersion: optionalVersion("installed_version"), requiredVersion: optionalVersion("required_version") };
+  });
+}
+
+function manifestRows(value: JsonValue | undefined): readonly AgentManifestSummary[] {
+  if (!Array.isArray(value) || value.length > 256) throw new Error("herdr server.agent_manifests: malformed manifests");
+  const rows = value.map((item) => {
+    if (item === null || typeof item !== "object" || Array.isArray(item)) throw new Error("herdr server.agent_manifests: malformed manifest");
+    // SAFETY: null and arrays were excluded; this value is one JSON object row.
+    const row = item as JsonObject;
+    const agent = wireText(row, "agent");
+    const source = wireText(row, "source");
+    const sourceKind = wireText(row, "source_kind");
+    const nullableText = (key: string): string | null => {
+      const raw = row[key];
+      if (raw === undefined || raw === null) return null;
+      if (typeof raw !== "string" || raw.length > 2048) throw new Error(`herdr server.agent_manifests: malformed ${key}`);
+      return raw;
+    };
+    const nullableUnix = (key: string): string | null => {
+      const raw = row[key];
+      if (raw === undefined || raw === null) return null;
+      if (typeof raw === "string") {
+        const encoded = parseEncodedUint64(raw);
+        if (encoded !== null) return encoded;
+      }
+      if (typeof raw !== "number" || !Number.isSafeInteger(raw) || raw < 0) throw new Error(`herdr server.agent_manifests: malformed ${key}`);
+      return String(raw);
+    };
+    if (agent.length > 256 || source.length > 2048 || sourceKind.length > 128 || typeof row.local_override_shadowing_remote !== "boolean") {
+      throw new Error("herdr server.agent_manifests: malformed manifest status");
+    }
+    return {
+      agent, source, sourceKind,
+      activeVersion: nullableText("active_version"),
+      cachedRemoteVersion: nullableText("cached_remote_version"),
+      localOverrideShadowingRemote: row.local_override_shadowing_remote,
+      remoteLastCheckedUnix: nullableUnix("remote_last_checked_unix"),
+      remoteUpdateResult: nullableText("remote_update_result"),
+      remoteUpdateError: nullableText("remote_update_error"),
+      warning: nullableText("warning"),
+    };
+  });
+  const ids = rows.map((row) => row.agent);
+  if (new Set(ids).size !== ids.length) throw new Error("herdr server.agent_manifests: duplicate agent");
+  return rows;
+}
+
+function parseNullableText(value: JsonValue | undefined, field: string): string | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string" || value.length > 2048) throw new Error(`herdr server.agent_manifests: malformed ${field}`);
+  return value;
+}
+
+function parseNullableUint64(value: JsonValue | undefined, field: string): string | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value === "string") {
+    const encoded = parseEncodedUint64(value);
+    if (encoded !== null) return encoded;
+  }
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) throw new Error(`herdr server.agent_manifests: malformed ${field}`);
+  return String(value);
+}
+
+function parseEncodedUint64(value: string): string | null {
+  const parts = value.split(".");
+  if (parts.length !== 4 || parts[0] !== "\u0000collie" || parts[1] !== "uint64" || parts[2] === "") return null;
+  const digits = parts[3]!;
+  if (digits.length < 1 || digits.length > 20 || (digits.length > 1 && digits[0] === "0")) return null;
+  for (const digit of digits) {
+    const code = digit.charCodeAt(0);
+    if (code < 48 || code > 57) return null;
+  }
+  return digits;
+}
+
+function hostMutation(value: JsonValue, type: "integration_install" | "integration_uninstall", target: IntegrationTarget): HostMutationResult {
+  const row = wireObject(value, `${type} result`);
+  if (row.type !== type || integrationTarget(row.target) !== target) throw new Error(`herdr ${type}: result target mismatch`);
+  const details = wireObject(row.details, `${type} details`);
+  if (!Array.isArray(details.messages) || details.messages.length > 64 || !details.messages.every((message) => typeof message === "string" && message.length <= 2048)) {
+    throw new Error(`herdr ${type}: malformed messages`);
+  }
+  const messages: string[] = [];
+  for (const message of details.messages) {
+    if (typeof message !== "string" || message.length > 2048) throw new Error(`herdr ${type}: malformed messages`);
+    messages.push(message);
+  }
+  return { messages };
+}
+
+function wirePid(row: JsonObject, field: string): number | undefined {
+  const value = row[field];
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`herdr pane.process_info: malformed ${field}`);
+  }
+  return value;
+}
+
+/** Parse the pinned vendor result once; omitted rows/args are signalled to the adapter as truncated. */
+function parsePaneProcessInfo(value: JsonValue): WirePaneProcessInfo {
+  const result = wireObject(value, "result");
+  const paneId = wireText(result, "pane_id");
+  const rows = result.foreground_processes ?? [];
+  if (!Array.isArray(rows)) throw new Error("herdr pane.process_info: malformed foreground_processes");
+  let truncated = rows.length > MAX_PROCESSES;
+  const foregroundProcesses: WirePaneProcessInfo["foreground_processes"] = [];
+  for (const entry of rows.slice(0, MAX_PROCESSES)) {
+    const process = wireObject(entry, "foreground process");
+    const pid = wirePid(process, "pid");
+    const name = wireText(process, "name");
+    if (pid === undefined) throw new Error("herdr pane.process_info: missing pid");
+    const argvValue = process.argv;
+    let argv: string[] | undefined;
+    if (argvValue !== undefined && argvValue !== null) {
+      if (!Array.isArray(argvValue) || !argvValue.every((arg) => typeof arg === "string")) {
+        throw new Error("herdr pane.process_info: malformed argv");
+      }
+      if (argvValue.length > MAX_PROCESS_ARGS) truncated = true;
+      argv = argvValue.slice(0, MAX_PROCESS_ARGS).map(redactText);
+    }
+    const parsed: WirePaneProcessInfo["foreground_processes"][number] = { pid, name: redactText(name) };
+    if (argv !== undefined) parsed.argv = argv;
+    const argv0 = wireText(process, "argv0", true);
+    if (argv0 !== undefined) parsed.argv0 = redactText(argv0);
+    const cmdline = wireText(process, "cmdline", true);
+    if (cmdline !== undefined) parsed.cmdline = redactText(cmdline);
+    const cwd = wireText(process, "cwd", true);
+    if (cwd !== undefined) parsed.cwd = redactText(cwd);
+    foregroundProcesses.push(parsed);
+  }
+  const parsed: WirePaneProcessInfo = { pane_id: paneId, foreground_processes: foregroundProcesses, truncated };
+  if (result.runtime_incarnation !== undefined) { const incarnation = wireText(result, "runtime_incarnation"); if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(incarnation)) throw new Error("herdr pane.process_info: invalid runtime incarnation"); parsed.runtime_incarnation = incarnation; }
+  if (result.original_binding !== undefined || result.original_incarnation !== undefined || result.original_epoch !== undefined) {
+    const binding = wireText(result, "original_binding"); const incarnation = wireText(result, "original_incarnation"); const epoch = wireText(result, "original_epoch");
+    if (!/^[a-f0-9]{64}$/.test(binding) || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(incarnation) || !/^(0|[1-9][0-9]{0,19})$/.test(epoch) || BigInt(epoch) > 18_446_744_073_709_551_615n) throw new Error("herdr pane.process_info: invalid original custody");
+    parsed.original_binding = binding; parsed.original_incarnation = incarnation; parsed.original_epoch = epoch;
+  }
+  const shellPid = wirePid(result, "shell_pid");
+  if (shellPid !== undefined) parsed.shell_pid = shellPid;
+  const processGroupId = wirePid(result, "foreground_process_group_id");
+  if (processGroupId !== undefined) parsed.foreground_process_group_id = processGroupId;
+  const tty = wireText(result, "tty", true);
+  if (tty !== undefined) parsed.tty = redactText(tty);
+  return parsed;
+}
+
+/** One foreground process, as `pane.process_info` reports it. argv is null when Herdr could not
+ *  read it — the adapter maps that to no argv rather than failing the whole read. */
+export interface WireForegroundProcess {
+  pid: number;
+  name: string;
+  argv?: string[] | null;
+}
+
+/** Raw wire shape of `pane.process_info`. Only `pane_id` is required by the schema; a pane
+ *  whose processes Herdr cannot list answers without the foreground group. */
+export interface WireProcessInfo {
+  pane_id: string;
+  foreground_processes?: WireForegroundProcess[] | null;
 }
 
 // Wire names are snake_case: `recent-unwrapped` is REJECTED by the server (`unknown variant`,
@@ -192,6 +578,12 @@ type WorkspaceCreateParams = { cwd: string; focus: false; label?: string };
 /** What {@link HerdrClient.subscribeEvents} is asked for. */
 export type SubscribeOptions = {
   subscriptions: Array<{ type: string; pane_id?: string }>;
+  /** Additive bounded observer mode; legacy snapshot pokes retain their original contract. */
+  original?: HerdrDispatchAdmission;
+  signal?: AbortSignal;
+  boundedAgentObserver?: boolean;
+  /** Negotiated producer cursor; mandatory for observations that retire their old anchor. */
+  originalObservationRegistration?: string;
   onUp: () => void;
   onEvent: (event: string, data: EventData) => void;
   onDown: (reason: string) => void;
@@ -215,8 +607,11 @@ export type HerdrRpc = Pick<
   | "sessionSnapshot"
   | "listWorkspaces"
   | "listPanes"
+  | "getAgent"
+  | "getPane"
   | "listTabs"
   | "readPane"
+  | "processInfo"
   | "sendPaneText"
   | "sendPaneKeys"
   | "renamePane"
@@ -225,17 +620,174 @@ export type HerdrRpc = Pick<
   | "createTab"
   | "renameTab"
   | "closeTab"
+  | "focusWorkspace"
+  | "renameWorkspace"
+  | "moveWorkspace"
+  | "moveWorkspaceBlock"
+  | "closeWorkspace"
+  | "focusTab"
+  | "moveTab"
   | "createWorkspace"
   | "listWorktrees"
+  | "workspaceWorktrees"
   | "createWorktree"
   | "openWorktree"
   | "subscribeEvents"
->;
+> & Partial<Pick<HerdrClient,
+  | "getAgentControl" | "listAgentControls" | "readAgentControl" | "actOnAgent" | "explainAgent" | "waitForAgentCondition" | "observeAgentEvent" | "sampleAgentOutputRevision" | "originalAgentObservations" | "originalAgentInputs"
+  | "handshake"
+  | "layoutHandshakeSample"
+  | "layoutRuntimeIdentity"
+  | "metadataProtocolCapabilities"
+  | "removeWorktree"
+  | "retireLayoutRuntime"
+  | "readPaneLayout"
+  | "readPaneNeighbor"
+  | "readPaneEdges"
+  | "exportLayout"
+  | "applyLayout"
+  | "setSplitRatio"
+  | "focusPaneDirection"
+  | "splitPane"
+  | "resizePane"
+  | "zoomPane"
+  | "swapPanes"
+  | "movePane"
+  | "exportLayout"
+  | "applyLayout"
+  | "setSplitRatio"
+  | "listIntegrations"
+  | "installIntegration"
+  | "uninstallIntegration"
+  | "listPlugins"
+  | "listPluginActions"
+  | "listPluginLogs"
+  | "setPluginEnabled"
+  | "unlinkPlugin"
+  | "invokePluginAction"
+  | "openPluginPane"
+  | "focusPluginPane"
+  | "closePluginPane"
+  | "preparePluginUserDirs"
+  | "pluginOwnerContext"
+  | "planPluginInstall"
+  | "applyPluginInstall"
+  | "applyPluginLink"
+  | "planPluginUninstall"
+  | "applyPluginUninstall"
+  | "getPluginOwnerOperation"
+  | "agentManifests"
+  | "reloadAgentManifests"
+  | "reportPaneMetadata"
+  | "reportPaneMetadataOriginal"
+  | "reportWorkspaceMetadata"
+  | "setAgentView"
+  | "clearAgentView"
+  | "getAgentView"
+>>;
 
 let idCounter = 0;
 
 /** Per-request wall-clock budget. Exported so callers can pass it explicitly alongside a dial mode. */
 export const DEFAULT_TIMEOUT_MS = 5000;
+
+/**
+ * The budget of a worktree create or open, per call (ADR 0089). Herdr runs `git worktree add` and
+ * opens a workspace before it answers, and on a large repo that takes far longer than the 5 s every
+ * other call gets. Cut at 5 s, the create still finishes on the host, and the phone is told it failed.
+ */
+export const WORKTREE_TIMEOUT_MS = 60_000;
+
+/** pane.get is read twice for every identity join, so each untrusted reply has a hard wire bound. */
+export const MAX_PANE_REPLY_CHARS = 64 * 1024;
+const UINT64_FIELDS = new Set(["state_change_seq", "completion_seq"]);
+
+/** Quote only JSON numeric tokens belonging to uint64 fields before JSON.parse can round them. */
+function preserveUint64Tokens(line: string, marker: string): string {
+  const edits: Array<{ start: number; end: number; replacement: string }> = [];
+  for (let i = 0; i < line.length;) {
+    if (line[i] !== '"') { i++; continue; }
+    const start = i++;
+    let escaped = false;
+    while (i < line.length) {
+      const ch = line[i++]!;
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') break;
+    }
+    if (line[i - 1] !== '"') break;
+    let key: unknown;
+    try { key = JSON.parse(line.slice(start, i)); } catch { continue; }
+    if (typeof key !== "string" || !UINT64_FIELDS.has(key)) continue;
+    let cursor = i;
+    while (/\s/.test(line[cursor] ?? "")) cursor++;
+    if (line[cursor] !== ":") continue;
+    cursor++;
+    while (/\s/.test(line[cursor] ?? "")) cursor++;
+    const match = /^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?/.exec(line.slice(cursor));
+    if (match) edits.push({ start: cursor, end: cursor + match[0].length, replacement: JSON.stringify(`\u0000collie.uint64.${marker}.${match[0]}`) });
+  }
+  if (edits.length === 0) return line;
+  let output = "";
+  let from = 0;
+  for (const edit of edits) {
+    output += line.slice(from, edit.start) + edit.replacement;
+    from = edit.end;
+  }
+  return output + line.slice(from);
+}
+
+
+/** `worktree.create`'s parameters as Collie sends them. `base` and `path` go on the wire only when set. */
+export interface HerdrWorktreeCreate {
+  cwd: string;
+  branch: string;
+  base?: string;
+  path?: string;
+}
+
+/** Herdr 0.9.3's closed remove-worktree request. Trust is never inferred or added by Collie. */
+export interface HerdrWorktreeRemove {
+  readonly workspace_id: string;
+  readonly force: boolean;
+}
+
+export interface WireWorktreeRemoved {
+  readonly type: "worktree_removed";
+  readonly workspace_id: string;
+  readonly path: string;
+  readonly forced: boolean;
+}
+
+/** Closed parameters for the one-shot, focus-off pane.split mapping. */
+export interface HerdrSplitPaneParams {
+  readonly direction: "right" | "down";
+  readonly ratio: number | null;
+  readonly target_pane_id: string;
+  readonly workspace_id: string;
+  cwd?: string;
+  readonly env: JsonObject;
+  readonly focus: false;
+  readonly right_click: "herdr";
+}
+
+/** Immutable original runtime and actor predicate, never an ambient resampler. */
+export class HerdrAgentRefusal extends Error {
+  constructor(readonly vendorCode: string) { super(`Owning runtime refused agent operation (${vendorCode}).`); }
+}
+
+export interface HerdrDispatchAdmission {
+  readonly runtimeIdentity: string;
+  readonly originalBinding?: string;
+  readonly originalPaneId?: string;
+  readonly observationTimeoutMs?: number;
+  readonly finalAdmission: (runtimeIdentity: string) => boolean;
+  readonly beforeFirstBytes?: (() => Promise<boolean>) | undefined;
+}
+
+export type HerdrLayoutNode =
+  | { readonly type: "pane"; readonly label?: string | null; readonly cwd?: string | null; readonly pane_id?: string | null; readonly command?: readonly string[] | null; readonly env?: Readonly<Record<string, string>> }
+  | { readonly type: "split"; readonly direction: "right" | "down"; readonly ratio: number; readonly first: HerdrLayoutNode; readonly second: HerdrLayoutNode };
 
 export class HerdrClient {
   constructor(
@@ -243,14 +795,104 @@ export class HerdrClient {
     private readonly timeoutMs = DEFAULT_TIMEOUT_MS,
     /** Which dialer to use; see {@link DialMode}. `auto` picks by platform. */
     private readonly dialMode: DialMode = "auto",
+    /** Tests may hold the actual production dial continuation; normal construction uses dialHerdr. */
+    private readonly dial: typeof dialHerdr = dialHerdr,
   ) {}
 
-  /** One request, one reply, one connection. Rejects on error reply, timeout, or early close. */
-  private request<T>(method: string, params: JsonObject = {}): Promise<T> {
+  /** Stable local endpoint plus process-incarnation witness for the currently handshaken runtime. */
+  layoutRuntimeIdentity(): string | null {
+    if (!this.verifiedHandshake || !this.verifiedEndpointWitness) return null;
+    const witness = this.observeEndpointWitness();
+    if (!witness || witness !== this.verifiedEndpointWitness) { this.retireHandshake(); return null; }
+    return this.runtimeIdentity(witness);
+  }
+
+  metadataProtocolCapabilities(): HerdrMetadataProtocolCapabilities {
+    const current = this.layoutRuntimeIdentity() !== null;
+    return { paneOriginalMetadataV1: current && this.verifiedPaneOriginalMetadataV1, agentViewReadV1: current && this.verifiedAgentViewReadV1 };
+  }
+
+  /** A compatible ping bracketed by the OS witness of the actual local endpoint. */
+  async layoutHandshakeSample(): Promise<{ handshake: HerdrHandshake; identity: string } | null> {
+    const before = this.observeEndpointWitness();
+    if (!before) return null;
+    try {
+      const handshake = await this.handshake();
+      const after = this.observeEndpointWitness();
+      if (!after || before !== after) { this.retireHandshake(); return null; }
+      this.verifiedEndpointWitness = after;
+      return { handshake, identity: this.runtimeIdentity(after) };
+    } catch {
+      this.retireHandshake();
+      return null;
+    }
+  }
+
+  /** Event-stream loss or replacement immediately retires cached layout readiness. */
+  retireLayoutRuntime(): void { this.retireHandshake(); }
+
+  private runtimeIdentity(witness: string): string {
+    return createHash("sha256").update(`herdr-layout-runtime\0${witness}\0${this.handshakeGeneration}\0${this.verifiedHandshake}`).digest("hex");
+  }
+  private observeEndpointWitness(): string | null {
+    try {
+      const witness = HOST.platform === "win32"
+        ? readWindowsPipeWitness(this.socketPath)
+        : this.unixEndpointWitness();
+      if (!witness) { this.retireHandshake(); return null; }
+      if (this.lastEndpointWitness !== null && this.lastEndpointWitness !== witness) {
+        this.retireHandshake();
+        return null;
+      }
+      if (this.lastEndpointWitness === null) this.handshakeGeneration += 1;
+      this.lastEndpointWitness = witness;
+      return witness;
+    } catch { this.retireHandshake(); return null; }
+  }
+  private unixEndpointWitness(): string | null {
+    const stat = statSync(this.socketPath, { bigint: true });
+    if (!stat.isSocket()) return null;
+    return createHash("sha256").update(`${stat.dev}:${stat.ino}:${stat.ctimeNs}`).digest("hex");
+  }
+  private retireHandshake(): void {
+    this.verifiedHandshake = null;
+    this.verifiedPaneOriginalMetadataV1 = false;
+    this.verifiedAgentViewReadV1 = false;
+    this.verifiedEndpointWitness = null;
+    this.lastEndpointWitness = null;
+    this.handshakeGeneration += 1;
+    this.verifiedOriginalAgentObservations = false;
+    this.verifiedOriginalAgentInputs = false;
+  }
+  private verifiedHandshake: string | null = null;
+  private verifiedPaneOriginalMetadataV1 = false;
+  private verifiedAgentViewReadV1 = false;
+  private verifiedEndpointWitness: string | null = null;
+  private lastEndpointWitness: string | null = null;
+  private handshakeGeneration = 0;
+  private verifiedOriginalAgentObservations = false;
+  private verifiedOriginalAgentInputs = false;
+  originalAgentInputs(): boolean { return this.layoutRuntimeIdentity() !== null && this.verifiedOriginalAgentInputs; }
+  originalAgentObservations(): boolean { return this.layoutRuntimeIdentity() !== null && this.verifiedOriginalAgentObservations; }
+
+  /**
+   * One request, one reply, one connection. Rejects on error reply, timeout, or early close.
+   *
+   * `timeoutMs` overrides the client's budget for this one call; absent, the constructor's applies.
+   */
+  private request<T>(method: string, params: JsonObject = {}, timeoutMs = this.timeoutMs, maxReplyChars?: number, exactUint64Marker?: string, originalAdmission?: HerdrDispatchAdmission, signal?: AbortSignal, requireCorrelation = false): Promise<T> {
+    const originalRuntime = originalAdmission?.runtimeIdentity;
+    const originalPredicate = originalAdmission?.finalAdmission;
+    const originalBeforeFirstBytes = originalAdmission?.beforeFirstBytes;
     const id = `b${++idCounter}`;
     return new Promise<T>((resolve, reject) => {
       let buf = "";
       let settled = false;
+      const admitted = () => {
+        if (settled || signal?.aborted) return false;
+        try { return originalPredicate === undefined || originalRuntime !== undefined && this.layoutRuntimeIdentity() === originalRuntime && originalPredicate(originalRuntime); }
+        catch { return false; }
+      };
       // The live socket, once the dial opens one. Hoisted so EVERY terminal path (timeout
       // included) can close it — otherwise a timeout leaves the FD dangling.
       let socket: SockHandle | null = null;
@@ -259,13 +901,15 @@ export class HerdrClient {
       let cancelDial: (() => void) | null = null;
       // Stream-decode so a multi-byte UTF-8 codepoint split across chunk boundaries isn't
       // corrupted into replacement characters.
-      const decoder = new TextDecoder("utf-8");
+      const decoder = new TextDecoder("utf-8", { fatal: true });
+      let replyBytes = 0;
       // Settle BEFORE closing: socket.end() synchronously fires `close`, which re-enters finish —
       // but `settled` is already set there, so that reject is a no-op and we keep the real outcome.
       const finish = (fn: () => void) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        signal?.removeEventListener("abort", abort);
         fn();
         if (socket) {
           try {
@@ -285,11 +929,14 @@ export class HerdrClient {
         cancelDial = null;
       };
       const timer = setTimeout(
-        () => finish(() => reject(new Error(`herdr ${method}: timed out after ${this.timeoutMs}ms`))),
-        this.timeoutMs,
+        () => finish(() => reject(new Error(`herdr ${method}: timed out after ${timeoutMs}ms`))),
+        timeoutMs,
       );
 
-      const dialed = dialHerdr(this.socketPath, {
+      const abort = () => finish(() => reject(new Error("agent.observation_cancelled")));
+      signal?.addEventListener("abort", abort, { once: true });
+      if (signal?.aborted) { abort(); return; }
+      const dialed = this.dial(this.socketPath, {
         onDial(cancel) {
           cancelDial = cancel;
         },
@@ -298,15 +945,41 @@ export class HerdrClient {
         },
         data(s, chunk) {
           socket = s;
-          buf += decoder.decode(chunk, { stream: true });
+          replyBytes += chunk.byteLength;
+          if (maxReplyChars !== undefined && replyBytes > maxReplyChars * 4) {
+            finish(() => reject(new Error(`herdr ${method}: reply exceeded ${maxReplyChars * 4} bytes`)));
+            return;
+          }
+          try {
+            buf += decoder.decode(chunk, { stream: true });
+          } catch {
+            finish(() => reject(new Error(`herdr ${method}: reply was not valid UTF-8`)));
+            return;
+          }
+          if (maxReplyChars !== undefined && buf.length > maxReplyChars) {
+            finish(() => reject(new Error(`herdr ${method}: reply exceeded ${maxReplyChars} characters`)));
+            return;
+          }
           const nl = buf.indexOf("\n");
           if (nl < 0) return;
           const line = buf.slice(0, nl);
           finish(() => {
             try {
-              resolve(decodeReplyLine<T>(line, method));
-            } catch (e) {
-              reject(e);
+              decoder.decode(); // Reject an incomplete UTF-8 codepoint at the reply boundary.
+              if (requireCorrelation || originalAdmission !== undefined) {
+                const frame = agentObject(strictAgentJson(line));
+                if (frame.id !== id) throw new Error("agent.protocol: response correlation mismatch");
+                if (frame.error !== undefined) {
+                  const error = agentObject(frame.error); const code = agentString(error.code, 128);
+                  agentString(error.message, 2048);
+                  if (!/^[a-z_]{1,128}$/.test(code)) throw new Error("agent.protocol: invalid error code");
+                  throw new HerdrAgentRefusal(code);
+                }
+              }
+              const decoded = decodeReplyLine<T>(exactUint64Marker ? preserveUint64Tokens(line, exactUint64Marker) : line, method);
+              resolve(decoded);
+            } catch (error) {
+              reject(error instanceof Error ? error : new Error(`herdr ${method}: malformed reply`));
             }
           });
         },
@@ -339,8 +1012,14 @@ export class HerdrClient {
           // one go; the dialer owns that continuation, so there is nothing to retry here (dial.ts,
           // write-drain.ts). A connection that dies mid-write lands in close/error above and
           // rejects like any other transport failure.
-          s.write(JSON.stringify({ id, method, params }) + "\n");
-          s.flush();
+          if (!admitted()) { finish(() => reject(new WriteAdmissionRetired(false))); return; }
+          if (originalBeforeFirstBytes) {
+            let ready = false; try { ready = await originalBeforeFirstBytes(); } catch { /* An original preflight exception accepts no action bytes. */ }
+            if (!ready) { finish(() => reject(new WriteAdmissionRetired(false))); return; }
+          }
+          if (!admitted()) { finish(() => reject(new WriteAdmissionRetired(false))); return; }
+          s.write(JSON.stringify({ id, method, params }) + "\n", admitted);
+          if (!settled) s.flush();
         } catch (err) {
           finish(() => reject(err));
         }
@@ -356,6 +1035,247 @@ export class HerdrClient {
   async listPanes(): Promise<WirePane[]> {
     const r = await this.request<{ panes: WirePane[] }>("pane.list");
     return r.panes;
+  }
+
+  async getPane(paneId: string, signal?: AbortSignal, original?: HerdrDispatchAdmission): Promise<WirePane> {
+    const r = await this.request<{ type: string; pane: WirePane }>("pane.get", { pane_id: paneId }, this.timeoutMs, MAX_PANE_REPLY_CHARS, undefined, original, signal, original !== undefined);
+    const pane = r.pane;
+    if (r.type !== "pane_info" || !pane || pane.pane_id !== paneId ||
+      typeof pane.terminal_id !== "string" || pane.terminal_id.trim() === "" ||
+      typeof pane.workspace_id !== "string" || pane.workspace_id.trim() === "" ||
+      typeof pane.tab_id !== "string" || pane.tab_id.trim() === "" ||
+      typeof pane.agent_status !== "string" || parseAgentStatus(pane.agent_status) === null ||
+      (pane.agent !== undefined && pane.agent !== null && typeof pane.agent !== "string") ||
+      !validWireSession(pane.agent_session)) {
+      throw new Error("herdr pane.get: pane identity mismatch");
+    }
+    return pane;
+  }
+
+  /** Read the exact agent target by pane ID; never resolve an agent name or ambient focus. */
+  async getAgent(paneId: string): Promise<WireAgentInfo> {
+    const exactUint64Marker = randomUUID();
+    const raw = await this.request<JsonValue>("agent.get", { target: paneId }, this.timeoutMs, 64 * 1024, exactUint64Marker);
+    const result = wireObject(raw, "agent.get result");
+    if (result.type !== "agent_info" || result.agent === undefined) throw new Error("herdr agent.get: unexpected result type");
+    const agent = parseWireAgentInfo(result.agent, exactUint64Marker);
+    if (agent.pane_id !== paneId) throw new Error("herdr agent.get: target identity mismatch");
+    return agent;
+  }
+
+  /** Host administration methods are a fixed, closed set; never accepts a method name from callers. */
+  async listIntegrations(): Promise<readonly IntegrationSummary[]> {
+    const result = wireObject(await this.request<JsonValue>("integration.list"), "integration.list result");
+    if (result.type !== "integration_list") throw new Error("herdr integration.list: unexpected result type");
+    return integrationRows(result.integrations);
+  }
+
+  async installIntegration(target: IntegrationTarget, admission?: HerdrDispatchAdmission): Promise<HostMutationResult> {
+    if (!INTEGRATION_TARGETS.some((candidate) => candidate === target)) throw new Error("invalid integration target");
+    const result = await this.request<JsonValue>("integration.install", { target }, this.timeoutMs, undefined, undefined, admission);
+    return hostMutation(result, "integration_install", target);
+  }
+
+  async uninstallIntegration(target: IntegrationTarget, admission?: HerdrDispatchAdmission): Promise<HostMutationResult> {
+    if (!INTEGRATION_TARGETS.some((candidate) => candidate === target)) throw new Error("invalid integration target");
+    const result = await this.request<JsonValue>("integration.uninstall", { target }, this.timeoutMs, undefined, undefined, admission);
+    return hostMutation(result, "integration_uninstall", target);
+  }
+
+  /** Plugin APIs stay a finite typed surface; no caller can choose a socket method name. */
+  async listPlugins(pluginId?: string): Promise<JsonObject> {
+    return wireObject(await this.request<JsonValue>("plugin.list", pluginId === undefined ? {} : { plugin_id: pluginId }, this.timeoutMs, 512 * 1024), "plugin.list result");
+  }
+  async listPluginActions(pluginId?: string): Promise<JsonObject> {
+    return wireObject(await this.request<JsonValue>("plugin.action.list", pluginId === undefined ? {} : { plugin_id: pluginId }, this.timeoutMs, 256 * 1024), "plugin.action.list result");
+  }
+  async listPluginLogs(pluginId: string, limit: number): Promise<JsonObject> {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new Error("invalid plugin log limit");
+    return wireObject(await this.request<JsonValue>("plugin.log.list", { plugin_id: pluginId, limit }, this.timeoutMs, 512 * 1024), "plugin.log.list result");
+  }
+  async setPluginEnabled(pluginId: string, enabled: boolean, admission?: HerdrDispatchAdmission): Promise<JsonObject> {
+    if (typeof enabled !== "boolean") throw new Error("invalid plugin enabled state");
+    const method = enabled ? "plugin.enable" : "plugin.disable";
+    return wireObject(await this.request<JsonValue>(method, { plugin_id: pluginId }, this.timeoutMs, undefined, undefined, admission), `${method} result`);
+  }
+  async unlinkPlugin(pluginId: string, admission?: HerdrDispatchAdmission): Promise<JsonObject> {
+    return wireObject(await this.request<JsonValue>("plugin.unlink", { plugin_id: pluginId }, this.timeoutMs, undefined, undefined, admission), "plugin.unlink result");
+  }
+  async invokePluginAction(pluginId: string, actionId: string, correlationId: string, admission?: HerdrDispatchAdmission): Promise<JsonObject> {
+    // The server supplies only these two context fields. Herdr fills every workspace/tab/pane/status
+    // field from its own live state; client-provided authority or selection is never forwarded.
+    const context = { invocation_source: "api", correlation_id: correlationId };
+    return wireObject(await this.request<JsonValue>("plugin.action.invoke", { plugin_id: pluginId, action_id: actionId, context }, this.timeoutMs, 256 * 1024, undefined, admission), "plugin.action.invoke result");
+  }
+  async openPluginPane(params: {
+    readonly pluginId: string; readonly entrypoint: string; readonly placement?: "overlay" | "popup" | "split" | "tab" | "zoomed";
+    readonly width?: number | string; readonly height?: number | string; readonly workspaceId?: string; readonly targetPaneId?: string;
+    readonly direction?: "right" | "down"; readonly cwd?: string; readonly focus?: boolean;
+    readonly env?: Readonly<Record<string, string>>;
+  }, admission?: HerdrDispatchAdmission): Promise<JsonObject> {
+    const { pluginId, entrypoint, placement, width, height, workspaceId, targetPaneId, direction, cwd, focus, env } = params;
+    const wire: JsonObject = { plugin_id: pluginId, entrypoint };
+    if (placement !== undefined) wire.placement = placement;
+    if (width !== undefined) wire.width = width;
+    if (height !== undefined) wire.height = height;
+    if (workspaceId !== undefined) wire.workspace_id = workspaceId;
+    if (targetPaneId !== undefined) wire.target_pane_id = targetPaneId;
+    if (direction !== undefined) wire.direction = direction;
+    if (cwd !== undefined) wire.cwd = cwd;
+    if (focus !== undefined) wire.focus = focus;
+    if (env !== undefined) wire.env = { ...env };
+    return wireObject(await this.request<JsonValue>("plugin.pane.open", wire, this.timeoutMs, undefined, undefined, admission), "plugin.pane.open result");
+  }
+  async focusPluginPane(paneId: string, admission?: HerdrDispatchAdmission): Promise<JsonObject> {
+    return wireObject(await this.request<JsonValue>("plugin.pane.focus", { pane_id: paneId }, this.timeoutMs, undefined, undefined, admission), "plugin.pane.focus result");
+  }
+  async closePluginPane(paneId: string, admission?: HerdrDispatchAdmission): Promise<JsonObject> {
+    return wireObject(await this.request<JsonValue>("plugin.pane.close", { pane_id: paneId }, this.timeoutMs, undefined, undefined, admission), "plugin.pane.close result");
+  }
+  async preparePluginUserDirs(pluginId: string, expectedRevision: string, admission?: HerdrDispatchAdmission): Promise<JsonObject> {
+    if (!/^[A-Za-z0-9][A-Za-z0-9:._-]{0,119}$/u.test(pluginId) || !/^[a-f0-9]{64}$/u.test(expectedRevision)) throw new Error("invalid plugin user directory preparation binding");
+    return wireObject(await this.request<JsonValue>("plugin.prepare_user_dirs", { plugin_id: pluginId, expected_revision: expectedRevision }, this.timeoutMs, 16 * 1024, undefined, admission), "plugin.prepare_user_dirs result");
+  }
+
+  async pluginOwnerContext(admission?: HerdrDispatchAdmission): Promise<JsonObject> {
+    return wireObject(await this.request<JsonValue>("plugin.owner_context", {}, this.timeoutMs, 128 * 1024, undefined, admission), "plugin.owner_context result");
+  }
+
+  async planPluginInstall(params: { readonly owner: string; readonly repo: string; readonly subdir?: string; readonly ref?: string; readonly expectedOwnerRevision: string }, admission?: HerdrDispatchAdmission): Promise<JsonObject> {
+    if (!/^[A-Za-z0-9-]{1,100}$/u.test(params.owner) || !/^[A-Za-z0-9._-]{1,100}$/u.test(params.repo) || params.subdir !== undefined && (!params.subdir || params.subdir.length > 512 || params.subdir.startsWith("/") || params.subdir.split("/").some((part) => part === ".." || part === "." || part === "")) || params.ref !== undefined && (!params.ref || params.ref.length > 256 || hasControlCharacters(params.ref)) || !/^[a-f0-9]{64}$/u.test(params.expectedOwnerRevision)) throw new Error("invalid plugin install plan input");
+    const body: JsonObject = { owner: params.owner, repo: params.repo, expected_owner_revision: params.expectedOwnerRevision };
+    if (params.subdir !== undefined) body.subdir = params.subdir;
+    if (params.ref !== undefined) body.ref = params.ref;
+    return wireObject(await this.request<JsonValue>("plugin.install.plan", body, this.timeoutMs, 128 * 1024, undefined, admission), "plugin.install.plan result");
+  }
+
+  async applyPluginInstall(planId: string, checksum: string, expectedOwnerRevision: string, requestId: string, admission?: HerdrDispatchAdmission): Promise<JsonObject> {
+    return this.applyPluginOwnerOperation("plugin.install.apply", { plan_id: planId, checksum, expected_owner_revision: expectedOwnerRevision, request_id: requestId }, admission);
+  }
+
+  async applyPluginLink(selectionId: string, expectedOwnerRevision: string, requestId: string, admission?: HerdrDispatchAdmission): Promise<JsonObject> {
+    return this.applyPluginOwnerOperation("plugin.link.apply", { selection_id: selectionId, expected_owner_revision: expectedOwnerRevision, request_id: requestId }, admission);
+  }
+
+  async planPluginUninstall(pluginId: string, expectedOwnerRevision: string, admission?: HerdrDispatchAdmission): Promise<JsonObject> {
+    if (!/^[A-Za-z0-9][A-Za-z0-9:._-]{0,119}$/u.test(pluginId) || !/^[a-f0-9]{64}$/u.test(expectedOwnerRevision)) throw new Error("invalid plugin uninstall plan input");
+    return wireObject(await this.request<JsonValue>("plugin.uninstall.plan", { plugin_id: pluginId, expected_owner_revision: expectedOwnerRevision }, this.timeoutMs, 32 * 1024, undefined, admission), "plugin.uninstall.plan result");
+  }
+
+  async applyPluginUninstall(planId: string, expectedRevision: string, expectedOwnerRevision: string, requestId: string, admission?: HerdrDispatchAdmission): Promise<JsonObject> {
+    return this.applyPluginOwnerOperation("plugin.uninstall.apply", { plan_id: planId, expected_revision: expectedRevision, expected_owner_revision: expectedOwnerRevision, request_id: requestId }, admission);
+  }
+
+  async getPluginOwnerOperation(requestId: string, admission?: HerdrDispatchAdmission): Promise<JsonObject> {
+    if (!/^[A-Za-z0-9_-]{1,128}$/u.test(requestId)) throw new Error("invalid plugin operation request id");
+    return wireObject(await this.request<JsonValue>("plugin.owner_operation.get", { request_id: requestId }, this.timeoutMs, 64 * 1024, undefined, admission), "plugin.owner_operation.get result");
+  }
+
+  private async applyPluginOwnerOperation(method: "plugin.install.apply" | "plugin.link.apply" | "plugin.uninstall.apply", params: JsonObject, admission?: HerdrDispatchAdmission): Promise<JsonObject> {
+    return wireObject(await this.request<JsonValue>(method, params, WORKTREE_TIMEOUT_MS, 64 * 1024, undefined, admission), `${method} result`);
+  }
+
+  async agentManifests(): Promise<AgentManifestSnapshot> {
+    const marker = randomUUID();
+    const result = wireObject(await this.request<JsonValue>("server.agent_manifests", {}, this.timeoutMs, 512 * 1024, marker), "server.agent_manifests result");
+    if (result.type !== "agent_manifest_status") throw new Error("herdr server.agent_manifests: unexpected result type");
+    return { manifests: manifestRows(result.manifests), lastCheckUnix: parseNullableUint64(result.last_check_unix, "last_check_unix"), lastResult: parseNullableText(result.last_result, "last_result") };
+  }
+
+  async reloadAgentManifests(admission?: HerdrDispatchAdmission): Promise<AgentManifestSnapshot> {
+    const marker = randomUUID();
+    const result = wireObject(await this.request<JsonValue>("server.reload_agent_manifests", {}, this.timeoutMs, 512 * 1024, marker, admission), "server.reload_agent_manifests result");
+    if (result.type !== "agent_manifest_reload") throw new Error("herdr server.reload_agent_manifests: unexpected result type");
+    return { manifests: manifestRows(result.manifests) };
+  }
+
+  /** Exact shipped AgentInfo, retaining the resolved terminal/name independently of public pane alias. */
+  async getAgentControl(target: string, signal?: AbortSignal, original?: HerdrDispatchAdmission): Promise<WireAgentControlInfo> {
+    const marker = randomUUID();
+    const result = agentObject(await this.request<JsonValue>("agent.get", { target }, this.timeoutMs, 64 * 1024, marker, original, signal, true));
+    if (result.type !== "agent_info") throw new Error("agent.protocol: expected agent_info");
+    return parseAgentControlInfo(result.agent, marker);
+  }
+  async listAgentControls(): Promise<readonly WireAgentControlInfo[]> {
+    const marker = randomUUID(); const result = agentObject(await this.request<JsonValue>("agent.list", {}, this.timeoutMs, 64 * 1024, marker, undefined, undefined, true));
+    if (result.type !== "agent_list" || !Array.isArray(result.agents) || result.agents.length > 64) throw new Error("agent.protocol: invalid agent list");
+    const rows = result.agents.map((value) => parseAgentControlInfo(value, marker));
+    if (new Set(rows.map((row) => row.paneId)).size !== rows.length || new Set(rows.map((row) => row.terminalId)).size !== rows.length) throw new Error("agent.protocol: duplicated agent identity");
+    return rows;
+  }
+  async readAgentControl(paneId: string, source: "visible" | "recent" | "recent_unwrapped" | "detection", lines: number, original: HerdrDispatchAdmission, signal?: AbortSignal): Promise<{ readonly read: JsonObject; readonly marker: string }> {
+    const marker = randomUUID(); const result = agentObject(await this.request<JsonValue>("agent.read", { target: paneId, source, lines, format: "ansi", strip_ansi: false }, this.timeoutMs, 64 * 1024, marker, original, signal));
+    if (result.type !== "pane_read") throw new Error("agent.protocol: invalid named read envelope");
+    return { read: agentObject(result.read), marker };
+  }
+  async actOnAgent(paneId: string, action: AgentAction, original: HerdrDispatchAdmission, signal?: AbortSignal): Promise<WireAgentControlInfo> {
+    const marker = randomUUID(); let method: string; let params: JsonObject; let expected: string;
+    if (action.kind === "start") { method = "agent.start"; params = { pane_id: paneId, name: action.name, kind: action.agent, args: [...action.args], timeout_ms: action.timeoutMs }; expected = "agent_started"; }
+    else if (action.kind === "focus") { method = "agent.focus"; params = { target: paneId }; expected = "agent_info"; }
+    else if (action.kind === "keys") { method = "agent.send_keys"; params = { target: paneId, keys: [...action.keys] }; expected = "ok"; }
+    else if (action.kind === "input") { method = "pane.send_input"; params = { pane_id: paneId, text: action.text, keys: [...action.keys] }; expected = "ok"; }
+    else if (action.kind === "rename") { method = "agent.rename"; params = { target: paneId, name: action.name }; expected = "agent_info"; }
+    else { method = "agent.prompt"; params = { target: paneId, text: action.text }; if (action.until !== null) params.wait = { until: [...action.until], timeout_ms: action.timeoutMs }; expected = "agent_prompted"; }
+    if (this.originalAgentInputs()) {
+      if (!original.originalBinding || !/^[a-f0-9]{64}$/.test(original.originalBinding)) throw new HerdrAgentRefusal("original_input_unavailable");
+      params.original_binding = original.originalBinding;
+    }
+    const actionBudget = action.kind === "start" || action.kind === "prompt" ? action.timeoutMs + 1000 : this.timeoutMs;
+    const result = agentObject(await this.request<JsonValue>(method, params, actionBudget, 64 * 1024, marker, original, signal));
+    if (result.type !== expected) throw new Error("agent.protocol: unexpected action envelope");
+    if (action.kind === "start") {
+      if (!Array.isArray(result.argv) || result.argv.length < 1 || result.argv.length > 33) throw new Error("agent.protocol: invalid argv");
+      result.argv.forEach((arg) => agentString(arg, 512));
+    }
+    if (expected === "ok") return this.getAgentControl(paneId, signal);
+    const info = parseAgentControlInfo(result.agent, marker);
+    if (info.paneId !== paneId) throw new Error("agent.protocol: action target mismatch");
+    return info;
+  }
+  async explainAgent(paneId: string): Promise<JsonObject> {
+    const result = agentObject(await this.request<JsonValue>("agent.explain", { target: paneId }, this.timeoutMs, 64 * 1024, undefined, undefined, undefined, true));
+    if (result.type !== "agent_explain") throw new Error("agent.protocol: expected agent_explain");
+    return agentObject(result.explain);
+  }
+  async waitForAgentCondition(paneId: string, condition: AgentWaitCondition, timeoutMs: number, original: HerdrDispatchAdmission, signal: AbortSignal): Promise<{ readonly raw: JsonObject; readonly marker: string }> {
+    const marker = randomUUID(); let method: string; let params: JsonObject;
+    if (condition.kind === "lifecycle") { method = "agent.wait"; params = { target: paneId, until: [...condition.until], timeout_ms: timeoutMs }; }
+    else if (condition.kind === "output") { method = "pane.wait_for_output"; params = { pane_id: paneId, source: condition.source, match: { type: condition.match.kind, value: condition.match.value }, lines: condition.lines, strip_ansi: true, timeout_ms: timeoutMs }; }
+    else { method = "events.wait"; params = { match_event: agentEventMatch(condition), timeout_ms: timeoutMs }; }
+    return { raw: agentObject(await this.request<JsonValue>(method, params, timeoutMs + 1000, 64 * 1024, marker, original, signal)), marker };
+  }
+
+  /** A bounded official subscription equivalence for general events absent from events.wait.
+   * Registration never reconnects/catches up and returns only the matched original event. */
+  observeAgentEvent(condition: AgentEventCondition, original: HerdrDispatchAdmission, signal: AbortSignal, matches: (event: string, data: JsonObject) => boolean, cursorRequired = false): Promise<JsonObject> {
+    if (cursorRequired && !this.originalAgentObservations()) return Promise.reject(new HerdrAgentRefusal("original_observation_unavailable"));
+    const registration = cursorRequired ? randomUUID() : undefined;
+    const event = agentEventMatch(condition).event; const subscription = agentString(event, 64).replace("_", ".");
+    return new Promise<JsonObject>((resolve, reject) => {
+      let stream: EventStream | null = null; let settled = false;
+      const finish = (value: JsonObject | Error) => { if (settled) return; settled = true; stream?.close(); if (value instanceof Error) reject(value); else resolve(value); };
+      const observerOptions: SubscribeOptions = { subscriptions: [{ type: subscription }], original, signal, boundedAgentObserver: true,
+        onUp: () => {}, onEvent: (name, data) => {
+          try { const row = agentObject(data); if (matches(name, row)) finish({ event: name, data: row }); }
+          catch (error) { finish(error instanceof Error ? error : new Error("agent.event_protocol")); }
+        }, onDown: (reason) => finish(new HerdrAgentRefusal(/^agent\.[a-z_]{1,64}$/.test(reason) ? reason.slice("agent.".length) : "event_stream_lost")),
+      };
+      if (registration !== undefined) Object.assign(observerOptions, { originalObservationRegistration: registration });
+      stream = this.subscribeEvents(observerOptions);
+      if (settled) stream.close();
+    });
+  }
+  async sampleAgentOutputRevision(paneId: string, original: HerdrDispatchAdmission, signal: AbortSignal): Promise<{ readonly read: JsonObject; readonly marker: string }> {
+    const marker = randomUUID(); const result = agentObject(await this.request<JsonValue>("pane.read", { pane_id: paneId, source: "visible", lines: AGENT_LIMITS.lines, format: "text", strip_ansi: true, intent: "passive" }, this.timeoutMs, 64 * 1024, marker, original, signal));
+    if (result.type !== "pane_read") throw new Error("agent.output_revision_protocol"); return { read: agentObject(result.read), marker };
+  }
+
+  /** Fetch sensitive process metadata for the explicit target; never asks Herdr to infer focus. */
+  async processInfo(paneId: string, signal?: AbortSignal, original?: HerdrDispatchAdmission): Promise<WirePaneProcessInfo> {
+    const r = await this.request<JsonValue>("pane.process_info", { pane_id: paneId }, this.timeoutMs, MAX_PROCESS_INFO_REPLY_CHARS, undefined, original, signal);
+    const result = wireObject(r, "result wrapper");
+    if (result.type !== "pane_process_info") throw new Error("herdr pane.process_info: unexpected result type");
+    return parsePaneProcessInfo(result.process_info ?? null);
   }
 
   /** All tabs across every workspace (`tab.list` with no filter returns the full set). */
@@ -382,8 +1302,14 @@ export class HerdrClient {
    * ends it with reason "closed". Reconnect/backoff live in the caller (see EventPoker).
    */
   subscribeEvents(opts: SubscribeOptions): EventStream {
+    const signal = opts.signal;
+    const originalRuntime = opts.original?.runtimeIdentity; const originalPredicate = opts.original?.finalAdmission;
+    const beforeFirstBytes = opts.original?.beforeFirstBytes; const bounded = opts.boundedAgentObserver === true;
+    const registration = opts.originalObservationRegistration; let cursor: bigint | null = null;
+    const admitted = (): boolean => { try { return !signal?.aborted && (originalPredicate === undefined || originalRuntime !== undefined && this.layoutRuntimeIdentity() === originalRuntime && originalPredicate(originalRuntime)); } catch { return false; } };
+    let frameCount = 0; let streamBytes = 0;
     const id = `es${++idCounter}`;
-    const decoder = new TextDecoder("utf-8");
+    const decoder = new TextDecoder("utf-8", { fatal: bounded });
     let buf = "";
     let socket: SockHandle | null = null;
     let cancelDial: (() => void) | null = null;
@@ -395,6 +1321,7 @@ export class HerdrClient {
       if (down) return;
       down = true;
       clearTimeout(ackTimer);
+      signal?.removeEventListener("abort", abort);
       if (socket) {
         try {
           socket.end();
@@ -420,11 +1347,33 @@ export class HerdrClient {
 
     const handleLine = (line: string) => {
       if (line === "") return;
+      if (!admitted()) { fireDown("agent.observation_retired"); return; }
+      if (bounded) {
+        try {
+          if (++frameCount > 256 || Buffer.byteLength(line) > 65_536) { fireDown("agent.event_budget_exceeded"); return; }
+          const frame = agentObject(strictAgentJson(line));
+          if (frame.error !== undefined) { const error = agentObject(frame.error); const code = agentString(error.code, 128); agentString(error.message, 2048); fireDown(/^[a-z_]{1,64}$/.test(code) ? `agent.${code}` : "agent.event_protocol"); return; }
+          if (frame.result !== undefined) {
+            const result = agentObject(frame.result);
+            if (acked || frame.id !== id || result.type !== "subscription_started") throw new Error("agent.event_protocol");
+            if (registration !== undefined) {
+              const proof = agentObject(result.original_observation);
+              if (Object.keys(proof).length !== 2 || proof.registration_id !== registration) throw new Error("agent.event_protocol");
+              cursor = originalObservationSequence(proof.start_sequence);
+            }
+          } else if (!acked || frame.event === undefined || frame.data === undefined) throw new Error("agent.event_protocol");
+          else if (registration !== undefined) {
+            const proof = agentObject(frame.original_observation); const next = originalObservationSequence(proof.sequence);
+            if (Object.keys(proof).length !== 2 || proof.registration_id !== registration || cursor === null || next <= cursor) throw new Error("agent.event_protocol");
+            cursor = next;
+          }
+        } catch { fireDown("agent.event_protocol"); return; }
+      }
       let decoded;
       try {
         decoded = decodeStreamLine(line);
       } catch (e) {
-        fireDown(`protocol error: ${e instanceof Error ? e.message : String(e)}`);
+        fireDown(bounded ? "agent.event_protocol" : `protocol error: ${e instanceof Error ? e.message : String(e)}`);
         return;
       }
       if (decoded.kind === "error") {
@@ -438,10 +1387,13 @@ export class HerdrClient {
         opts.onUp();
         return;
       }
-      opts.onEvent(decoded.event, decoded.data);
+      try { opts.onEvent(decoded.event, decoded.data); } catch { fireDown("agent.event_protocol"); }
     };
 
-    const dialed = dialHerdr(this.socketPath, {
+    const abort = () => fireDown("agent.observation_cancelled");
+    signal?.addEventListener("abort", abort, { once: true });
+    if (!admitted()) { fireDown("agent.observation_retired"); return { close: () => {} }; }
+    const dialed = this.dial(this.socketPath, {
       onDial(cancel) {
         cancelDial = cancel;
       },
@@ -452,7 +1404,10 @@ export class HerdrClient {
       // stream open. Stream-decode so a multi-byte codepoint split across chunks isn't corrupted.
       data(s, chunk) {
         socket = s;
-        buf += decoder.decode(chunk, { stream: true });
+        streamBytes += chunk.byteLength;
+        if (bounded && streamBytes > 1_048_576) { fireDown("agent.event_budget_exceeded"); return; }
+        try { buf += decoder.decode(chunk, { stream: true }); } catch { fireDown("agent.event_protocol"); return; }
+        if (bounded && buf.indexOf("\n") < 0 && Buffer.byteLength(buf) > 65_536) { fireDown("agent.event_budget_exceeded"); return; }
         let nl = buf.indexOf("\n");
         while (nl >= 0) {
           if (down) break;
@@ -484,7 +1439,11 @@ export class HerdrClient {
           return;
         }
         socket = s;
-        s.write(JSON.stringify({ id, method: "events.subscribe", params: { subscriptions: opts.subscriptions } }) + "\n");
+        if (!admitted() || beforeFirstBytes && !await beforeFirstBytes() || !admitted()) { fireDown("agent.observation_retired"); return; }
+        const marker: JsonObject = { type: "original.agent_observation", registration_id: registration ?? "" };
+        if (opts.original?.originalBinding !== undefined) Object.assign(marker, { pane_id: opts.original.originalPaneId, original_binding: opts.original.originalBinding, timeout_ms: opts.original.observationTimeoutMs });
+        const subscriptions = registration === undefined ? opts.subscriptions : [...opts.subscriptions, marker];
+        s.write(JSON.stringify({ id, method: "events.subscribe", params: { subscriptions } }) + "\n", opts.original === undefined ? undefined : admitted);
         s.flush();
       } catch (err) {
         fireDown((err instanceof Error ? err.message : String(err)) || "connect failed");
@@ -532,6 +1491,29 @@ export class HerdrClient {
     };
   }
 
+  /** Exact schema-22 organization methods. Ordering indices are Herdr's pre-removal indices. */
+  focusWorkspace(workspaceId: string): Promise<void> {
+    return this.request<void>("workspace.focus", { workspace_id: workspaceId });
+  }
+  renameWorkspace(workspaceId: string, label: string): Promise<void> {
+    return this.request<void>("workspace.rename", { workspace_id: workspaceId, label });
+  }
+  moveWorkspace(workspaceId: string, insertIndex: number): Promise<void> {
+    return this.request<void>("workspace.move", { workspace_id: workspaceId, insert_index: insertIndex });
+  }
+  moveWorkspaceBlock(workspaceIds: readonly string[], beforeWorkspaceId: string | null): Promise<void> {
+    return this.request<void>("workspace.move_block", { workspace_ids: [...workspaceIds], before_workspace_id: beforeWorkspaceId });
+  }
+  closeWorkspace(workspaceId: string, closeGroup: boolean): Promise<void> {
+    return this.request<void>("workspace.close", { workspace_id: workspaceId, close_group: closeGroup });
+  }
+  focusTab(tabId: string): Promise<void> {
+    return this.request<void>("tab.focus", { tab_id: tabId });
+  }
+  moveTab(tabId: string, insertIndex: number): Promise<void> {
+    return this.request<void>("tab.move", { tab_id: tabId, insert_index: insertIndex });
+  }
+
   /**
    * The worktrees of the repo at `cwd` — including the repo's own checkout, which comes back with
    * `is_linked_worktree: false`.
@@ -546,6 +1528,19 @@ export class HerdrClient {
   }
 
   /**
+   * The repo a WORKSPACE sits in, and every checkout of it: `worktree.list` by `workspace_id`.
+   *
+   * herdr 0.9.3 stopped putting the repo on the workspace record (see {@link WireWorkspace.worktree}),
+   * and this is where it went. On the client's own budget, not WORKTREE_TIMEOUT_MS: it runs `git
+   * worktree list`, which reads and never writes. A folder outside Git answers `not_git_worktree`,
+   * an unknown id `workspace_not_found` — both rejections, both told apart by the caller.
+   */
+  async workspaceWorktrees(workspaceId: string): Promise<WireWorktreeListing> {
+    const r = await this.request<WireWorktreeListing>("worktree.list", { workspace_id: workspaceId });
+    return { source: r.source, worktrees: r.worktrees };
+  }
+
+  /**
    * Create a worktree on a new branch and open it as its own workspace. `focus:false`, so the
    * operator's own screen stays where they left it (the phone navigates itself).
    *
@@ -553,11 +1548,23 @@ export class HerdrClient {
    * window server, the checkout was created and the OPEN failed with `worktree_open_failed` — the
    * branch exists, nothing shows it. A retry then fails as `worktree_create_failed` (the path is
    * taken), so the recovery is to open it, never to create it again.
+   *
+   * `base` is `WorktreeCreateParams.base` (`herdr api schema --json`, 0.9.3, protocol 22; the socket
+   * docs say a missing branch is created "from the requested base or `HEAD`"). It is sent only when
+   * given, so a call without one is byte-for-byte the call this method always made.
    */
-  async createWorktree(opts: { cwd: string; branch: string }): Promise<CreatedShell> {
+  async createWorktree(opts: HerdrWorktreeCreate, originalAdmission?: HerdrDispatchAdmission): Promise<CreatedShell> {
+    // No `trust_repository`: that flag grants Git trust for the request (`safe.directory`), and the
+    // operator gives it in Herdr, never from the phone (ADR 0089). `path` is Herdr 0.9.3's
+    // `WorktreeCreateParams.path`, absolute, checked by bridge/worktree-folder.ts (ADR 0093).
+    const { cwd, branch, base, path } = opts;
+    const params: JsonObject = { cwd, branch, focus: false };
+    if (base !== undefined) params.base = base;
+    if (path !== undefined) params.path = path;
     const r = await this.request<{ workspace: WireWorkspace; root_pane: WirePane }>(
       "worktree.create",
-      { cwd: opts.cwd, branch: opts.branch, focus: false },
+      params,
+      WORKTREE_TIMEOUT_MS, undefined, undefined, originalAdmission,
     );
     const p = r.root_pane;
     return {
@@ -579,12 +1586,12 @@ export class HerdrClient {
   async openWorktree(opts: {
     cwd: string;
     path: string;
-  }): Promise<{ shell: CreatedShell; alreadyOpen: boolean }> {
+  }, originalAdmission?: HerdrDispatchAdmission): Promise<{ shell: CreatedShell; alreadyOpen: boolean }> {
     const r = await this.request<{
       workspace: WireWorkspace;
       root_pane: WirePane;
       already_open?: boolean;
-    }>("worktree.open", { cwd: opts.cwd, path: opts.path, focus: false });
+    }>("worktree.open", { cwd: opts.cwd, path: opts.path, focus: false }, WORKTREE_TIMEOUT_MS, undefined, undefined, originalAdmission);
     const p = r.root_pane;
     return {
       shell: {
@@ -596,6 +1603,18 @@ export class HerdrClient {
       },
       alreadyOpen: r.already_open === true,
     };
+  }
+
+  /** Remove a linked checkout by the workspace Herdr currently owns, never by a caller path. */
+  async removeWorktree(opts: HerdrWorktreeRemove, originalAdmission?: HerdrDispatchAdmission): Promise<WireWorktreeRemoved> {
+    const r = await this.request<WireWorktreeRemoved>("worktree.remove", {
+      workspace_id: opts.workspace_id,
+      force: opts.force,
+    }, WORKTREE_TIMEOUT_MS, undefined, undefined, originalAdmission);
+    if (r.type !== "worktree_removed" || r.workspace_id !== opts.workspace_id || typeof r.path !== "string" || r.forced !== opts.force) {
+      throw new Error("worktree.remove_failed: invalid worktree removal response");
+    }
+    return r;
   }
 
 
@@ -616,14 +1635,15 @@ export class HerdrClient {
     return r.read;
   }
 
+
   /** Type literal text into a pane's terminal (does not submit). */
-  sendPaneText(paneId: string, text: string): Promise<void> {
-    return this.request<void>("pane.send_text", { pane_id: paneId, text });
+  sendPaneText(paneId: string, text: string, originalAdmission?: HerdrDispatchAdmission): Promise<void> {
+    return this.request<void>("pane.send_text", { pane_id: paneId, text }, this.timeoutMs, undefined, undefined, originalAdmission);
   }
 
   /** Send key names (e.g. ["Enter"]) to a pane — used to submit a reply. */
-  sendPaneKeys(paneId: string, keys: string[]): Promise<void> {
-    return this.request<void>("pane.send_keys", { pane_id: paneId, keys });
+  sendPaneKeys(paneId: string, keys: string[], originalAdmission?: HerdrDispatchAdmission): Promise<void> {
+    return this.request<void>("pane.send_keys", { pane_id: paneId, keys }, this.timeoutMs, undefined, undefined, originalAdmission);
   }
 
   /** Close a pane, terminating its agent ("kill"). Resolves on Herdr's `{type:"ok"}` reply. */
@@ -643,6 +1663,57 @@ export class HerdrClient {
    */
   focusPane(paneId: string): Promise<void> {
     return this.request<void>("pane.focus", { pane_id: paneId });
+  }
+
+  /** Read the current pane layout; the caller validates the closed success DTO. */
+  readPaneLayout(paneId: string): Promise<JsonValue> {
+    return this.request<JsonValue>("pane.layout", { pane_id: paneId });
+  }
+
+  exportLayout(target: { readonly tab_id: string } | { readonly pane_id: string }): Promise<JsonValue> {
+    return this.request<JsonValue>("layout.export", target);
+  }
+
+  applyLayout(params: { readonly root: HerdrLayoutNode; readonly workspace_id?: string; readonly tab_id?: string; readonly tab_label?: string; readonly focus: false }): Promise<JsonValue> {
+    // SAFETY: The params are constructed from closed HerdrLayoutNode records in the adapter.
+    return this.request<JsonValue>("layout.apply", JSON.parse(JSON.stringify(params)) as JsonObject);
+  }
+
+  setSplitRatio(params: { readonly tab_id: string; readonly pane_id?: string; readonly path: readonly boolean[]; readonly ratio: number }): Promise<JsonValue> {
+    // SAFETY: The adapter validates tab identity, the boolean path, and a finite in-range ratio.
+    return this.request<JsonValue>("layout.set_split_ratio", JSON.parse(JSON.stringify(params)) as JsonObject);
+  }
+
+  readPaneNeighbor(paneId: string, direction: "left" | "right" | "up" | "down"): Promise<JsonValue> {
+    return this.request<JsonValue>("pane.neighbor", { pane_id: paneId, direction });
+  }
+
+  readPaneEdges(paneId: string): Promise<JsonValue> {
+    return this.request<JsonValue>("pane.edges", { pane_id: paneId });
+  }
+
+  focusPaneDirection(paneId: string, direction: "left" | "right" | "up" | "down"): Promise<JsonValue> {
+    return this.request<JsonValue>("pane.focus_direction", { pane_id: paneId, direction });
+  }
+
+  splitPane(params: HerdrSplitPaneParams): Promise<JsonValue> {
+    return this.request<JsonValue>("pane.split", { ...params });
+  }
+
+  resizePane(paneId: string, direction: "left" | "right" | "up" | "down", amount: number | null): Promise<JsonValue> {
+    return this.request<JsonValue>("pane.resize", { pane_id: paneId, direction, amount });
+  }
+
+  zoomPane(paneId: string, mode: "toggle" | "on" | "off"): Promise<JsonValue> {
+    return this.request<JsonValue>("pane.zoom", { pane_id: paneId, mode });
+  }
+
+  swapPanes(params: { pane_id: string; direction: "left" | "right" | "up" | "down" | null; source_pane_id: string | null; target_pane_id: string | null }): Promise<JsonValue> {
+    return this.request<JsonValue>("pane.swap", params);
+  }
+
+  movePane(params: { pane_id: string; destination: HerdrMoveDestination; focus: false }): Promise<JsonValue> {
+    return this.request<JsonValue>("pane.move", params);
   }
 
   /**
@@ -675,13 +1746,73 @@ export class HerdrClient {
     return this.request<void>("tab.close", { tab_id: tabId });
   }
 
-  /** Reachability check for the connected/disconnected banner. */
+  /** Validate the schema-22 pong variant rather than treating an arbitrary successful RPC as health. */
+  async handshake(): Promise<HerdrHandshake> {
+    let result: JsonObject;
+    try { result = await this.request<JsonObject>("ping"); }
+    catch (error) { this.retireHandshake(); throw error; }
+    if (result.type !== "pong" || typeof result.version !== "string" || !result.version || result.version.length > 256 ||
+        typeof result.protocol !== "number" || !Number.isInteger(result.protocol) || result.protocol < 0 || result.protocol > 0xffffffff) {
+      this.retireHandshake();
+      throw new Error("herdr ping: malformed pong");
+    }
+    const capabilities = result.capabilities === undefined || result.capabilities === null ? null : agentObject(result.capabilities);
+    if (capabilities?.agent_observation_cursor_v1 !== undefined && typeof capabilities.agent_observation_cursor_v1 !== "boolean") { this.retireHandshake(); throw new Error("herdr ping: malformed observation capability"); }
+    this.verifiedOriginalAgentObservations = capabilities?.agent_observation_cursor_v1 === true;
+    if (capabilities?.agent_original_input_v1 !== undefined && typeof capabilities.agent_original_input_v1 !== "boolean") { this.retireHandshake(); throw new Error("herdr ping: malformed original input capability"); }
+    this.verifiedOriginalAgentInputs = capabilities?.agent_original_input_v1 === true;
+    for (const name of ["pane_original_metadata_v1", "agent_view_read_v1", "plugin_user_dirs_v1", "plugin_owner_operations_v1"] as const) {
+      if (capabilities?.[name] !== undefined && typeof capabilities[name] !== "boolean") { this.retireHandshake(); throw new Error("herdr ping: malformed metadata capability"); }
+    }
+    const paneOriginalMetadataV1 = capabilities?.pane_original_metadata_v1 === true;
+    const agentViewReadV1 = capabilities?.agent_view_read_v1 === true;
+    const pluginUserDirsV1 = capabilities?.plugin_user_dirs_v1 === true;
+    const pluginOwnerOperationsV1 = capabilities?.plugin_owner_operations_v1 === true;
+    this.verifiedHandshake = `${result.version}:${result.protocol}:${this.verifiedOriginalAgentObservations}:${this.verifiedOriginalAgentInputs}:${paneOriginalMetadataV1}:${agentViewReadV1}:${pluginUserDirsV1}:${pluginOwnerOperationsV1}`;
+    this.verifiedPaneOriginalMetadataV1 = paneOriginalMetadataV1;
+    this.verifiedAgentViewReadV1 = agentViewReadV1;
+    return { version: result.version, protocol: result.protocol, paneOriginalMetadataV1, agentViewReadV1, pluginUserDirsV1, pluginOwnerOperationsV1 };
+  }
+
+  async reportPaneMetadata(params: JsonObject): Promise<JsonObject> {
+    return expectHerdrType(await this.request<JsonObject>("pane.report_metadata", params), "ok");
+  }
+  async reportPaneMetadataOriginal(params: JsonObject, admission?: HerdrDispatchAdmission): Promise<JsonObject> {
+    return expectHerdrType(await this.request<JsonObject>("pane.report_metadata.original_v1", params, this.timeoutMs, undefined, undefined, admission), "ok");
+  }
+  async reportWorkspaceMetadata(params: JsonObject): Promise<JsonObject> {
+    return expectHerdrType(await this.request<JsonObject>("workspace.report_metadata", params), "ok");
+  }
+  async setAgentView(params: JsonObject): Promise<JsonObject> {
+    const response = expectHerdrType(await this.request<JsonObject>("agent.view.set", params), "agent_view");
+    if (response.active !== true || typeof response.source !== "string" || response.label !== undefined && response.label !== null && typeof response.label !== "string") throw new Error("herdr agent.view.set: malformed response");
+    return response;
+  }
+  async clearAgentView(params: JsonObject): Promise<JsonObject> {
+    const response = expectHerdrType(await this.request<JsonObject>("agent.view.clear", params), "agent_view");
+    if (response.active !== false || response.source !== undefined && response.source !== null && typeof response.source !== "string" || response.label !== undefined && response.label !== null && typeof response.label !== "string") throw new Error("herdr agent.view.clear: malformed response");
+    return response;
+  }
+  async getAgentView(params: JsonObject): Promise<JsonObject> {
+    const response = expectHerdrType(await this.request<JsonObject>("agent.view.get", params), "agent_view_state");
+    if (typeof response.source !== "string" || typeof response.active !== "boolean" || response.view !== null && (response.view === undefined || typeof response.view !== "object" || Array.isArray(response.view))) throw new Error("herdr agent.view.get: malformed response");
+    return response;
+  }
+
+  /** Reachability check through the existing adapter health seam; never infer new capabilities. */
   async ping(): Promise<boolean> {
     try {
-      await this.listWorkspaces();
+      await this.handshake();
       return true;
     } catch {
       return false;
     }
   }
+}
+
+/** Cursor tokens remain exact unsigned decimal strings, never rounded JSON numbers. */
+function originalObservationSequence(value: JsonValue | undefined): bigint {
+  const sequence = agentString(value, 20);
+  if (!/^(0|[1-9][0-9]{0,19})$/.test(sequence) || BigInt(sequence) > 18_446_744_073_709_551_615n) throw new Error("agent.event_protocol");
+  return BigInt(sequence);
 }

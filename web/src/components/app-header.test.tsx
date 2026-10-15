@@ -6,13 +6,16 @@ import type { ComponentProps, ReactElement } from "react";
 
 import { server } from "@/test/setup";
 import { collieMark, markIsLive, markPaper } from "@/test/collie-mark";
-import { __resetOperatorCommands } from "@/lib/operator-config";
+import { __resetOperatorCommands, loadOperatorCommands } from "@/lib/operator-config";
 import { ROOT_ROUTE_ID } from "@/lib/loaders";
 import { AppHeaderHost, RouteHeader, SettingsGear } from "./app-header";
 import { StatusBadge } from "./status-badge";
 import { CONNECTION_LOST_MS, TROUBLE_MS } from "@/hooks/use-connection-lost";
 import { __resetConnectionHealth, isLostLatched } from "@/lib/connection-health";
-import { PackProvider } from "./pack-provider";
+import { CrewProvider } from "./crew-provider";
+import { savedAtLabel } from "@/lib/format";
+import { ServerSwitcher } from "./server-switcher";
+import { SessionSwitcher } from "./session-switcher";
 import type { BridgeStatus, ServerSummary } from "@/lib/types";
 
 // The header shell mounts CollieHome (a button) and, via SettingsGear, useNavigate — so it needs a router.
@@ -33,10 +36,13 @@ function renderHeader(ui: ReactElement) {
 function Header({
   bridge,
   error,
+  lastSeenAt,
   ...route
-}: { bridge: BridgeStatus | undefined; error: boolean } & ComponentProps<typeof RouteHeader>) {
+}: { bridge: BridgeStatus | undefined; error: boolean; lastSeenAt?: number } & ComponentProps<
+  typeof RouteHeader
+>) {
   return (
-    <AppHeaderHost bridge={bridge} error={error}>
+    <AppHeaderHost bridge={bridge} error={error} lastSeenAt={lastSeenAt}>
       <RouteHeader {...route} />
     </AppHeaderHost>
   );
@@ -67,9 +73,12 @@ describe("the header — the one shared shell", () => {
     expect(container.querySelector(".dog-gallop")).toBeNull(); // mark at rest (static icon)
     expect(screen.getByText("webapp › main")).toBeInTheDocument(); // the breadcrumb slot
     expect(screen.getByText("working")).toBeInTheDocument(); // the agent status badge
-    expect(screen.queryByText("Collie")).toBeNull(); // no brand line in a pane
-    // …and no identity block at all, not an empty one: the pane's width belongs to the breadcrumb.
-    expect(container.querySelector('[data-slot="header-identity"]')).toBeNull();
+    expect(screen.getByText("Collie")).not.toBeVisible(); // no brand line ON SCREEN in a pane
+    // The block stays MOUNTED and goes `hidden`, so the mux logo is not re-fetched on the way back.
+    // Hidden is `display: none`, so it costs the row no width: the pane's width is the breadcrumb's.
+    const identity = container.querySelector('[data-slot="header-identity"]');
+    expect(identity).not.toBeNull();
+    expect(identity).not.toBeVisible();
   });
 
   it("is calm in the DASHBOARD variant while live — identity + settings gear, resting mark", () => {
@@ -215,12 +224,60 @@ describe("the header — the dog keys on trouble/lost, not the first not-live fr
     expect(markIsLive(container)).toBe(false);
     expect(collieMark(container)?.getAttribute("class") ?? "").toMatch(/grayscale/);
   });
+
+  // The strip can be dismissed; the badge on the mark is what stays. The host reads the phone's own
+  // online flag and hands it down, so the icon agrees with the strip's sentence.
+  describe("the lost badge", () => {
+    const badge = (root: ParentNode) => root.querySelector('[data-slot="collie-lost-badge"]');
+    const setOnline = (value: boolean) =>
+      Object.defineProperty(navigator, "onLine", { configurable: true, get: () => value });
+    afterEach(() => setOnline(true));
+
+    it("is absent while live, and while merely troubled", () => {
+      const { container } = renderHeader(<Header bridge="connected" error onHome={() => {}} />);
+      expect(badge(container)).toBeNull();
+      act(() => vi.advanceTimersByTime(TROUBLE_MS));
+      expect(badge(container)).toBeNull();
+    });
+
+    it("appears once lost, as CloudOff while the phone says online", () => {
+      setOnline(true);
+      const { container } = renderHeader(<Header bridge="connected" error onHome={() => {}} />);
+      act(() => vi.advanceTimersByTime(CONNECTION_LOST_MS));
+      expect(badge(container)?.getAttribute("data-icon")).toBe("cloud-off");
+    });
+
+    it("is WifiOff while the phone says offline", () => {
+      setOnline(false);
+      const { container } = renderHeader(<Header bridge="connected" error onHome={() => {}} />);
+      act(() => vi.advanceTimersByTime(CONNECTION_LOST_MS));
+      expect(badge(container)?.getAttribute("data-icon")).toBe("wifi-off");
+    });
+
+    // The saved-copy time left the bar with the "as of" badge (2026-10-07); the ribbon under the
+    // header says it, and once that is dismissed the mark's NAME still does. The host forwards the
+    // same stamp root.tsx gives the ribbon.
+    it("puts the saved time into the mark's name once lost, from the host's lastSeenAt", () => {
+      const at = Date.now() - 60_000;
+      renderHeader(<Header bridge="connected" error lastSeenAt={at} onHome={() => {}} />);
+      act(() => vi.advanceTimersByTime(CONNECTION_LOST_MS));
+      expect(
+        screen.getByRole("button", { name: `Collie home, not connected. Showing what was saved at ${savedAtLabel(at)}.` }),
+      ).toBeInTheDocument();
+    });
+
+    it("keeps the plain lost name when no stamp is known", () => {
+      renderHeader(<Header bridge="connected" error onHome={() => {}} />);
+      act(() => vi.advanceTimersByTime(CONNECTION_LOST_MS));
+      expect(screen.getByRole("button", { name: "Collie home — not connected" })).toBeInTheDocument();
+    });
+  });
 });
 
 // The header dog and the ConnectionBanner read ONE anchor (lib/connection-health.ts), which is why
-// they can never disagree — and why a pack member going quiet must not reach it. The dog is asserted
+// they can never disagree — and why a crew member going quiet must not reach it. The dog is asserted
 // alongside the banner deliberately: they escalate together, so a mistake here would be wrong twice.
-describe("the header — a quiet pack member is not the phone's connection", () => {
+describe("the header — a quiet crew member is not the phone's connection", () => {
   beforeEach(() => __resetConnectionHealth());
 
   it("stays at rest with an unreachable peer in the roster and a healthy lead", () => {
@@ -229,9 +286,9 @@ describe("the header — a quiet pack member is not the phone's connection", () 
       { id: "workshop", name: "workshop", isLead: false, reachable: false, protocol: "ok", lastSeenAt: 1_000 },
     ];
     const { container } = renderHeader(
-      <PackProvider servers={roster} ts={100_000} pollMs={1500}>
+      <CrewProvider servers={roster} ts={100_000} pollMs={1500}>
         <Header bridge="connected" error={false} wordmark />
-      </PackProvider>,
+      </CrewProvider>,
     );
     // Nothing about a peer feeds `isConnecting`, so: no gallop, no pill, no escalation.
     expect(container.querySelector(".dog-gallop")).toBeNull();
@@ -248,8 +305,12 @@ describe("the header — a quiet pack member is not the phone's connection", () 
 // The block is TWO STACKED LINES, not one 18px sentence: on a phone the single line ran out of room
 // inside the multiplexer's own name. The structure cases below pin the shape that fixed it.
 describe("the header — the stacked identity", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     __resetConnectionHealth();
+    // Let a read an earlier case left in flight land FIRST. The reset forgets that promise without
+    // stopping it, so on Node 20 and 22 it answered after this case's own read and wrote its config,
+    // with no multiplexer, over this case's (CI, 2026-10-08).
+    await loadOperatorCommands();
     __resetOperatorCommands(); // the store caches one read for the life of a page; each case is a page
   });
   afterEach(() => __resetOperatorCommands());
@@ -300,8 +361,11 @@ describe("the header — the stacked identity", () => {
       <Header bridge="connected" error={false} wordmark rightTrail={<SettingsGear />} />,
     );
     await waitFor(() => expect(screen.getByText("on reference")).toBeInTheDocument());
-    const logo = container.querySelector('img[src="/api/mux/logo.svg"]');
-    expect(logo).not.toBeNull();
+    // Reads need the pairing token (ADR 0086), so the mark's bytes are fetched with it and drawn
+    // from an object URL rather than printed as `/api/mux/logo.svg` into the `src`.
+    await waitFor(() => expect(container.querySelector('img[src^="blob:"]')).not.toBeNull());
+    expect(container.querySelector('img[src="/api/mux/logo.svg"]')).toBeNull();
+    const logo = container.querySelector('img[src^="blob:"]');
     // alt="" — the name is right there in the same sentence; announcing the picture too would say
     // the multiplexer twice.
     expect(logo?.getAttribute("alt")).toBe("");
@@ -328,14 +392,14 @@ describe("the header — the stacked identity", () => {
 
   // THE SHAPE. The two runs used to share one line, so the brand's ~55px came out of the
   // multiplexer name's budget and the name was what got the ellipsis — the operator's screenshot
-  // had it down to a single letter. Stacked, they no longer compete — and the brand is OUT OF FLOW
-  // (`absolute bottom-full`), so the block's width and height are the mux line's alone. That is
-  // what parks "on <mux>" on the row's one centred line, shared with the chips and the gear, with
-  // the eyebrow riding above it (see the identity comment in app-header.tsx for the arithmetic).
-  // Pinned as classes because that is where the fact lives: `relative` on the block anchors the
-  // eyebrow, `min-w-0` is what lets the block shrink instead of pushing the gear off the row,
-  // `max-w-full` clips the eyebrow to the width the mux line sized, and `truncate` on BOTH lines
-  // is the promise that neither overflows it.
+  // had it down to a single letter. Stacked, they no longer compete — and the brand sits in a
+  // ZERO-HEIGHT box (`flex h-0 items-end`) that overflows upward, so the block's height is the mux
+  // line's alone while its width is the longer of the two. That is what parks "on <mux>" on the
+  // row's one centred line, shared with the chips and the gear, with the eyebrow riding above it
+  // (see the identity comment in app-header.tsx for the arithmetic). Pinned as classes because that
+  // is where the fact lives: `shrink-0 whitespace-nowrap` on the block means it never gives way and
+  // never wraps (the right cluster gives way instead, see the 390px case below), so neither line
+  // carries a `truncate` any more.
   it("stacks the brand over the multiplexer instead of racing it for one line's width", async () => {
     server.use(
       http.get("/api/config", () =>
@@ -352,15 +416,100 @@ describe("the header — the stacked identity", () => {
     await waitFor(() => expect(screen.getByText("on reference")).toBeInTheDocument());
     const block = container.querySelector<HTMLElement>('[data-slot="header-identity"]');
     expect(block).not.toBeNull();
-    expect(block?.className).toContain("relative");
-    expect(block?.className).toContain("min-w-0");
+    expect(block?.className).toMatch(/(^|\s)shrink-0(\s|$)/);
+    expect(block?.className).toMatch(/(^|\s)whitespace-nowrap(\s|$)/);
+    expect(block?.className).not.toMatch(/(^|\s)min-w-0(\s|$)/);
     const [brand, muxLine] = Array.from(block?.children ?? []);
     expect(brand?.textContent).toBe("Collie"); // the brand is the TOP line…
-    expect(brand?.className).toContain("bottom-full"); // …and out of flow, above the block
-    expect(brand?.className).toContain("max-w-full");
+    expect(brand?.className).toMatch(/(^|\s)h-0(\s|$)/); // …adding no height…
+    expect(brand?.className).toContain("items-end"); // …and drawn above the block's top edge
     expect(muxLine?.textContent).toBe("on reference");
-    expect(brand?.className).toContain("truncate");
-    expect(muxLine?.className).toContain("truncate");
+    expect(brand?.className).not.toContain("truncate");
+    expect(muxLine?.className).not.toContain("truncate");
+  });
+
+  // THE BRAND NEVER GIVES WAY (2026-10-07). On a Pixel in airplane mode the dashboard row held the
+  // mark, the identity, a saved-copy badge, the "bluefin" and "default" chips and the gear, and the
+  // identity was the one thing allowed to shrink: it came out ~20px wide, "C." over "o". The row now
+  // gives the shrink to the RIGHT cluster. jsdom lays nothing out, so a 390px viewport cannot be
+  // measured here; what is pinned is the full right cluster at that width and the classes that
+  // decide who shrinks: the block is `shrink-0 whitespace-nowrap`, the cluster is `min-w-0`, each
+  // chip is `min-w-0` with a `truncate` name, and the gear holds its 44px with `shrink-0`.
+  it("keeps the wordmark whole at 390px with the right cluster full, and shortens the chips instead", async () => {
+    const width = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 390 });
+    try {
+      server.use(
+        http.get("/api/config", () =>
+          HttpResponse.json({
+            push: false,
+            vapidPublicKey: "",
+            mux: { name: "herdr", capabilities: {}, unsupportedKeys: [], notes: {} },
+          }),
+        ),
+      );
+      const roster: ServerSummary[] = [
+        { id: "bluefin", name: "bluefin", isLead: true, reachable: true, protocol: "ok", lastSeenAt: 100_000 },
+        { id: "workshop", name: "workshop", isLead: false, reachable: true, protocol: "ok", lastSeenAt: 100_000 },
+      ];
+      const { container } = renderHeader(
+        <CrewProvider servers={roster} ts={100_000} pollMs={1500}>
+          <Header
+            bridge="connected"
+            error={false}
+            wordmark
+            width="column"
+            rightLead={
+              <>
+                <ServerSwitcher servers={roster} scope={{}} />
+                <SessionSwitcher sessions={[]} scope={{ session: "default" }} viewAll={false} />
+              </>
+            }
+            rightTrail={<SettingsGear />}
+          />
+        </CrewProvider>,
+      );
+      await waitFor(() => expect(screen.getByText("on herdr")).toBeInTheDocument());
+
+      // The right cluster is FULL: both chips and the gear are in it.
+      const right = container.querySelector<HTMLElement>('[data-slot="header-right"]');
+      const host = screen.getByRole("button", { name: /bluefin/ });
+      const session = screen.getByRole("button", { name: /default/ });
+      const gear = screen.getByRole("button", { name: "Settings" });
+      for (const el of [host, session, gear]) expect(right?.contains(el)).toBe(true);
+
+      // The wordmark is intact, on one line each, and its block cannot be squeezed.
+      const block = container.querySelector<HTMLElement>('[data-slot="header-identity"]');
+      expect(block).toBeVisible();
+      const [brand, muxLine] = Array.from(block?.children ?? []);
+      expect(brand?.textContent).toBe("Collie");
+      expect(muxLine?.textContent).toBe("on herdr");
+      expect(block?.className).toMatch(/(^|\s)shrink-0(\s|$)/);
+      expect(block?.className).toMatch(/(^|\s)whitespace-nowrap(\s|$)/);
+      expect(block?.className).not.toMatch(/(^|\s)min-w-0(\s|$)/);
+
+      // What gives way is the right cluster, and inside it the chip NAMES.
+      expect(right?.className).toMatch(/(^|\s)min-w-0(\s|$)/);
+      for (const chip of [host, session]) {
+        expect(chip.className).toMatch(/(^|\s)min-w-0(\s|$)/);
+        expect(chip.className).not.toMatch(/(^|\s)shrink-0(\s|$)/);
+        const name = chip.querySelector("span");
+        expect(name?.className).toMatch(/(^|\s)min-w-0(\s|$)/);
+        expect(name?.className).toMatch(/(^|\s)truncate(\s|$)/);
+      }
+      expect(gear.className).toMatch(/(^|\s)shrink-0(\s|$)/);
+    } finally {
+      Object.defineProperty(window, "innerWidth", { configurable: true, value: width });
+    }
+  });
+
+  it("reserves the safe-area inset on the header itself, in every state", () => {
+    // The band paints UNDER the bar since 2026-10-07, so nothing ever sits above the header and the
+    // notch is always its own. There is no handover left to animate: no padding transition.
+    const { container } = renderHeader(<Header bridge="connected" error={false} wordmark />);
+    const header = container.querySelector("header");
+    expect(header?.className).toContain("[padding-top:env(safe-area-inset-top)]");
+    expect(header?.className).not.toMatch(/transition-\[padding-top\]/);
   });
 
   // THE HEIGHT CONTRACT, which the stack had to fit inside rather than grow (DESIGN.md §2, §6).
@@ -428,7 +577,8 @@ describe("the header — the stacked identity", () => {
       </Header>,
     );
     await waitFor(() => expect(screen.getByText("webapp › main")).toBeInTheDocument());
-    expect(screen.queryByText("on reference")).toBeNull();
+    // Off screen, not gone: the block keeps its node (and its logo) and only hides.
+    expect(screen.getByText("on reference")).not.toBeVisible();
   });
 });
 
@@ -530,7 +680,7 @@ describe("the ONE header — hoisted above the outlet", () => {
   });
 
   // THE ONE PLACE THE PHASE STILL RESETS, stated rather than left to be discovered. A full-row
-  // takeover is defined as "the route supplies the row INSTEAD of the mark" — Settings and Pack lead
+  // takeover is defined as "the route supplies the row INSTEAD of the mark" — Settings and Crew lead
   // with a back button where the mark stands, and the find bar hands the row to a search field. The
   // mark is not on screen at all there, so it is unmounted, and coming back out mounts a new one at
   // phase zero. That is a smaller thing than the bug this change fixes (the mark WAS on screen on
@@ -594,7 +744,7 @@ describe("the ONE header — hoisted above the outlet", () => {
     // Pane: the breadcrumb takes the middle, the dashboard's items are gone, the mark stays.
     await go("/pane");
     expect(screen.getByText("webapp › main")).toBeInTheDocument();
-    expect(screen.queryByText("Collie")).toBeNull(); // no wordmark inside a pane
+    expect(screen.getByText("Collie")).not.toBeVisible(); // no wordmark inside a pane
     expect(screen.queryByRole("button", { name: "Settings" })).toBeNull();
     expect(screen.getByRole("button", { name: "Collie home" })).toBeInTheDocument();
 
@@ -615,7 +765,7 @@ describe("the ONE header — hoisted above the outlet", () => {
 
   it("carries the route's own width claim, so a hoisted header is not silently full-bleed", async () => {
     // The header used to live INSIDE each route's content column and inherited its width for free:
-    // 640px on the dashboard, Settings and Pack, edge-to-edge in a pane and in history. Measured in
+    // 640px on the dashboard, Settings and Crew, edge-to-edge in a pane and in history. Measured in
     // a 1280px viewport before this change: `/` gave x=320 w=640, `/pane/…` gave x=0 w=1280. Hoisted,
     // that width has to be STATED or the dashboard's rule silently becomes the viewport's.
     const { container, go } = renderHoisted();
@@ -642,6 +792,26 @@ describe("the ONE header — hoisted above the outlet", () => {
     expect(header?.className).toContain("mx-auto");
     await go("/pane");
     expect(header?.className).not.toContain("max-w-screen-md");
+  });
+
+  it("grows the wide claim past md on a desktop, and leaves the sm column flat", async () => {
+    // #166: flat at 768px, a 1920px desktop left 576px of dead margin on each side of a terminal
+    // mirror that had columns to spare. `wide` is a ladder now. The dashboard's `column` is NOT —
+    // a list row has no column count, so widening it only lengthens the line. That asymmetry is the
+    // whole fix, so both halves are asserted here.
+    //
+    // AgentChat's wrapper and history's carry this identical ladder. Nothing can check across the
+    // three files, so the string is pinned in one place: change it here and grep the other two.
+    const LADDER = ["max-w-screen-md", "lg:max-w-screen-lg", "xl:max-w-screen-xl", "2xl:max-w-[1400px]"];
+    const { container, go } = renderHoisted();
+    const header = container.querySelector("header");
+
+    await go("/wide");
+    for (const step of LADDER) expect(header?.className).toContain(step);
+
+    await go("/settings");
+    expect(header?.className).toContain("max-w-screen-sm");
+    for (const step of LADDER.slice(1)) expect(header?.className).not.toContain(step);
   });
 
   it("refuses to render a route header with no host above it", () => {

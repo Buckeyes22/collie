@@ -12,6 +12,16 @@
 import type { Block, StyledLine } from "../blocks";
 
 export interface HarnessAdapter {
+  /** Lossless transport pastes. Intermediate parts must be verified before continuing;
+   * only the complete reply can authorise Enter. Other harnesses stay single-paste. */
+  replyChunks?(text: string): string[];
+  /**
+   * Whether to type this reply part as ONE bracketed paste (`ESC[200~ … ESC[201~`) rather than as
+   * bare keystrokes. `pane.send_text` writes raw bytes (HERDR_API.md), so a long send reaches the
+   * harness as several PTY reads, and a harness that guesses pastes from read size can mis-split it.
+   * OPTIONAL: only for a harness that turns bracketed paste on, or the markers are typed as junk.
+   */
+  bracketedPaste?(text: string): boolean;
   /** The exact Herdr snapshot `agent` string this adapter claims (its registry key). */
   agent: string;
   /** The adapter's OWN full block pipeline over the pane's styled lines — for Claude that is the
@@ -25,6 +35,11 @@ export interface HarnessAdapter {
    *  readable at a glance. Empty = no box at the tail (a menu is up, or a foreign/torn buffer), so
    *  nothing to surface. */
   extractStatusLines(lines: StyledLine[]): StyledLine[];
+  /** Re-surface a block of rows the harness paints UNDER its statusline about work running beside
+   *  the main session (Claude's background-agents footer: "● main" plus one row per agent). Stripped
+   *  off the mirror with the rest of the tail, so this is its only surface. STYLED rows, top to
+   *  bottom, verbatim. OPTIONAL: a harness without such a block omits it, and `[]` means none now. */
+  extractAgentsFooter?(lines: StyledLine[]): StyledLine[];
   /** Re-surface a user draft stranded on the input box's prompt line (null = no box / empty / a
    *  known placeholder). */
   extractInputDraft(lines: StyledLine[]): string | null;
@@ -38,6 +53,38 @@ export interface HarnessAdapter {
    * withheld either way; the pre-flight just avoids depositing the text in a menu first.
    */
   composerReady?(lines: StyledLine[]): boolean;
+  /**
+   * The key THIS harness's own modals print as the way OUT of them — a Herdr key token ("Escape",
+   * "ctrl+c"), declared here and read from nowhere else.
+   *
+   * It is the one control the unread-dialog card offers (harness/index.ts `withUnreadDialog`,
+   * .adr/0053): when every grammar declined, `composerReady` answered a definite `false` and the
+   * screen is not blank, the operator gets this key over the raw mirror instead of a locked composer
+   * and no buttons at all. Declare it from the harness's OWN captures or notes, and say in a comment
+   * which file it was read from — a declaration is reviewed once, a footer parse is fooled by a
+   * phrase.
+   *
+   * OPTIONAL, and its absence means "this adapter declares no way out": the pass emits no card for
+   * that agent, per adapter, by construction. That is a supported answer with a visible cost, and it
+   * is the right one while an adapter's `composerReady` has a total false-negative mode (omp).
+   *
+   * Not every harness spells it the same way: grok's footers give Escape to the scrollback view and
+   * name `Ctrl+c:cancel` instead. That single divergence is why the key is declared rather than
+   * assumed.
+   */
+  cancelKey?: string;
+  /**
+   * Positive evidence that one of THIS harness's modals is on screen, asked by the unread-dialog pass
+   * before it offers `cancelKey` (.adr/0053, addendum 2026-09-26). `composerReady` answering `false`
+   * says only that no input box is there, and that is also true of a plain shell: herdr reports the
+   * agent a moment before its first frame paints and a moment after it exits, and the card used to
+   * flash over the shell prompt in both windows.
+   *
+   * OPTIONAL. Absent keeps the four original conditions unchanged for that adapter. Declared, the
+   * card needs it to answer `true` as well; a throw counts as `false`. Read from the harness's own
+   * captures, and pinned by the card's allow-list test.
+   */
+  modalOnScreen?(lines: StyledLine[]): boolean;
   /**
    * Literal on-screen text from the composer's prompt/draft tail — the region a DESTRUCTIVE write
    * aimed at that composer may be bound to. Null = no composer at the tail (the same screens
@@ -57,6 +104,16 @@ export interface HarnessAdapter {
    * whose final row sits too high would refuse legitimate sweeps, which is worse than leaving it out.
    */
   composerPrompt?(lines: StyledLine[]): string | null;
+  /**
+   * Whether the input on screen SUBMITS when it receives a raw newline. `pane.send_text` delivers a
+   * `\n` inside the text as a real keypress (HERDR_API.md), so on such a screen a multi-line message
+   * would be submitted at its first line break and the rest typed into whatever comes next.
+   *
+   * OPTIONAL; absence means "a newline inserts a line", which is the pre-existing assumption. The
+   * reply path asks it of every read that clears the text to go out, after `composerReady` said yes,
+   * and refuses a message that contains a newline when it answers true.
+   */
+  newlineSubmits?(lines: StyledLine[]): boolean;
   /**
    * SUPPLEMENTAL evidence that `sent` reached the input box, for the case the reply guard's own
    * literal-substring match structurally cannot see: a harness that swallows what was typed and paints
@@ -79,4 +136,16 @@ export interface HarnessAdapter {
    * heuristic gets, and is the pre-existing behaviour.
    */
   draftIsOpaque?(draft: string): boolean;
+  /**
+   * Tidy one raw block's rows for display only, after every grammar has run: chrome the harness paints
+   * inside the transcript that is not content (Grok's dark scrollbar track and its right padding).
+   * The terminal mirror calls it through the registry, on the wrapped view with grammars on, so the
+   * shared component never imports a harness module.
+   *
+   * Display only. Never hand the result back to a grammar, a guard or the reply path: it may drop or
+   * collapse rows, which would break the raw screen coordinates the send's verification reads.
+   *
+   * OPTIONAL; absence means the rows are shown as they are.
+   */
+  prepareDisplay?(lines: StyledLine[]): StyledLine[];
 }

@@ -1,0 +1,3492 @@
+{
+  "date": "2026-10-10",
+  "scope": "complete mandatory fix plan; no feature implementation in this turn",
+  "status": "planned",
+  "summary": {
+    "implementation_units": 75,
+    "original_report_rows": 132,
+    "required_rows": 98,
+    "baseline_rows": 33,
+    "non_gap_rows": 1,
+    "unassigned_rows": 0,
+    "herdr_methods_mapped": 102
+  },
+  "units": {
+    "C01": {
+      "title": "shared typed capability state and genuine Space refresh",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-collie.md",
+      "line": 25,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "C02": {
+      "title": "safe Send queued now",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-collie.md",
+      "line": 35,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "C03": {
+      "title": "journal images and authenticated blobs",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-collie.md",
+      "line": 43,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "C04": {
+      "title": "complete structured tool and denial cards",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-collie.md",
+      "line": 53,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "C05": {
+      "title": "native Changes, diffs and last commit",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-collie.md",
+      "line": 61,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "C06": {
+      "title": "native Files tree and source",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-collie.md",
+      "line": 69,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "C07": {
+      "title": "full inert native document previews",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-collie.md",
+      "line": 77,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "C08": {
+      "title": "printed file paths and source line links, including peers",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-collie.md",
+      "line": 87,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "C09": {
+      "title": "rich New agent, shell and declared launcher workflow",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-collie.md",
+      "line": 95,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "C10": {
+      "title": "machine folders, favorites and recents",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-collie.md",
+      "line": 103,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "C11": {
+      "title": "worktree plan, base/ref, parent and chosen agent",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-collie.md",
+      "line": 111,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "C12": {
+      "title": "durable launch intent and deliberate replay",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-collie.md",
+      "line": 119,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "C13": {
+      "title": "add/rename/remove recipes and free-text launchers",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-collie.md",
+      "line": 129,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "C14": {
+      "title": "one-off run, validation and command history",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-collie.md",
+      "line": 137,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "C15": {
+      "title": "bounded document/text uploads",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-collie.md",
+      "line": 145,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "C16": {
+      "title": "all five bridge notification switches and snooze",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-collie.md",
+      "line": 153,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "C17": {
+      "title": "typed cache/model/git facts and sourced catalog",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-collie.md",
+      "line": 161,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "C18": {
+      "title": "cache watch/list/forget and target navigation",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-collie.md",
+      "line": 169,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "C19": {
+      "title": "native machine resource monitoring and charts",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-collie.md",
+      "line": 177,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "C20": {
+      "title": "machine rule editing/firing states and persistence continuity",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-collie.md",
+      "line": 185,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "C21": {
+      "title": "implement the complete native push provider and bridge contract",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-collie.md",
+      "line": 193,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "C22": {
+      "title": "durable version/scope update dismissal",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-collie.md",
+      "line": 211,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "C23": {
+      "title": "native deputy health/takeover and safe ingress prerequisites",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-collie.md",
+      "line": 219,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "C24": {
+      "title": "cold-start offline dashboard/panes/Chat with encrypted retention",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-collie.md",
+      "line": 227,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "C25": {
+      "title": "every local appearance/ergonomic setting, including fonts",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-collie.md",
+      "line": 235,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "C26": {
+      "title": "dashboard pins and complete native keypad editor/import/export",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-collie.md",
+      "line": 245,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "C27": {
+      "title": "all native route targets, external links and pairing QR entry",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-collie.md",
+      "line": 253,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "C28": {
+      "title": "independent native APK check/download/install lifecycle",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-collie.md",
+      "line": 263,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "C29": {
+      "title": "masking, upload/STT/config facts and native access diagnostics",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-collie.md",
+      "line": 271,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "A00": {
+      "title": "foundations shared by every row",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-android.md",
+      "line": 9,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "A01": {
+      "title": "Changes and commit inspection (P1)",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-android.md",
+      "line": 21,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "A02": {
+      "title": "Files, images and file-reference navigation (P1)",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-android.md",
+      "line": 29,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "A03": {
+      "title": "Rich New agent/shell/folder launch (P1)",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-android.md",
+      "line": 37,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "A04": {
+      "title": "Worktree planning, base and parent folder (P1)",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-android.md",
+      "line": 45,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "A05": {
+      "title": "Journal images and authenticated media (P1)",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-android.md",
+      "line": 53,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "A06": {
+      "title": "Folder history and stars (P1)",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-android.md",
+      "line": 61,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "A07": {
+      "title": "Recipes, one-off runs and recent-run history (P1)",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-android.md",
+      "line": 69,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "A08": {
+      "title": "Machines, resources and alerts (P1)",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-android.md",
+      "line": 77,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "A09": {
+      "title": "Cache/model/git context and cache-watch lifecycle (P1)",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-android.md",
+      "line": 85,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "A10": {
+      "title": "Complete verified harness semantics and honest fallback (P1)",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-android.md",
+      "line": 93,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "A11": {
+      "title": "Generic document uploads (P1)",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-android.md",
+      "line": 101,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "A12": {
+      "title": "Version-specific update dismiss versus digest snooze (P2)",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-android.md",
+      "line": 109,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "A13": {
+      "title": "Declared freshness, mirror ceiling and loaded-history search (P2)",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-android.md",
+      "line": 117,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "A14": {
+      "title": "Opt-in encrypted offline dashboard, mirror and transcript retention (P1, required implementation)",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-android.md",
+      "line": 125,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "A15": {
+      "title": "Real native background push (P1, required)",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-android.md",
+      "line": 133,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "A16": {
+      "title": "Device font selection and operator fonts (P2)",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-android.md",
+      "line": 159,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "A17": {
+      "title": "Structured tool calls, rich question/result rendering (P1)",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-android.md",
+      "line": 167,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "A18": {
+      "title": "Pending agent queue and Send now (P1)",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-android.md",
+      "line": 175,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "A19": {
+      "title": "Ergonomics, configurable key board and stable pins (P2)",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-android.md",
+      "line": 183,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "A20": {
+      "title": "Exported safe links, share import and QR pairing (P1)",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-android.md",
+      "line": 191,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "A21": {
+      "title": "Separate native APK discovery, download and user installation (P1)",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-android.md",
+      "line": 201,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "H02": {
+      "title": "Decode and display declared topology freshness",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 42,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "H03": {
+      "title": "Run scoped look-now before manual topology refresh",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 52,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "H04": {
+      "title": "Negotiate read ceilings and served-depth evidence",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 62,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "H05": {
+      "title": "Inspect and mutate pane layout",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 72,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "H06": {
+      "title": "Portable layouts, recipes and split ratios",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 82,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "H07": {
+      "title": "Workspace and tab organization including group close",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 92,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "H08": {
+      "title": "Complete worktree create flow and safe removal",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 102,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "H09": {
+      "title": "Foreground directory and process inspection",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 112,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "H10": {
+      "title": "Agent prompt, named start, rename, explain and waits",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 122,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "H11": {
+      "title": "State authority, session references and resume commands",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 132,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "H12": {
+      "title": "Complete broader harness, launcher and journal registries",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 142,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "H13": {
+      "title": "Integration install/status/uninstall and manifest reload",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 185,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "H14": {
+      "title": "Bounded metadata and declarative agent views",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 195,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "H15": {
+      "title": "Plugin inventory, configuration, installation and runtime controls",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 205,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "H16": {
+      "title": "Saved machines and remote administration through HTTP",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 215,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "H17": {
+      "title": "Session lifecycle, backup/restore, configuration and live handoff",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 225,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "H18": {
+      "title": "Operator scroll, copy/search/links, titles and host UI actions",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 235,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "H19": {
+      "title": "Rendered session observation, HTTP streams and equivalent media",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 245,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "H20": {
+      "title": "Documentation, compatibility ledger and full closure audit",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 267,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "R01": {
+      "title": "Bounded search of the owning session journal",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan.md",
+      "line": 92,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "R02": {
+      "title": "Native access through an identity-aware front door",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan.md",
+      "line": 104,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "W01": {
+      "title": "Windows Crew admission, persistence and failover parity",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan.md",
+      "line": 118,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "W02": {
+      "title": "Windows build and action workflow without bash",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan.md",
+      "line": 128,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    },
+    "H01": {
+      "title": "Neutral contracts, capabilities, admission, Crew and operation receipts",
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 15,
+      "required": true,
+      "implementation_status": "planned",
+      "acceptance_status": "pending"
+    }
+  },
+  "original_findings": [
+    {
+      "finding_id": "capability-gap-analysis:25",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gap-analysis.md",
+      "line": 25,
+      "feature": "Structured tool-call and denial detail",
+      "source_excerpt": "| Structured tool-call and denial detail | Native text cards omit some decoded structured call/image/denial context shown by the PWA. | Enrich native tool cards with faithful typed context and distinguish denial from tool errors, while retaining text fallback. |",
+      "disposition": "required",
+      "implementation_units": [
+        "C04",
+        "A17"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gap-analysis:26",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gap-analysis.md",
+      "line": 26,
+      "feature": "Journal attachment images and tool-result images",
+      "source_excerpt": "| Journal attachment images and tool-result images | Fields decode, but history projection/rendering drops image content. This can hide the only phone-readable copy of pi/OMP off-grid terminal images. | Native authenticated, same-origin scoped, bounded image loading and rendering in both history and live transcript. Restore visible results, with an explicit failure/unsupported state. |",
+      "disposition": "required",
+      "implementation_units": [
+        "C03",
+        "A05",
+        "H19"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gap-analysis:27",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gap-analysis.md",
+      "line": 27,
+      "feature": "Pane/workspace Changes, diffs and last-commit inspection",
+      "source_excerpt": "| Pane/workspace Changes, diffs and last-commit inspection | No native API/screen for the implemented read-only Changes family. | Native read-only lists/diff views, scoped to the source machine/session; preserve repository containment and server limits. Inspect an agent's work before approving or responding. |",
+      "disposition": "required",
+      "implementation_units": [
+        "C05",
+        "A01"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gap-analysis:28",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gap-analysis.md",
+      "line": 28,
+      "feature": "Pane/workspace Files, text and image reads, path existence",
+      "source_excerpt": "| Pane/workspace Files, text and image reads, path existence | No native file browser or authenticated file-image viewer; terminal filesystem links are not promoted into this workflow. | Native bounded file browser/viewer with distinct refusal and missing-route states; Files additionally requires the server's device-read authorization gate, beyond ordinary paired reads. Files remains read-only; editing is not an existing contract. |",
+      "disposition": "required",
+      "implementation_units": [
+        "C06",
+        "C07",
+        "C08",
+        "A02"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gap-analysis:29",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gap-analysis.md",
+      "line": 29,
+      "feature": "Harness/command/shell launch targets and folder-based worktree planning",
+      "source_excerpt": "| Harness/command/shell launch targets and folder-based worktree planning | New transports exist in Android, but screens still call legacy launch/worktree routes. | Wire target discovery, folder choice, plan preview, base/ref and parent choice into native screens. Preserve caller-held request IDs across deliberate same-intent replay, without automatic write retries. |",
+      "disposition": "required",
+      "implementation_units": [
+        "C09",
+        "C10",
+        "C11",
+        "C12",
+        "A03",
+        "A04",
+        "A06"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gap-analysis:30",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gap-analysis.md",
+      "line": 30,
+      "feature": "Launcher recipe add/remove/rename; folder stars",
+      "source_excerpt": "| Launcher recipe add/remove/rename; folder stars | API/PWA feature family absent from native UI. | Native configuration controls scoped to the target host, with the same confirmation and write gates. Avoid visiting the PWA merely to maintain phone launch choices. |",
+      "disposition": "required",
+      "implementation_units": [
+        "C10",
+        "C13",
+        "A06",
+        "A07"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gap-analysis:31",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gap-analysis.md",
+      "line": 31,
+      "feature": "One-off command runs, preflight, recent-run history/removal",
+      "source_excerpt": "| One-off command runs, preflight, recent-run history/removal | Rich launch/run screen absent; these are not the same as sending text to an existing pane. | Explicit run UI with server preflight and no-prompts confirmation, declared availability, intent identity and typed refusals. |",
+      "disposition": "required",
+      "implementation_units": [
+        "C14",
+        "C12",
+        "A07"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gap-analysis:32",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gap-analysis.md",
+      "line": 32,
+      "feature": "Chat `sendQueuedNow` action",
+      "source_excerpt": "| Chat `sendQueuedNow` action | Android displays queued messages and decodes declared keys but supplies no action. | A guarded \u201cSend now\u201d action using the server-declared keys. Never resend queued text; refuse while a semantic dialog owns input, while offline/saved, or when writes are unauthorized. |",
+      "disposition": "required",
+      "implementation_units": [
+        "C02",
+        "A18"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gap-analysis:33",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gap-analysis.md",
+      "line": 33,
+      "feature": "Persistent version/scope update dismissal",
+      "source_excerpt": "| Persistent version/scope update dismissal | Native Dismiss sets a local Boolean and calls digest snooze; server dismissal has different durable semantics. | Implement `/api/update/dismiss` with version and offer/crew scope. Keep \u201cremind me next digest\u201d as a distinct snooze operation. |",
+      "disposition": "required",
+      "implementation_units": [
+        "C22",
+        "A12"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gap-analysis:34",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gap-analysis.md",
+      "line": 34,
+      "feature": "Mux topology-latency declaration and force-refresh",
+      "source_excerpt": "| Mux topology-latency declaration and force-refresh | Android omits `topologyLatency`; Space refresh reads another snapshot without requesting the mux refresh floor. | Decode and display bounded freshness where declared, negotiate supported read depth, and perform scoped `/api/refresh` before a manual Space reload. Mainly improves zellij's census behavior. |",
+      "disposition": "required",
+      "implementation_units": [
+        "C01",
+        "H02",
+        "H03",
+        "A13"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gap-analysis:35",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gap-analysis.md",
+      "line": 35,
+      "feature": "Machine/cache notification preference switches",
+      "source_excerpt": "| Machine/cache notification preference switches | Native settings expose three shared switches, while the PWA exposes five; machine/cache fields decode but are not editable. | Add the two shared preference controls with clear bridge-wide scope, independently of native background delivery. |",
+      "disposition": "required",
+      "implementation_units": [
+        "C16",
+        "A08",
+        "A09"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gap-analysis:36",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gap-analysis.md",
+      "line": 36,
+      "feature": "Machine resource summaries/history and alert thresholds",
+      "source_excerpt": "| Machine resource summaries/history and alert thresholds | Native Crew status is not a machine metrics view; machine alert fields are preserved but not editable. | Native machine panels/history and declared alert controls. Resource configuration and actual native notification delivery are separate pieces. |",
+      "disposition": "required",
+      "implementation_units": [
+        "C19",
+        "C20",
+        "A08"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gap-analysis:37",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gap-analysis.md",
+      "line": 37,
+      "feature": "Cache/model/git context, cache rules and per-pane watches",
+      "source_excerpt": "| Cache/model/git context, cache rules and per-pane watches | Several decoded fields lack rich native presentation; cache metadata is largely opaque; watch/rules endpoints and associated user controls are absent. | Native cache-window presentation, declared rules, watch management and expiry-state handling. Notification delivery needs its own implementation decision. |",
+      "disposition": "required",
+      "implementation_units": [
+        "C17",
+        "C18",
+        "A09"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gap-analysis:38",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gap-analysis.md",
+      "line": 38,
+      "feature": "Text/document attachments accepted by configured bridge upload policy",
+      "source_excerpt": "| Text/document attachments accepted by configured bridge upload policy | Native picker and media path support images only. | Add a native document picker and bounded streaming upload, honoring server extension/type/size declarations. Attach logs or source files without switching clients. |",
+      "disposition": "required",
+      "implementation_units": [
+        "C15",
+        "A11"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gap-analysis:39",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gap-analysis.md",
+      "line": 39,
+      "feature": "Retained offline chat tails",
+      "source_excerpt": "| Retained offline chat tails | Native transcript caches are in memory; PWA offers bounded retained copies. | Optional encrypted, scoped, expiring retention and clear/revocation wipe. Saved copies remain read-only and never authorize writes. |",
+      "disposition": "required",
+      "implementation_units": [
+        "C24",
+        "A14"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gap-analysis:40",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gap-analysis.md",
+      "line": 40,
+      "feature": "Larger non-Herdr terminal read windows",
+      "source_excerpt": "| Larger non-Herdr terminal read windows | Android applies Herdr's 1,000-line ceiling to every backend; bridge allows bounded requests up to 10,000. | Negotiate a declared read ceiling and implement bounded growth for supporting adapters; retain Herdr limits and unknown-depth refusal. |",
+      "disposition": "required",
+      "implementation_units": [
+        "H04",
+        "A13"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gap-analysis:41",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gap-analysis.md",
+      "line": 41,
+      "feature": "Local pins, handedness and keypad customization",
+      "source_excerpt": "| Local pins, handedness and keypad customization | PWA offers device-local navigation/input preferences that native does not expose. | Optional native local preferences for frequent panes and custom key layouts, preserving supported-key validation and touch/accessibility targets. |",
+      "disposition": "required",
+      "implementation_units": [
+        "C25",
+        "C26",
+        "A19"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gap-analysis:42",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gap-analysis.md",
+      "line": 42,
+      "feature": "Per-device typeface/operator fonts",
+      "source_excerpt": "| Per-device typeface/operator fonts | Native fixes its current faces; PWA has font preferences. | Optional design reconciliation and authenticated bounded font loading, after core functionality. |",
+      "disposition": "required",
+      "implementation_units": [
+        "C25",
+        "A16"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gap-analysis:43",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gap-analysis.md",
+      "line": 43,
+      "feature": "Native background notification delivery",
+      "source_excerpt": "| Native background notification delivery | App edits shared notification preferences but has no native receiver/provider registration lifecycle. PWA Web Push exists. | Design a native delivery/provider contract and lifecycle, then implement app registration and handling. Existing browser subscription flow is not a native receiver. |",
+      "disposition": "required",
+      "implementation_units": [
+        "C21",
+        "A15"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gap-analysis:44",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gap-analysis.md",
+      "line": 44,
+      "feature": "Wider per-harness semantic presentation",
+      "source_excerpt": "| Wider per-harness semantic presentation | Raw fallback remains for unknown/unproven surfaces; icon recognition is broader than verified semantic/journal support. | Extend only from current fixtures and verified choreography; candidates include OMP dialogs, Claude resume/effort/unnumbered trust, and current Muse surfaces. Preserve raw readable fallback and existing dialog write guards; never map similarly named agents to unverified key recipes. |",
+      "disposition": "required",
+      "implementation_units": [
+        "A10",
+        "H12"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gap-analysis:45",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gap-analysis.md",
+      "line": 45,
+      "feature": "Additional Herdr layout, movement, waits/process information and integration management",
+      "source_excerpt": "| Additional Herdr layout, movement, waits/process information and integration management | Herdr exposes methods that Collie's mux port/HTTP API does not expose. | Add deliberately scoped, capability-gated bridge contracts before native controls. Evaluate layout/move/inspection first; agent automation and integration administration need separate product intent. |",
+      "disposition": "required",
+      "implementation_units": [
+        "H01",
+        "H05",
+        "H06",
+        "H07",
+        "H08",
+        "H09",
+        "H10",
+        "H11",
+        "H12",
+        "H13",
+        "H14",
+        "H15",
+        "H16",
+        "H17",
+        "H18",
+        "H19",
+        "H20"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-collie:81",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-collie.md",
+      "line": 81,
+      "feature": "HTTPS origin, safe mount, bearer pairing, expiry/revoke",
+      "source_excerpt": "| HTTPS origin, safe mount, bearer pairing, expiry/revoke | Open health/pair; paired reads and writes; optional identity/header gates | Implemented; encrypted token, scoped/mounted calls, exact pairing refusal clears authority | Core supported. A paired token still cannot satisfy a separate proxy identity requirement. | E02, E04\u2013E06 |",
+      "disposition": "baseline",
+      "implementation_units": [
+        "C01",
+        "A00",
+        "R02"
+      ],
+      "reason": "Existing functionality remains regression acceptance; mapped extensions do not negate this baseline."
+    },
+    {
+      "finding_id": "capability-gaps-collie:82",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-collie.md",
+      "line": 82,
+      "feature": "Dashboard, Space/tab/pane, host/session/all-session selection",
+      "source_excerpt": "| Dashboard, Space/tab/pane, host/session/all-session selection | Snapshot topology and triage, status/freshness | Implemented core; scoped identities and host freshness | Preserve current scopes when adding any feature. | E01, E05, E21, E24 |",
+      "disposition": "baseline",
+      "implementation_units": [
+        "C01",
+        "A00"
+      ],
+      "reason": "Existing functionality remains regression acceptance; mapped extensions do not negate this baseline."
+    },
+    {
+      "finding_id": "capability-gaps-collie:83",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-collie.md",
+      "line": 83,
+      "feature": "Pane/tab focus, rename, close; tab/Space create",
+      "source_excerpt": "| Pane/tab focus, rename, close; tab/Space create | Gated mutation routes | Implemented with write gates and confirmations | Supported subject to mux capability and reachable peer. | E01, E13 |",
+      "disposition": "baseline",
+      "implementation_units": [
+        "H01",
+        "A00"
+      ],
+      "reason": "Existing functionality remains regression acceptance; mapped extensions do not negate this baseline."
+    },
+    {
+      "finding_id": "capability-gaps-collie:84",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-collie.md",
+      "line": 84,
+      "feature": "Look now refresh",
+      "source_excerpt": "| Look now refresh | POST /api/refresh is read-level and invokes mux refresh | Transport/repository exist; Space refresh currently reloads snapshot only | Partial wiring. A Space pull may not accelerate bounded out-of-band topology visibility. | E05, E07 |",
+      "disposition": "required",
+      "implementation_units": [
+        "C01",
+        "H03",
+        "A13"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-collie:85",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-collie.md",
+      "line": 85,
+      "feature": "Terminal mirror, ANSI, wrap/table pan, output Find, Zen",
+      "source_excerpt": "| Terminal mirror, ANSI, wrap/table pan, output Find, Zen | Rendered inert grid, client presentation | Implemented native controls | Core supported; no terminal emulator or shared PTY resizing is warranted. | E02, E03 |",
+      "disposition": "baseline",
+      "implementation_units": [
+        "A13",
+        "A19"
+      ],
+      "reason": "Existing functionality remains regression acceptance; mapped extensions do not negate this baseline."
+    },
+    {
+      "finding_id": "capability-gaps-collie:86",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-collie.md",
+      "line": 86,
+      "feature": "Semantic dialogs, quick replies, agent commands, named keys, direct typing",
+      "source_excerpt": "| Semantic dialogs, quick replies, agent commands, named keys, direct typing | Client-side harness adapters and guarded terminal input | Implemented native parsers/control paths; exact subset assessed separately | Keep unsupported dialogs readable and fail closed; API availability is not safe semantic parity. | E02, E06 |",
+      "disposition": "required",
+      "implementation_units": [
+        "A10",
+        "H12"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-collie:87",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-collie.md",
+      "line": 87,
+      "feature": "Operator key/reply/command catalogs",
+      "source_excerpt": "| Operator key/reply/command catalogs | Scoped /api/config | Implemented, native catalog/grammar | Supported; operator text remains operator-authored. | E01, E05, E27 |",
+      "disposition": "baseline",
+      "implementation_units": [
+        "A19"
+      ],
+      "reason": "Existing functionality remains regression acceptance; mapped extensions do not negate this baseline."
+    },
+    {
+      "finding_id": "capability-gaps-collie:88",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-collie.md",
+      "line": 88,
+      "feature": "Journal Chat/history, pagination, search, whole-turn updates",
+      "source_excerpt": "| Journal Chat/history, pagination, search, whole-turn updates | Live generation/revision cursors and older pages; logs required | Implemented, fallback to history on legacy chat 404 | Supported where mux reports session and log exists; missing integration is not an Android defect. | E01, E08; /home/chris/git/collie/docs/configure.md:816 |",
+      "disposition": "baseline",
+      "implementation_units": [
+        "A13",
+        "R01"
+      ],
+      "reason": "Existing functionality remains regression acceptance; mapped extensions do not negate this baseline."
+    },
+    {
+      "finding_id": "capability-gaps-collie:89",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-collie.md",
+      "line": 89,
+      "feature": "Queued-message display",
+      "source_excerpt": "| Queued-message display | Chat queued array | Implemented as selectable queued text | Supported display only. | E09 |",
+      "disposition": "baseline",
+      "implementation_units": [
+        "C02",
+        "A18"
+      ],
+      "reason": "Existing functionality remains regression acceptance; mapped extensions do not negate this baseline."
+    },
+    {
+      "finding_id": "capability-gaps-collie:90",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-collie.md",
+      "line": 90,
+      "feature": "Send queued messages now",
+      "source_excerpt": "| Send queued messages now | Server-declared keys; Claude Ctrl+Enter; guarded PWA button | Field decoded, omitted from live window/UI action | Worthwhile small gap. User otherwise waits or must manually find the correct keys. | E09 |",
+      "disposition": "required",
+      "implementation_units": [
+        "C02",
+        "A18"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-collie:91",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-collie.md",
+      "line": 91,
+      "feature": "Journal attachment/tool images",
+      "source_excerpt": "| Journal attachment/tool images | Image parts and imageUrl; authed /api/blobs bytes, scoped to owner | Fields decode, native text projection drops image values; no blob fetch API | Worthwhile content gap. Image-only turns/tools can look empty and omit agent evidence. | E03, E10; /home/chris/git/collie/bridge/server.ts:1512 |",
+      "disposition": "required",
+      "implementation_units": [
+        "C03",
+        "A05"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-collie:92",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-collie.md",
+      "line": 92,
+      "feature": "Structured tool-call/denial presentation",
+      "source_excerpt": "| Structured tool-call/denial presentation | Additive call metadata and denial versus error semantics | Models decode fields; text tool card uses name/summary/result text | Partial presentation. Keep text fallback; enrich native cards without implying new tool execution. | E10 |",
+      "disposition": "required",
+      "implementation_units": [
+        "C04",
+        "A17"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-collie:93",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-collie.md",
+      "line": 93,
+      "feature": "Changes list/diffs, staged+unstaged, nested repos, last commit",
+      "source_excerpt": "| Changes list/diffs, staged+unstaged, nested repos, last commit | Read-only pane/workspace Changes API and screen | No native API methods/screen | High-value gap: cannot inspect what the agent changed or just committed from native app. | E01, E03, E11 |",
+      "disposition": "required",
+      "implementation_units": [
+        "C05",
+        "A01"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-collie:94",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-collie.md",
+      "line": 94,
+      "feature": "Files tree/source and ignored-file filtering",
+      "source_excerpt": "| Files tree/source and ignored-file filtering | Workspace-root bounded read, needs device-read; no git required | No native API methods/screen | High-value gap: cannot inspect output/config/source files outside the terminal transcript. | E01, E03, E11 |",
+      "disposition": "required",
+      "implementation_units": [
+        "C06",
+        "A02"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-collie:95",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-collie.md",
+      "line": 95,
+      "feature": "File images/JSON/Markdown/HTML/SVG previews",
+      "source_excerpt": "| File images/JSON/Markdown/HTML/SVG previews | Raw raster-image API; PWA inert/sandboxed preview policies | Absent with Files; no WebView allowed | Native text/JSON/Markdown/raster are feasible. Browser HTML/SVG preview is a design boundary, not copyable UI. | E02, E12 |",
+      "disposition": "required",
+      "implementation_units": [
+        "C07",
+        "A02"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-collie:96",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-collie.md",
+      "line": 96,
+      "feature": "Agent-printed file links and source line navigation",
+      "source_excerpt": "| Agent-printed file links and source line navigation | Batched existence check, bounded workspace-relative links | linkText decodes, but no file existence/browser consumer | Worthwhile follow-on to Files; no guessing paths or fetching arbitrary URLs. | E05, E12 |",
+      "disposition": "required",
+      "implementation_units": [
+        "C08",
+        "A02"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-collie:97",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-collie.md",
+      "line": 97,
+      "feature": "Declared legacy command launchers",
+      "source_excerpt": "| Declared legacy command launchers | Host-scoped /api/launchers and /api/launch | Implemented, consumes legacy launchers list and confirms noPrompts | Supported; does not imply richer New parity. | E13, E14 |",
+      "disposition": "baseline",
+      "implementation_units": [
+        "C09",
+        "A03"
+      ],
+      "reason": "Existing functionality remains regression acceptance; mapped extensions do not negate this baseline."
+    },
+    {
+      "finding_id": "capability-gaps-collie:98",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-collie.md",
+      "line": 98,
+      "feature": "Discovered agent IDs, availability/reasons, shell choice",
+      "source_excerpt": "| Discovered agent IDs, availability/reasons, shell choice | Rich /api/launchers items; POST /api/launch harness/command/shell | Models and startLaunch repository/transport exist; current screens use legacy rows | Transport-ready gap. Users cannot start discovered installed agents without an operator launcher row. | E01, E14\u2013E16 |",
+      "disposition": "required",
+      "implementation_units": [
+        "C09",
+        "A03",
+        "H12"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-collie:99",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-collie.md",
+      "line": 99,
+      "feature": "Folder selection, favorites/recents, star",
+      "source_excerpt": "| Folder selection, favorites/recents, star | Machine-scoped /api/folders and /api/folders/star | No methods/screens | Worthwhile New workflow gap; fewer path re-entry errors on a phone. Lists must belong to selected machine. | E03, E15; /home/chris/git/collie/docs/configure.md:687 |",
+      "disposition": "required",
+      "implementation_units": [
+        "C10",
+        "A06"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-collie:100",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-collie.md",
+      "line": 100,
+      "feature": "Existing workspace worktree list/create/open",
+      "source_excerpt": "| Existing workspace worktree list/create/open | Legacy supported routes; capability gated | Implemented current UI with branch entry and existing unopened trees | Supported subset, not arbitrary repository/folder worktrees. | E13 |",
+      "disposition": "baseline",
+      "implementation_units": [
+        "C11",
+        "A04",
+        "H08"
+      ],
+      "reason": "Existing functionality remains regression acceptance; mapped extensions do not negate this baseline."
+    },
+    {
+      "finding_id": "capability-gaps-collie:101",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-collie.md",
+      "line": 101,
+      "feature": "Plan worktree, choose base/ref and parent, start selected agent",
+      "source_excerpt": "| Plan worktree, choose base/ref and parent, start selected agent | /api/worktree/plan and /api/worktree; server contains/validates parent | Native transport/repository/models exist; no new plan/base/parent/launcher screen | Transport-ready opportunity; reduces opaque base choice and combines branch+agent startup. | E01, E13, E14, E16 |",
+      "disposition": "required",
+      "implementation_units": [
+        "C11",
+        "C12",
+        "A04",
+        "H08"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-collie:102",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-collie.md",
+      "line": 102,
+      "feature": "Add/rename/remove launcher recipes or free lines",
+      "source_excerpt": "| Add/rename/remove launcher recipes or free lines | /api/launchers/added family; host switches and per-device attribution | adding metadata decodes; no mutation methods/screens | Native gap. Recipe mode can precede free-text mode; disabled operator switches must stay disabled. | E03, E14\u2013E16 |",
+      "disposition": "required",
+      "implementation_units": [
+        "C13",
+        "A07"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-collie:103",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-collie.md",
+      "line": 103,
+      "feature": "One-off command check/run/recent/remove/clear",
+      "source_excerpt": "| One-off command check/run/recent/remove/clear | Check is read; run is explicit paired terminal write; per-machine history, secret suppression | Recent runs decode; no run/check/recent-write methods or UI | Native gap with larger write-risk surface; do after native New gates and intent identity are established. | E03, E14\u2013E16 |",
+      "disposition": "required",
+      "implementation_units": [
+        "C14",
+        "C12",
+        "A07"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-collie:104",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-collie.md",
+      "line": 104,
+      "feature": "Request receipt / deliberate replay",
+      "source_excerpt": "| Request receipt / deliberate replay | Same request ID returns same start/worktree outcome; automatic resend forbidden | IDs on legacy calls; caller-held ID methods for new launches/worktrees | Partial UX readiness; retain intent across operator-confirmed retry, never mint a new ID for ambiguous old intent. | E01, E14, E16 |",
+      "disposition": "required",
+      "implementation_units": [
+        "C12",
+        "A03",
+        "A04",
+        "A07"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-collie:105",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-collie.md",
+      "line": 105,
+      "feature": "Image attachment upload",
+      "source_excerpt": "| Image attachment upload | Multipart /api/pane/:id/upload, config limits/types | Implemented image-only Photo Picker, 10 MiB native bound | Supported subset; do not inflate memory limit merely because server allows larger uploads. | E17, E18 |",
+      "disposition": "baseline",
+      "implementation_units": [
+        "C15",
+        "A11"
+      ],
+      "reason": "Existing functionality remains regression acceptance; mapped extensions do not negate this baseline."
+    },
+    {
+      "finding_id": "capability-gaps-collie:106",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-collie.md",
+      "line": 106,
+      "feature": "Text/document attachments",
+      "source_excerpt": "| Text/document attachments | Server accepts configured text types through same upload route | No document picker or generic file upload abstraction | Worthwhile bounded extension: attach a brief/log/spec without pasting its contents. | E03, E17 |",
+      "disposition": "required",
+      "implementation_units": [
+        "C15",
+        "A11"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-collie:107",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-collie.md",
+      "line": 107,
+      "feature": "Dictation/STT, hands-free option",
+      "source_excerpt": "| Dictation/STT, hands-free option | Operator-configured provider seam; setup stays CLI | Implemented recording, transcription insertion and guarded hands-free | Supported; absence of server STT is intentional configuration, not native gap. | E18, E26 |",
+      "disposition": "baseline",
+      "implementation_units": [
+        "C29",
+        "A00",
+        "A19"
+      ],
+      "reason": "Existing functionality remains regression acceptance; mapped extensions do not negate this baseline."
+    },
+    {
+      "finding_id": "capability-gaps-collie:108",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-collie.md",
+      "line": 108,
+      "feature": "Notification kind preferences/snooze",
+      "source_excerpt": "| Notification kind preferences/snooze | Bridge-wide blocked/done/updates/machines/cache and global snooze | Implemented three switches and snooze; machine/cache fields preserved but hidden | Small settings gap affects all subscribed browser devices; clarify bridge-wide scope. | E19 |",
+      "disposition": "required",
+      "implementation_units": [
+        "C16",
+        "A08",
+        "A09"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-collie:109",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-collie.md",
+      "line": 109,
+      "feature": "Cache countdown, model metadata, claim/catalog detail",
+      "source_excerpt": "| Cache countdown, model metadata, claim/catalog detail | Snapshot cache/model; measured versus claimed windows; /api/cache-rules | Cache/git JSON and model decode; header omits them, no catalog call | Worthwhile visibility gap; show confidence/state, not a promised billing saving. | E20 |",
+      "disposition": "required",
+      "implementation_units": [
+        "C17",
+        "A09"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-collie:110",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-collie.md",
+      "line": 110,
+      "feature": "Per-pane cache watch/list/forget",
+      "source_excerpt": "| Per-pane cache watch/list/forget | Preferences on lead, host/session/pane identifies subject; not forwarded | No native methods/UI | Native gap even without native push: controls existing browser alerts; must state delivery limitation. | E03, E19 |",
+      "disposition": "required",
+      "implementation_units": [
+        "C18",
+        "A09"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-collie:111",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-collie.md",
+      "line": 111,
+      "feature": "Machine CPU/memory/load/network/disks, 30-minute spark/24-hour history",
+      "source_excerpt": "| Machine CPU/memory/load/network/disks, 30-minute spark/24-hour history | /api/machines, /:id/history; optional platform readings, gaps kept empty | Crew topology/freshness exists, but no machine metric calls/models/screens | High-value monitoring gap. Host health is not resource telemetry or a load chart. | E01, E03, E21 |",
+      "disposition": "required",
+      "implementation_units": [
+        "C19",
+        "A08",
+        "W01"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-collie:112",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-collie.md",
+      "line": 112,
+      "feature": "Machine alert threshold/duration and current firing rules",
+      "source_excerpt": "| Machine alert threshold/duration and current firing rules | POST /api/machines/:id/alerts replaces whole rule object, device-write gate | No native rule editor/API | Worthwhile after machine read screen; preserve untouched rules when replacing whole object. Browser push handles delivery today. | E03, E19, E21 |",
+      "disposition": "required",
+      "implementation_units": [
+        "C20",
+        "C21",
+        "C23",
+        "A08",
+        "A15"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-collie:113",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-collie.md",
+      "line": 113,
+      "feature": "PWA install/service worker/Web Push",
+      "source_excerpt": "| PWA install/service worker/Web Push | Browser subscription, SW push/tap routing | Intentionally separate/absent | Browser-specific functionality, not a native REST feature that can be enabled by one API call. | E02, E22 |",
+      "disposition": "required",
+      "implementation_units": [
+        "C21",
+        "C24",
+        "C27",
+        "C28",
+        "A14",
+        "A15",
+        "A20",
+        "A21"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-collie:114",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-collie.md",
+      "line": 114,
+      "feature": "Native background push",
+      "source_excerpt": "| Native background push | Payload/provider types are preparation only | Pure decoder, no provider/registration/permission/receiver/channels | Deferred design project; no background notifications available now. | E02, E22 |",
+      "disposition": "required",
+      "implementation_units": [
+        "C21",
+        "A15"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-collie:115",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-collie.md",
+      "line": 115,
+      "feature": "Update check/preflight/start/progress, peers retry, package/restart guidance",
+      "source_excerpt": "| Update check/preflight/start/progress, peers retry, package/restart guidance | Existing server updater and standby record | Implemented current native workflow; packaged installs don't use source updater | Supported, subject to documented source/packaged distinctions and standby ingress. Does not update the APK. | E01, E23 |",
+      "disposition": "baseline",
+      "implementation_units": [
+        "C22",
+        "A12"
+      ],
+      "reason": "Existing functionality remains regression acceptance; mapped extensions do not negate this baseline."
+    },
+    {
+      "finding_id": "capability-gaps-collie:116",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-collie.md",
+      "line": 116,
+      "feature": "Version/scope-scoped durable update dismissal",
+      "source_excerpt": "| Version/scope-scoped durable update dismissal | /api/update/dismiss persists offer or crew dismissal; newer release reappears | Local dismissed Boolean plus /api/update/snooze only | Small consistency gap: \u201cdismiss\u201d does not persist the same notice decision across Activity recreation/devices. | E23 |",
+      "disposition": "required",
+      "implementation_units": [
+        "C22",
+        "A12"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-collie:117",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-collie.md",
+      "line": 117,
+      "feature": "Crew census/formation/member facts",
+      "source_excerpt": "| Crew census/formation/member facts | /api/crew report; join/leave/promote/rotate remain CLI | Implemented native report with legacy pack fallback | Supported. Missing fleet administration buttons are intentional exclusions shared by PWA. | E01, E24 |",
+      "disposition": "baseline",
+      "implementation_units": [
+        "C23",
+        "A00",
+        "H16",
+        "W01"
+      ],
+      "reason": "Existing functionality remains regression acceptance; mapped extensions do not negate this baseline."
+    },
+    {
+      "finding_id": "capability-gaps-collie:118",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-collie.md",
+      "line": 118,
+      "feature": "Deputy takeover",
+      "source_excerpt": "| Deputy takeover | Separate standby listener, verified warrant, operator pairing credential | Update standby read only; no native takeover implementation | Separate architecture/access flow; current Crew screen is not proof of Android failover support. | E03, E24 |",
+      "disposition": "required",
+      "implementation_units": [
+        "C23",
+        "C20",
+        "C21",
+        "W01"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-collie:119",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-collie.md",
+      "line": 119,
+      "feature": "Cold-start offline saved dashboard/pane/Chat and retention",
+      "source_excerpt": "| Cold-start offline saved dashboard/pane/Chat and retention | Bounded IndexedDB store; expiry, password/unpair cleanup; controls disabled | In-memory scoped pane cache and ViewModel last-success state; no persistent offline store/retention control | Native opportunity, not current parity. Needs explicit content storage/cleanup design, encrypted storage and stale read-only labeling. | E25 |",
+      "disposition": "required",
+      "implementation_units": [
+        "C24",
+        "A14"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-collie:120",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-collie.md",
+      "line": 120,
+      "feature": "Local appearance/ergonomics",
+      "source_excerpt": "| Local appearance/ergonomics | Theme/typeface/fonts, left-hand layout, belt scale, pane ordering, tool/compaction switches | Theme/text size/haptics/Zen and local drafts exist; native Aldrich fixed; many PWA controls absent | Mostly native client work, not missing server APIs. Prioritize accessibility/left-hand layout; fixed font is currently a stated native choice. | E26 |",
+      "disposition": "required",
+      "implementation_units": [
+        "C25",
+        "A16",
+        "A19"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-collie:121",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-collie.md",
+      "line": 121,
+      "feature": "Local dashboard pinning and customizable keypad",
+      "source_excerpt": "| Local dashboard pinning and customizable keypad | Pins and per-browser board editor/import/export; no server endpoint | Dashboard collapse/sort and fixed keypad/presets; no pin/board model/UI | Useful local customization; separate from operator key catalog, never move config into server. | E26, E27 |",
+      "disposition": "required",
+      "implementation_units": [
+        "C26",
+        "A19"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-collie:122",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-collie.md",
+      "line": 122,
+      "feature": "External exact-target links/QR app entry",
+      "source_excerpt": "| External exact-target links/QR app entry | PWA route URLs and pairing QR, browser routes current | Internal parser, launcher-only exported Activity; parser knows pack but not current crew/new/files/machines | Partial internal routing, no general Android App Link handling. Keep origin/mount binding; an exported link flow is separate work. | E03, E28 |",
+      "disposition": "required",
+      "implementation_units": [
+        "C27",
+        "A20"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-collie:123",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-collie.md",
+      "line": 123,
+      "feature": "Redaction/configuration/provider/install/crew enrollment",
+      "source_excerpt": "| Redaction/configuration/provider/install/crew enrollment | Server masking/capabilities; host CLI owns sensitive setup and provisioning | Config redact/upload/STT fields decode; native consumes masked results | Server-side control, not missing native config editing. Optional \u201cmasking off\u201d/upload-limit UX can use config; don't add credential/setup forms. | E01, E04, E17, E18, E24 |",
+      "disposition": "required",
+      "implementation_units": [
+        "C29",
+        "R02",
+        "A00",
+        "A11"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-android:31",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-android.md",
+      "line": 31,
+      "feature": "P1 \u2014 absent native surface",
+      "source_excerpt": "| P1 \u2014 absent native surface | **Changes:** users cannot inspect dirty/untracked file lists, diffs, or commit diffs from a pane/space before approving an agent's work. | Maintained compatibility explicitly excludes native parity: [/home/chris/git/collie/android/UPSTREAM_API_COMPATIBILITY.md:37](/home/chris/git/collie/android/UPSTREAM_API_COMPATIBILITY.md). Existing pane/workspace REST targets and list/file/commit calls: [/home/chris/git/collie/web/src/lib/api.ts:850](/home/chris/git/collie/web/src/lib/api.ts), [/home/chris/git/collie/web/src/lib/api.ts:867](/home/chris/git/collie/web/src/lib/api.ts), [/home/chris/git/collie/web/src/lib/api.ts:891](/home/chris/git/collie/web/src/lib/api.ts). Native API surface ends without these calls: [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/network/CollieApiClient.kt:61](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/network/CollieApiClient.kt). | Typed scoped read methods, native list/diff/commit views, pane/space entry points, bounded rendering, refresh on open/tap, binary/truncation/unavailable states. Preserve the bridge's read-only discovery/listed-path rules. |",
+      "disposition": "required",
+      "implementation_units": [
+        "C05",
+        "A01"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-android:32",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-android.md",
+      "line": 32,
+      "feature": "P1 \u2014 absent native surface",
+      "source_excerpt": "| P1 \u2014 absent native surface | **Files:** users cannot browse workspace folders, inspect arbitrary allowed files, or view repository images without switching client. | Existing directory/file/image reads and typed refusal handling: [/home/chris/git/collie/web/src/lib/api.ts:989](/home/chris/git/collie/web/src/lib/api.ts), [/home/chris/git/collie/web/src/lib/api.ts:1017](/home/chris/git/collie/web/src/lib/api.ts); read-only root boundary: [/home/chris/git/collie/bridge/files-view.ts:1](/home/chris/git/collie/bridge/files-view.ts). Native exclusion: [/home/chris/git/collie/android/UPSTREAM_API_COMPATIBILITY.md:39](/home/chris/git/collie/android/UPSTREAM_API_COMPATIBILITY.md). | Native folder/file/image viewer beside Changes, authenticated byte fetches, root-relative paths, explicit not-found/not-authorized/old-server distinctions, bounded image decoding, deep links from displayed file references using the existing `files/exist` read. Do not invent filesystem access on the phone. |",
+      "disposition": "required",
+      "implementation_units": [
+        "C06",
+        "C07",
+        "C08",
+        "A02"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-android:33",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-android.md",
+      "line": 33,
+      "feature": "P1 \u2014 transport implemented, no UI caller",
+      "source_excerpt": "| P1 \u2014 transport implemented, no UI caller | **New by agent/shell/folder:** installed harness discovery and rich launcher items are decoded, but users still see legacy command-launcher flow. No native UI calls `startLaunch`. | Repository/API-only occurrences: [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/data/CollieRepository.kt:208](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/data/CollieRepository.kt), [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/network/CollieApiClient.kt:343](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/network/CollieApiClient.kt). Rich models: [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/network/UpstreamModels.kt:13](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/network/UpstreamModels.kt). Actual legacy launch: [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/MainActivity.kt:1122](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/MainActivity.kt). PWA New workflow: [/home/chris/git/collie/web/src/routes/new.tsx:327](/home/chris/git/collie/web/src/routes/new.tsx). | Native New screen with server-supplied agent/shell/command choices, unavailable reasons, machine and folder selection, `noPrompts` confirmation, one caller-held request ID per intent and deliberate replay after ambiguous outcomes. Keep legacy fallback for older servers. |",
+      "disposition": "required",
+      "implementation_units": [
+        "C09",
+        "C12",
+        "A03"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-android:34",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-android.md",
+      "line": 34,
+      "feature": "P1 \u2014 transport implemented, legacy-only UI",
+      "source_excerpt": "| P1 \u2014 transport implemented, legacy-only UI | **Worktree planning/base/parent/start choices:** native branch creation requires an existing repository space and displays unknown base; richer plan/create transport is unused. | Existing sheet's unknown-base caption and legacy call: [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/MainActivity.kt:954](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/MainActivity.kt), [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/MainActivity.kt:1049](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/MainActivity.kt). Uncalled repository methods: [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/data/CollieRepository.kt:212](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/data/CollieRepository.kt). REST plan/create contracts and lead-local limit: [/home/chris/git/collie/web/src/lib/api.ts:1371](/home/chris/git/collie/web/src/lib/api.ts), [/home/chris/git/collie/web/src/lib/api.ts:1395](/home/chris/git/collie/web/src/lib/api.ts). | Integrate folder-based repository discovery, plan previews, default/ref base and default/parent destination choices, start agent/command/shell on the branch, stable request IDs. Retain existing open-worktree confirmation. Respect lead-local and server parent-path refusals. |",
+      "disposition": "required",
+      "implementation_units": [
+        "C11",
+        "C12",
+        "A04",
+        "H08"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-android:35",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-android.md",
+      "line": 35,
+      "feature": "P1 \u2014 decoded, discarded in rendering",
+      "source_excerpt": "| P1 \u2014 decoded, discarded in rendering | **Journal images:** image-only turns appear empty; tool-returned images disappear. This especially affects Pi/OMP image output, which cannot be recovered from a text-only terminal grid. | Native fields decode `imageUrl`, `url`, `mimeType`: [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/network/WireModels.kt:226](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/network/WireModels.kt). Presentation retains tool text or `part.text` only: [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/HistoryPresentation.kt:317](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/HistoryPresentation.kt); only Prose/Tool views: [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/HistoryTurnRenderer.kt:98](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/HistoryTurnRenderer.kt). PWA renders both: [/home/chris/git/collie/web/src/components/transcript-view.tsx:148](/home/chris/git/collie/web/src/components/transcript-view.tsx), [/home/chris/git/collie/web/src/components/transcript-view.tsx:170](/home/chris/git/collie/web/src/components/transcript-view.tsx). Off-grid caveat: [/home/chris/git/collie/bridge/journal/registry.ts:103](/home/chris/git/collie/bridge/journal/registry.ts). | Add image parts/tool result attachments to shared history/transcript renderer, native zoom/accessibility/loading/error views, bounded memory and scoped authenticated blob fetching. Permit only recognized `/api/blobs/<hash>` or supported bounded inline image forms, matching [/home/chris/git/collie/web/src/lib/api.ts:267](/home/chris/git/collie/web/src/lib/api.ts); never fetch arbitrary agent-supplied URLs. |",
+      "disposition": "required",
+      "implementation_units": [
+        "C03",
+        "A05",
+        "H19"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-android:36",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-android.md",
+      "line": 36,
+      "feature": "P2 \u2014 absent native surface",
+      "source_excerpt": "| P2 \u2014 absent native surface | **Folder history/stars:** starting work in a known folder requires manual typing or an already-open space. | Native optional cwd text field: [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/MainActivity.kt:910](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/MainActivity.kt). Existing per-machine folder list/star routes: [/home/chris/git/collie/web/src/lib/api.ts:1489](/home/chris/git/collie/web/src/lib/api.ts), [/home/chris/git/collie/bridge/server.ts:5269](/home/chris/git/collie/bridge/server.ts). | Scoped reusable folder picker for New/worktrees, favorites and recent folder history. Read on open/host change rather than poll; star only a folder the server supplied. |",
+      "disposition": "required",
+      "implementation_units": [
+        "C10",
+        "A06"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-android:37",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-android.md",
+      "line": 37,
+      "feature": "P2 \u2014 absent native surface",
+      "source_excerpt": "| P2 \u2014 absent native surface | **Launcher management and one-off runs:** phone-added recipes cannot be added/renamed/removed; typed one-off commands cannot be checked/run/reused/removed from recent-run history. Decoding `recentRuns` does not provide these operations. | Native `StartTarget` permits harness/command/shell only, no run: [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/network/UpstreamModels.kt:16](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/network/UpstreamModels.kt); `RecentRun` is a model: [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/network/UpstreamModels.kt:48](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/network/UpstreamModels.kt). Existing run/check/history APIs: [/home/chris/git/collie/web/src/lib/api.ts:1316](/home/chris/git/collie/web/src/lib/api.ts); added-row APIs: [/home/chris/git/collie/web/src/lib/api.ts:1443](/home/chris/git/collie/web/src/lib/api.ts). | After New flow, add native recipe/add/edit sheets and one-off command history. Respect `[phone]` switches, character/length rules, `noPrompts` confirmation, device ownership and UUID replay. One-off run is never a branch target. |",
+      "disposition": "required",
+      "implementation_units": [
+        "C13",
+        "C14",
+        "C12",
+        "A07"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-android:38",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-android.md",
+      "line": 38,
+      "feature": "P2 \u2014 partial metadata only",
+      "source_excerpt": "| P2 \u2014 partial metadata only | **Machines/resources/alerts:** Crew health is available, but CPU/RAM/swap/resource history, sparklines, and alert rule editing are absent, including for a solo machine. | Existing native Crew health/member read surface: [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PackActivity.kt:244](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PackActivity.kt). Census/history/alert REST APIs: [/home/chris/git/collie/web/src/lib/api.ts:1781](/home/chris/git/collie/web/src/lib/api.ts), [/home/chris/git/collie/bridge/server.ts:5336](/home/chris/git/collie/bridge/server.ts). Native notification model decodes `machines`, but settings exposes only blocked/done/updates: [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/network/WireModels.kt:403](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/network/WireModels.kt), [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/SettingsServerControls.kt:296](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/SettingsServerControls.kt). | Native Machines screen, scoped resource graphs, explicit stale/offline data, rule editing under existing write gates, machine notification preference. Do not represent rule configuration as native background delivery. |",
+      "disposition": "required",
+      "implementation_units": [
+        "C16",
+        "C19",
+        "C20",
+        "A08"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-android:39",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-android.md",
+      "line": 39,
+      "feature": "P2 \u2014 decoded metadata, absent controls",
+      "source_excerpt": "| P2 \u2014 decoded metadata, absent controls | **Cache/model/git context:** native `gitHead`, `cache`, and `model` decode but have no rich native presentation; no cache-rule details or per-pane cache-watch/list/forget controls. Users lose context useful for timing follow-up prompts and understanding an agent's cost/state. | Optional snapshot fields: [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/network/WireModels.kt:107](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/network/WireModels.kt). Native header uses identity/cwd: [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PaneHeaderPresentation.kt:31](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PaneHeaderPresentation.kt). PWA cache details and watch APIs: [/home/chris/git/collie/web/src/components/cache-sheet.tsx:48](/home/chris/git/collie/web/src/components/cache-sheet.tsx), [/home/chris/git/collie/web/src/lib/api.ts:1585](/home/chris/git/collie/web/src/lib/api.ts). | Typed optional cache/git metadata; compact branch/model/cache chips and details; server-authored confidence/TTL/reset language; cache watch preference and saved watch list. Preserve peer rule-catalog caveat and avoid inferring a model or observed cache hit from terminal decoration. |",
+      "disposition": "required",
+      "implementation_units": [
+        "C17",
+        "C18",
+        "A09"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-android:40",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-android.md",
+      "line": 40,
+      "feature": "P2 \u2014 incomplete semantic parity, intentional conservative fallback",
+      "source_excerpt": "| P2 \u2014 incomplete semantic parity, intentional conservative fallback | **Some dialogs remain raw/locked:** OMP selection/model/settings/resume/palette dialogs, Claude resume/effort slider/unnumbered trust, clipped suggestions, and unproven Grok checkbox choreography lack native automation. Users can read and operate these using explicit Keys/Type, but do not receive full native dialog buttons. | Native parser's exact-agent dispatch/OMP exclusion: [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/terminal/AgentSemanticParser.kt:61](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/terminal/AgentSemanticParser.kt). Explicit raw corpus classification: [/home/chris/git/collie/android/app/src/test/java/com/lateapex/collie/ui/terminal/AgentSemanticParserTest.kt:15](/home/chris/git/collie/android/app/src/test/java/com/lateapex/collie/ui/terminal/AgentSemanticParserTest.kt), [/home/chris/git/collie/android/app/src/test/java/com/lateapex/collie/ui/terminal/AgentSemanticParserTest.kt:92](/home/chris/git/collie/android/app/src/test/java/com/lateapex/collie/ui/terminal/AgentSemanticParserTest.kt). | Prioritize OMP and common Claude selectors only after adapting the maintained PWA grammar and verifying exact key recipes across fixtures, widths, focus/text states and fresh prompt bindings. Do not reclassify every `null` fixture as a bug: torn/dismissed/clipped states should often remain raw. |",
+      "disposition": "required",
+      "implementation_units": [
+        "A10",
+        "H12"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-android:41",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-android.md",
+      "line": 41,
+      "feature": "P2 \u2014 image-only native attachment UI",
+      "source_excerpt": "| P2 \u2014 image-only native attachment UI | **Text/document upload:** native picker restricts to images and a 10 MiB local bound, while bridge/PWA support operator-approved text file types and server-configured limits. Users cannot attach logs/source documents through native UI. | ImageOnly picker: [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PaneActivity.kt:528](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PaneActivity.kt); image-only MIME/local bounded read: [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/ComposerMedia.kt:189](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/ComposerMedia.kt). Decoded capability: [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/network/UpstreamModels.kt:10](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/network/UpstreamModels.kt); bridge byte/text allowlist: [/home/chris/git/collie/bridge/uploads.ts:97](/home/chris/git/collie/bridge/uploads.ts); separate PWA file picker: [/home/chris/git/collie/web/src/components/composer.tsx:1515](/home/chris/git/collie/web/src/components/composer.tsx). | Native document picker and generic upload DTO, honor server extension/size capability plus a safe local resource bound, stream bytes instead of raising an in-memory ceiling, render meaningful file chips and refusals. Preserve server byte sniffing and SVG exclusion. |",
+      "disposition": "required",
+      "implementation_units": [
+        "C15",
+        "A11"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-android:42",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-android.md",
+      "line": 42,
+      "feature": "P2 \u2014 semantic mismatch",
+      "source_excerpt": "| P2 \u2014 semantic mismatch | **Dismiss versus snooze:** native Server updates labels a control Dismiss, sets local state, and calls `/api/update/snooze`; it never records the bridge's version-specific offer/Crew-band dismissal. The notice can reappear after recreation or in another client. | Native control/action: [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/UpdatesActivity.kt:204](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/UpdatesActivity.kt), [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/UpdatesActivity.kt:568](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/UpdatesActivity.kt). Separate PWA/server contract: [/home/chris/git/collie/web/src/lib/api.ts:1675](/home/chris/git/collie/web/src/lib/api.ts), [/home/chris/git/collie/bridge/server.ts:2498](/home/chris/git/collie/bridge/server.ts). | Add `dismissUpdate(version, scope)` transport/repository/UI state for matching bands and show refusal/confirmation. Keep digest snooze as its separately named action; do not permanently hide newer versions. |",
+      "disposition": "required",
+      "implementation_units": [
+        "C22",
+        "A12"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-android:43",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-android.md",
+      "line": 43,
+      "feature": "P2 \u2014 missing declared capability",
+      "source_excerpt": "| P2 \u2014 missing declared capability | **Topology freshness:** native mux config omits `topologyLatency`. Users cannot see the mux's declared bounded delay, especially zellij's 12 s census ceiling. | Native mux fields: [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/network/WireModels.kt:37](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/network/WireModels.kt); bridge emits declaration: [/home/chris/git/collie/bridge/server.ts:620](/home/chris/git/collie/bridge/server.ts); PWA decoder/helper: [/home/chris/git/collie/web/src/lib/mux-capability.ts:238](/home/chris/git/collie/web/src/lib/mux-capability.ts); per-mux contract: [/home/chris/git/collie/MUX_CONTRACT.md:51](/home/chris/git/collie/MUX_CONTRACT.md). | Decode optional push/bounded declaration and show honest freshness help near refresh. This is a missing wire fact; the PWA currently exposes a helper, which alone does not prove a visible PWA screen consumes it. Do not confuse internal mux event delivery with native background push. |",
+      "disposition": "required",
+      "implementation_units": [
+        "H02",
+        "H03",
+        "A13"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-android:44",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-android.md",
+      "line": 44,
+      "feature": "P2/P3 \u2014 PWA-only local retention",
+      "source_excerpt": "| P2/P3 \u2014 PWA-only local retention | **Offline chat copies:** native transcript/cache state lives in memory, unlike PWA's optional retained newest turns. Users lose readable context after process death when the bridge is unreachable. | Native pane LRU: [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/data/CollieRepository.kt:105](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/data/CollieRepository.kt); chat state: [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PaneViewModel.kt:762](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PaneViewModel.kt). PWA retention options/cache: [/home/chris/git/collie/web/src/components/keep-chat-control.tsx:43](/home/chris/git/collie/web/src/components/keep-chat-control.tsx), [/home/chris/git/collie/web/src/lib/chat-tail.ts:18](/home/chris/git/collie/web/src/lib/chat-tail.ts). | Optional bounded encrypted chat-tail store, off/1-day/7-day retention, clear-now and credential-revocation wipe, exact origin/host/session/pane identity, stale/offline read labels. Never treat retained turns as authorization or a current prompt for writes. |",
+      "disposition": "required",
+      "implementation_units": [
+        "C24",
+        "A14"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-android:45",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-android.md",
+      "line": 45,
+      "feature": "P3 \u2014 intentionally prepared, delivery absent",
+      "source_excerpt": "| P3 \u2014 intentionally prepared, delivery absent | **Native background notification delivery:** users receive no native blocked/done/update alert while the app is backgrounded. Server notification preferences alone do not create Android delivery. | Decoder explicitly has no provider/side effects: [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/notifications/NativePushPayload.kt:11](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/notifications/NativePushPayload.kt); contract excludes live provider/routes: [/home/chris/git/collie/android/NATIVE_PUSH_CONTRACT.md:3](/home/chris/git/collie/android/NATIVE_PUSH_CONTRACT.md), [/home/chris/git/collie/android/NATIVE_PUSH_CONTRACT.md:103](/home/chris/git/collie/android/NATIVE_PUSH_CONTRACT.md); decision: [/home/chris/git/collie/.adr/0036-the-android-app-is-a-native-rest-client.md:38](/home/chris/git/collie/.adr/0036-the-android-app-is-a-native-rest-client.md). | Separate provider selection, authenticated device registration/rotation/revoke, server delivery/deduplication, Android channels/permission/receiver, durable sequence/TTL state and scoped tap routing; doze/reboot/device acceptance. No provider is currently available to switch on. |",
+      "disposition": "required",
+      "implementation_units": [
+        "C21",
+        "A15"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-android:46",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-android.md",
+      "line": 46,
+      "feature": "P3 \u2014 optional preference divergence",
+      "source_excerpt": "| P3 \u2014 optional preference divergence | **Typeface/operator-font parity:** native deliberately fixes Aldrich chrome; PWA supports per-device faces and operator fonts. | Fixed-face/no-picker native choice: [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PreferredTypeface.kt:11](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PreferredTypeface.kt); server font route: [/home/chris/git/collie/bridge/server.ts:672](/home/chris/git/collie/bridge/server.ts); maintained product preference rule: [/home/chris/git/collie/CLAUDE.md:588](/home/chris/git/collie/CLAUDE.md). | Treat as a product design choice to reconcile, not missing core control. If adopted, native face preference and authenticated operator-font loading with bounded caching; keep agent/terminal text independent. |",
+      "disposition": "required",
+      "implementation_units": [
+        "C25",
+        "A16"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-android:15",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-android.md",
+      "line": 15,
+      "feature": "Connection and authorization",
+      "source_excerpt": "| Connection and authorization | Manual HTTPS origin, pairing code/device label, refresh, paired-write gating, authoritative expiry/revocation handling. Dashboard listeners: [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/MainActivity.kt:111](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/MainActivity.kt); repository credential/cache boundary: [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/data/CollieRepository.kt:401](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/data/CollieRepository.kt). |",
+      "disposition": "baseline",
+      "implementation_units": [
+        "A00"
+      ],
+      "reason": "Existing functionality remains regression acceptance; mapped extensions do not negate this baseline."
+    },
+    {
+      "finding_id": "capability-gaps-android:16",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-android.md",
+      "line": 16,
+      "feature": "Dashboard/scope navigation",
+      "source_excerpt": "| Dashboard/scope navigation | Attention triage, recent panes/spaces, host/session switchers, refresh, pane/space navigation; same scoped host/session travels into pane actions. [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/MainActivity.kt:474](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/MainActivity.kt), [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/MainActivity.kt:691](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/MainActivity.kt). |",
+      "disposition": "baseline",
+      "implementation_units": [
+        "A00"
+      ],
+      "reason": "Existing functionality remains regression acceptance; mapped extensions do not negate this baseline."
+    },
+    {
+      "finding_id": "capability-gaps-android:17",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-android.md",
+      "line": 17,
+      "feature": "Spaces, tabs and pane administration",
+      "source_excerpt": "| Spaces, tabs and pane administration | Space tabs/panes, new workspace/tab, tab rename/close; pane close/focus/rename via the HTTP actions. Capability-gated tab actions: [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/SpaceActivity.kt:49](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/SpaceActivity.kt); actual sheets: [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/SpaceActivity.kt:341](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/SpaceActivity.kt); HTTP actions: [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/network/CollieApiClient.kt:361](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/network/CollieApiClient.kt). |",
+      "disposition": "baseline",
+      "implementation_units": [
+        "A00"
+      ],
+      "reason": "Existing functionality remains regression acceptance; mapped extensions do not negate this baseline."
+    },
+    {
+      "finding_id": "capability-gaps-android:18",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-android.md",
+      "line": 18,
+      "feature": "Launch/worktrees, existing slice",
+      "source_excerpt": "| Launch/worktrees, existing slice | Operator-approved legacy command launchers; choose an open repository workspace, create a named branch; list/open linked worktrees that lack an open workspace, with confirmation. [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/MainActivity.kt:949](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/MainActivity.kt), [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/MainActivity.kt:1060](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/MainActivity.kt), [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/MainActivity.kt:1122](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/MainActivity.kt). |",
+      "disposition": "baseline",
+      "implementation_units": [
+        "A00"
+      ],
+      "reason": "Existing functionality remains regression acceptance; mapped extensions do not negate this baseline."
+    },
+    {
+      "finding_id": "capability-gaps-android:19",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-android.md",
+      "line": 19,
+      "feature": "Transcript/history/search",
+      "source_excerpt": "| Transcript/history/search | Live generation/revision chat polling with older-page reads and 404 legacy-history fallback; standalone history paging, local loaded-turn search/highlighting, user-turn jumps, Markdown/tables and collapsible tool output. [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PaneViewModel.kt:782](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PaneViewModel.kt), [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/HistoryActivity.kt:290](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/HistoryActivity.kt), [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/HistoryActivity.kt:462](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/HistoryActivity.kt). Transcript eligibility follows server availability; the seven bridge adapters are Claude, Codex, Pi, OpenCode, Grok, Hermes and Muse, plus OMP\u2192Pi alias: [/home/chris/git/collie/bridge/journal/registry.ts:55](/home/chris/git/collie/bridge/journal/registry.ts). |",
+      "disposition": "baseline",
+      "implementation_units": [
+        "A00"
+      ],
+      "reason": "Existing functionality remains regression acceptance; mapped extensions do not negate this baseline."
+    },
+    {
+      "finding_id": "capability-gaps-android:20",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-android.md",
+      "line": 20,
+      "feature": "Terminal and agent controls",
+      "source_excerpt": "| Terminal and agent controls | Inert ANSI mirror, raw/transcript choice, wrapped text/table handling, loaded-output find, bounded scrollback, Quick replies, agent commands, neutral named keys/modifiers/presets/F-keys, ephemeral key queue, deliberate direct typing and guarded semantic prompt actions. [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PaneActivity.kt:759](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PaneActivity.kt), [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/domain/MuxKeyGrammar.kt:3](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/domain/MuxKeyGrammar.kt), [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PaneViewModel.kt:526](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PaneViewModel.kt). Semantic parser handles Claude/Codex/Grok/Agy/Antigravity; OMP dialogs deliberately remain raw: [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/terminal/AgentSemanticParser.kt:61](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/terminal/AgentSemanticParser.kt). |",
+      "disposition": "baseline",
+      "implementation_units": [
+        "A00"
+      ],
+      "reason": "Existing functionality remains regression acceptance; mapped extensions do not negate this baseline."
+    },
+    {
+      "finding_id": "capability-gaps-android:21",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-android.md",
+      "line": 21,
+      "feature": "Media",
+      "source_excerpt": "| Media | Native image picker and bounded upload; microphone permission and bounded audio capture; server-configured STT availability; transcript insertion with guarded opt-in hands-free behavior. [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PaneActivity.kt:528](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PaneActivity.kt), [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/ComposerMedia.kt:111](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/ComposerMedia.kt), [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/ComposerMedia.kt:292](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/ComposerMedia.kt). |",
+      "disposition": "baseline",
+      "implementation_units": [
+        "A00"
+      ],
+      "reason": "Existing functionality remains regression acceptance; mapped extensions do not negate this baseline."
+    },
+    {
+      "finding_id": "capability-gaps-android:22",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-android.md",
+      "line": 22,
+      "feature": "Crew and settings",
+      "source_excerpt": "| Crew and settings | Read-only Crew formation/member health, version, role, deputy, conflict/secret status and scoped navigation. Native theme, text sizes, diagnostics opt-in/export, connection/reset, manual pairing, device list/confirmed revoke, notification switches and snooze. [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PackActivity.kt:130](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PackActivity.kt), [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PackActivity.kt:244](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PackActivity.kt), [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/SettingsServerControls.kt:296](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/SettingsServerControls.kt), [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/SettingsServerControls.kt:556](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/SettingsServerControls.kt). |",
+      "disposition": "baseline",
+      "implementation_units": [
+        "A00"
+      ],
+      "reason": "Existing functionality remains regression acceptance; mapped extensions do not negate this baseline."
+    },
+    {
+      "finding_id": "capability-gaps-android:23",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-android.md",
+      "line": 23,
+      "feature": "Server updates",
+      "source_excerpt": "| Server updates | Check/status, package-manager instructions, preflight/confirmation, major update confirmation, Crew update/retry, standby run reads. Android APK updates remain separate. [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/UpdatesActivity.kt:574](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/UpdatesActivity.kt), [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/UpdatesActivity.kt:635](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/UpdatesActivity.kt), [/home/chris/git/collie/android/GETTING_STARTED.md:91](/home/chris/git/collie/android/GETTING_STARTED.md). |",
+      "disposition": "baseline",
+      "implementation_units": [
+        "A00"
+      ],
+      "reason": "Existing functionality remains regression acceptance; mapped extensions do not negate this baseline."
+    },
+    {
+      "finding_id": "capability-gaps-android:52",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-android.md",
+      "line": 52,
+      "feature": "Direct edit/save/stage/commit/revert from Files/Changes",
+      "source_excerpt": "| Direct edit/save/stage/commit/revert from Files/Changes | **Not an existing upstream client feature.** Both modules are read-only by construction: [/home/chris/git/collie/bridge/files-view.ts:1](/home/chris/git/collie/bridge/files-view.ts), [/home/chris/git/collie/bridge/changes.ts:1](/home/chris/git/collie/bridge/changes.ts). Adding editing requires a new server contract, path/write authorization, conflict/version checks and explicit user-facing review. Existing safe workflow is inspect, then ask the agent to edit through the guarded composer. |",
+      "disposition": "non-gap",
+      "implementation_units": [
+        "C05",
+        "C06",
+        "A01",
+        "A02"
+      ],
+      "reason": "Direct editing/stage/commit/revert is explicitly not supplied by the existing platform. Required read-only inspection closes the actual native gap."
+    },
+    {
+      "finding_id": "capability-gaps-android:53",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-android.md",
+      "line": 53,
+      "feature": "Native terminal emulator, direct Herdr socket, cross-host socket, arbitrary SSH/plugin/session/layout controls",
+      "source_excerpt": "| Native terminal emulator, direct Herdr socket, cross-host socket, arbitrary SSH/plugin/session/layout controls | **Outside the native boundary and often absent from Collie's REST surface.** Client uses HTTP; emulator/WebView/browser bridge shortcuts violate [/home/chris/git/collie/.adr/0036-the-android-app-is-a-native-rest-client.md:28](/home/chris/git/collie/.adr/0036-the-android-app-is-a-native-rest-client.md) and terminal/mux rules in [/home/chris/git/collie/CLAUDE.md:615](/home/chris/git/collie/CLAUDE.md). Herdr's larger control surface is not automatically Android-accessible; add a reviewed neutral Collie bridge operation first if a product need warrants it. Crew enrollment/secret rotation/deputy administration remain operator/CLI workflows, while native Crew status/navigation is already implemented. |",
+      "disposition": "required",
+      "implementation_units": [
+        "H01",
+        "H05",
+        "H06",
+        "H07",
+        "H10",
+        "H13",
+        "H15",
+        "H16",
+        "H17",
+        "H18",
+        "H19"
+      ],
+      "reason": "All functional organization/session/plugin/host gaps are implemented through neutral authenticated HTTP; transport shortcuts do not define the feature."
+    },
+    {
+      "finding_id": "capability-gaps-android:54",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-android.md",
+      "line": 54,
+      "feature": "App Links/QR/browser session takeover",
+      "source_excerpt": "| App Links/QR/browser session takeover | **Intentional omission, not a broken implemented entry point.** Manifest exports only launcher MainActivity, with no HTTPS VIEW filter: [/home/chris/git/collie/android/app/src/main/AndroidManifest.xml:16](/home/chris/git/collie/android/app/src/main/AndroidManifest.xml). Deep-link parser exists for same configured origin/mount and internal intents: [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/CollieDeepLink.kt:25](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/CollieDeepLink.kt); manual code entry is documented: [/home/chris/git/collie/android/GETTING_STARTED.md:69](/home/chris/git/collie/android/GETTING_STARTED.md). Future explicit app links/QR import need origin confirmation and Android dispatch tests; they must not import browser credentials or authorize writes. |",
+      "disposition": "required",
+      "implementation_units": [
+        "C27",
+        "A20"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-android:55",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-android.md",
+      "line": 55,
+      "feature": "Proxy authentication browser action",
+      "source_excerpt": "| Proxy authentication browser action | **An external sign-in intent already exists**, not an embedded app shell: [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/MainActivity.kt:469](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/MainActivity.kt). A browser cookie is not evidence of native bearer/header access; deployment-specific access issues need actual existing API credentials/access routes assessed separately. |",
+      "disposition": "required",
+      "implementation_units": [
+        "R02",
+        "C29",
+        "A00"
+      ],
+      "reason": "External browser launch exists; native identity credential access needs the concrete gateway/client contract."
+    },
+    {
+      "finding_id": "capability-gaps-android:56",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-android.md",
+      "line": 56,
+      "feature": "Infinite terminal scrollback/server-wide full-text journal search",
+      "source_excerpt": "| Infinite terminal scrollback/server-wide full-text journal search | **Wire-limited, not solved by a new Android widget.** Native mirror cap is 1,000 lines: [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PaneScrollback.kt:6](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PaneScrollback.kt). No served-line count/total-depth contract is available: [/home/chris/git/collie/ANDROID_NATIVE_IMPLEMENTATION_PLAN.md:751](/home/chris/git/collie/ANDROID_NATIVE_IMPLEMENTATION_PLAN.md). Native history find searches loaded turns; older-page reads are already supported. A whole-log search needs a bounded server search contract; do not promise it based on local find. |",
+      "disposition": "required",
+      "implementation_units": [
+        "H04",
+        "A13",
+        "R01"
+      ],
+      "reason": "Negotiate bounded terminal reads and implement bounded owning-session journal search; infinite PTY history is not a supported upstream capability."
+    },
+    {
+      "finding_id": "capability-gaps-android:57",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-android.md",
+      "line": 57,
+      "feature": "STT provider setup on phone / native local speech engine assumed available",
+      "source_excerpt": "| STT provider setup on phone / native local speech engine assumed available | **Provider-dependent existing feature.** App exposes configured server availability and records/transcribes audio: [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/ComposerMedia.kt:152](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/ComposerMedia.kt). Provider setup/credential custody stays operator-side. Native hands-free is guarded opt-in; neither default Android speech recognition nor an unconfigured remote provider is claimed. |",
+      "disposition": "baseline",
+      "implementation_units": [
+        "C29",
+        "A11",
+        "A19"
+      ],
+      "reason": "Configured STT recording/transcription already exists; preserve operator credential custody and expose declared setup/availability. No nonexistent local speech engine is promised."
+    },
+    {
+      "finding_id": "capability-gaps-android:58",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-android.md",
+      "line": 58,
+      "feature": "Server updater updates APK",
+      "source_excerpt": "| Server updater updates APK | **Separate lifecycle.** Server update controls never install the Android package; manual same-signer APK upgrade is documented: [/home/chris/git/collie/android/GETTING_STARTED.md:91](/home/chris/git/collie/android/GETTING_STARTED.md). Optional native APK update discovery/distribution is a separate product feature, not a missing server route. |",
+      "disposition": "required",
+      "implementation_units": [
+        "C28",
+        "A21"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-android:62",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-android.md",
+      "line": 62,
+      "feature": "Correct native four-adapter journal documentation drift",
+      "source_excerpt": "[/home/chris/git/collie/android/README.md:122](/home/chris/git/collie/android/README.md) still names four journal adapters, while [/home/chris/git/collie/bridge/journal/registry.ts:55](/home/chris/git/collie/bridge/journal/registry.ts) registers seven plus the OMP alias. This is documentation drift, not missing native transcript support: [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PaneViewModel.kt:781](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PaneViewModel.kt) calls the chat API without an agent allowlist, and [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PaneBodyMode.kt:17](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PaneBodyMode.kt) selects transcript based on availability. The native missing-session explanation intentionally omits Muse because it discovers its own sessions; it is not an eligibility filter ([/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PaneScrollback.kt:35](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PaneScrollback.kt)).",
+      "disposition": "required",
+      "implementation_units": [
+        "H20"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-herdr:16",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-herdr.md",
+      "line": 16,
+      "feature": "H-N1 / P2",
+      "source_excerpt": "| H-N1 / P2 | Android drops declared topology freshness. Collie publishes `mux.topologyLatency`, but native `MuxConfigResponse` models name/capabilities/notes/spaces/unsupportedKeys only. A zellij user gets no declared explanation that topology changes may take up to the census bound. | [/home/chris/git/collie/bridge/server.ts:620](/home/chris/git/collie/bridge/server.ts); [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/network/WireModels.kt:37](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/network/WireModels.kt); [/home/chris/git/collie/bridge/mux/zellij/adapter.ts:204](/home/chris/git/collie/bridge/mux/zellij/adapter.ts). Decode the optional push/bounded wire union and show the bounded promise on relevant status surfaces. Do not derive a permanent promise from observed timing. |",
+      "disposition": "required",
+      "implementation_units": [
+        "H02",
+        "A13"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-herdr:17",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-herdr.md",
+      "line": 17,
+      "feature": "H-N2 / P2",
+      "source_excerpt": "| H-N2 / P2 | Space pull-to-refresh rereads cached topology rather than exercising the bridge's existing look-now floor. Its swipe callback calls `SpaceViewModel.refresh`, which calls `load(manual=true)` and then `repository.paneSnapshot`; none invokes `repository.refresh`. Dashboard does invoke it. | [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/SpaceActivity.kt:100](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/SpaceActivity.kt); [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/SpaceViewModel.kt:132](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/SpaceViewModel.kt); [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/SpaceViewModel.kt:158](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/SpaceViewModel.kt); [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/MainViewModel.kt:206](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/MainViewModel.kt); [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/data/CollieRepository.kt:183](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/data/CollieRepository.kt). Call scoped `/api/refresh` before the manual snapshot. This matters chiefly on censused muxes such as zellij; Herdr's refresh is intentionally a no-op. Pane `refresh()` also loads data without a bridge refresh ([/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PaneViewModel.kt:194](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PaneViewModel.kt)); apply the floor wherever the UI promises topology refresh. |",
+      "disposition": "required",
+      "implementation_units": [
+        "H03",
+        "C01",
+        "A13"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-herdr:18",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-herdr.md",
+      "line": 18,
+      "feature": "H-N3 / P2",
+      "source_excerpt": "| H-N3 / P2 | The native live-buffer ceiling is globally 1,000 lines, although the bridge allows requests up to 10,000 and non-Herdr adapters can expose larger host scrollback. The cap is accurate for Herdr 0.9.3 but unnecessarily carries Herdr's limit into other muxes. | [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PaneScrollback.kt:6](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PaneScrollback.kt); [/home/chris/git/collie/bridge/server.ts:230](/home/chris/git/collie/bridge/server.ts); [/home/chris/git/collie/bridge/server.ts:3050](/home/chris/git/collie/bridge/server.ts); [/home/chris/git/collie/bridge/mux/tmux/adapter.ts:945](/home/chris/git/collie/bridge/mux/tmux/adapter.ts); [/home/chris/git/collie/bridge/mux/tuios/adapter.ts:771](/home/chris/git/collie/bridge/mux/tuios/adapter.ts); [Herdr v0.9.3 src/app/api_helpers.rs:117](https://github.com/herdrdev/herdr/blob/v0.9.3/src/app/api_helpers.rs#L117). Negotiate a supported read ceiling through Collie's wire before increasing it; retain bounded requests and no-action behavior when depth is unknown. This is a client/bridge capability enhancement, not permission to scrape agent-owned history or resize the PTY. |",
+      "disposition": "required",
+      "implementation_units": [
+        "H04",
+        "A13"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-herdr:28",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-herdr.md",
+      "line": 28,
+      "feature": "Workspace/tab/pane census, agent lifecycle status, titles and labels",
+      "source_excerpt": "| Workspace/tab/pane census, agent lifecycle status, titles and labels | Neutral snapshot; native dashboard, Space, pane switcher consume it. [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/network/WireModels.kt:84](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/network/WireModels.kt) | Consumed. Explicit focus is separate from browsing. |",
+      "disposition": "baseline",
+      "implementation_units": [
+        "H01",
+        "A00"
+      ],
+      "reason": "Existing functionality remains regression acceptance; mapped extensions do not negate this baseline."
+    },
+    {
+      "finding_id": "capability-gaps-herdr:29",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-herdr.md",
+      "line": 29,
+      "feature": "Pane rendered grid, ANSI styling, bounded scrollback",
+      "source_excerpt": "| Pane rendered grid, ANSI styling, bounded scrollback | `GET /api/pane/<id>`; native live pane and `readableLines` policy. [/home/chris/git/collie/bridge/mux/herdr/adapter.ts:405](/home/chris/git/collie/bridge/mux/herdr/adapter.ts); [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PaneScrollback.kt:39](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PaneScrollback.kt) | Consumed within limits; H-N3. No terminal emulator needed. |",
+      "disposition": "baseline",
+      "implementation_units": [
+        "H04",
+        "A13"
+      ],
+      "reason": "Existing functionality remains regression acceptance; mapped extensions do not negate this baseline."
+    },
+    {
+      "finding_id": "capability-gaps-herdr:30",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-herdr.md",
+      "line": 30,
+      "feature": "Agent session references and disk transcripts",
+      "source_excerpt": "| Agent session references and disk transcripts | Ref translated with current-agent match; Collie's journal serves supported harness logs, native history/chat methods consume them. [/home/chris/git/collie/bridge/mux/herdr/adapter.ts:679](/home/chris/git/collie/bridge/mux/herdr/adapter.ts); [/home/chris/git/collie/bridge/journal/registry.ts:55](/home/chris/git/collie/bridge/journal/registry.ts); [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/network/CollieApiClient.kt:294](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/network/CollieApiClient.kt) | Consumed for supported journal adapters. Herdr recognition alone does not supply a journal parser. |",
+      "disposition": "baseline",
+      "implementation_units": [
+        "H11",
+        "H12",
+        "A05",
+        "A17"
+      ],
+      "reason": "Existing functionality remains regression acceptance; mapped extensions do not negate this baseline."
+    },
+    {
+      "finding_id": "capability-gaps-herdr:31",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-herdr.md",
+      "line": 31,
+      "feature": "Literal text, keys, guarded replies and direct typing",
+      "source_excerpt": "| Literal text, keys, guarded replies and direct typing | Neutral type/send methods; native reply/keys HTTP calls. [/home/chris/git/collie/bridge/mux/herdr/adapter.ts:442](/home/chris/git/collie/bridge/mux/herdr/adapter.ts); [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/network/CollieApiClient.kt:609](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/network/CollieApiClient.kt) | Consumed. Preserve prompt-bound and device write guards. |",
+      "disposition": "baseline",
+      "implementation_units": [
+        "H01",
+        "H10",
+        "A10",
+        "A18"
+      ],
+      "reason": "Existing functionality remains regression acceptance; mapped extensions do not negate this baseline."
+    },
+    {
+      "finding_id": "capability-gaps-herdr:32",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-herdr.md",
+      "line": 32,
+      "feature": "Pane focus across tab/workspace",
+      "source_excerpt": "| Pane focus across tab/workspace | Explicit `focus` HTTP action and native Show in terminal. [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PaneActivity.kt:3287](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PaneActivity.kt); [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PaneActivity.kt:3718](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/PaneActivity.kt) | Consumed. Phone navigation must not move the operator implicitly. |",
+      "disposition": "baseline",
+      "implementation_units": [
+        "H01",
+        "H05"
+      ],
+      "reason": "Existing functionality remains regression acceptance; mapped extensions do not negate this baseline."
+    },
+    {
+      "finding_id": "capability-gaps-herdr:33",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-herdr.md",
+      "line": 33,
+      "feature": "Pane rename/close; tab create/rename/close; workspace create",
+      "source_excerpt": "| Pane rename/close; tab create/rename/close; workspace create | Native concrete implementations. [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/network/CollieApiClient.kt:361](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/network/CollieApiClient.kt); [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/network/CollieApiClient.kt:397](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/network/CollieApiClient.kt) | Consumed with existing confirmation/capability gates. |",
+      "disposition": "baseline",
+      "implementation_units": [
+        "H01",
+        "H07"
+      ],
+      "reason": "Existing functionality remains regression acceptance; mapped extensions do not negate this baseline."
+    },
+    {
+      "finding_id": "capability-gaps-herdr:34",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-herdr.md",
+      "line": 34,
+      "feature": "Existing worktree list/create/open",
+      "source_excerpt": "| Existing worktree list/create/open | Bridge mux verbs and legacy native methods/sheets. [/home/chris/git/collie/bridge/mux/herdr/adapter.ts:528](/home/chris/git/collie/bridge/mux/herdr/adapter.ts); [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/network/CollieApiClient.kt:441](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/network/CollieApiClient.kt); [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/MainActivity.kt:964](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/MainActivity.kt) | Consumed through the legacy flow. Creating a worktree is not removing one. |",
+      "disposition": "baseline",
+      "implementation_units": [
+        "H08",
+        "C11",
+        "A04"
+      ],
+      "reason": "Existing functionality remains regression acceptance; mapped extensions do not negate this baseline."
+    },
+    {
+      "finding_id": "capability-gaps-herdr:35",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-herdr.md",
+      "line": 35,
+      "feature": "Richer branch/base/folder planning and create-at flow",
+      "source_excerpt": "| Richer branch/base/folder planning and create-at flow | Bridge supports the richer contract; native `planWorktree` and `createWorktreeAt` transport methods exist, but have no native UI caller. [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/network/CollieApiClient.kt:349](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/network/CollieApiClient.kt) | Transport-only / native UI gap. See the companion Collie and Android capability-gap reports for APICompatibility36 and caller evidence. |",
+      "disposition": "required",
+      "implementation_units": [
+        "H08",
+        "C11",
+        "C12",
+        "A04"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-herdr:36",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-herdr.md",
+      "line": 36,
+      "feature": "Discover other local Herdr sessions",
+      "source_excerpt": "| Discover other local Herdr sessions | `listSessions` plus snapshot sessions and native session picker. [/home/chris/git/collie/bridge/mux/herdr/adapter.ts:110](/home/chris/git/collie/bridge/mux/herdr/adapter.ts); [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/MainActivity.kt:582](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/MainActivity.kt) | Consumed. Not a phone-side socket connection. |",
+      "disposition": "baseline",
+      "implementation_units": [
+        "H17",
+        "A00"
+      ],
+      "reason": "Existing functionality remains regression acceptance; mapped extensions do not negate this baseline."
+    },
+    {
+      "finding_id": "capability-gaps-herdr:37",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-herdr.md",
+      "line": 37,
+      "feature": "Herdr topology/agent event stream",
+      "source_excerpt": "| Herdr topology/agent event stream | Bridge subscribes and invalidates state; Android polls Collie HTTP. [/home/chris/git/collie/bridge/mux/herdr/events.ts:19](/home/chris/git/collie/bridge/mux/herdr/events.ts); [/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/SpaceViewModel.kt:116](/home/chris/git/collie/android/app/src/main/java/com/lateapex/collie/ui/SpaceViewModel.kt) | Consumed indirectly. HTTP streaming is a separate bridge prerequisite, not a missing Android Herdr socket client. |",
+      "disposition": "required",
+      "implementation_units": [
+        "H19"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-herdr:38",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-herdr.md",
+      "line": 38,
+      "feature": "Pane split, resize, zoom, neighbor/edge/layout inspect, swap/move",
+      "source_excerpt": "| Pane split, resize, zoom, neighbor/edge/layout inspect, swap/move | Present in shipped schema; absent neutral capabilities/routes. [Herdr v0.9.3 docs/next/website/src/content/docs/socket-api.mdx:97](https://github.com/herdrdev/herdr/blob/v0.9.3/docs/next/website/src/content/docs/socket-api.mdx#L97) | Bridge prerequisite; P2 candidate for explicit organize-layout workflow. Shared terminal mutations need the existing write gates and pane identity handling. |",
+      "disposition": "required",
+      "implementation_units": [
+        "H05"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-herdr:39",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-herdr.md",
+      "line": 39,
+      "feature": "Portable layout export/apply/split ratios",
+      "source_excerpt": "| Portable layout export/apply/split ratios | Shipped schema; no Collie operation. [/home/chris/git/collie/.project-docs/herdr/docs/next/website/src/content/docs/socket-api.md:208](/home/chris/git/collie/.project-docs/herdr/docs/next/website/src/content/docs/socket-api.md) | Bridge prerequisite / P3. Apply creates/replaces processes and layout; not a harmless view-setting. |",
+      "disposition": "required",
+      "implementation_units": [
+        "H06"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-herdr:40",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-herdr.md",
+      "line": 40,
+      "feature": "Workspace rename/close/group-close/reorder; tab move/reorder",
+      "source_excerpt": "| Workspace rename/close/group-close/reorder; tab move/reorder | Herdr supports them; Collie currently exposes creation and tab/pane structural subset. [/home/chris/git/collie/.project-docs/herdr/docs/next/website/src/content/docs/socket-api.md:114](/home/chris/git/collie/.project-docs/herdr/docs/next/website/src/content/docs/socket-api.md) | Bridge prerequisite / P2 organize-space candidate. Group closure has broader consequences than closing one tab. |",
+      "disposition": "required",
+      "implementation_units": [
+        "H07"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-herdr:41",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-herdr.md",
+      "line": 41,
+      "feature": "Worktree removal",
+      "source_excerpt": "| Worktree removal | Herdr `worktree.remove`; Collie port exposes list/create/open only. [/home/chris/git/collie/.project-docs/herdr/docs/next/website/src/content/docs/socket-api.md:353](/home/chris/git/collie/.project-docs/herdr/docs/next/website/src/content/docs/socket-api.md) | Bridge prerequisite / P2 only with explicit linked-checkout/dirty-state plan and destructive confirmation. Closing a pane must not imply checkout removal. |",
+      "disposition": "required",
+      "implementation_units": [
+        "H08"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-herdr:42",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-herdr.md",
+      "line": 42,
+      "feature": "Process details and foreground cwd",
+      "source_excerpt": "| Process details and foreground cwd | Herdr has `pane.process_info` and `foreground_cwd`; Collie transport declares the latter but adapter does not project it. [/home/chris/git/collie/bridge/mux/herdr/client.ts:103](/home/chris/git/collie/bridge/mux/herdr/client.ts); [/home/chris/git/collie/bridge/mux/herdr/adapter.ts:640](/home/chris/git/collie/bridge/mux/herdr/adapter.ts); [/home/chris/git/collie/.project-docs/herdr/docs/next/website/src/content/docs/socket-api.md:204](/home/chris/git/collie/.project-docs/herdr/docs/next/website/src/content/docs/socket-api.md) | Bridge prerequisite / P2 read-only diagnostics candidate. `cwd` retains its documented pane/workspace semantics. |",
+      "disposition": "required",
+      "implementation_units": [
+        "H09"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-herdr:43",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-herdr.md",
+      "line": 43,
+      "feature": "Atomic agent prompt, occupant-pinned lifecycle wait, output wait, named agent start/rename/explain",
+      "source_excerpt": "| Atomic agent prompt, occupant-pinned lifecycle wait, output wait, named agent start/rename/explain | Shipped Herdr primitives; Collie uses neutral pane text/keys and its own guarded client interaction. [/home/chris/git/collie/.project-docs/herdr/docs/next/website/src/content/docs/socket-api.md:125](/home/chris/git/collie/.project-docs/herdr/docs/next/website/src/content/docs/socket-api.md); [/home/chris/git/collie/.project-docs/herdr/docs/next/website/src/content/docs/agent-automation.md:83](/home/chris/git/collie/.project-docs/herdr/docs/next/website/src/content/docs/agent-automation.md) | Bridge prerequisite / P2 orchestration candidate. Do not replace Collie's verified send with raw `agent.prompt` blindly: delivery and settled state are different guarantees. |",
+      "disposition": "required",
+      "implementation_units": [
+        "H10"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-herdr:44",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-herdr.md",
+      "line": 44,
+      "feature": "Broader agent kinds and custom state/session/resume reporting",
+      "source_excerpt": "| Broader agent kinds and custom state/session/resume reporting | Herdr supports more kinds than Collie's nine launch IDs and seven journal adapters plus alias. [/home/chris/git/collie/.project-docs/herdr/docs/next/website/src/content/docs/agent-automation.md:55](/home/chris/git/collie/.project-docs/herdr/docs/next/website/src/content/docs/agent-automation.md); [/home/chris/git/collie/bridge/harness-launch.ts:43](/home/chris/git/collie/bridge/harness-launch.ts); [/home/chris/git/collie/bridge/journal/registry.ts:55](/home/chris/git/collie/bridge/journal/registry.ts) | Bridge/harness prerequisite. Unsupported kinds may still be monitored as raw panes; rich dialogs/history require their own evidence and adapters. Avoid equating Herdr recognition with native semantic support. |",
+      "disposition": "required",
+      "implementation_units": [
+        "H11",
+        "H12",
+        "A10"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-herdr:45",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-herdr.md",
+      "line": 45,
+      "feature": "Integration install/uninstall/list/status, manifests/reload",
+      "source_excerpt": "| Integration install/uninstall/list/status, manifests/reload | Herdr CLI/schema available; absent phone contract. [/home/chris/git/collie/.project-docs/herdr/docs/next/website/src/content/docs/integrations.md:69](/home/chris/git/collie/.project-docs/herdr/docs/next/website/src/content/docs/integrations.md) | Read-only integration diagnostics first (P2 bridge prerequisite), installation remains explicit operator setup. Native missing-session explanation is not authoritative hook health. Codex may report only after first prompt ([/home/chris/git/collie/bridge/journal/registry.ts:83](/home/chris/git/collie/bridge/journal/registry.ts)). |",
+      "disposition": "required",
+      "implementation_units": [
+        "H13"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-herdr:46",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-herdr.md",
+      "line": 46,
+      "feature": "Custom pane/workspace metadata and transient Herdr agent views",
+      "source_excerpt": "| Custom pane/workspace metadata and transient Herdr agent views | Present in schema; native Collie domain does not expose arbitrary tokens/views. [/home/chris/git/collie/.project-docs/herdr/docs/next/website/src/content/docs/socket-api.md:379](/home/chris/git/collie/.project-docs/herdr/docs/next/website/src/content/docs/socket-api.md) | Bridge prerequisite / P3. Herdr view projection affects its own UI, not Collie's list or global attention semantics. |",
+      "disposition": "required",
+      "implementation_units": [
+        "H14"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-herdr:47",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-herdr.md",
+      "line": 47,
+      "feature": "Native Herdr notifications / plugin actions, panes, logs, enable/link",
+      "source_excerpt": "| Native Herdr notifications / plugin actions, panes, logs, enable/link | Shipped schema; Collie's thin plugin integration is service registration, not arbitrary plugin administration. [/home/chris/git/collie/ARCHITECTURE.md:98](/home/chris/git/collie/ARCHITECTURE.md) | Deliberate boundary; P3 server admin proposal, not automatic Android parity requirement. Herdr desktop toasts do not provide Android background push. |",
+      "disposition": "required",
+      "implementation_units": [
+        "H15",
+        "H18",
+        "C21",
+        "A15"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-herdr:48",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-herdr.md",
+      "line": 48,
+      "feature": "Saved-machine SSH connections, remote attach, persistence/restore, live handoff",
+      "source_excerpt": "| Saved-machine SSH connections, remote attach, persistence/restore, live handoff | Herdr host administration; Collie federates through per-machine Collie HTTP/crew instead. [/home/chris/git/collie/ARCHITECTURE.md:79](/home/chris/git/collie/ARCHITECTURE.md) | Deliberate separate transport/administration model. Never add Android SSH/socket/vendor protocol access. |",
+      "disposition": "required",
+      "implementation_units": [
+        "H16",
+        "H17"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-herdr:49",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-herdr.md",
+      "line": 49,
+      "feature": "Pane scroll/clear/copy/search/selection/link actions and client titles",
+      "source_excerpt": "| Pane scroll/clear/copy/search/selection/link actions and client titles | Present in installed schema; absent Collie HTTP operations. | Bridge prerequisite / P3, except mobile-local copy/search can stay client-side. Changing operator scroll position is not required to scroll the native mirror. |",
+      "disposition": "required",
+      "implementation_units": [
+        "H18"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-herdr:50",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-herdr.md",
+      "line": 50,
+      "feature": "Terminal session observe/control, Kitty image output",
+      "source_excerpt": "| Terminal session observe/control, Kitty image output | Terminal attach/control excluded by native REST architecture; public pane graphics overlay methods removed. [/home/chris/git/collie/.project-docs/herdr/docs/next/website/src/content/docs/socket-api.md:188](/home/chris/git/collie/.project-docs/herdr/docs/next/website/src/content/docs/socket-api.md); [/home/chris/git/collie/CLAUDE.md:620](/home/chris/git/collie/CLAUDE.md) | Deliberate exclusion / unavailable old image API. Journal/files images are a different Collie feature, not direct Herdr terminal emulation. |",
+      "disposition": "required",
+      "implementation_units": [
+        "H19",
+        "C03",
+        "C07",
+        "A02",
+        "A05"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-herdr:68",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-herdr.md",
+      "line": 68,
+      "feature": "Five-mux declarations and outdated three-mux introduction",
+      "source_excerpt": "Primary code evidence: [/home/chris/git/collie/bridge/mux/herdr/adapter.ts:90](/home/chris/git/collie/bridge/mux/herdr/adapter.ts), [/home/chris/git/collie/bridge/mux/tmux/adapter.ts:176](/home/chris/git/collie/bridge/mux/tmux/adapter.ts), [/home/chris/git/collie/bridge/mux/zellij/adapter.ts:184](/home/chris/git/collie/bridge/mux/zellij/adapter.ts), [/home/chris/git/collie/bridge/mux/tuios/adapter.ts:115](/home/chris/git/collie/bridge/mux/tuios/adapter.ts), [/home/chris/git/collie/bridge/mux/tern/adapter.ts:78](/home/chris/git/collie/bridge/mux/tern/adapter.ts). Probe provenance and version boundaries are in [/home/chris/git/collie/MUX_CONTRACT.md:15](/home/chris/git/collie/MUX_CONTRACT.md): historical tmux 3.6b/zellij 0.44.2, Tern 0.4.5, Tuios 0.8.4. This audit did not rerun these probes. Registry includes all five ([/home/chris/git/collie/bridge/mux/registry.ts:112](/home/chris/git/collie/bridge/mux/registry.ts)); documentation saying only three is an introductory/historical shorthand.",
+      "disposition": "required",
+      "implementation_units": [
+        "H01",
+        "H04",
+        "H20"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-herdr:72",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-herdr.md",
+      "line": 72,
+      "feature": "Six upstream key limitations and supported alias",
+      "source_excerpt": "- **Six refused Herdr keys remain real on v0.9.3.** The stable key parser lists arrows, Enter, Tab, Escape, Backspace, punctuation, characters and function keys, but not paging/edit keys: [Herdr v0.9.3 src/config/keybinds.rs:1281](https://github.com/herdrdev/herdr/blob/v0.9.3/src/config/keybinds.rs#L1281). The adapter's declaration is correct ([/home/chris/git/collie/bridge/mux/herdr/keys.ts:28](/home/chris/git/collie/bridge/mux/herdr/keys.ts)). `C-c` has become a supported Herdr alias ([Herdr v0.9.3 src/app/api_helpers.rs:17](https://github.com/herdrdev/herdr/blob/v0.9.3/src/app/api_helpers.rs#L17)); Collie's neutral `ctrl+c` spelling remains appropriate.",
+      "disposition": "baseline",
+      "implementation_units": [
+        "H01",
+        "H18",
+        "A10",
+        "A19",
+        "H20"
+      ],
+      "reason": "Existing functionality remains regression acceptance; mapped extensions do not negate this baseline."
+    },
+    {
+      "finding_id": "capability-gaps-herdr:73",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-herdr.md",
+      "line": 73,
+      "feature": "Herdr zero revision requires content-bound guards",
+      "source_excerpt": "- **`revision:0` remains current.** [Herdr v0.9.3 src/app/api/panes.rs:1540](https://github.com/herdrdev/herdr/blob/v0.9.3/src/app/api/panes.rs#L1540). Continue content-based prompt identity checks; no client may treat revision as the sole freshness proof.",
+      "disposition": "baseline",
+      "implementation_units": [
+        "H01",
+        "H10",
+        "H18",
+        "A00",
+        "A10"
+      ],
+      "reason": "Existing functionality remains regression acceptance; mapped extensions do not negate this baseline."
+    },
+    {
+      "finding_id": "capability-gaps-herdr:74",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-herdr.md",
+      "line": 74,
+      "feature": "Version-scoped truncation comment/documentation correction",
+      "source_excerpt": "- **The historical \u201ctruncated always false\u201d claim has drifted.** Stable code computes `truncated` from omitted lines and has a test asserting true: [Herdr v0.9.3 src/app/api_helpers.rs:143](https://github.com/herdrdev/herdr/blob/v0.9.3/src/app/api_helpers.rs#L143), [Herdr v0.9.3 src/app/api/panes.rs:2786](https://github.com/herdrdev/herdr/blob/v0.9.3/src/app/api/panes.rs#L2786). The old comment at [/home/chris/git/collie/bridge/mux/herdr/client.ts:148](/home/chris/git/collie/bridge/mux/herdr/client.ts) and capability note at [/home/chris/git/collie/bridge/mux/herdr/adapter.ts:118](/home/chris/git/collie/bridge/mux/herdr/adapter.ts) should be qualified by version. This is documentation/comment drift, not evidence of a missing Android feature or permission to infer unlimited alt-screen history from one flag. `readableLines` remains useful. Historical viewport-harvesting measurements must also retain their original dates rather than being stated as universal current behavior.",
+      "disposition": "required",
+      "implementation_units": [
+        "H04",
+        "H20"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-herdr:75",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-herdr.md",
+      "line": 75,
+      "feature": "Windows Crew refusal and bash-dependent actions",
+      "source_excerpt": "- **Windows host limits are not Android defects.** Current Collie documentation supports standalone Windows 11 x64 with Herdr 0.9.3+, Task Scheduler and manually published ingress. Windows crew admission/promotion verbs refuse; Herdr action buttons are unavailable because they require bash. [/home/chris/git/collie/docs/windows.md:532](/home/chris/git/collie/docs/windows.md); [/home/chris/git/collie/docs/windows.md:555](/home/chris/git/collie/docs/windows.md). Android still requires a conforming HTTPS origin; a documented Windows HTTP rehearsal is not an Android TLS compatibility promise.",
+      "disposition": "required",
+      "implementation_units": [
+        "W01",
+        "W02",
+        "H15",
+        "H18"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gaps-herdr:76",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gaps-herdr.md",
+      "line": 76,
+      "feature": "Native HTTP functional equivalence to host controls",
+      "source_excerpt": "- **Raw Herdr/socket/native terminal protocols remain outside Android scope.** [/home/chris/git/collie/CLAUDE.md:20](/home/chris/git/collie/CLAUDE.md); [/home/chris/git/collie/bridge/mux/herdr/adapter.ts:15](/home/chris/git/collie/bridge/mux/herdr/adapter.ts). New functionality should enter the neutral mux port, declared support, authenticated Collie HTTP API and crew forwarding before the native client. No external credentials, paid agent calls, LAN/SSH probing, or operator writes were needed for this branch.",
+      "disposition": "required",
+      "implementation_units": [
+        "H01",
+        "H16",
+        "H17",
+        "H18",
+        "H19"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gap-analysis:68",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gap-analysis.md",
+      "line": 68,
+      "feature": "Five-mux capability negotiation",
+      "source_excerpt": "Collie registers five mux backends: Herdr, tmux, zellij, tuios and tern. Android must consume capability declarations rather than treating a feature as supported solely because a backend name appears. Journal/session availability, keyboard grammar, focus, worktrees and topology freshness differ between them; the exact matrix is in `/home/chris/git/collie/MUX_CONTRACT.md` and the Herdr companion report.",
+      "disposition": "required",
+      "implementation_units": [
+        "H01",
+        "H04",
+        "H20"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gap-analysis:70",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gap-analysis.md",
+      "line": 70,
+      "feature": "Windows Crew support closure",
+      "source_excerpt": "Windows support is specifically standalone Windows 11 x64 with Herdr 0.9.3+, manual front-door publishing, and no Windows Crew membership in the documented release. An Android screen cannot supply a server capability deliberately refused on that host. See `/home/chris/git/collie/docs/windows.md:532`.",
+      "disposition": "required",
+      "implementation_units": [
+        "W01",
+        "W02"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    },
+    {
+      "finding_id": "capability-gap-analysis:72",
+      "source": "/home/chris/git/collie/android/acceptance/capability-gap-analysis.md",
+      "line": 72,
+      "feature": "Journal inventory and truncation documentation drift",
+      "source_excerpt": "Two misleading documentation statements require maintenance: the native README lists only four journal adapters while the current bridge registers seven plus the OMP alias; older Herdr API/adapter comments describe `truncated` as always false, while pinned Herdr 0.9.3 can report truncation. Neither finding means unsupported journal harnesses suddenly need native SDKs or that Herdr offers unlimited scrollback.",
+      "disposition": "required",
+      "implementation_units": [
+        "H20"
+      ],
+      "reason": "Mandatory closure across all mapped layers."
+    }
+  ],
+  "herdr_schema_methods": [
+    {
+      "method": "agent.explain",
+      "parameter_schema": "`AgentTarget`: `target!:string`",
+      "owners": [
+        "H10"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 283,
+      "existing": false
+    },
+    {
+      "method": "agent.focus",
+      "parameter_schema": "`AgentTarget`: `target!:string`",
+      "owners": [
+        "H10"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 284,
+      "existing": false
+    },
+    {
+      "method": "agent.get",
+      "parameter_schema": "`AgentTarget`: `target!:string`",
+      "owners": [
+        "H10"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 285,
+      "existing": false
+    },
+    {
+      "method": "agent.list",
+      "parameter_schema": "`EmptyParams`: empty object",
+      "owners": [
+        "H10"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 286,
+      "existing": false
+    },
+    {
+      "method": "agent.prompt",
+      "parameter_schema": "`AgentPromptParams`: `target!:string`; `text!:string`; `wait?:AgentPromptWaitOptions / null`",
+      "owners": [
+        "H10"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 287,
+      "existing": false
+    },
+    {
+      "method": "agent.read",
+      "parameter_schema": "`AgentReadParams`: `format?:ReadFormat=\"text\"`; `lines?:integer / null`; `source!:ReadSource`; `strip_ansi?:boolean=true`; `target!:string`",
+      "owners": [
+        "H10"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 288,
+      "existing": false
+    },
+    {
+      "method": "agent.rename",
+      "parameter_schema": "`AgentRenameParams`: `name?:string / null`; `target!:string`",
+      "owners": [
+        "H10"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 289,
+      "existing": false
+    },
+    {
+      "method": "agent.send_keys",
+      "parameter_schema": "`AgentSendKeysParams`: `keys!:array<string>`; `target!:string`",
+      "owners": [
+        "H10"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 290,
+      "existing": false
+    },
+    {
+      "method": "agent.start",
+      "parameter_schema": "`AgentStartParams`: `args?:array<string>`; `kind!:string`; `name!:string`; `pane_id!:string`; `timeout_ms?:integer / null`",
+      "owners": [
+        "H10"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 291,
+      "existing": false
+    },
+    {
+      "method": "agent.view.clear",
+      "parameter_schema": "`AgentViewClearParams`: `source?:string / null`",
+      "owners": [
+        "H14"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 292,
+      "existing": false
+    },
+    {
+      "method": "agent.view.set",
+      "parameter_schema": "`AgentViewSetParams`: `filter?:AgentViewFilter / null`; `label?:string / null`; `sort?:array<AgentViewSort>`; `source!:string`",
+      "owners": [
+        "H14"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 293,
+      "existing": false
+    },
+    {
+      "method": "agent.wait",
+      "parameter_schema": "`AgentWaitParams`: `target!:string`; `timeout_ms?:integer / null`; `until?:array<AgentStatus>`",
+      "owners": [
+        "H10"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 294,
+      "existing": false
+    },
+    {
+      "method": "client.window_title.clear",
+      "parameter_schema": "`EmptyParams`: empty object",
+      "owners": [
+        "H18"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 295,
+      "existing": false
+    },
+    {
+      "method": "client.window_title.set",
+      "parameter_schema": "`ClientWindowTitleSetParams`: `title!:string`",
+      "owners": [
+        "H18"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 296,
+      "existing": false
+    },
+    {
+      "method": "client_shell.surface.set",
+      "parameter_schema": "`ClientShellSurfaceSetParams`: `active!:boolean`",
+      "owners": [
+        "H18"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 297,
+      "existing": false
+    },
+    {
+      "method": "command.invoke",
+      "parameter_schema": "`CommandInvokeParams`: `command_id!:string`; `pane_id?:string / null`; `selection?:PaneSelectionReadParams / null`; `tab_id?:string / null`; `workspace_id?:string / null`",
+      "owners": [
+        "H18"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 298,
+      "existing": false
+    },
+    {
+      "method": "events.subscribe",
+      "parameter_schema": "`EventsSubscribeParams`: `subscriptions!:array<Subscription>`",
+      "owners": [
+        "H19"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 299,
+      "existing": false
+    },
+    {
+      "method": "events.wait",
+      "parameter_schema": "`EventsWaitParams`: `match_event!:EventMatch`; `timeout_ms?:integer / null`",
+      "owners": [
+        "H10"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 300,
+      "existing": false
+    },
+    {
+      "method": "integration.install",
+      "parameter_schema": "`IntegrationInstallParams`: `target!:IntegrationTarget`",
+      "owners": [
+        "H13"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 301,
+      "existing": false
+    },
+    {
+      "method": "integration.list",
+      "parameter_schema": "`EmptyParams`: empty object",
+      "owners": [
+        "H13"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 302,
+      "existing": false
+    },
+    {
+      "method": "integration.uninstall",
+      "parameter_schema": "`IntegrationUninstallParams`: `target!:IntegrationTarget`",
+      "owners": [
+        "H13"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 303,
+      "existing": false
+    },
+    {
+      "method": "layout.apply",
+      "parameter_schema": "`LayoutApplyParams`: `focus?:boolean=false`; `root!:LayoutNode`; `tab_id?:string / null`; `tab_label?:string / null`; `workspace_id?:string / null`",
+      "owners": [
+        "H06"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 304,
+      "existing": false
+    },
+    {
+      "method": "layout.export",
+      "parameter_schema": "`LayoutExportParams`: `pane_id?:string / null`; `tab_id?:string / null`",
+      "owners": [
+        "H06"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 305,
+      "existing": false
+    },
+    {
+      "method": "layout.set_split_ratio",
+      "parameter_schema": "`LayoutSetSplitRatioParams`: `pane_id?:string / null`; `path!:array<boolean>`; `ratio!:number`; `tab_id?:string / null`",
+      "owners": [
+        "H06"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 306,
+      "existing": false
+    },
+    {
+      "method": "notification.show",
+      "parameter_schema": "`NotificationShowParams`: `body?:string / null`; `position?:ToastHerdrPosition / null`; `sound?:NotificationShowSound`; `title!:string`",
+      "owners": [
+        "H18"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 307,
+      "existing": false
+    },
+    {
+      "method": "pane.clear",
+      "parameter_schema": "`PaneTarget`: `pane_id!:string`",
+      "owners": [
+        "H18"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 308,
+      "existing": false
+    },
+    {
+      "method": "pane.clear_agent_authority",
+      "parameter_schema": "`PaneClearAgentAuthorityParams`: `pane_id!:string`; `seq?:integer / null`; `source?:string / null`",
+      "owners": [
+        "H11"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 309,
+      "existing": false
+    },
+    {
+      "method": "pane.close",
+      "parameter_schema": "`PaneTarget`: `pane_id!:string`",
+      "owners": [
+        "H01",
+        "H05",
+        "H11"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 310,
+      "existing": true
+    },
+    {
+      "method": "pane.copy_motion",
+      "parameter_schema": "`PaneCopyMotionParams`: `content_revision?:integer / null`; `cursor!:PaneTextPoint`; `motion!:PaneCopyMotion`; `pane_id!:string`",
+      "owners": [
+        "H18"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 311,
+      "existing": false
+    },
+    {
+      "method": "pane.copy_search",
+      "parameter_schema": "`PaneCopySearchParams`: `content_revision!:integer`; `cursor!:PaneTextPoint`; `direction!:PaneCopySearchDirection`; `pane_id!:string`; `previous?:PaneTextRange / null`; `query!:string`",
+      "owners": [
+        "H18"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 312,
+      "existing": false
+    },
+    {
+      "method": "pane.current",
+      "parameter_schema": "`PaneCurrentParams`: `caller_pane_id?:string / null`",
+      "owners": [
+        "H01",
+        "H05",
+        "H11"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 313,
+      "existing": true
+    },
+    {
+      "method": "pane.edges",
+      "parameter_schema": "`PaneEdgesParams`: `pane_id?:string / null`",
+      "owners": [
+        "H05"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 314,
+      "existing": false
+    },
+    {
+      "method": "pane.edit_scrollback",
+      "parameter_schema": "`PaneTarget`: `pane_id!:string`",
+      "owners": [
+        "H18"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 315,
+      "existing": false
+    },
+    {
+      "method": "pane.focus",
+      "parameter_schema": "`PaneTarget`: `pane_id!:string`",
+      "owners": [
+        "H01",
+        "H05",
+        "H11"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 316,
+      "existing": true
+    },
+    {
+      "method": "pane.focus_direction",
+      "parameter_schema": "`PaneFocusDirectionParams`: `direction!:PaneDirection`; `pane_id?:string / null`",
+      "owners": [
+        "H05"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 317,
+      "existing": false
+    },
+    {
+      "method": "pane.get",
+      "parameter_schema": "`PaneTarget`: `pane_id!:string`",
+      "owners": [
+        "H01",
+        "H05",
+        "H11"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 318,
+      "existing": true
+    },
+    {
+      "method": "pane.input.set",
+      "parameter_schema": "`PaneInputSetParams`: `pane_id!:string`; `right_click!:PaneRightClickTarget`",
+      "owners": [
+        "H18"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 319,
+      "existing": false
+    },
+    {
+      "method": "pane.layout",
+      "parameter_schema": "`PaneLayoutParams`: `pane_id?:string / null`",
+      "owners": [
+        "H05"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 320,
+      "existing": false
+    },
+    {
+      "method": "pane.link.activate",
+      "parameter_schema": "`PaneLinkActivateParams`: `col!:integer`; `content_revision?:integer / null`; `offset_from_bottom?:integer / null`; `pane_id!:string`; `viewport_row!:integer`",
+      "owners": [
+        "H18"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 321,
+      "existing": false
+    },
+    {
+      "method": "pane.link.resolve",
+      "parameter_schema": "`PaneLinkActivateParams`: `col!:integer`; `content_revision?:integer / null`; `offset_from_bottom?:integer / null`; `pane_id!:string`; `viewport_row!:integer`",
+      "owners": [
+        "H18"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 322,
+      "existing": false
+    },
+    {
+      "method": "pane.list",
+      "parameter_schema": "`PaneListParams`: `workspace_id?:string / null`",
+      "owners": [
+        "H01",
+        "H05",
+        "H11"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 323,
+      "existing": true
+    },
+    {
+      "method": "pane.move",
+      "parameter_schema": "`PaneMoveParams`: `destination!:PaneMoveDestination`; `focus?:boolean=false`; `pane_id!:string`",
+      "owners": [
+        "H05"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 324,
+      "existing": false
+    },
+    {
+      "method": "pane.neighbor",
+      "parameter_schema": "`PaneNeighborParams`: `direction!:PaneDirection`; `pane_id?:string / null`",
+      "owners": [
+        "H05"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 325,
+      "existing": false
+    },
+    {
+      "method": "pane.process_info",
+      "parameter_schema": "`PaneProcessInfoParams`: `pane_id?:string / null`",
+      "owners": [
+        "H09"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 326,
+      "existing": false
+    },
+    {
+      "method": "pane.read",
+      "parameter_schema": "`PaneReadParams`: `format?:ReadFormat=\"text\"`; `lines?:integer / null`; `pane_id!:string`; `source!:ReadSource`; `strip_ansi?:boolean=true`",
+      "owners": [
+        "H04"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 327,
+      "existing": true
+    },
+    {
+      "method": "pane.release_agent",
+      "parameter_schema": "`PaneReleaseAgentParams`: `agent!:string`; `pane_id!:string`; `seq?:integer / null`; `source!:string`",
+      "owners": [
+        "H11"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 328,
+      "existing": false
+    },
+    {
+      "method": "pane.rename",
+      "parameter_schema": "`PaneRenameParams`: `label?:string / null`; `pane_id!:string`",
+      "owners": [
+        "H01",
+        "H05",
+        "H11"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 329,
+      "existing": true
+    },
+    {
+      "method": "pane.report_agent",
+      "parameter_schema": "`PaneReportAgentParams`: `agent!:string`; `agent_session_id?:string / null`; `agent_session_path?:string / null`; `message?:string / null`; `pane_id!:string`; `resume_argv?:array / null`; `seq?:integer / null`; `source!:string`; `state!:PaneAgentState`",
+      "owners": [
+        "H11"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 330,
+      "existing": false
+    },
+    {
+      "method": "pane.report_agent_session",
+      "parameter_schema": "`PaneReportAgentSessionParams`: `agent!:string`; `agent_session_id?:string / null`; `agent_session_path?:string / null`; `pane_id!:string`; `resume_argv?:array / null`; `seq?:integer / null`; `session_start_source?:string / null`; `source!:string`",
+      "owners": [
+        "H11"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 331,
+      "existing": false
+    },
+    {
+      "method": "pane.report_metadata",
+      "parameter_schema": "`PaneReportMetadataParams`: `agent?:string / null`; `applies_to_source?:string / null`; `clear_display_agent?:boolean=false`; `clear_state_labels?:boolean=false`; `clear_title?:boolean=false`; `display_agent?:string / null`; `pane_id!:string`; `seq?:integer / null`; `source!:string`; `state_labels?:object`; `title?:string / null`; `tokens?:object`; `ttl_ms?:integer / null`",
+      "owners": [
+        "H14"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 332,
+      "existing": false
+    },
+    {
+      "method": "pane.resize",
+      "parameter_schema": "`PaneResizeParams`: `amount?:number / null`; `direction!:PaneDirection`; `pane_id?:string / null`",
+      "owners": [
+        "H05"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 333,
+      "existing": false
+    },
+    {
+      "method": "pane.scroll",
+      "parameter_schema": "`PaneScrollParams`: `offset_from_bottom!:integer`; `pane_id!:string`",
+      "owners": [
+        "H18"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 334,
+      "existing": false
+    },
+    {
+      "method": "pane.selection.read",
+      "parameter_schema": "`PaneSelectionReadParams`: `anchor!:PaneTextPoint`; `content_revision?:integer / null`; `cursor!:PaneTextPoint`; `pane_id!:string`",
+      "owners": [
+        "H18"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 335,
+      "existing": false
+    },
+    {
+      "method": "pane.send_input",
+      "parameter_schema": "`PaneSendInputParams`: `keys?:array<string>`; `pane_id!:string`; `text?:string`",
+      "owners": [
+        "H10",
+        "H18"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 336,
+      "existing": false
+    },
+    {
+      "method": "pane.send_keys",
+      "parameter_schema": "`PaneSendKeysParams`: `keys!:array<string>`; `pane_id!:string`",
+      "owners": [
+        "H01",
+        "H05",
+        "H11"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 337,
+      "existing": true
+    },
+    {
+      "method": "pane.send_text",
+      "parameter_schema": "`PaneSendTextParams`: `pane_id!:string`; `text!:string`",
+      "owners": [
+        "H01",
+        "H05",
+        "H11"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 338,
+      "existing": true
+    },
+    {
+      "method": "pane.split",
+      "parameter_schema": "`PaneSplitParams`: `cwd?:string / null`; `direction!:SplitDirection`; `env?:object`; `focus?:boolean=false`; `ratio?:number / null`; `right_click?:PaneRightClickTarget=\"herdr\"`; `target_pane_id?:string / null`; `workspace_id?:string / null`",
+      "owners": [
+        "H05"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 339,
+      "existing": false
+    },
+    {
+      "method": "pane.swap",
+      "parameter_schema": "`PaneSwapParams`: `direction?:PaneDirection / null`; `pane_id?:string / null`; `source_pane_id?:string / null`; `target_pane_id?:string / null`",
+      "owners": [
+        "H05"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 340,
+      "existing": false
+    },
+    {
+      "method": "pane.wait_for_output",
+      "parameter_schema": "`PaneWaitForOutputParams`: `lines?:integer / null`; `match!:OutputMatch`; `pane_id!:string`; `source!:ReadSource`; `strip_ansi?:boolean=true`; `timeout_ms?:integer / null`",
+      "owners": [
+        "H10"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 341,
+      "existing": false
+    },
+    {
+      "method": "pane.zoom",
+      "parameter_schema": "`PaneZoomParams`: `mode?:PaneZoomMode=\"toggle\"`; `pane_id?:string / null`",
+      "owners": [
+        "H05"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 342,
+      "existing": false
+    },
+    {
+      "method": "ping",
+      "parameter_schema": "`PingParams`: empty object",
+      "owners": [
+        "H01"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 343,
+      "existing": false
+    },
+    {
+      "method": "plugin.action.invoke",
+      "parameter_schema": "`PluginActionInvokeParams`: `action_id!:string`; `context?:PluginInvocationContext / null`; `plugin_id?:string / null`",
+      "owners": [
+        "H15"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 344,
+      "existing": false
+    },
+    {
+      "method": "plugin.action.list",
+      "parameter_schema": "`PluginActionListParams`: `plugin_id?:string / null`",
+      "owners": [
+        "H15"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 345,
+      "existing": false
+    },
+    {
+      "method": "plugin.disable",
+      "parameter_schema": "`PluginSetEnabledParams`: `plugin_id!:string`",
+      "owners": [
+        "H15"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 346,
+      "existing": false
+    },
+    {
+      "method": "plugin.enable",
+      "parameter_schema": "`PluginSetEnabledParams`: `plugin_id!:string`",
+      "owners": [
+        "H15"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 347,
+      "existing": false
+    },
+    {
+      "method": "plugin.link",
+      "parameter_schema": "`PluginLinkParams`: `enabled?:boolean=true`; `path!:string`; `source?:PluginSourceInfo / null`",
+      "owners": [
+        "H15"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 348,
+      "existing": false
+    },
+    {
+      "method": "plugin.list",
+      "parameter_schema": "`PluginListParams`: `plugin_id?:string / null`",
+      "owners": [
+        "H15"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 349,
+      "existing": false
+    },
+    {
+      "method": "plugin.log.list",
+      "parameter_schema": "`PluginLogListParams`: `limit?:integer / null`; `plugin_id?:string / null`",
+      "owners": [
+        "H15"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 350,
+      "existing": false
+    },
+    {
+      "method": "plugin.pane.close",
+      "parameter_schema": "`PluginPaneCloseParams`: `pane_id!:string`",
+      "owners": [
+        "H15"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 351,
+      "existing": false
+    },
+    {
+      "method": "plugin.pane.focus",
+      "parameter_schema": "`PluginPaneFocusParams`: `pane_id!:string`",
+      "owners": [
+        "H15"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 352,
+      "existing": false
+    },
+    {
+      "method": "plugin.pane.open",
+      "parameter_schema": "`PluginPaneOpenParams`: `cwd?:string / null`; `direction?:SplitDirection / null`; `entrypoint!:string`; `env?:object`; `focus?:boolean=false`; `height?:PopupSize / null`; `placement?:PluginPanePlacement / null`; `plugin_id!:string`; `target_pane_id?:string / null`; `width?:PopupSize / null`; `workspace_id?:string / null`",
+      "owners": [
+        "H15"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 353,
+      "existing": false
+    },
+    {
+      "method": "plugin.unlink",
+      "parameter_schema": "`PluginUnlinkParams`: `plugin_id!:string`",
+      "owners": [
+        "H15"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 354,
+      "existing": false
+    },
+    {
+      "method": "popup.close",
+      "parameter_schema": "`EmptyParams`: empty object",
+      "owners": [
+        "H18"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 355,
+      "existing": false
+    },
+    {
+      "method": "product_announcement.dismiss",
+      "parameter_schema": "`ProductAnnouncementDismissParams`: `id!:string`; `version!:string`",
+      "owners": [
+        "H18"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 356,
+      "existing": false
+    },
+    {
+      "method": "release_notes.dismiss",
+      "parameter_schema": "`ReleaseNotesDismissParams`: `version!:string`",
+      "owners": [
+        "H18"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 357,
+      "existing": false
+    },
+    {
+      "method": "server.agent_manifests",
+      "parameter_schema": "`EmptyParams`: empty object",
+      "owners": [
+        "H13"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 358,
+      "existing": false
+    },
+    {
+      "method": "server.live_handoff",
+      "parameter_schema": "`ServerLiveHandoffParams`: `expected_protocol?:integer / null`; `expected_version?:string / null`; `import_exe?:string / null`",
+      "owners": [
+        "H17"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 359,
+      "existing": false
+    },
+    {
+      "method": "server.reload_agent_manifests",
+      "parameter_schema": "`EmptyParams`: empty object",
+      "owners": [
+        "H13"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 360,
+      "existing": false
+    },
+    {
+      "method": "server.reload_config",
+      "parameter_schema": "`EmptyParams`: empty object",
+      "owners": [
+        "H17"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 361,
+      "existing": false
+    },
+    {
+      "method": "server.ssh_agent.register",
+      "parameter_schema": "`ServerSshAgentRegisterParams`: `socket_path!:string`",
+      "owners": [
+        "H17"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 362,
+      "existing": false
+    },
+    {
+      "method": "server.stop",
+      "parameter_schema": "`EmptyParams`: empty object",
+      "owners": [
+        "H17"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 363,
+      "existing": false
+    },
+    {
+      "method": "session.snapshot",
+      "parameter_schema": "`EmptyParams`: empty object",
+      "owners": [
+        "H19"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 364,
+      "existing": false
+    },
+    {
+      "method": "tab.close",
+      "parameter_schema": "`TabTarget`: `tab_id!:string`",
+      "owners": [
+        "H01",
+        "H05",
+        "H11"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 365,
+      "existing": true
+    },
+    {
+      "method": "tab.create",
+      "parameter_schema": "`TabCreateParams`: `cwd?:string / null`; `env?:object`; `focus?:boolean=false`; `label?:string / null`; `workspace_id?:string / null`",
+      "owners": [
+        "H01",
+        "H05",
+        "H11"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 366,
+      "existing": true
+    },
+    {
+      "method": "tab.focus",
+      "parameter_schema": "`TabTarget`: `tab_id!:string`",
+      "owners": [
+        "H07"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 367,
+      "existing": false
+    },
+    {
+      "method": "tab.get",
+      "parameter_schema": "`TabTarget`: `tab_id!:string`",
+      "owners": [
+        "H01",
+        "H05",
+        "H11"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 368,
+      "existing": true
+    },
+    {
+      "method": "tab.list",
+      "parameter_schema": "`TabListParams`: `workspace_id?:string / null`",
+      "owners": [
+        "H01",
+        "H05",
+        "H11"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 369,
+      "existing": true
+    },
+    {
+      "method": "tab.move",
+      "parameter_schema": "`TabMoveParams`: `insert_index!:integer`; `tab_id!:string`",
+      "owners": [
+        "H07"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 370,
+      "existing": false
+    },
+    {
+      "method": "tab.rename",
+      "parameter_schema": "`TabRenameParams`: `label!:string`; `tab_id!:string`",
+      "owners": [
+        "H01",
+        "H05",
+        "H11"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 371,
+      "existing": true
+    },
+    {
+      "method": "workspace.close",
+      "parameter_schema": "`WorkspaceCloseParams`: `close_group?:boolean`; `workspace_id!:string`",
+      "owners": [
+        "H07"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 372,
+      "existing": false
+    },
+    {
+      "method": "workspace.create",
+      "parameter_schema": "`WorkspaceCreateParams`: `cwd?:string / null`; `env?:object`; `focus?:boolean=false`; `label?:string / null`; `source_workspace_id?:string / null`",
+      "owners": [
+        "H01",
+        "H05",
+        "H11"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 373,
+      "existing": true
+    },
+    {
+      "method": "workspace.focus",
+      "parameter_schema": "`WorkspaceTarget`: `workspace_id!:string`",
+      "owners": [
+        "H07"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 374,
+      "existing": false
+    },
+    {
+      "method": "workspace.get",
+      "parameter_schema": "`WorkspaceTarget`: `workspace_id!:string`",
+      "owners": [
+        "H01",
+        "H05",
+        "H11"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 375,
+      "existing": true
+    },
+    {
+      "method": "workspace.list",
+      "parameter_schema": "`EmptyParams`: empty object",
+      "owners": [
+        "H01",
+        "H05",
+        "H11"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 376,
+      "existing": true
+    },
+    {
+      "method": "workspace.move",
+      "parameter_schema": "`WorkspaceMoveParams`: `insert_index!:integer`; `workspace_id!:string`",
+      "owners": [
+        "H07"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 377,
+      "existing": false
+    },
+    {
+      "method": "workspace.move_block",
+      "parameter_schema": "`WorkspaceMoveBlockParams`: `before_workspace_id?:string / null`; `workspace_ids!:array<string>`",
+      "owners": [
+        "H07"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 378,
+      "existing": false
+    },
+    {
+      "method": "workspace.rename",
+      "parameter_schema": "`WorkspaceRenameParams`: `label!:string`; `workspace_id!:string`",
+      "owners": [
+        "H07"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 379,
+      "existing": false
+    },
+    {
+      "method": "workspace.report_metadata",
+      "parameter_schema": "`WorkspaceReportMetadataParams`: `seq?:integer / null`; `source!:string`; `tokens!:object`; `ttl_ms?:integer / null`; `workspace_id!:string`",
+      "owners": [
+        "H14"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 380,
+      "existing": false
+    },
+    {
+      "method": "worktree.create",
+      "parameter_schema": "`WorktreeCreateParams`: `base?:string / null`; `branch?:string / null`; `cwd?:string / null`; `focus?:boolean=false`; `label?:string / null`; `path?:string / null`; `trust_repository?:boolean`; `workspace_id?:string / null`",
+      "owners": [
+        "H08"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 381,
+      "existing": false
+    },
+    {
+      "method": "worktree.list",
+      "parameter_schema": "`WorktreeListParams`: `cwd?:string / null`; `trust_repository?:boolean`; `workspace_id?:string / null`",
+      "owners": [
+        "H08"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 382,
+      "existing": false
+    },
+    {
+      "method": "worktree.open",
+      "parameter_schema": "`WorktreeOpenParams`: `branch?:string / null`; `cwd?:string / null`; `focus?:boolean=false`; `label?:string / null`; `path?:string / null`; `trust_repository?:boolean`; `workspace_id?:string / null`",
+      "owners": [
+        "H08"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 383,
+      "existing": false
+    },
+    {
+      "method": "worktree.remove",
+      "parameter_schema": "`WorktreeRemoveParams`: `force?:boolean=false`; `trust_repository?:boolean`; `workspace_id!:string`",
+      "owners": [
+        "H08"
+      ],
+      "specification": "/home/chris/git/collie/android/acceptance/capability-fix-plan-herdr.md",
+      "line": 384,
+      "existing": false
+    }
+  ],
+  "closure_policy": "Every required unit and required finding needs implemented native workflow, matching contracts/adapters/gates/Crew semantics, meaningful tests and all specified acceptance evidence. Missing evidence stays pending; no API-only, decoder-only or documentation-only closure.",
+  "current_scope_review": {
+    "date": "2026-10-13",
+    "authority": "/home/chris/git/collie/android/acceptance/course-correction-2026-10-13.md",
+    "crosswalk": "/home/chris/git/collie/android/acceptance/course-correction-2026-10-13.json",
+    "goal_prompt": "/home/chris/git/collie/android/acceptance/completion-goal-2026-10-13.txt",
+    "herdr_development_required": false,
+    "speech_to_text_required": false,
+    "old_counts_are_completion_conditions": false,
+    "historical_statuses_are_current_acceptance": false,
+    "note": "Retain prior source requirements and evidence as history; execute the corrected crosswalk, not the expanded former backlog. No goal has been activated."
+  }
+}
