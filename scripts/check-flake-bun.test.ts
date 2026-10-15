@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 // The flake's pinned Bun and MIN_BUN are two statements about ONE fact: the Bun this tree is built
@@ -101,15 +101,49 @@ describe("the Windows check runs the flake's Bun", () => {
     expect(String(setup[0]?.with?.["bun-version"])).toBe(flakeBunVersion());
   });
 
-  test("windows-suites.ps1 gives each suite its own skip budget, 28 in all, each skip named", () => {
+  test("windows-suites.ps1 allows only its documented Windows conditions, per suite", () => {
     const script = readFileSync(join(ROOT, "scripts", "windows-suites.ps1"), "utf8");
     const budget = (suite: string): number => Number(new RegExp(`\\[int\\]\\$MaxSkips${suite} = (\\d+)`).exec(script)?.[1] ?? Number.NaN);
-    expect([budget("Bridge"), budget("Cli"), budget("Scripts")]).toEqual([4, 1, 23]);
-    // The bridge allowance is exactly the local-cli tests that stay POSIX-only, and the comment names them.
-    const localCli = readFileSync(join(ROOT, "bridge", "stt", "local-cli.test.ts"), "utf8");
+    expect([budget("Bridge"), budget("Cli"), budget("Scripts")]).toEqual([62, 1, 23]);
+
+    // These are the four existing POSIX-only local-cli tests; their exact names and count are the
+    // whole STT allowance. The durable cases are a separate documented census below.
+    const localCliPath = join(ROOT, "bridge", "stt", "local-cli.test.ts");
+    const localCli = readFileSync(localCliPath, "utf8");
     const posixOnly = [...localCli.matchAll(/test\.if\(posix\)\("([^"]+)"/g)].map((m) => m[1]!);
-    expect(posixOnly).toHaveLength(budget("Bridge"));
+    expect(posixOnly).toEqual([
+      "commandFileProblem: regular executable passes, symlinks are followed",
+      "status refuses a directory and a non-executable file, and names neither",
+      "only an old directory with the prefix, owned by this user, is removed",
+      "loading the provider sweeps its temp root once, in the background",
+    ]);
+    expect(script).toContain("bridge 4, in bridge/stt/local-cli.test.ts");
     for (const name of posixOnly) expect(script).toContain(name);
+
+    // WIRE.md section 1A and ADR 0103 define the socket-only cases. Keep each file/count and its
+    // reason explicit so a changed platform condition cannot silently borrow another suite's budget.
+    const durable = [
+      ["bridge/durable/log.test.ts", 1, "test.skipIf(HOST.platform === \"win32\")", "1 POSIX chmod repair test"],
+      ["bridge/mux/durable/adapter.test.ts", 6, "SOCKET_ONLY_SKIP", "6 socket-only cases"],
+      ["bridge/mux/durable/asks.test.ts", 1, "SOCKET_ONLY_SKIP", "1 socket-only case"],
+      ["bridge/mux/durable/client.test.ts", 27, "SOCKET_ONLY_SKIP", "27 Unix socket privacy/path/wire cases"],
+      ["bridge/mux/durable/events.test.ts", 1, "SOCKET_ONLY_SKIP", "1 socket log-folder factory case"],
+      ["bridge/mux/durable/example.test.ts", 10, "describe.skipIf(!RUNS)", "10 real example Unix-socket cases"],
+      ["bridge/mux/durable/example-cloudflare.test.ts", 11, "describe.skipIf(!RUNS)", "11 optional Wrangler process-"],
+      ["bridge/mux/durable/http-client.test.ts", 1, "SOCKET_ONLY_SKIP", "1 comparison against socket transport"],
+    ] as const;
+    expect(durable).toHaveLength(8);
+    expect(durable.reduce((sum, [, count]) => sum + count, 0)).toBe(58);
+    expect(script).toContain("bridge also includes 58 existing conditional tests added with the durable adapter:");
+    expect(script).toContain("WIRE.md section 1A and ADR 0103 define the private Unix socket and Windows HTTPS");
+    for (const [relativePath, _count, guard, rationale] of durable) {
+      const path = join(ROOT, relativePath);
+      expect(rationale.startsWith(`${_count} `)).toBe(true);
+      expect(existsSync(path)).toBe(true);
+      expect(readFileSync(path, "utf8")).toContain(guard);
+      expect(script).toContain(`${relativePath}: ${rationale}`);
+    }
+    expect(script).toContain("Today, 86 in all.");
     expect(script).not.toContain("[int]$MaxSkips = ");
     expect(script).toContain("if ($skip -gt $skipBudget[$name])");
   });
