@@ -8,7 +8,7 @@
     "captured_date": "2026-10-10",
     "worktree_status": "Main user working tree remains dirty and preserved; isolated kickoff snapshots contain its tracked and nonignored untracked inputs."
   },
-  "overall_status": "in_progress",
+  "overall_status": "corrected_retained_scope_accepted_signed_release_published",
   "source_register": {
     "ranked_backlog": "/home/chris/git/collie/android/acceptance/capability-backlog.json",
     "ranked_register": "/home/chris/git/collie/android/acceptance/capability-backlog.md",
@@ -16590,7 +16590,7 @@
       "scope": "26 reviewed paths guard integrated; real index unchanged; all422 native hashes match passing preview"
     }
   ],
-  "updated_at": "2026-10-15T01:44:57.374442+00:00",
+  "updated_at": "2026-10-15T03:52:42.949817+00:00",
   "current_evidence": {
     "root_20261011_1429": {
       "B10": "joined20 source WHOLE approved; allfive1111/0, bridge5680/Crew68; integrated24/privatebasis106c7c2; device/fullacceptance OPEN",
@@ -17372,9 +17372,9 @@
     "note": "Active completion goal; historical expanded scope and acceptance claims are superseded."
   },
   "completion_execution_20261013": {
-    "status": "retained_workflows_accepted_with_explicit_conditional_limits_final_signed_release_pending",
+    "status": "accepted_with_explicit_conditional_limits",
     "source_committed": true,
-    "released": false,
+    "released": true,
     "bridge_tests": {
       "pass": 6676,
       "optional_skip": 11
@@ -17384,8 +17384,8 @@
       "expected_fail": 33,
       "todo": 44
     },
-    "last_full_native": "Fresh209 integratedall1501unitPASS0fail/errors/skips10m32s, afterreviewedRecentbaselinefix and reviewedRobolectricpausedpoll correction. Earlier190/200 failed one test finalpoll; corrected208focusedPASS12s and209fullPASS. lintDebug/lintRelease/assembleRelease204PASS1m39s; debug/testbuild203PASS6s. APKsigning/CI/finalreleaseartifactgates stillpending.",
-    "current_apk_and_lint": "Installed production-code app203 SHA256 b21065429ab6196bd805e101ea20c3f0deb9fb55d401f264702146d8f6a40abb; installed instrumentation227 SHA256 780cad97c6ebbe7e447db6caf4a75e1cc5d00143cb0b03b07fd25cb303a14130. Test228 built but not installed. Debug/test203 PASS; lintDebug/lintRelease/assembleRelease204 PASS. Full native209: 1501 tests, zero failures/errors/skips after independently reviewed Robolectric poll-clock correction; final CI/signing remain pending. Latest test241 built PASS7s and installed: SHA256 6b07680d1bc493a57304ede37020d92b8540b30077c2bdb02d85cb8744d75b17. Production-code app203 unchanged. Test252 built PASS6s and installed SHA256 68e9f6abdae5f32e20f0534110a1b124bab54f6ecd82db4ab2563516da20ca48. Latest installed instrumentation261 builtPASS1s SHA256 f724f3d9bf3e7eccb9ac0e9db664414ceb770bcc1d036e39da9a9aed7d3060cc. Includes independently reviewed durable turn-boundary helper; no production change after app203. Latestinstalledtest271builtPASS2s SHA256 aec35be742edb7be9be046bb65ee2188f26e0de30469eb037a1ddc2247865db2. Currenttest290correctcompletionidentity buildPASS27s/installed; SHA25611d334c981e9553b6553867d4f8727faec8b926bea81ba31839764e00b2a3cfd. HOMEtestcompile288failedwrongReadSourceStatepackage thenexacttwoidentifiercorrection; no productioncodechanged. App203 remainsinstalledunchanged. Fulltreelint300PASS; B21andupdatehelper312testAPKbuildPASS16s/installed. Later323newStockhelperscompilefailedsinglemissinggenericView; correctedfor325build, notyetaccepted.",
+    "last_full_native": "Final main release gates455: 1503 tests, zero failures/errors/skips; lintDebug, lintRelease, assembleRelease pass. Required main CI38670596512 all4 jobs PASS; canonical Android release workflow38673306858 SUCCESS. Exact published signed artifact smoke464 and anonymous native same-signer code3-to4 update465 pass. See final_release evidence below.",
+    "current_apk_and_lint": "Published android-v1.6.0 from main8f3e8672d92287173355cc29ea286238224b93a1: com.lateapex.collie versionName1.6.0 code4, canonical APK SHA256 dff16c52a6fce4ade86a529bfa04479018fab7e603faf9a672453cd00ede8de2, production signer SHA256 4b210175d640ad78071d69a3866749fc7fee344805991a121432c59a2dfd8e92. Fresh exact artifact smoke464 PASS; public anonymous native same-signer upgrade465 from private code3 PASS with pairing/theme/mirror preference continuity. Local gates455: 1503 tests, 0 failures/errors/skips plus lintDebug/lintRelease/assembleRelease PASS.",
     "physical": {
       "device": "Pixel9 Pro caiman API37 through dell-7680",
       "namespace": "com.lateapex.collie.completiontest",
@@ -17422,7 +17422,7 @@
       "worktree_recipe": "143 duplicate Add refused with no row; native Abandon154 PASS removes exact priorunknown only. Actual156 Add/Use created exactly w5:p1 with launchUUID9202f893-5a99-4b43-898a-cf9359eeab55, then Rename/Remove restored launcher inventory. Subsequent Run stopped before positiveconfirm on unavailable currentwriteadmission (under review), no Runwrite claimed. Actual157 realPlan/Cancel passed readonly inventory checks; secondPlan defaultShell selector ambiguous beforeCreate, semanticcheckedfirstRadioGroup correction reviewed; rerun required. Actual176 RunACK exactw8:p1 UUID97bea5b5-a996-48ad-bb3e-1505a12882ba bodySHA8f4e48719a9288e705d3b4b75263966e8b51628ba5854c498358ac720ed27874; failedONLYpostrunRemove fullyvisibleconstraint. Cleanup-only181/182/183 failedbeforeclick; no repeatRun/removalmutation. Privateboundedread-onlygeometrypatch186 reviewed/compiled, actualgeometry187 pending. RecentRemove205actualnormalUIfullyvisible/dialog/oneexplicitconfirmPASS5.188s, exactownedhistorylineremoved/allothercatalog/panes/journals unchanged. Provenproductionclippingfixedonlyhorizontalbaselinealignment; no Runresend. Worktree201 secondPlan/defaultShellready but Create90%constraintfailedBEFOREclick; noCreatewrite. SamecollapsedcanonicalBottomSheet exposure issue asZen underSolfixturefix, notacceptedpositiveCreate.\nPhysical223 PASS normal Open and exact clean removal of prepared owned linked checkout. Physical229 PASS native Plan/Cancel/Create and exact clean removal; no created checkout remains. Interrupted Create233 failed before snapshot/UI/POST because temporary forwarding was unavailable; no request UUID or interrupted checkout exists. Recovery acceptance remains pending. Genuine interrupted239 created request099201be-8a4c-43bb-af82-859d830270c7, owner-bound realHTTP200, exactlyone worktree /home/chris/cc13-native-interrupted and one pane wA:p1. Parent independently checked normal registry-derived server identity and actual inventory, killed verified ownappPID28252 before heldresponse delivery, then released relay. Original held runner intentionally killed and not counted PASS. Recovery240 failed beforeRetry only because helper required expanded state for shortsheet. Independently reviewed removal of only that helpercall retained all currentactor/fullvisibility/frozenbody guards. Recovery242 PASS7.178s: newPID, actualUnknown, no automaticreplay, explicitRetry sameUUID/body/owner, Successoriginalpane, no duplicate. Cleanup243 PASS8.756s: normal native cleanRemove closed only acknowledged wA:p1 and removed only interrupted checkout; original Create receipt preserved. Public Caddy restored original SHA80348e47ebcd432fd2a25009315604159571dc678fb9f8eb2ec031c8dfc872e7 after guarded own-SHA verification. No interrupted checkout remains.",
       "launcher_duplicate_recovery": "Actual143 Add HTTP409 duplicated existing operator command; no saved row. Narrow local launcher.duplicate Collie provenance fix deployed, route34 and native HTTPS metadata1 tests PASS. Historical UNKNOWN remains untouched by metadata fix. Actual native Abandon154 PASS5.345s explicitly removes only exact own unknown request fdd40fe3-d967-4715-bcd8-6a47ee56cd07; all other local journal rows, operator catalog and real pane inventory unchanged. No HTTP resend or receipt/tombstone claim.",
       "pane_pins": "Fresh171 PASS8.824s withapp169/test169: nativeMore Unpin/Pin, pinnedDashboard/switcher exacthome-abbreviatedcurrentrow, freshPane+Activityrecreation persist, terminalrevision unchanged andoriginalpair/incarnation preserved, successrestorespretestpinstate. Earlier149/155 fixturefailures and167 actualwholeSnapshot cachedecodebug retained honestly; lastfixedsource60focusedPASS146.",
-      "device_testing": "Pixel exclusively for live device acceptance; user shutting down z2 emulator for other work. No z2/emulator dependency. Currentimplementation committedonmain8e5f52fa withnormalrepo pre-commitguards enabled/passing; generatedAndroidCMake .cxx cachesignored andonlythreeintentionaltest-signedAPKfixturesforce-added. No releaseversionbump/tag/publish yet. Vendoredlicenses/rawANSI/CRLFfixturesretainfaithfulsourcebytes; whitespace-onlydiagnosticwarningsarenotformattedaway. Native durableSettingsdisconnect280 PASS beforeordinaryCrewformpair281. Pixel alone remainssoledevice.",
+      "device_testing": "Pixel exclusively for live device acceptance; user shutting down z2 emulator for other work. No z2/emulator dependency. Currentimplementation committedonmain8e5f52fa withnormalrepo pre-commitguards enabled/passing; generatedAndroidCMake .cxx cachesignored andonlythreeintentionaltest-signedAPKfixturesforce-added. No releaseversionbump/tag/publish yet. Vendoredlicenses/rawANSI/CRLFfixturesretainfaithfulsourcebytes; whitespace-onlydiagnosticwarningsarenotformattedaway. Native durableSettingsdisconnect280 PASS beforeordinaryCrewformpair281. Pixel alone remainssoledevice. Final release supersession: the exact published production APK was freshly installed/smoke-tested on the same Pixel as464; public same-signer3-to4 upgrade passed465. Parent-owned cleanup remains outstanding.",
       "local_preferences": "Actual158 terminal/draft-size changes survived Settings recreation/reopen and restored initialsizes (one test PASS). Zen stopped beforeclick on viewport fixtureconstraint; reviewed actualscroll correction pendingrerun. Quick oneUIclick generated exactstandalone marker confirmed through stockpublicpane.read but test wronglyrequired revisionincrease (stock0.9.4revision0). Corrected currentactualcount+ACK readiness under review; singleLeft/draft followup remains unexecuted. Actual185 Quick/Left/draft completePASS with nativeACK and actualmarkerbaseline+1 (do not replay); Zen185 againfailed beforeclick on fullyvisibleMore target, Sol investigating actualcollapsedBottomSheetgeometry. Size158PASS retained. Read-onlyZen206geometrydiagnosticPASS3.839s only: state4collapsedBottomSheetheight2341/top648, target144px has83visible clippedscreenbottom; actualZenactionstillunproven. Normalgesture expansionhelper underSolauthoring.",
       "vendor_journal": "Actual163 nativeNew PASS5.483s exactlyonegenuineCodex w7:p1; taskcomplete and exactexpectedreply inactualvendorjournal UUID01a13895-0983-7f41-8dd0-363486e18e4d. Process-only exactfoldertrustoverride reviewed, personalCodexconfighash unchanged. ActualpublicstockCLI reportsfactualUUID. Vendor164/168 readonlyfirstsnapshot failures (168 Protocol despitecurrentownedactor), plusPin167 samefailure; actualHTTPSsnapshot capturedprivately usingseparateownednormalprobe forSol DTO/authoritydiagnosis. Chat/History/cache stillrequired. Fresh170 PASS5.49s withfixedapp169: actualvendorUUID/publicidentity bracketed, genuineChatassistant reply andnativeTranscript/History; no Sendperformed. Actual179 genuineCodex oneharmlessnativefollowupPASS29.837s, exact assistantCOLLIE_CC13_VENDOR_CACHE_OK and exactlyone newuser+assistant, originalSOLreply preserved, unchangedactualvendorUUID, bothgenuinecachelastRequestAt/expiresAtadvance. No repeat permitted. CurrentactualnormalTTL1800 cacheexpires1791955756393ms; normalwarning2026-10-14T05:27:16.393Z. Stockenrollment174/cachepref175/watch173 precededthiscycle; ownOSkeys0 at05:16Z, actualdeliverypending. Fresh212genuineClaudeimage Chat→nativeHistory decodedexactmarkeduserturnPASS3.248s: oneactualCLI2.1.299streamimage request onowned373BtechnicalPNG, actualsession33d0ccd1-f054-4f98-84dc-871ec27cf39b genuineCLIjournal/publicstockUUID bracketed, exactassistant reply; no fabricatedjournal/provider/SDKinstall. Initial211 failedBEFOREread whilecompletedCLIleftpaneShell; normalSAMEsessionCLIresumed withstdinopen/no newuser/modelsend soactualagentClaude/publicidentitythen212PASS. PrivateCLIbudgetcost0.0001619USD; no hooks/tools/MCP. Codex input_image adapter unsupported explicitly, notinvention.",
       "link_admission": "Actual191 correctedgenuineACTION_VIEW foreign/malformed/outsideMount5cases PASS3.345s with normalbaseMainresumption and originalpair/incarnation/scope/panes/nojournalwrite preserved. Actual259 PASS4.660s: normalCLIrevokedonlycompletion Pixel afterlivecurrentactor/nativecomposeradmission; genuine403 triggerednormalRefresh/retiredcredential, preservedpublicprofile, closedalloriginalwriteauthority, nonewmutationUUID. Actual260 PASS1.540s afterHOME/amkill confirmedPIDabsent: newprocess retainedunpairedprofile and requirednativeformrepair. Actual262 nativeformrepair PASS withfreshnormal2dcode; no personalapp/data modified.",
@@ -17433,7 +17433,7 @@
       "cache_warning_delivery": "Actualgenuine179 Codexwarmcycleexpires1791955756393. Fixedofficialconfig defaultcacheWarnSeconds300 (earlier120 prediction incorrect); due2026-10-14T05:24:16.393Z; actualwarden sentmark exactdeadline/nativepushsequence1/pendingempty/ownOSkeys1 at05:25:20Z. NativeappUIclosed after189; PIDabsence independentlyverified only05:24:33Z (afterdue, NOTprocessabsence-before-delivery claim). Actual193 normalSystemUItap/custody/replaywatermark/privateextras/exactw7:p1 nativePane PASS1.157s. Native174enroll/175globalcachetrue/173watchtrue precededgenuine179cycle; no clock/TTL/vendorjournal mutation.",
       "offline_chat": "Freshactual196preparePASS4.596s/197offlinePASS1.007s/198reconnectPASS3.292s/199optoutPASS1.199s. Existingpairedstockw7realCodexUUID01a13895-0983-7f41-8dd0-363486e18e4d: native1dayconsent/liveTranscript, onlyverifiedownbridgePID249631stopped, normalbackgroundownappPIDabsent beforeofflinecoldrestart; exactencrypted savedChat/sourceUUID/currentpairedscope +disabledwrites/no livepane/chatActor; restartedexactownbridge HTTPShealth200/liveChat; nativeOFFremovesallownedretainedrows. Test186/app169; no seeding/draft/terminalwrite.",
       "cache_watch_lifecycle": "Fresh172realcachemodel/source/countdownPASS5.109s,173perpaneWatchONPASS2.702s,175globalcacheONPASS1.997s,179actualnewwarmcycle+193realwarningtapPASS1.157s;194globalcacheOFFPASS2.367s then195perpaneWatchOFFPASS2.367s restoresinitialwatch/cachepreference. Officialdefaultwarn300s notamber120s; no fakeclock/TTL.",
-      "server_update_check": "Actual210 realnativeUpdates Check now PASS1.851s, genuineofficialGitHub1.21.0 newerthan stockdevserver1.19.0; completedfreshcheckedAtadvance/offerretained/currentversionunchanged/no installation/run. IndependentAndroidreleaseupdate stillpendingfinalsignedartifact.",
+      "server_update_check": "Actual210 realnativeUpdates Check now PASS1.851s, genuineofficialGitHub1.21.0 newerthan stockdevserver1.19.0; completedfreshcheckedAtadvance/offerretained/currentversionunchanged/no installation/run. IndependentAndroidreleaseupdate stillpendingfinalsignedartifact. Superseded for B28 by the published1.6.0 release and actual public anonymous code3-to4 native update recorded in completion_execution_20261013.final_release; same-signer upgrade passed, with the private-baseline provenance limit retained.",
       "acceptance_runtime_recovery": "\n2026-10-14 22:58 UTC: prior process handles absent, owned backend and Herdr socket absent; saved namespace/receipts/session files remain. Restarted only isolated stock Herdr/bridge; actual snapshot restored 8 workspaces and 8 panes. Current Caddy SHA80348e47ebcd432fd2a25009315604159571dc678fb9f8eb2ec031c8dfc872e7 unchanged. SSH reverse-forward fails because prod AllowTcpForwarding local; restored normal prod→ed8 local forwarding and real health200. Owned probe and Pixel credentials had genuinely expired (12h); renewed only probe via normal CLI set-expiry2d, revoked only expired completion Pixel before fresh native pairing. Pair234 failed before input because origin field had zero geometry during initial layout; bounded layout wait added to test and independently approved. No pairing success claimed. Native pairing236 PASS after bounded form-layout wait. Both new owned credentials have normal explicit2d lifetime. No token, application data or personal package was copied/cleared. Restarted only ownntfy2.12 savedconfiguration/database and normalprod→ed8 localforward28797→8797; realpublicGET/v1/health healthytrue. No personalntfyconfiguration changed.",
       "machine_charts": "Actual287 nativeCrewresourcecharts/history PASS: stoppedonlyverifiedownformerpeer2411713SIGTERM285, naturallywaitedcompletedmissingminute fromlastreal1792021740000, realAPIretainedsamples+nativechartaccessibility/table/trailingnullgaps andunchangedallrules/incarnations. Restartedonlysameownpeer37610 afterward.",
       "update_delivery": "Actual freshnamespace295/pair296/enroll297/backgroundPIDabsent12.6s→genuineOSalert1/providerseq1;302failedaftertap staleexpected1.21.0(actual1.21.3). Secondfresh305/306/307/backgroundPIDabsent12.9s→OS1seq1;309failedaftertap hardcodedtestexpectation1.21.0. Noappdefect/releasefeedresetclaimed. Independentlyreviewedcanonicalexpectedgenuineversionguardintegrated;test312buildPASS16s/installed. Thirdfresh317/pair318/enroll319/backgroundPIDabsent15.0s→normal90stick actualGitHub1.21.3/seq1/pending0/OS1 BEFOREinstrumentation320. Actual321 fullPASS normalSystemUItap/privateimmutabletapcustody/exactownedUpdatesActivity/current1.19.0+visiblegenuine1.21.3offer/noInstall/originalactor+committedpairincarnation/replaywatermark/journalunchanged. TZPacific/Auckland onlyactualprocesslocalhour; UTCclock unchanged; fixedfeaturetargetremains1.21.0. Earlierfixtures preservedunchanged.",
@@ -17454,16 +17454,11 @@
       "crew_files": "437 PASS native qa-lead Files Unicode source and real PNG, source433. Initial432 correctly403 because peer allowlist lacked validated paired label; only exact owned label explicitly appended, header enforcement preserved.",
       "crew_host_session": "441 PASS exact normal qa-lead/cc13-crew-extra selection, recreate/reopen, current live actor/unchangedpair, originalscope restored. Original431 preflightwronghost and435 premature hiddenselector retained as honest failedtest evidence.",
       "external_https_url": "442 PASS actual rendered native HTTPS link→one actual ACTION_VIEW→existing default app.vanadium.browser foreground→normalBack, same actor/pair/terminal/Git. No browser pagebody/history read or delivery claim.",
-      "latest_retained_workflow_source": "Parent committed reviewed physical acceptance helpers/results d431397f; application203 remains APK SHA256 b21065429ab6196bd805e101ea20c3f0deb9fb55d401f264702146d8f6a40abb, Pixel9Pro caiman API37 through dell-7680. git diff2cbdeb9c..d431397f -- android/app/src/main android/app/build.gradle.kts android/gradle.lockfile is empty: latest changes are test helpers and evidence, not new application behavior. Final signed1.6/code4 artifact smoke and upgrade remain separate required checks.",
+      "latest_retained_workflow_source": "Parent committed reviewed physical acceptance helpers/results d431397f; application203 remains APK SHA256 b21065429ab6196bd805e101ea20c3f0deb9fb55d401f264702146d8f6a40abb, Pixel9Pro caiman API37 through dell-7680. git diff2cbdeb9c..d431397f -- android/app/src/main android/app/build.gradle.kts android/gradle.lockfile is empty: latest changes are test helpers and evidence, not new application behavior. Final signed1.6/code4 artifact smoke and upgrade remain separate required checks. Final source/release supersession: PR5 normally merged; published tag android-v1.6.0 at2f2e5fdc peels to main8f3e8672d92287173355cc29ea286238224b93a1. Required CI/release workflow, signed artifact, smoke464 and upgrade465 passed; exact evidence is recorded in final_release. B41 cleanup and documentation commit/review/checks remain pending.",
       "gone_session_attempt446": "446 failed stale test assumption that evicted Pane persists;448 failed invented sticky missing-dashboard scope. Both actualbackend404 and normalclosedPane recovery occurred; no product pass claimed for these attempts.",
       "gone_session_safe_recovery": "450 PASS24.288s exact owned officialsessionstop afterrealnativeREADY, actualsession.unknown404, oldPane destroyed/oldactor retired/no fallbackPane, fresh declared dashboard read actor, primaryoutput/revision unchanged, samepair/incarnation; onlyread navigation restored. Extra daemon remains stopped."
     },
-    "remaining": [
-      "final clean1.6.0/code4 release commit and required gates/CI/security scan",
-      "review signed exact artifact and draft; fresh production-package Pixel smoke",
-      "publish unchanged reviewed Android assets and verify anonymous native same-signer3-to4 upgrade preserving pairing/preferences",
-      "final evidence and owned fixture cleanup"
-    ],
+    "remaining": [],
     "cli_tests": {
       "pass": 1957,
       "skip": 1,
@@ -17480,7 +17475,7 @@
     "deputy_setup": "actualsignedwarrant generation3, roster1/syncedDevices2; completed nativecold→armed→confirmedtakeover→actualsupervisednewlead→nativeverifiedrecovery116",
     "preflight_scan": "unsigned code3 current APK SBOM101 components, grype no matches; final signed artifact scan remains required",
     "signing_parser_review": "SDK37 scheme-qualified singleAPK signer + distinctSourceStamp parser17casesPASS independentlySolapproved; productionpin unchanged",
-    "functional_commit": "8e5f52fa",
+    "functional_commit": "8f3e8672d92287173355cc29ea286238224b93a1",
     "private_upgrade_baseline": {
       "source_commit": "2cbdeb9c",
       "functional_commit": "8e5f52fa",
@@ -17490,7 +17485,8 @@
       "sha256": "50fc34d58cb570c8785a94644384ff5f356e5b37647e4af51e4a7fc45691315d",
       "status": "private only; not published; not built from existing android-v1.5.2 tag d1e604af",
       "checks": "checkAndroid275 PASS; assembleRelease276 PASS; cleanbuildinputs277; normalsigning279 PASS; independentSolreview actualsingletrustedV3signer/packageAPI37/nondebug/P256signature/buildinputs102SBOM/all860unsignedpayloadentries/all16checksums/eightnotices/privatepermissions PASS",
-      "installed": false
+      "installed": true,
+      "upgrade_test": "Installed in the task-owned production package com.lateapex.collie as the private code3 base for public release465, after fresh code4 smoke and removal of that task-owned install. Android package installer applied canonical public code4 with the same trusted signer and preserved pairing/preferences. Personal debug/capability packages were preserved. This baseline was not the published android-v1.5.2 artifact."
     },
     "backend_gate_recovery": "Normalpush284 aborted fourbackendfailures6677pass11skip4fail. Threeunchangeddiscoverytests encounterunrelated/tmp/.git ancestor; TMPDIR=/var/tmp restoresisolation. Fourthactualcanonicalnativeinventory-ID guardclassification fixedexactcount2withreason; independentlyreviewed/intgrated; actual291focused76PASS0fail498assertions. Fullnormalprepushremainsrequired; no skips.",
     "corrected_crosswalk_dispositions": {
@@ -18403,13 +18399,44 @@
       "B28": {
         "scope_decision": "required",
         "retained_requirement": "Finish the native app update equivalent: independent Android release discovery/link, download checks and Android-confirmed install with matching package/signer and increasing versionCode. Keep server/Crew updates separate. No new generic distribution/signing service.",
-        "disposition": "pending_final_signed_upgrade_release",
-        "actual_evidence": [],
-        "remaining_required_workflow": [
-          "Build/review final1.6.0/code4 signed artifact, required CI/security scan, fresh artifact smoke, publish unchanged reviewed assets and complete native same-signer3-to4 upgrade preserving pairing/preferences."
+        "disposition": "accepted_published_signed_release_and_actual_same_signer_upgrade_with_private_baseline_limit",
+        "actual_evidence": [
+          {
+            "artifact": "https://github.com/Buckeyes22/collie/releases/tag/android-v1.6.0",
+            "method": "publishedAndroidRelease",
+            "result": "published 2026-10-15T03:42:05Z; tag android-v1.6.0 at 2f2e5fdc peels to main 8f3e8672d92287173355cc29ea286238224b93a1",
+            "proves": "Public release completed after PR5 normal merge (182faaad), required main CI38670596512 all4PASS, and canonical release workflow38673306858 success."
+          },
+          {
+            "artifact": "/tmp/collie-completion-release-gates455.log",
+            "method": "finalReleaseCommitGates",
+            "result": "1503 tests; zero failures/errors/skips; lintDebug, lintRelease and assembleRelease passed",
+            "proves": "Required local release checks on the final main source. Cached-main458 passed; normal push463 passed all hooks and current bridge/PWA checks."
+          },
+          {
+            "artifact": "/var/tmp/collie-completion-20261013/android-1.6.0-artifact-review-media/review.json",
+            "method": "signedArtifactAndAssetReview",
+            "result": "PASS; canonical APK SHA256 dff16c52a6fce4ade86a529bfa04479018fab7e603faf9a672453cd00ede8de2; production signer verified; 16 assets unchanged",
+            "proves": "Package com.lateapex.collie version1.6.0 code4, metadata signature, notices, SBOM and Grype0.116.1 valid-database scan with zero matches. This review record predates publication; canonical release workflow and public URL record publication."
+          },
+          {
+            "artifact": "/var/tmp/collie-completion-20261013/pixel-production4-smoke464.log",
+            "method": "freshPublishedProductionArtifactSmoke",
+            "result": "actual Pixel PASS",
+            "proves": "Exact canonical production APK installed and launched on Pixel9Pro/API37; normal native pairing, live dashboard/pane and native license screen."
+          },
+          {
+            "artifact": "/var/tmp/collie-completion-20261013/pixel-production3-to4-upgrade465.log",
+            "method": "publicAnonymousSameSignerNativeUpgrade",
+            "result": "actual Pixel PASS",
+            "proves": "Anonymous public native discovery/download and normal Android package-installer update from installed code3 to canonical public code4; exact published APK bytes/signer verified; pairing, Dark theme and mirror size11 preserved. No ADB upgrade."
+          }
         ],
+        "remaining_required_workflow": [],
         "coverage_limits": [
-          "Private production3 SHA50fc34d58cb570c8785a94644384ff5f356e5b37647e4af51e4a7fc45691315d is independently verified but uninstalled/unpublished and not built from existing1.5.2 tag; it is not final release acceptance."
+          "Upgrade began from a privately built production-signed version1.5.2/code3 APK, not the previously published android-v1.5.2 artifact; it used the task-owned production package com.lateapex.collie. The published code4 APK and same-signer update path were verified exactly.",
+          "Optional Windows run38670596506 was cancelled. Earlier run38663872452 was also cancelled after recording141 backend failures and62 existing skips. Windows is non-required by the Android release workflow and live Windows-to-Pixel behavior remains uncertified.",
+          "Current genuine Claude queue was empty and no genuinely newer public update offer existed; no live queued-send or newer-offer pass is claimed."
         ]
       },
       "B29": {
@@ -18724,24 +18751,129 @@
       "B41": {
         "scope_decision": "required",
         "retained_requirement": "Use this corrected scope, not all41/75/132/102 as immutable acceptance counts. Update existing docs/evidence to current integrated source and run release checks; no new evidence framework.",
-        "disposition": "pending_exact_release_and_crosswalk_closure",
-        "actual_evidence": [],
-        "remaining_required_workflow": [
-          "Parent must integrate these finite honest dispositions into existing ledger, resolve actual required gaps, and finish exact final commit gates/scan/signed-artifact/upgrade/publication evidence."
+        "disposition": "accepted_final_evidence_independently_reviewed",
+        "actual_evidence": [
+          {
+            "artifact": "https://github.com/Buckeyes22/collie/releases/tag/android-v1.6.0",
+            "method": "finalAndroidReleasePublished",
+            "result": "Published from tag2f2e5fdc, peeling to main8f3e8672d92287173355cc29ea286238224b93a1",
+            "proves": "B28 release and actual public artifact upgrade are complete; required CI and release workflow passed."
+          },
+          {
+            "artifact": "/home/chris/git/collie/android/acceptance/capability-execution-ledger.json",
+            "method": "correctedCrosswalkAndFinalReleaseEvidenceUpdate",
+            "result": "Independent Sol final review PASS after concrete documentation corrections; normal repository promotion remains required",
+            "proves": "Every finite retained crosswalk row has an accepted or explicitly conditional disposition; final signed public release, actual native upgrade and owned cleanup are verified. Historical all41/75/132/102 gates remain superseded."
+          },
+          {
+            "artifact": "/var/tmp/collie-completion-20261013/owned-cleanup466.log",
+            "method": "ownedAcceptanceCleanupAndRestoration",
+            "result": "PASS",
+            "proves": "Only owned fixture services/routes/accounts/temporary permissions retired; prior ntfy config, personal app namespaces and unfinished source preserved."
+          }
         ],
+        "remaining_required_workflow": [],
         "coverage_limits": [
-          "Markdown ledger corrected-completion narrative remains stale; old counts/statuses and uncommitted wording must not override current8e5f52fa/2cbdeb9c evidence."
+          "Final evidence reviewed independently after correcting production-package baseline provenance, scan-report path and exact Windows cancellation results. This documentation update uses normal commit/required checks/merge; overall goal completion is gated on its promotion to main. Historical expanded counts remain superseded."
         ]
       }
     },
     "ci_status": {
       "pr": "https://github.com/Buckeyes22/collie/pull/5",
-      "source_commit": "9225ad62d7d4a4d3dd831cbeb938a484f0507ffc",
-      "run": 38665327106,
-      "windows_run": 38663872452,
-      "status": "9225 root/typecheck+tests and Crew pass; browser/native still running at01:31UTC. Later Pixel acceptance d431397f committed locally; final release commit gates pending.",
-      "details": "9225ad62 commits independently reviewed test-only exact documented62/1/23 skip census correction; focused7PASS60assert. Normal pre-push421 backend and web pass; exact git push held before remote update to preserve current Windows failure evidence. Windows ACL/path/real named-pipe and different-PID replacement fixtures committed0c5da99; no new skips, protection changes or feature scope expansion.",
-      "windows_result": "actual6488pass/141fail/62skip, bridge872.24s; job deadline interruptsCLI, scripts not run; artifact11940856341 preserved /var/tmp/collie-completion-20261013/windows-38663872452. Optional Windows workflow explicitly not required by Android release workflow; no pass claimed."
+      "pr_merge": "PR #5 normally merged with exact content 182faaad",
+      "pre_merge_run": 38668868606,
+      "pre_merge_conclusion": "success",
+      "source_commit": "8f3e8672d92287173355cc29ea286238224b93a1",
+      "main_run": 38670596512,
+      "main_jobs": "4/4 success",
+      "canonical_release_run": 38673306858,
+      "canonical_release_conclusion": "success",
+      "release_tag": "android-v1.6.0",
+      "release_tag_commit": "2f2e5fdc",
+      "release_tag_peels_to_main": "8f3e8672d92287173355cc29ea286238224b93a1",
+      "release_url": "https://github.com/Buckeyes22/collie/releases/tag/android-v1.6.0",
+      "published_at": "2026-10-15T03:42:05Z",
+      "optional_windows_run": 38670596506,
+      "optional_windows_conclusion": "cancelled",
+      "windows_result": "Current optional Windows workflow38670596506 was cancelled; earlier38663872452 was cancelled after recording141 backend failures and62 existing skips. Neither is an Android required gate, and no live Windows-to-Pixel acceptance is claimed. Historical failed-test evidence remains preserved."
+    },
+    "final_release": {
+      "published": true,
+      "url": "https://github.com/Buckeyes22/collie/releases/tag/android-v1.6.0",
+      "published_at": "2026-10-15T03:42:05Z",
+      "tag": "android-v1.6.0",
+      "tag_commit": "2f2e5fdc",
+      "main_commit": "8f3e8672d92287173355cc29ea286238224b93a1",
+      "pull_request": "PR #5 normally merged; exact merged content182faaad",
+      "required_main_ci": "38670596512: all four jobs passed; pre-merge38668868606 passed",
+      "canonical_release_workflow": "38673306858: successful; both jobs passed",
+      "local_final_gates": {
+        "artifact": "/tmp/collie-completion-release-gates455.log",
+        "unit_tests": 1503,
+        "failures": 0,
+        "errors": 0,
+        "skips": 0,
+        "lintDebug": "passed",
+        "lintRelease": "passed",
+        "assembleRelease": "passed"
+      },
+      "cached_main_verification": "458 passed",
+      "normal_push": "463 all hooks passed; backend6681 pass/11 optional skips; PWA20741 pass/33 expected failures/44 todo",
+      "isolated_push_checks": "Environmental /tmp/.git failures in460 retained; focused isolated check462 passed61 tests; successful normal push463 used TMPDIR=/var/tmp/cc13-push",
+      "apk": {
+        "path": "/var/tmp/collie-completion-20261013/android-1.6.0-workflow/release/collie-android-1.6.0.apk",
+        "sha256": "dff16c52a6fce4ade86a529bfa04479018fab7e603faf9a672453cd00ede8de2",
+        "package": "com.lateapex.collie",
+        "versionName": "1.6.0",
+        "versionCode": 4,
+        "minSdk": 37,
+        "targetSdk": 37,
+        "debuggable": false,
+        "productionSignerSha256": "4b210175d640ad78071d69a3866749fc7fee344805991a121432c59a2dfd8e92",
+        "assetReview": "/var/tmp/collie-completion-20261013/android-1.6.0-artifact-review-media/review.json",
+        "reviewResult": "PASS; exact APK/source/build inputs, signer, metadata signature, unchanged16 release assets and bundled notices verified"
+      },
+      "security_scan": {
+        "grype": "0.116.1",
+        "databaseBuilt": "2026-10-14T06:30:34Z",
+        "databaseValid": true,
+        "vulnerabilityMatches": 0,
+        "highCriticalMatches": 0,
+        "report": "/var/tmp/collie-completion-20261013/android-1.6.0-workflow/signed-grype.json",
+        "sbom": "/var/tmp/collie-completion-20261013/android-1.6.0-workflow/release/sbom.cdx.json"
+      },
+      "fresh_artifact_smoke": {
+        "artifact": "/var/tmp/collie-completion-20261013/pixel-production4-smoke464.log",
+        "result": "PASS",
+        "device": "Pixel 9 Pro API37",
+        "scope": "fresh exact artifact install, normal native pairing, live dashboard/pane, license screen"
+      },
+      "public_upgrade": {
+        "artifact": "/var/tmp/collie-completion-20261013/pixel-production3-to4-upgrade465.log",
+        "result": "PASS",
+        "route": "anonymous public native discovery/download and normal Android package-installer update; no adb upgrade",
+        "from": "private-only production-signed code3/version1.5.2 build",
+        "to": "canonical published code4/version1.6.0 APK; byte-identical SHA-256 and production signer verified",
+        "continuity": "pairing, Dark theme and mirror size11 preserved"
+      },
+      "conditional_limits": [
+        "Private code3 upgrade baseline was not the published android-v1.5.2 artifact.",
+        "Optional Windows CI is non-required; current run was cancelled, and the earlier run was cancelled after backend test failures; no live Windows-to-Pixel acceptance.",
+        "Genuine Claude queued-send queue was empty; no live Send now claim. No genuinely newer public update offer was available for live newer-offer proof."
+      ],
+      "still_pending": []
+    },
+    "owned_cleanup": {
+      "result": "PASS",
+      "evidence": "/var/tmp/collie-completion-20261013/owned-cleanup466.log",
+      "phone": "Production4 normal disconnect and retained installed at empty setup; temporary unknown-source grant restored off; personal packages preserved; isolated completiontest stopped. ntfy prior HTTPS LAN default/account/topic restored; only own cc13-distributor removed; owned subscriptions absent; system font/accessibility restored; verified own USB ACL removed.",
+      "services": "Six owned fixture services and stock Herdr stopped; five remote forwards stopped; all owned local/prod ports absent. Caddy original bytes restored, validated with existing service env, reload active. Original bootstrap fallback404 retained.",
+      "preserved": "Private evidence, genuine vendor journals and B33/B34 branches/worktrees retained."
+    },
+    "final_evidence_review": {
+      "reviewer": "independent Sol media_review",
+      "result": "PASS; no remaining findings after bounded re-review",
+      "promotion": "This documentation change must pass normal required checks and merge to main before the overall goal is marked complete."
     }
   }
 }
