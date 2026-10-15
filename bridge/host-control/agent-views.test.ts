@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import type { HerdrRpc } from "../mux/herdr/client.ts";
 import { OperationStore } from "../control/operations.ts";
 import { memoryAgentViewReceipts, herdrAgentViews, serveAgentViewRoute } from "./agent-views.ts";
@@ -43,7 +45,7 @@ describe("bounded Herdr agent views", () => {
   });
 
   test("host route binds operations to host/device, rejects session selectors and never repeats a dispatch", async () => {
-    const root = await mkdtemp("/var/tmp/collie-b31-luna-current1-agent-view-");
+    const root = await mkdtemp(join(tmpdir(), "collie-b31-luna-current1-agent-view-"));
     try {
       const operations = new OperationStore(root);
       expect(await operations.prepare()).toBe(true);

@@ -117,7 +117,7 @@ describe("pane layout scoped routes", () => {
     await mux.reachable();
     const snapshot = await mux.snapshot();
     const source = snapshot.panes.find((pane) => snapshot.panes.filter((row) => row.tabId === pane.tabId).length === 1)!;
-    const dir = await mkdtemp(join("/var/tmp", "collie-transfer-new-workspace-"));
+    const dir = await mkdtemp(join(tmpdir(), "collie-transfer-new-workspace-"));
     try {
       const stores = { plans: new PlanStore(), operations: new OperationStore(dir) };
       const readPath = transferPath(source.tabId);
@@ -164,7 +164,7 @@ describe("pane layout scoped routes", () => {
     const sourceMembers = snapshot.panes.filter((pane) => pane.tabId === source.tabId);
     expect(sourceMembers).toHaveLength(3);
     const targetWorkspace = snapshot.spaces.find((space) => space.spaceId !== source.spaceId)!;
-    const dir = await mkdtemp(join("/var/tmp", "collie-transfer-member-race-"));
+    const dir = await mkdtemp(join(tmpdir(), "collie-transfer-member-race-"));
     try {
     const stores = { plans: new PlanStore(), operations: new OperationStore(dir) };
     const planPath = transferPath(source.tabId);
@@ -238,7 +238,7 @@ describe("pane layout scoped routes", () => {
       const layout = response.layout as { area: import("../json.ts").JsonObject };
       return { ...response, layout: { ...response.layout, area: { ...layout.area, width: 79 } } };
     };
-    const dir = await mkdtemp(join("/var/tmp", "collie-transfer-layout-read-race-"));
+    const dir = await mkdtemp(join(tmpdir(), "collie-transfer-layout-read-race-"));
     try {
       const url = transferPath(source.tabId);
       const result = await servePaneLayoutRoute(request(url, {
@@ -718,7 +718,7 @@ describe("corrective5 final adapter witness", () => {
       const mux = new HerdrMux(fake, () => []);
       await mux.reachable();
       const source = (await mux.snapshot()).panes[0]!;
-      const dir = await mkdtemp(join("/var/tmp", "collie-layout-final-witness-"));
+      const dir = await mkdtemp(join(tmpdir(), "collie-layout-final-witness-"));
       try {
         const stores = { plans: new PlanStore(), operations: new OperationStore(dir) };
         const action = { kind: "resize", direction: "right", amount: 0.1 };
@@ -772,7 +772,7 @@ describe("corrective5 final adapter witness", () => {
   test("retargeting the still-advertised alias during adapter preflight refuses, unchanged alias succeeds once", async () => {
     const { symlink, unlink } = await import("node:fs/promises");
     for (const choice of ["advertised-folder", "source-pane"]) for (const replace of [false, true]) {
-      const dir = await mkdtemp(join("/var/tmp", "collie-layout-alias-"));
+      const dir = await mkdtemp(join(tmpdir(), "collie-layout-alias-"));
       try {
         const first = join(dir, "first"); const second = join(dir, "second"); const alias = join(dir, "advertised");
         await mkdir(first); await mkdir(second); await symlink(first, alias, "dir");
@@ -818,7 +818,7 @@ describe("corrective5 final adapter witness", () => {
 describe("corrective5 workspace cwd witness", () => {
   test("selected workspace folder bypasses cached repo metadata: stable succeeds, late replacement refuses", async () => {
     for (const replace of [false, true]) {
-      const dir = await mkdtemp(join("/var/tmp", "collie-layout-workspace-cwd-"));
+      const dir = await mkdtemp(join(tmpdir(), "collie-layout-workspace-cwd-"));
       try {
         const first = join(dir, "first"); const second = join(dir, "second");
         await mkdir(first); await mkdir(second);
@@ -865,7 +865,7 @@ describe("corrective5 destination-await witness", () => {
       const snapshot = await mux.snapshot();
       const source = snapshot.panes[0]!;
       const target = snapshot.panes.find((pane) => pane.tabId !== source.tabId)!;
-      const dir = await mkdtemp(join("/var/tmp", "collie-layout-destination-await-"));
+      const dir = await mkdtemp(join(tmpdir(), "collie-layout-destination-await-"));
       try {
         const stores = { plans: new PlanStore(), operations: new OperationStore(dir) };
         const action = { kind: "move", destination: { type: "tab", tabId: target.tabId,
@@ -931,7 +931,7 @@ describe("corrective6 final plan lifetime", () => {
         ["focus-direction", { kind: "focus-direction", direction: "right" }],
       ]);
       const action = actions.get(kind)!;
-      const dir = await mkdtemp(join("/var/tmp", "collie-layout-final-expiry-"));
+      const dir = await mkdtemp(join(tmpdir(), "collie-layout-final-expiry-"));
       try {
         const stores = { plans: new ShortPlanStore(() => clock), operations: new OperationStore(dir) };
         const planPath = path(source.paneId, "/plan");

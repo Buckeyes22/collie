@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import type { MuxAdapter } from "../mux/types.ts";
 import { OperationStore } from "./operations.ts";
 
@@ -11,7 +13,7 @@ import { ORIGINAL_AGENT_BINDING, ORIGINAL_RUNTIME_INCARNATION } from "./agent-mo
 
 describe("bounded metadata HTTP route", () => {
   test("requires the current agent, durable receipt and rechecks scope before its one-shot report", async () => {
-    const root = await mkdtemp("/var/tmp/collie-b31-luna-current1-metadata-");
+    const root = await mkdtemp(join(tmpdir(), "collie-b31-luna-current1-metadata-"));
     try {
       const operations = new OperationStore(root);
       expect(await operations.prepare()).toBe(true);

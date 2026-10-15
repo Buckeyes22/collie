@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { ORIGINAL_AGENT_BINDING, ORIGINAL_RUNTIME_INCARNATION, type AgentControlInfo } from "./agent-models.ts";
 import { MetadataStateStore, serveMetadataRoute } from "./metadata.ts";
 import { OperationStore } from "./operations.ts";
@@ -40,7 +42,7 @@ async function fixture(replaceAfterAdmission: boolean) {
 
 describe("B31 metadata retains original route admission", () => {
   test("same-terminal same-label successor cannot replace the admission binding", async () => {
-    const root = await mkdtemp("/var/tmp/collie-b31-original-race-");
+    const root = await mkdtemp(join(tmpdir(), "collie-b31-original-race-"));
     try {
       const f = await fixture(true);
       const operations = new OperationStore(root);
@@ -55,7 +57,7 @@ describe("B31 metadata retains original route admission", () => {
   });
 
   test("unchanged original owner dispatches retained binding once and keeps custody private", async () => {
-    const root = await mkdtemp("/var/tmp/collie-b31-original-positive-");
+    const root = await mkdtemp(join(tmpdir(), "collie-b31-original-positive-"));
     try {
       const f = await fixture(false);
       const operations = new OperationStore(root);

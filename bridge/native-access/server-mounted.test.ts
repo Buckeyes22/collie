@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { generateKeyPairSync, sign, randomUUID } from "node:crypto";
 import { startServer } from "../server.ts";
 import { loadConfig } from "../config.ts";
@@ -28,7 +29,7 @@ import { digest, thumbprint, strictJson } from "./jose.ts";
 import type { JsonValue } from "../json.ts";
 
 test("actual mounted central Collie requires verified proxy AND pairing; read-only binding reads config but not Files or terminal writes",async()=>{
- const root=await mkdtemp("/var/tmp/collie-b24-mounted-");
+ const root=await mkdtemp(join(tmpdir(), "collie-b24-mounted-"));
  const state=join(root,"state"),code=join(root,"code");await mkdir(state,{mode:0o700});await mkdir(code);await writeFile(join(code,"fixture.txt"),"bounded fixture content");
  const cfg={...loadConfig({COLLIE_HOST:"127.0.0.1",COLLIE_CONFIG_DIR:join(state,"config"),COLLIE_STATE_DIR:state,COLLIE_BASE_PATH:"/browser/",COLLIE_SKIP_SERVE:"1",COLLIE_TRUSTED_USER:"operator@example",COLLIE_DEVICE_HEADER:"X-Device",COLLIE_DEVICE_ALLOWLIST:"writer",COLLIE_ALLOWED_ORIGINS:"https://gateway.example"}),port:0};
  const fake=new FakeHerdr();const created=await fake.createWorkspace({cwd:code,label:"fixture-files"});const mux=new HerdrMux(fake,()=>[]),pane=(await mux.snapshot()).panes.find(row=>row.paneId===created.paneId)!;
@@ -94,7 +95,7 @@ type FixtureProfileDocument = Omit<NativeAccessProfile, "redirectUri" | "algorit
 
 
 test("mounted final dispatch refuses completed binding revoke/replacement, role change and access expiry during actual prompt preflight; fresh owner sends once",async()=>{
- const root=await mkdtemp("/var/tmp/collie-b24-mounted-");
+ const root=await mkdtemp(join(tmpdir(), "collie-b24-mounted-"));
  const state=join(root,"state"),code=join(root,"code");await mkdir(state,{mode:0o700});await mkdir(code);await writeFile(join(code,"fixture.txt"),"bounded fixture content");
  const cfg={...loadConfig({COLLIE_HOST:"127.0.0.1",COLLIE_CONFIG_DIR:join(state,"config"),COLLIE_STATE_DIR:state,COLLIE_BASE_PATH:"/browser/",COLLIE_SKIP_SERVE:"1",COLLIE_TRUSTED_USER:"operator@example",COLLIE_DEVICE_HEADER:"X-Device",COLLIE_DEVICE_ALLOWLIST:"writer",COLLIE_ALLOWED_ORIGINS:"https://gateway.example"}),port:0};
  const fake=new FakeHerdr();const created=await fake.createWorkspace({cwd:code,label:"fixture-files"});const mux=new HerdrMux(fake,()=>[]),pane=(await mux.snapshot()).panes.find(row=>row.paneId===created.paneId)!;

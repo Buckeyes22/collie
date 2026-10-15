@@ -1,4 +1,4 @@
-import { mkdir, open, rename, unlink } from "node:fs/promises";
+import { mkdir, open, rename, stat, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { HOST } from "../host.ts";
@@ -170,6 +170,13 @@ export class OperationStore {
       }
       catch (error) {
         if (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT") throw error;
+        // Windows reports ENOENT for a child beneath a regular file, where POSIX reports
+        // ENOTDIR. A missing registry is safe only if its existing parent is a directory.
+        try {
+          if (!(await stat(this.stateDir)).isDirectory()) throw new Error("operation registry parent is not a directory", { cause: error });
+        } catch (parentError) {
+          if (!(parentError instanceof Error) || !("code" in parentError) || parentError.code !== "ENOENT") throw parentError;
+        }
         this.loaded = true;
         this.storageReady = true;
         return;

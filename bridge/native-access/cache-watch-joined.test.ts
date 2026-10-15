@@ -1,11 +1,13 @@
 import { expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { CacheWatchStore } from "../cache/watch.ts";
 import { watchKeyOf, type CacheWarnPane } from "../cache/watch-key.ts";
 import { serveCacheWatchRoute } from "../server.ts";
 
 test("joined cache watch refuses retired original caller after streamed body wait; fresh caller commits exact scoped watch", async () => {
-  const root = await mkdtemp("/var/tmp/collie-b24-joined-watch-");
+  const root = await mkdtemp(join(tmpdir(), "collie-b24-joined-watch-"));
   const watch = new CacheWatchStore({ stateDir: root }, () => 100);
   const identity = { host: "east", session: "work", ref: "peer-pane:w1:p1" };
   const pane: CacheWarnPane = { ...identity, key: watchKeyOf(identity), paneId: "w1:p1", label: "owned peer", cache: { ruleId: "fixture", state: "warm", confidence: "documented", ttlSeconds: 300, expiresAt: 10000 } };

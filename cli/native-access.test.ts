@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { generateKeyPairSync } from "node:crypto";
 import { cmdNativeAccess } from "./native-access.ts";
 import { EXIT } from "./io.ts";
@@ -9,7 +10,7 @@ import { NATIVE_REDIRECT } from "../bridge/native-access/contracts.ts";
 import { nativeAccessFor } from "../bridge/native-access/config.ts";
 
 test("operator configure/enroll/revoke is concrete, checks existing opaque pairing owner, prints only public profile and preserves bearer registry", async()=>{
- const dir=await mkdtemp("/var/tmp/collie-b24-cli-");const oldState=process.env.COLLIE_STATE_DIR,oldConfig=process.env.COLLIE_CONFIG_DIR;
+ const dir=await mkdtemp(join(tmpdir(), "collie-b24-cli-"));const oldState=process.env.COLLIE_STATE_DIR,oldConfig=process.env.COLLIE_CONFIG_DIR;
  process.env.COLLIE_STATE_DIR=dir;process.env.COLLIE_CONFIG_DIR=dir;
  const output:string[]=[],errors:string[]=[];const io={out:(line:string)=>{output.push(line);},err:(line:string)=>{errors.push(line);}};
  try {
