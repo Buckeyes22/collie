@@ -22,8 +22,8 @@ android {
         applicationId = "com.lateapex.collie"
         minSdk = 37
         targetSdk = 37
-        versionCode = 3
-        versionName = "1.5.2"
+        versionCode = 4
+        versionName = "1.6.0"
 
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
         externalNativeBuild {

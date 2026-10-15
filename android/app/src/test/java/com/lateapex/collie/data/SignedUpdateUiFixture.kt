@@ -33,6 +33,7 @@ internal class SignedUpdateUiFixture(
     private val factory: OriginalUpdateWorkerFactory,
     beforeInstall: suspend () -> Unit = {},
 ) : AutoCloseable {
+    private val installedVersionCode = com.lateapex.collie.BuildConfig.VERSION_CODE.toLong()
     private val apk = requireNotNull(javaClass.classLoader?.getResourceAsStream("collie-android-1.5.3.apk"))
         .use { it.readBytes() }
     private val key = KeyPairGenerator.getInstance("EC").run {
@@ -75,7 +76,7 @@ internal class SignedUpdateUiFixture(
         repository = AndroidReleaseRepository(
             context, client = client, apiRoot = "https://api.github.com:${server.port}".toHttpUrl(),
             allowedPort = server.port, verifier = AndroidReleaseMetadataVerifier(publicKey.encodeToByteArray()),
-            packageName = "com.lateapex.collie", installedVersionCodeOverrideForTests = { 3L },
+            packageName = "com.lateapex.collie", installedVersionCodeOverrideForTests = { installedVersionCode },
             installedSignerDigestsOverrideForTests = { setOf("04cc6cede086ffbfcd6aa50c7a52eb13705bb6fdd08e00b76c785b04bfd6400d") },
             archivePackageInfoForTests = VerifiedPublicArchiveFixture::read,
             beforeFinalInstallAdmissionForTests = beforeInstall,
@@ -94,7 +95,7 @@ internal class SignedUpdateUiFixture(
 
     suspend fun reserveDownload(): AndroidReleaseOperationWitness {
         enqueueDiscovery()
-        val lookup = repository.latest(3L)
+        val lookup = repository.latest(installedVersionCode)
         assertTrue("Actual signed HTTPS lookup produces offer: ${(lookup as? AndroidReleaseLookup.Unavailable)?.reason}", lookup is AndroidReleaseLookup.Available)
         val witness = requireNotNull(repository.beginDownload((lookup as AndroidReleaseLookup.Available).candidate))
         operation = witness

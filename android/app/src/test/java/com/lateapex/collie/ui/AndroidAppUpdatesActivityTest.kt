@@ -341,7 +341,7 @@ class AndroidAppUpdatesActivityTest {
             tag = metadata.tag, versionName = metadata.versionName, versionCode = metadata.versionCode,
             notes = "Public release notes", sourceUrl = "https://github.com/Buckeyes22/collie/releases/tag/android-v1.5.4",
             byteSize = metadata.apkSizeBytes, metadata = com.lateapex.collie.data.VerifiedAndroidRelease(metadata, byteArrayOf(1), byteArrayOf(1)),
-            manifestDigest = "a".repeat(64), acceptedRevision = 1, installedVersionCode = 3,
+            manifestDigest = "a".repeat(64), acceptedRevision = 1, installedVersionCode = com.lateapex.collie.BuildConfig.VERSION_CODE.toLong(),
             installedSignerDigests = listOf("c".repeat(64)), apkUrl = url, metadataUrl = url, signatureUrl = url)
     }
 

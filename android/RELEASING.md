@@ -10,8 +10,8 @@ Android app releases are independent of server/PWA releases.
 | --- | --- | --- |
 | Application ID | `com.lateapex.collie` | Preserve for in-place upgrades. |
 | Debug application ID | `com.lateapex.collie.debug` | Development only; separate local data. |
-| versionName | `1.5.2` | Pick the next Android SemVer at release time. |
-| versionCode | `3` | Increase for every distributed update. |
+| versionName | `1.6.0` | Pick the next Android SemVer at release time. |
+| versionCode | `4` | Increase for every distributed update. |
 | Tag | `android-vX.Y.Z` | Must match the APK's versionName. |
 | Changelog | `ANDROID_CHANGELOG.md` | Record app changes separately from the server. |
 
@@ -200,11 +200,11 @@ Only tag the clean commit after choosing the Android version and completing the 
 5. Create an annotated `android-vX.Y.Z` tag on that commit.
 6. Push the commit and tag when ready to create the draft.
 
-For example, after a release commit for Android 1.5.2:
+For example, after a release commit for Android 1.6.0:
 
 ```bash
-git tag -a android-v1.5.2 -m "Collie for Android 1.5.2"
-git push origin main android-v1.5.2
+git tag -a android-v1.6.0 -m "Collie for Android 1.6.0"
+git push origin main android-v1.6.0
 ```
 
 The [Android release workflow](../.github/workflows/android-release.yml) tests and builds before

@@ -35,7 +35,7 @@ EOF
   printf 'build/\n' > "$work/repo/android/app/.gitignore"
   cat > "$work/sdk/build-tools/37.0.0/aapt" <<'EOF'
 #!/usr/bin/env bash
-echo "package: name='com.lateapex.collie' versionCode='3' versionName='1.5.2'"
+echo "package: name='com.lateapex.collie' versionCode='4' versionName='1.6.0'"
 echo "sdkVersion:'37'"
 EOF
   # Stub apksigner: `sign ... --out <path> <input>` copies <input> to <path>; `verify` prints the signer.

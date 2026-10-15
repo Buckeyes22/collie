@@ -127,6 +127,8 @@ Running a crew? Update the lead first; members follow on their own. Details:
 - **Pin current Android tooling without weakening native checks.** Align the SDK, built-in Kotlin, wrapper checksum and release SDK references with the latest-only Android policy.
 - **Android builds use the current SDK command interface.** CI installs the age-eligible Android CLI from Google's signed repository with an explicit version pin and retains SDK license and failure checks.
 
+- **Android release checks follow the current app package identity.** Pin the independent native checker and packaging fixtures to Android 1.6.0/code 4 without changing the server or PWA versions.
+
 ## [1.19.0] - 2026-10-09
 
 ### Added
