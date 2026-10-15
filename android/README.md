@@ -439,7 +439,7 @@ preparation. See [Releasing](RELEASING.md) for versioning, signing, acceptance a
 Unsigned and debug APKs are development artifacts. A public APK needs release signing, passing build checks and a basic artifact smoke check.
 Retain physical-device security, lifecycle, large-font and TalkBack evidence with its actual device/API; disclose untested scope accurately.
 
-The current package is `versionName=1.6.0`, `versionCode=4`. Android `versionCode` is monotonic and
+The current package is `versionName=1.6.1`, `versionCode=5`. Android `versionCode` is monotonic and
 independent of the Collie server release mechanism; every APK distributed as an update must use a
 higher code than the installed APK.
 

@@ -130,6 +130,7 @@ Running a crew? Update the lead first; members follow on their own. Details:
 - **Android builds use the current SDK command interface.** CI installs the age-eligible Android CLI from Google's signed repository with an explicit version pin and retains SDK license and failure checks.
 
 - **Android release checks follow the current app package identity.** Pin the independent native checker and packaging fixtures to Android 1.6.0/code 4 without changing the server or PWA versions.
+- **Android 16 compatibility ships with an increasing build code.** Advance the independent Android checker and release pins to 1.6.1/code 5 while preserving the existing production package and signing keys.
 
 ## [1.19.0] - 2026-10-09
 
