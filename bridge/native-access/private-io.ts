@@ -2,7 +2,7 @@ import { closeSync, constants, fsyncSync, fstatSync, lstatSync, mkdirSync, openS
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { HOST } from "../host.ts";
-import { secretFileVerdict } from "../owner-only.ts";
+import { isOwnerOnly } from "../owner-only.ts";
 import { strictJson } from "./jose.ts";
 import type { JsonValue } from "../json.ts";
 
@@ -10,7 +10,7 @@ export interface PrivateJsonIo { read(): JsonValue | null; write(value: JsonValu
 function validate(path: string, directory: boolean): void {
     const stat = lstatSync(path);
     if (stat.isSymbolicLink() || (directory ? !stat.isDirectory() : !stat.isFile() || stat.nlink !== 1)) throw new Error("native.private_file");
-    if (HOST.platform === "win32") { const verdict = secretFileVerdict(path, { repair: false }); if (!verdict.ok || verdict.warning !== null) throw new Error("native.private_acl"); }
+    if (HOST.platform === "win32") { const verdict = isOwnerOnly(path, HOST); if (verdict.state !== "private") throw new Error("native.private_acl"); }
     else if ((stat.mode & 0o077) !== 0 || process.getuid && stat.uid !== process.getuid()) throw new Error("native.private_owner");
   }
 /** Operator-declared fixed file only. No caller JSON becomes a filesystem path. */

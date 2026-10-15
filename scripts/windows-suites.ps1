@@ -14,7 +14,7 @@
 #              cannot hide behind a removed one in another. A test must not be skipped just to get
 #              green, so a higher count is a failure. Raise a number only with a reason.
 #              Bridge went from 2 to 0 when M43 spec 04 checked the access list instead of the mode.
-#              Today, 28 in all, each one named, with its reason:
+#              Today, 86 in all. These are existing explicit platform conditions, not new skips:
 #              bridge 4, in bridge/stt/local-cli.test.ts. Windows has no executable bit and no file
 #                owner check in this provider:
 #                - "commandFileProblem: regular executable passes, symlinks are followed" (the
@@ -25,13 +25,27 @@
 #                  owner check by uid)
 #                - "loading the provider sweeps its temp root once, in the background" (without a
 #                  uid the sweep removes nothing on Windows, so there is nothing to see)
+#              bridge also includes 58 existing conditional tests added with the durable adapter:
+#                - bridge/durable/log.test.ts: 1 POSIX chmod repair test; the adjacent private-file
+#                  test still verifies the real Windows ACL instead of nonexistent mode bits.
+#                - bridge/mux/durable/adapter.test.ts: 6 socket-only cases
+#                - bridge/mux/durable/asks.test.ts: 1 socket-only case
+#                - bridge/mux/durable/client.test.ts: 27 Unix socket privacy/path/wire cases
+#                - bridge/mux/durable/events.test.ts: 1 socket log-folder factory case
+#                - bridge/mux/durable/example.test.ts: 10 real example Unix-socket cases
+#                - bridge/mux/durable/example-cloudflare.test.ts: 11 optional Wrangler process-
+#                  group cases; that example is not installed in this root-only Windows job.
+#                - bridge/mux/durable/http-client.test.ts: 1 comparison against socket transport
+#                WIRE.md section 1A and ADR 0103 define the private Unix socket and Windows HTTPS
+#                split. All portable wire/conformance cases already run over real loopback HTTP
+#                on Windows. This census adds no skip and permits no failing test.
 #              cli 1: "a per-call override wins over the Exec's own environment (#283) > a child
 #                killed by a signal says which one" (Windows has no POSIX signals)
 #              scripts 23: every test of scripts/install.test.ts ("scripts/install.sh > ..."):
 #                install.sh is POSIX sh, and Windows installs with install.ps1, tested beside it.
 param(
   [Parameter(Mandatory = $true)][string]$Out,
-  [int]$MaxSkipsBridge = 4,
+  [int]$MaxSkipsBridge = 62,
   [int]$MaxSkipsCli = 1,
   [int]$MaxSkipsScripts = 23
 )

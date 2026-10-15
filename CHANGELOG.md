@@ -115,6 +115,8 @@ Running a crew? Update the lead first; members follow on their own. Details:
 
 - **Documentation links resolve from the current checkout.** Validate canonical repository paths against the current Git root, including CI clones, while preserving missing-file and missing-anchor failures.
 - **Receipt readiness rejects a file where its folder belongs.** Treat Windows missing-child errors beneath a regular state file as unavailable storage before any receipt-bound action.
+- **Windows skip accounting names existing platform-only durable tests.** Include the already conditional Unix-socket, POSIX-mode and optional example cases in the runner census while keeping every failure and portable conformance test enforced.
+- **Windows checkpoint writes use verified access lists for privacy.** Keep POSIX mode checks on POSIX and require an explicit private ACL verdict for monitoring and native gateway custody; an unchecked, previously warned path never authorizes a later read.
 
 ### Packaging
 

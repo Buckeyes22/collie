@@ -14,7 +14,7 @@ import { dirname, join } from "node:path";
 import { parseMachineStrictJson, isMachineFileMissing } from "../machine-parse.ts";
 import type { JsonValue, JsonObject } from "../json.ts";
 import { HOST } from "../host.ts";
-import { secretFileVerdict } from "../owner-only.ts";
+import { isOwnerOnly } from "../owner-only.ts";
 import { assertMonitoringPrivateDirectory as assertPrivateDirectory, readMonitoringPrivateFile as readPrivateFile } from "../monitoring-private-io.ts";
 import {
   canonicalMonitoringCheckpointRecord,
@@ -427,10 +427,9 @@ async function durableWrite(path: string, bytes: Uint8Array, beforeRename: () =>
     const handle = await open(tmp, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | (constants.O_NOFOLLOW ?? 0), 0o600);
     try { await handle.writeFile(bytes); await handle.sync(); } finally { await handle.close(); }
     const stat = await lstat(tmp);
-    if (stat.isSymbolicLink() || !stat.isFile() || stat.nlink !== 1 || (stat.mode & 0o077) !== 0) throw new Error("checkpoint.private_temp");
+    if (stat.isSymbolicLink() || !stat.isFile() || stat.nlink !== 1 || (HOST.platform !== "win32" && (stat.mode & 0o077) !== 0)) throw new Error("checkpoint.private_temp");
     if (HOST.platform === "win32") {
-      const verdict = secretFileVerdict(tmp, { repair: false });
-      if (!verdict.ok || verdict.warning !== null) throw new Error("checkpoint.private_acl");
+      const verdict = isOwnerOnly(tmp, HOST); if (verdict.state !== "private") throw new Error("checkpoint.private_acl");
     }
     if (!beforeRename()) throw new Error("checkpoint.authority_changed");
     renameSync(tmp, path);

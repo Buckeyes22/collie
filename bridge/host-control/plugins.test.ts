@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtemp, rm, mkdir, writeFile, readFile } from "node:fs/promises";
+import { realpath, mkdtemp, rm, mkdir, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { OperationStore } from "../control/operations.ts";
@@ -99,7 +99,7 @@ test("plugin install plans disclose a pinned artifact and retain an unknown outc
       return { kind: "available" as const, value: { requestId, state: "unknown" as const, plugin: null, removed: false, code: "plugin_owner_outcome_unknown" } };
     },
   });
-  const root = await mkdtemp(join(tmpdir(), "collie-plugin-owner-"));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "collie-plugin-owner-")));
   const operations = new OperationStore(root);
   await operations.prepare();
   const plans = new PlanStore();
@@ -138,7 +138,7 @@ test("plugin install plans disclose a pinned artifact and retain an unknown outc
 
 test("redacted config edit replays its restored-content intent without a second write", async () => {
   const { caller, port } = fixture();
-  const root = await mkdtemp(join(tmpdir(), "collie-plugin-config-replay-"));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "collie-plugin-config-replay-")));
   const configDir = join(root, "config");
   await mkdir(configDir);
   await writeFile(join(configDir, "settings.json"), JSON.stringify({ api_key: "fixture-secret", label: "before" }));

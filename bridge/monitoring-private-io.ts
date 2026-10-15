@@ -3,14 +3,13 @@ import { constants } from "node:fs";
 import { lstat, open } from "node:fs/promises";
 import { dirname } from "node:path";
 import { HOST } from "./host.ts";
-import { secretFileVerdict } from "./owner-only.ts";
+import { isOwnerOnly } from "./owner-only.ts";
 
 export async function assertMonitoringPrivateDirectory(path: string): Promise<void> {
   const stat = await lstat(path);
   if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error("monitoring.private_directory");
   if (HOST.platform === "win32") {
-    const verdict = secretFileVerdict(path, { repair: false });
-    if (!verdict.ok || verdict.warning !== null) throw new Error("monitoring.private_acl");
+    const verdict = isOwnerOnly(path, HOST); if (verdict.state !== "private") throw new Error("monitoring.private_acl");
   } else if ((stat.mode & 0o077) !== 0 || (process.getuid !== undefined && stat.uid !== process.getuid())) {
     throw new Error("monitoring.private_owner");
   }
@@ -21,8 +20,7 @@ export async function readMonitoringPrivateFile(path: string, maxBytes: number):
   const before = await lstat(path);
   if (before.isSymbolicLink() || !before.isFile() || before.nlink !== 1 || before.size > maxBytes) throw new Error("monitoring.private_file");
   if (HOST.platform === "win32") {
-    const verdict = secretFileVerdict(path, { repair: false });
-    if (!verdict.ok || verdict.warning !== null) throw new Error("monitoring.private_acl");
+    const verdict = isOwnerOnly(path, HOST); if (verdict.state !== "private") throw new Error("monitoring.private_acl");
   } else if ((before.mode & 0o077) !== 0 || (process.getuid !== undefined && before.uid !== process.getuid())) {
     throw new Error("monitoring.private_owner");
   }

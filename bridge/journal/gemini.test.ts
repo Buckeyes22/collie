@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { appendFile, mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, realpath, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -94,7 +94,7 @@ describe("Gemini CLI JSONL journal", () => {
   });
 
   test("resolves full UUIDs under project chats and subagent chats, not a short-ID collision or symlink escape", async () => {
-    const base = await mkdtemp(join(tmpdir(), "collie-gemini-journal-"));
+    const base = await realpath(await mkdtemp(join(tmpdir(), "collie-gemini-journal-")));
     try {
       const chats = join(base, "project-opaque", "chats");
       const nestedChats = join(chats, "parent-session");
@@ -153,7 +153,7 @@ describe("Gemini CLI JSONL journal", () => {
   });
 
   test("live order and deletion replacement starts a new safe sequence generation", async () => {
-    const base = await mkdtemp(join(tmpdir(), "collie-gemini-live-"));
+    const base = await realpath(await mkdtemp(join(tmpdir(), "collie-gemini-live-")));
     let now = 100_000;
     try {
       const chats = join(base, "project", "chats");

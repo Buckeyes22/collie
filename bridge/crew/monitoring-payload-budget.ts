@@ -4,7 +4,7 @@ import {HOST} from "../host.ts";
 import {lstat,opendir,mkdtemp,rm} from "node:fs/promises";
 import {join} from "node:path";
 import {assertMonitoringPrivateDirectory} from "../monitoring-private-io.ts";
-import {secretFileVerdict} from "../owner-only.ts";
+import {isOwnerOnly} from "../owner-only.ts";
 export const MONITORING_PAYLOAD_MAX_BYTES=128*1024*1024;
 export async function monitoringPayloadBytes(root:string):Promise<number> {
   await assertMonitoringPrivateDirectory(root);let total=0,directories=0;
@@ -19,7 +19,7 @@ export async function monitoringPayloadBytes(root:string):Promise<number> {
         if(++count>256 || !/^chunk-(?:0|[1-9][0-9]{0,2})\.bin$/.test(file.name))throw new Error("checkpoint.payload_unknown_custody");
         const path=join(directory,file.name),stat=await lstat(path);
         if(!stat.isFile() || stat.isSymbolicLink() || stat.nlink!==1 || stat.size>262144 || HOST.platform!=="win32" && (stat.mode&0o077 || stat.uid!==process.getuid?.()))throw new Error("checkpoint.payload_private");
-        if(HOST.platform==="win32") {const proof=secretFileVerdict(path,{repair:false});if(!proof.ok || proof.warning!==null)throw new Error("checkpoint.payload_acl");}
+        if(HOST.platform==="win32") {const proof = isOwnerOnly(path, HOST); if (proof.state !== "private")throw new Error("checkpoint.payload_acl");}
         total+=stat.size;if(total>MONITORING_PAYLOAD_MAX_BYTES)throw new Error("checkpoint.payload_quota");
       }
     }
@@ -68,7 +68,7 @@ async function removeDeadMonitoringTransfers(stateDir:string,current:()=>boolean
       if(++chunks>256 || !/^chunk-(?:0|[1-9][0-9]{0,2})\.bin$/.test(file.name))throw new Error("checkpoint.transfer_unknown_custody");
       const stat=await lstat(join(path,file.name));
       if(!stat.isFile() || stat.isSymbolicLink() || stat.nlink!==1 || stat.size>262144 || HOST.platform!=="win32" && (stat.mode&0o077 || stat.uid!==process.getuid?.()))throw new Error("checkpoint.transfer_private");
-      if(HOST.platform==="win32"){const proof=secretFileVerdict(join(path,file.name),{repair:false});if(!proof.ok || proof.warning!==null)throw new Error("checkpoint.transfer_acl");}
+      if(HOST.platform==="win32"){const proof = isOwnerOnly(join(path,file.name), HOST); if (proof.state !== "private")throw new Error("checkpoint.transfer_acl");}
     }
     if(!current())throw new Error("checkpoint.authority_changed");
     await rm(path,{recursive:true});

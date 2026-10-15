@@ -2,12 +2,24 @@ import { expect, test } from "bun:test";
 import { mkdtempSync, readdirSync, rmSync, writeFileSync, symlinkSync, linkSync, chmodSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { HOST } from "../host.ts";
+import { aclTool } from "../icacls.ts";
+import { isOwnerOnly } from "../owner-only.ts";
 import { privateJsonIo } from "./private-io.ts";
 import { nativeAccessFor } from "./config.ts";
 import { DeviceBindings } from "./device-bindings.ts";
 import { ProofReplayStore } from "./replay.ts";
 import { digest } from "./jose.ts";
 import { drainBindingRetirements, nativeEnrollmentBinding } from "./enrollment.ts";
+
+// Only these newly created fixture paths are ever changed. Windows checks an actual ACL grant;
+// chmod on NTFS cannot demonstrate another account being allowed to read a private file.
+function fixturePrivacy(path: string, loose: boolean, directory = false): void {
+ if(HOST.platform!=="win32"){chmodSync(path,directory?(loose?0o755:0o700):(loose?0o644:0o600));return;}
+ const run=aclTool().icacls(loose?[path,"/grant","*S-1-1-0:(R)"]:[path,"/remove:g","*S-1-1-0"]);
+ expect(run?.timedOut).toBe(false);expect(run?.code).toBe(0);
+ expect(isOwnerOnly(path,HOST).state).toBe(loose?"loose":"private");
+}
 
 test("real owner-only atomic registry survives restart and lease cleanup; revoke outbox stays durable until signed dispatcher ACK",async()=>{
  const dir=mkdtempSync(join(tmpdir(),"collie-native-access-"));try{
@@ -21,7 +33,7 @@ test("real owner-only atomic registry survives restart and lease cleanup; revoke
 test("real file boundary refuses symlink, hardlink, loose permissions and pre-read byte bound",()=>{
  const dir=mkdtempSync(join(tmpdir(),"collie-native-private-"));try{
  const target=join(dir,"target.json");writeFileSync(target,"{}",{mode:0o600});const link=join(dir,"link.json");symlinkSync(target,link);expect(()=>privateJsonIo(link).read()).toThrow();rmSync(link);linkSync(target,link);expect(()=>privateJsonIo(link).read()).toThrow();rmSync(link);
- chmodSync(target,0o644);expect(()=>privateJsonIo(target).read()).toThrow();chmodSync(target,0o600);writeFileSync(target,"x".repeat(1025));expect(()=>privateJsonIo(target,1024).read()).toThrow();
+ fixturePrivacy(target,true);expect(()=>privateJsonIo(target).read()).toThrow();fixturePrivacy(target,false);writeFileSync(target,"x".repeat(1025));expect(()=>privateJsonIo(target,1024).read()).toThrow();
  }finally{rmSync(dir,{recursive:true,force:true});}
 });
 test("proof consumed before dispatch cannot replay after constructing a new actual filesystem registry",()=>{
@@ -37,8 +49,8 @@ test("an unconfigured native gateway read has no filesystem tax or background cu
 
 test("optional gateway leaves existing nonprivate state alone but present unsafe configuration still refuses",()=>{
  const dir=mkdtempSync(join(tmpdir(),"collie-native-legacy-"));try{
-  chmodSync(dir,0o755);expect(nativeAccessFor(dir)).toBeNull();expect(readdirSync(dir)).toEqual([]);
-  const config=join(dir,"native-access.json");writeFileSync(config,"{}",{mode:0o600});expect(()=>nativeAccessFor(dir)).toThrow("native.private_owner");
-  rmSync(config);chmodSync(dir,0o700);symlinkSync(join(dir,"missing-target.json"),config);expect(()=>nativeAccessFor(dir)).toThrow("native.private_file");
+  fixturePrivacy(dir,true,true);expect(nativeAccessFor(dir)).toBeNull();expect(readdirSync(dir)).toEqual([]);
+  const config=join(dir,"native-access.json");writeFileSync(config,"{}",{mode:0o600});expect(()=>nativeAccessFor(dir)).toThrow(HOST.platform==="win32"?"native.private_acl":"native.private_owner");
+  rmSync(config);fixturePrivacy(dir,false,true);symlinkSync(join(dir,"missing-target.json"),config);expect(()=>nativeAccessFor(dir)).toThrow("native.private_file");
  }finally{rmSync(dir,{recursive:true,force:true});}
 });

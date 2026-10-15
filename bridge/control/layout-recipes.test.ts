@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { MuxLayoutApplyRequest, MuxLayoutCreated, MuxPortableLayout, MuxPortableLayoutNode, MuxSnapshot } from "../mux/types.ts";
@@ -23,7 +23,7 @@ describe("portable layout route contracts", () => {
 
   async function fixture(options: { readonly ratioReply?: "apply" | "unchanged" | "wrong-tab"; readonly applyReply?: "success" | "wrong-tab" | "wrong-count";
     readonly layout?: MuxPortableLayout; readonly denyDeviceRead?: boolean; readonly stops?: number; readonly launchers?: readonly Launcher[] } = {}) {
-    stateDir = await mkdtemp(join(tmpdir(), "collie-layout-recipes-"));
+    stateDir = await realpath(await mkdtemp(join(tmpdir(), "collie-layout-recipes-")));
     const operations = new OperationStore(stateDir);
     expect(await operations.prepare()).toBe(true);
     let ratioRequest: { tabId: string; paneId: string | null; path: readonly boolean[]; ratio: number } | null = null;
@@ -33,16 +33,21 @@ describe("portable layout route contracts", () => {
     let exportHook: ((count: number) => Promise<void>) | null = null;
     let exportCalls = 0;
     let resolveCalls = 0;
-    let currentLayout = options.layout ?? tree;
+    // The export contract resolves real workspace folders on every supported host.
+    const workspaceRoot = stateDir;
+    const inOwnedRoot = (node: MuxPortableLayoutNode): MuxPortableLayoutNode => node.type === "split"
+      ? { ...node, first: inOwnedRoot(node.first), second: inOwnedRoot(node.second) }
+      : { ...node, cwd: node.cwd === "/tmp" ? workspaceRoot : node.cwd };
+    let currentLayout = { ...(options.layout ?? tree), root: inOwnedRoot((options.layout ?? tree).root) };
     const updateRatio = (node: MuxPortableLayoutNode, path: readonly boolean[], ratio: number): MuxPortableLayoutNode => {
       if (path.length === 0) return node.type === "split" ? { ...node, ratio } : node;
       if (node.type !== "split") return node;
       return path[0] ? { ...node, second: updateRatio(node.second, path.slice(1), ratio) } : { ...node, first: updateRatio(node.first, path.slice(1), ratio) };
     };
-    const stops = Array.from({ length: options.stops ?? 1 }, (_, index) => ({ paneId: `p${index + 1}`, tabId: "t1", spaceId: "w1", spaceLabel: "Workspace", spaceNumber: 1, cwd: "/tmp", focused: index === 0, alive: true,
+    const stops = Array.from({ length: options.stops ?? 1 }, (_, index) => ({ paneId: `p${index + 1}`, tabId: "t1", spaceId: "w1", spaceLabel: "Workspace", spaceNumber: 1, cwd: workspaceRoot, focused: index === 0, alive: true,
       agent: "shell", status: "idle" as const, terminalIncarnation: "a".repeat(64), paneLabel: `old-${index}`.padEnd(128, "x") }));
     const snapshot = {
-      spaces: [{ spaceId: "w1", number: 1, label: "Workspace", focused: true, activeTabId: "t1", tabCount: 1, paneCount: stops.length, folder: "/tmp" }],
+      spaces: [{ spaceId: "w1", number: 1, label: "Workspace", focused: true, activeTabId: "t1", tabCount: 1, paneCount: stops.length, folder: workspaceRoot }],
       tabs: [{ tabId: "t1", spaceId: "w1", number: 1, label: "Tab", focused: true, paneCount: stops.length }],
       panes: stops,
     } satisfies MuxSnapshot;

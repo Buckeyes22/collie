@@ -5,7 +5,7 @@ import {HOST} from "../host.ts";
 import { deflateRawSync, inflateRawSync } from "node:zlib";
 import { Database } from "bun:sqlite";
 import { constants, closeSync, lstatSync, mkdirSync, mkdtempSync, openSync, opendirSync, rmSync, statfsSync } from "node:fs";
-import { secretFileVerdict } from "../owner-only.ts";
+import { isOwnerOnly } from "../owner-only.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -40,11 +40,11 @@ export class MonitoringFactIndex {
     if (HOST.platform !== "win32" && (privateRoot.mode & 0o077 || privateRoot.uid !== process.getuid?.())) {
       rmSync(this.directory, { recursive: true }); throw new Error("checkpoint.index_owner_invalid");
     }
-    if(HOST.platform==="win32") {const proof=secretFileVerdict(this.directory,{repair:false});if(!proof.ok || proof.warning!==null) {rmSync(this.directory,{recursive:true});throw new Error("checkpoint.index_acl");}}
+    if(HOST.platform==="win32") {const proof = isOwnerOnly(this.directory, HOST); if (proof.state !== "private") {rmSync(this.directory,{recursive:true});throw new Error("checkpoint.index_acl");}}
     const path = join(this.directory, "facts.sqlite");
     const descriptor = openSync(path, constants.O_CREAT | constants.O_EXCL | constants.O_RDWR | (constants.O_NOFOLLOW ?? 0), 0o600);
     closeSync(descriptor);
-    if(HOST.platform==="win32") {const proof=secretFileVerdict(path,{repair:false});if(!proof.ok || proof.warning!==null) {rmSync(this.directory,{recursive:true});throw new Error("checkpoint.index_acl");}}
+    if(HOST.platform==="win32") {const proof = isOwnerOnly(path, HOST); if (proof.state !== "private") {rmSync(this.directory,{recursive:true});throw new Error("checkpoint.index_acl");}}
     try {
       this.database = new Database(path, { strict: true });
       this.database.exec(`PRAGMA page_size=${INDEX_PAGE_BYTES}; PRAGMA max_page_count=${initialPages}; PRAGMA journal_mode=OFF;
@@ -96,7 +96,7 @@ export class MonitoringFactIndex {
 function assertPrivate(path:string):void {
   const stat=lstatSync(path);
   if(!stat.isDirectory() || stat.isSymbolicLink() || HOST.platform!=="win32" && (stat.mode&0o077 || stat.uid!==process.getuid?.())) throw new Error("checkpoint.index_owner_invalid");
-  if(HOST.platform==="win32") {const proof=secretFileVerdict(path,{repair:false});if(!proof.ok || proof.warning!==null) throw new Error("checkpoint.index_acl");}
+  if(HOST.platform==="win32") {const proof = isOwnerOnly(path, HOST); if (proof.state !== "private") throw new Error("checkpoint.index_acl");}
 }
 /** Crash files are disposable scratch, never accepted data. A live/unknown PID is preserved. */
 function removeDeadIndexScratch(namespace:string):void {

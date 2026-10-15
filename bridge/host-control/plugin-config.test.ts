@@ -1,12 +1,12 @@
 import { expect, test } from "bun:test";
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { realpath, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { JsonObject } from "../json.ts";
 import { listPluginConfigFiles, readPluginConfigFile, writePluginConfigFile, redactPluginConfigContent, restorePluginConfigSecrets, PLUGIN_CONFIG_REDACTED } from "./plugin-config.ts";
 
 test("plugin config edits are relative, revision-bound, atomic, and leave a private backup", async () => {
-  const parent = await mkdtemp(join(tmpdir(), "collie-plugin-config-"));
+  const parent = await realpath(await mkdtemp(join(tmpdir(), "collie-plugin-config-")));
   const root = join(parent, "config");
   try {
     await mkdir(root);
@@ -29,7 +29,7 @@ test("plugin config edits are relative, revision-bound, atomic, and leave a priv
 });
 
 test("plugin config discovery and editing refuse symlinks and path traversal", async () => {
-  const parent = await mkdtemp(join(tmpdir(), "collie-plugin-config-"));
+  const parent = await realpath(await mkdtemp(join(tmpdir(), "collie-plugin-config-")));
   const root = join(parent, "config");
   try {
     await mkdir(root);

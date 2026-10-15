@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { execFile as execFileCallback } from "node:child_process";
-import { mkdtemp, mkdir, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { realpath, mkdtemp, mkdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -18,7 +18,7 @@ async function git(cwd: string, ...args: string[]) {
 }
 
 async function fixture(dirty = false, loseReply = false) {
-  const root = await mkdtemp(join(tmpdir(), "collie-worktree-remove-"));
+  const root = await realpath(await mkdtemp(join(tmpdir(), "collie-worktree-remove-")));
   const repo = join(root, "repo");
   const checkout = join(root, "linked");
   await mkdir(repo);

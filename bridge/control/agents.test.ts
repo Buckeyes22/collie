@@ -19,7 +19,7 @@ afterEach(async () => { await Promise.all(waits.splice(0).map((store) => store.c
 function root(): string { const path = mkdtempSync(join(tmpdir(), "collie-b19-actions-")); roots.push(path); return path; }
 async function fixture(beforePersist?: () => Promise<void>) {
   const peer = new AgentTestPeer(); peers.push(peer); await peer.listen();
-  const mux = new HerdrMux(new HerdrClient(peer.path, 1000, "bun"), () => []); expect(await mux.reachable()).toBe(true);
+  const mux = new HerdrMux(new HerdrClient(peer.path, 1000, "auto"), () => []); expect(await mux.reachable()).toBe(true);
   let admitted = true; let owner = "a".repeat(64); let writes = true;
   const caller: AgentCaller = { redact: true, receiptKey: new Uint8Array(32).fill(9), gate: (level) => !admitted || (level === "write" && !writes) ? Response.json({ ok: false, code: "test.factor_required" }, { status: 403 }) : null, pairedIdentity: () => owner, composerSafe: () => true, visiblePrompt: (text) => text, audit: () => {}, resolve: async () => ({ host: "local", session: "fixture", mux, currentRuntime: () => admitted, current: (expected) => admitted && (expected.paneId === peer.paneId ? peer.terminal : expected.paneId === "w1:p1" ? peer.originalSlotReplacement : null) === expected.terminalId }) };
   const directory = root(); const operations = new OperationStore(directory, Date.now, beforePersist); await operations.prepare();

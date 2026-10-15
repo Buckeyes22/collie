@@ -9,7 +9,7 @@ function runtime(client: HerdrClient): string { const identity = client.layoutRu
 test("production client checks original authority after awaited dial before first named bytes and fresh current stays positive", async () => {
   const peer = await peerFixture(); let hold = false; let admitted = true; let release!: () => void; let entered!: () => void;
   const gate = new Promise<void>((resolve) => { release = resolve; }); const seen = new Promise<void>((resolve) => { entered = resolve; });
-  const client = new HerdrClient(peer.path, 1000, "bun", async (path, handlers, mode) => { if (hold) { entered(); await gate; } return dialHerdr(path, handlers, mode); });
+  const client = new HerdrClient(peer.path, 1000, "auto", async (path, handlers, mode) => { if (hold) { entered(); await gate; } return dialHerdr(path, handlers, mode); });
   expect(await client.layoutHandshakeSample()).not.toBeNull(); const original = runtime(client); hold = true;
   const pending = client.actOnAgent("w1:p1", { kind: "rename", name: "newname" }, { runtimeIdentity: original, finalAdmission: () => admitted }).catch((error: Error) => error);
   await seen; admitted = false; release(); const failure = await pending;
@@ -20,7 +20,7 @@ test("production client checks original authority after awaited dial before firs
 test("production writer carries accepted-prefix uncertainty through original retirement at a drain and closes its tail", async () => {
   const peer = await peerFixture(); let custom = false; let admitted = true; let stream: ReturnType<typeof createBunWriteStream> | null = null; let endCount = 0; let bytes = 0; let calls = 0;
   const raw = { write(_data: Uint8Array, _offset?: number, _length?: number) { calls++; const accepted = calls === 1 ? 1 : 0; bytes += accepted; return accepted; }, flush() {}, end() { endCount++; } };
-  const client = new HerdrClient(peer.path, 1000, "bun", async (path, handlers, mode): Promise<SockHandle> => {
+  const client = new HerdrClient(peer.path, 1000, "auto", async (path, handlers, mode): Promise<SockHandle> => {
     if (!custom) return dialHerdr(path, handlers, mode);
     stream = createBunWriteStream(handlers); stream.attach(raw); handlers.open?.(stream.handle); return stream.handle;
   });

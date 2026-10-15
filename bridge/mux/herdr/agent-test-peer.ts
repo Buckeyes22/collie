@@ -7,7 +7,11 @@ import { join } from "node:path";
 import type { JsonObject, JsonValue } from "../../json.ts";
 export class AgentTestPeer {
   readonly directory = mkdtempSync(join(tmpdir(), "collie-b19-peer-"));
-  readonly path = join(this.directory, "herdr.sock");
+  // Match the shipping dialer's endpoint on each host. Windows runtime custody requires
+  // the actual named-pipe server PID/creation time, never a filesystem socket alias.
+  readonly path = process.platform === "win32"
+    ? `\\\\.\\pipe\\collie-agent-test-${randomUUID()}`
+    : join(this.directory, "herdr.sock");
   readonly requests: { readonly id: string; readonly method: string; readonly params: JsonObject }[] = [];
   readonly connections = new Set<net.Socket>();
   readonly subscriptions = new Map<net.Socket, string>();
