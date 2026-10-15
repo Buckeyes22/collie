@@ -40,11 +40,13 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
+import org.robolectric.annotation.Config
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.shadows.ShadowDialog
 
 @RunWith(RobolectricTestRunner::class)
+@Config(sdk = [36, 37])
 class SettingsActivityTest {
     private val context: Context = ApplicationProvider.getApplicationContext()
 

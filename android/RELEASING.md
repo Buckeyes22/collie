@@ -10,8 +10,8 @@ Android app releases are independent of server/PWA releases.
 | --- | --- | --- |
 | Application ID | `com.lateapex.collie` | Preserve for in-place upgrades. |
 | Debug application ID | `com.lateapex.collie.debug` | Development only; separate local data. |
-| versionName | `1.6.0` | Pick the next Android SemVer at release time. |
-| versionCode | `4` | Increase for every distributed update. |
+| versionName | `1.6.1` | Pick the next Android SemVer at release time. |
+| versionCode | `5` | Increase for every distributed update. |
 | Tag | `android-vX.Y.Z` | Must match the APK's versionName. |
 | Changelog | `ANDROID_CHANGELOG.md` | Record app changes separately from the server. |
 
@@ -160,10 +160,13 @@ database, or the scan step failed.
 
 Smoke-test the signed artifact and complete the current physical-device checks before publication.
 
-Current Android acceptance uses the owned physical Pixel running Android 17 / API 37 on
-dell-7680 and synthetic terminal content. Do not run uninstalling instrumentation against another
+Android compatibility acceptance covers Android 16 / API 36 and Android 17 / API 37.
+Use the authorized physical device over its existing USB or wireless ADB connection and synthetic
+terminal content. The Samsung SM-S938U1 updated to API 37 during the compatibility work; API 36
+runtime coverage uses a separate local test emulator, while API 37 physical coverage includes
+the Samsung and prior Pixel evidence through dell-7680. Do not run uninstalling instrumentation against another
 personal app namespace: the runner may reinstall the app and erase its local connection.
-Older API/emulator results are historical evidence, not current release acceptance.
+Pre-API-36 and earlier dated emulator results are historical evidence, not current release acceptance.
 The [toolchain record](TOOLCHAIN.md) describes the stable SDK and build pins.
 
 Initial artifact smoke check:
@@ -200,11 +203,11 @@ Only tag the clean commit after choosing the Android version and completing the 
 5. Create an annotated `android-vX.Y.Z` tag on that commit.
 6. Push the commit and tag when ready to create the draft.
 
-For example, after a release commit for Android 1.6.0:
+For example, after a release commit for Android 1.6.1:
 
 ```bash
-git tag -a android-v1.6.0 -m "Collie for Android 1.6.0"
-git push origin main android-v1.6.0
+git tag -a android-v1.6.1 -m "Collie for Android 1.6.1"
+git push origin main android-v1.6.1
 ```
 
 The [Android release workflow](../.github/workflows/android-release.yml) tests and builds before

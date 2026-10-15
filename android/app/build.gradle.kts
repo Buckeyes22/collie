@@ -20,10 +20,10 @@ android {
 
     defaultConfig {
         applicationId = "com.lateapex.collie"
-        minSdk = 37
+        minSdk = 36
         targetSdk = 37
-        versionCode = 4
-        versionName = "1.6.0"
+        versionCode = 5
+        versionName = "1.6.1"
 
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
         externalNativeBuild {
@@ -92,6 +92,8 @@ configurations.configureEach {
 }
 
 dependencies {
+    // Already present transitively; declare the portable external-key verifier explicitly.
+    implementation("com.google.crypto.tink:tink:1.23.0")
     // UnifiedPush connector 3.3.5 released August 22, 2026; enrollment UI is native.
     implementation("org.unifiedpush.android:connector:3.3.5")
     implementation("androidx.work:work-runtime-ktx:2.12.0")

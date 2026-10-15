@@ -23,10 +23,10 @@ android {
   buildToolsVersion = "37.0.0"
   defaultConfig {
     applicationId = "com.lateapex.collie"
-    minSdk = 37
+    minSdk = 36
     targetSdk = 37
-    versionCode = 4
-    versionName = "1.6.0"
+    versionCode = 5
+    versionName = "1.6.1"
     buildConfigField("String", "DEFAULT_ORIGIN", "\\"\\"")
   }
   buildFeatures { viewBinding = true }
@@ -166,10 +166,10 @@ describe("check-android-native validation", () => {
     const appGradle = validAppGradle
       .replaceAll("com.lateapex.collie", "com.example.other")
       .replace("release(37)", "release(36)")
-      .replace("minSdk = 37", "minSdk = 36")
+      .replace("minSdk = 36", "minSdk = 37")
       .replace("targetSdk = 37", "targetSdk = 36")
-      .replace("versionCode = 4", "versionCode = 5")
-      .replace('versionName = "1.6.0"', 'versionName = "1.6.1"');
+      .replace("versionCode = 5", "versionCode = 6")
+      .replace('versionName = "1.6.1"', 'versionName = "1.6.2"');
     const output = messages({ appGradleText: appGradle });
     for (const field of ["namespace", "applicationId", "compileSdk", "minSdk", "targetSdk", "versionCode", "versionName"]) {
       expect(output).toContain(field);

@@ -8,9 +8,11 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
+import org.robolectric.annotation.Config
 import org.robolectric.RobolectricTestRunner
 
 @RunWith(RobolectricTestRunner::class)
+@Config(sdk = [36, 37])
 class SystemBarInsetsTest {
     @Test
     fun appliesLargestSafeInsetsWithoutAccumulatingRepeatedDispatches() {

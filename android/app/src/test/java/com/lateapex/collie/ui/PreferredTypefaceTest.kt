@@ -19,10 +19,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.Robolectric
+import org.robolectric.annotation.Config
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.shadows.ShadowDialog
 
 @RunWith(RobolectricTestRunner::class)
+@Config(sdk = [36, 37])
 class PreferredTypefaceTest {
     private val context = ApplicationProvider.getApplicationContext<Context>()
 

@@ -52,8 +52,8 @@ refused visibly. Selection and reloads preserve original actor and latest-choice
 
 ## Current Android support
 
-The supported platform is the current Android 17 / API 37 release. Compile SDK 37.2,
-minimum/target API 37 and the age-eligible stable toolchain are recorded in
+The supported platforms are Android 16 / API 36 and newer. Compile SDK 37.2,
+minimum API 36 and target API 37 and the age-eligible stable toolchain are recorded in
 [TOOLCHAIN.md](TOOLCHAIN.md). Historical older-platform and older-vendor evidence remains
 archived; it is not a fresh acceptance matrix. Raising these pins does not establish native,
 shared-custody, issuer, Crew or vendor acceptance; original functional and security requirements

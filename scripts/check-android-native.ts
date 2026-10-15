@@ -3,14 +3,14 @@ import { join, relative } from "node:path";
 
 const EXPECTED_APPLICATION_ID = "com.lateapex.collie";
 const EXPECTED_ACTIVITY = "com.lateapex.collie.ui.MainActivity";
-const EXPECTED_VERSION_NAME = "1.6.0";
-const EXPECTED_VERSION_CODE = 4;
+const EXPECTED_VERSION_NAME = "1.6.1";
+const EXPECTED_VERSION_CODE = 5;
 const EXPECTED_COMPILE_SDK = 37;
 const EXPECTED_COMPILE_SDK_MINOR = 2;
 const EXPECTED_BUILD_TOOLS = "37.0.0";
 const EXPECTED_GRADLE_SHA256 = "bafd5ce9cfaea0fbccfdc8439a1ac42fbd4cd9c89dc9a988228d8a2639a58e6c";
 const EXPECTED_TARGET_SDK = 37;
-const EXPECTED_MIN_SDK = 37;
+const EXPECTED_MIN_SDK = 36;
 const EXPECTED_GRADLE = "9.8.0";
 const EXPECTED_AGP = "9.4.1";
 const EXPECTED_KOTLIN = "2.4.20";
