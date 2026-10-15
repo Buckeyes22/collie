@@ -290,7 +290,10 @@ class NativeInteractionTest {
             onView(withId(R.id.dashboard_panel)).check(matches(isDisplayed()))
             onView(withId(R.id.settings_button)).perform(click())
             onView(withId(R.id.settings_header_title)).check(matches(isDisplayed()))
+            // The visible header can still be moving during the device's Activity transition.
+            settleUi()
             onView(withId(R.id.settings_back_button)).perform(click())
+            awaitDisplayed(R.id.dashboard_panel)
             onView(withId(R.id.dashboard_panel)).check(matches(isDisplayed()))
         }
     }
